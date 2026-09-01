@@ -15,7 +15,9 @@ import {
   INITIAL_LEARNERS,
   INITIAL_PARTIES,
   INITIAL_COMMITTEES,
-  INITIAL_AGENDA
+  INITIAL_AGENDA,
+  INITIAL_JURY,
+  INITIAL_VOLUNTEERS
 } from '../data/initialMockData';
 import { runAutoAllocation } from '../utils/allocationEngine';
 import { supabase, isSupabaseEnabled } from '../lib/supabase';
@@ -24,14 +26,14 @@ import { supabase, isSupabaseEnabled } from '../lib/supabase';
 // Local-storage keys (cache layer)
 // ---------------------------------------------------------------------------
 const STORAGE_KEYS = {
-  EVENTS: 'tn_assembly_events_v4',
-  COORDINATORS: 'tn_assembly_coordinators_v4',
-  LEARNERS: 'tn_assembly_learners_v4',
-  PARTIES: 'tn_assembly_parties_v4',
-  COMMITTEES: 'tn_assembly_committees_v4',
-  AGENDA: 'tn_assembly_agenda_v4',
-  JURY: 'tn_assembly_jury_v4',
-  VOLUNTEERS: 'tn_assembly_volunteers_v4'
+  EVENTS: 'tn_assembly_events_v5',
+  COORDINATORS: 'tn_assembly_coordinators_v5',
+  LEARNERS: 'tn_assembly_learners_v5',
+  PARTIES: 'tn_assembly_parties_v5',
+  COMMITTEES: 'tn_assembly_committees_v5',
+  AGENDA: 'tn_assembly_agenda_v5',
+  JURY: 'tn_assembly_jury_v5',
+  VOLUNTEERS: 'tn_assembly_volunteers_v5'
 };
 
 type Listener = () => void;
@@ -141,7 +143,24 @@ class StorageService {
         supabase.from('volunteers').select('*')
       ]);
 
-      if (events?.length) this.setItem(STORAGE_KEYS.EVENTS, events);
+      if (events && events.length > 0) {
+        this.setItem(STORAGE_KEYS.EVENTS, events);
+      } else {
+        // Seed initial events & relations to Supabase if Supabase is empty
+        const mappedEvents = INITIAL_EVENTS.map(e => ({
+          ...e,
+          status: e.status === 'Day 1 Live' || e.status === 'Day 2 Live' ? 'Live' : e.status
+        }));
+        await supabase.from('college_events').upsert(mappedEvents as unknown as Record<string, unknown>[], { onConflict: 'id' });
+        await supabase.from('coordinators').upsert(INITIAL_COORDINATORS as unknown as Record<string, unknown>[], { onConflict: 'id' });
+        await supabase.from('political_parties').upsert(INITIAL_PARTIES as unknown as Record<string, unknown>[], { onConflict: 'id' });
+        await supabase.from('committees').upsert(INITIAL_COMMITTEES as unknown as Record<string, unknown>[], { onConflict: 'id' });
+        await supabase.from('session_agenda').upsert(INITIAL_AGENDA as unknown as Record<string, unknown>[], { onConflict: 'id' });
+        await supabase.from('jury_members').upsert(INITIAL_JURY as unknown as Record<string, unknown>[], { onConflict: 'id' });
+        await supabase.from('volunteers').upsert(INITIAL_VOLUNTEERS as unknown as Record<string, unknown>[], { onConflict: 'id' });
+        await supabase.from('learners').upsert(INITIAL_LEARNERS as unknown as Record<string, unknown>[], { onConflict: 'id' });
+      }
+
       if (coordinators?.length) this.setItem(STORAGE_KEYS.COORDINATORS, coordinators);
       if (learners?.length) this.setItem(STORAGE_KEYS.LEARNERS, learners);
       if (parties?.length) this.setItem(STORAGE_KEYS.PARTIES, parties);
@@ -160,7 +179,11 @@ class StorageService {
 
   private async sbUpsert(table: string, data: Record<string, unknown>) {
     if (!supabase) return;
-    const { error } = await supabase.from(table).upsert(data, { onConflict: 'id' });
+    const payload = { ...data };
+    if (payload.status === 'Day 1 Live' || payload.status === 'Day 2 Live') {
+      payload.status = 'Live';
+    }
+    const { error } = await supabase.from(table).upsert(payload, { onConflict: 'id' });
     if (error) console.warn(`[Supabase] upsert ${table}:`, error.message);
   }
 
@@ -358,8 +381,8 @@ class StorageService {
 
   public bulkImportLearners(eventId: string, newLearners: Partial<Learner>[]): number {
     const all = this.getLearners();
-    const formatted: Learner[] = newLearners.map((l, idx) => ({
-      id: `l_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
+    const formatted: Learner[] = newLearners.map((l) => ({
+      id: crypto.randomUUID(),
       event_id: eventId,
       access_code: l.access_code || '',
       full_name: l.full_name || '',

@@ -32,7 +32,8 @@ interface SavedAuthSession {
   name?: string;
   assigned_event_ids?: string[];
   studentCode?: string;
-  eventId?: string;
+  currentEventId?: string;
+  activeNavTab?: ActiveNavTab;
 }
 
 export function App() {
@@ -75,7 +76,10 @@ export function App() {
   // Save session to localStorage to persist across refreshes
   const saveSession = (sess: SavedAuthSession) => {
     try {
-      localStorage.setItem(SESSION_KEY, JSON.stringify(sess));
+      const saved = localStorage.getItem(SESSION_KEY);
+      const existing = saved ? JSON.parse(saved) : {};
+      const merged = { ...existing, ...sess };
+      localStorage.setItem(SESSION_KEY, JSON.stringify(merged));
     } catch (e) {
       console.error('Failed to save auth session:', e);
     }
@@ -129,6 +133,8 @@ export function App() {
         if (sess.role) {
           setIsAuthenticated(true);
           setRole(sess.role);
+          if (sess.activeNavTab) setActiveNavTab(sess.activeNavTab);
+
           setUserSession({
             role: sess.role,
             email: sess.email,
@@ -136,11 +142,23 @@ export function App() {
             assigned_event_ids: sess.assigned_event_ids
           });
 
+          const evs = storageService.getEvents();
+          if (sess.currentEventId) {
+            const targetEv = evs.find(e => e.id === sess.currentEventId);
+            if (targetEv) {
+              setCurrentEvent(targetEv);
+              setLearners(storageService.getLearners(targetEv.id));
+              setParties(storageService.getParties(targetEv.id));
+              setCommittees(storageService.getCommittees(targetEv.id));
+              setAgenda(storageService.getAgenda(targetEv.id));
+            }
+          }
+
           if (sess.role === 'student' && sess.studentCode) {
             const student = storageService.getLearnerByAccessCode(sess.studentCode);
             if (student) {
               setCurrentStudent(student);
-              const ev = storageService.getEvents().find(e => e.id === student.event_id) || null;
+              const ev = evs.find(e => e.id === student.event_id) || null;
               if (ev) setCurrentEvent(ev);
             }
           }
@@ -163,6 +181,13 @@ export function App() {
     const coords = storageService.getCoordinators();
     const coord = coords.find(c => c.event_id === ev.id) || null;
     setCurrentCoordinator(coord);
+
+    saveSession({ currentEventId: ev.id, role });
+  };
+
+  const handleSelectTab = (tab: ActiveNavTab) => {
+    setActiveNavTab(tab);
+    saveSession({ activeNavTab: tab, currentEventId: currentEvent?.id, role });
   };
 
   // Organizer Authentication (returns UserSession | null for UnifiedLoginPage)
@@ -178,7 +203,8 @@ export function App() {
         role: userRole,
         email: session.email,
         name: session.name,
-        assigned_event_ids: session.assigned_event_ids
+        assigned_event_ids: session.assigned_event_ids,
+        activeNavTab: 'participants'
       });
       return session;
     }
@@ -205,7 +231,7 @@ export function App() {
         role: 'student',
         name: student.full_name,
         studentCode: student.access_code,
-        eventId: student.event_id
+        currentEventId: student.event_id
       });
       return student;
     }
@@ -336,6 +362,7 @@ export function App() {
         onGoHome={() => {
           setRole('super_admin');
           setActiveNavTab('participants');
+          saveSession({ role: 'super_admin', activeNavTab: 'participants' });
         }}
       />
 
@@ -346,7 +373,7 @@ export function App() {
         {role === 'coordinator' && (
           <Sidebar
             activeTab={activeNavTab}
-            onSelectTab={(tab) => setActiveNavTab(tab)}
+            onSelectTab={(tab) => handleSelectTab(tab)}
           />
         )}
 
@@ -363,6 +390,7 @@ export function App() {
                 handleEventChange(ev);
                 setRole('coordinator');
                 setActiveNavTab('overview');
+                saveSession({ role: 'coordinator', currentEventId: ev.id, activeNavTab: 'overview' });
                 addToast('Event Selected', `Opened ${ev.college_name}`, 'info');
               }}
               onShowToast={addToast}

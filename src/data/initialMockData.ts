@@ -2,7 +2,7 @@ import type { CollegeEvent, Coordinator, Learner, Party, Committee, AgendaItem, 
 
 export const INITIAL_EVENTS: CollegeEvent[] = [
   {
-    id: 'evt_jkkncet',
+    id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001',
     college_name: 'JKKNCET Youth Assembly 2026',
     chapter: 'Namakkal',
     level: 'College Round',
@@ -22,7 +22,7 @@ export const INITIAL_EVENTS: CollegeEvent[] = [
     created_at: '2026-09-01T10:00:00Z'
   },
   {
-    id: 'evt_erode_eng',
+    id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300002',
     college_name: 'Erode Engineering College Assembly',
     chapter: 'Erode',
     level: 'College Round',
@@ -43,16 +43,16 @@ export const INITIAL_EVENTS: CollegeEvent[] = [
 
 export const INITIAL_COORDINATORS: Coordinator[] = [
   {
-    id: 'coord_hari',
-    event_id: 'evt_jkkncet',
+    id: '11111111-1111-4111-8111-111111111111',
+    event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001',
     name: 'Hari & Yuva',
     email: 'hari@hari.com',
     password_hash: 'hari1234',
     raw_temp_password: 'hari1234'
   },
   {
-    id: 'coord_erode',
-    event_id: 'evt_erode_eng',
+    id: '22222222-2222-4222-8222-222222222222',
+    event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300002',
     name: 'Dr. S. Sundaram',
     email: 'coordinator@erode.edu',
     password_hash: 'erode2026',
@@ -62,8 +62,8 @@ export const INITIAL_COORDINATORS: Coordinator[] = [
 
 export const INITIAL_PARTIES: Party[] = [
   {
-    id: 'party_a',
-    event_id: 'evt_jkkncet',
+    id: '33333333-3333-4333-8333-333333333333',
+    event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001',
     name: 'Dr. APJ Abdul Kalam Youth Front',
     bench: 'Ruling',
     color: '#059669', // Emerald
@@ -71,8 +71,8 @@ export const INITIAL_PARTIES: Party[] = [
     manifesto: 'Higher Education Modernization & Green Energy Policy.'
   },
   {
-    id: 'party_b',
-    event_id: 'evt_jkkncet',
+    id: '44444444-4444-4444-8444-444444444444',
+    event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001',
     name: 'Periyar Progressive Alliance',
     bench: 'Opposition',
     color: '#dc2626', // Red
@@ -83,16 +83,16 @@ export const INITIAL_PARTIES: Party[] = [
 
 export const INITIAL_COMMITTEES: Committee[] = [
   {
-    id: 'comm_1',
-    event_id: 'evt_jkkncet',
+    id: '55555555-5555-4555-8555-555555555555',
+    event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001',
     name: 'Higher Education & Skill Development',
     topic: 'Curriculum Modernization & Industry Partnerships',
     chairperson: 'Prof. A. Ramanathan',
     max_capacity: 50
   },
   {
-    id: 'comm_2',
-    event_id: 'evt_jkkncet',
+    id: '66666666-6666-4666-8666-666666666666',
+    event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001',
     name: 'Public Health & Family Welfare',
     topic: 'Telemedicine Expansion & Rural Health Infrastructure',
     chairperson: 'Dr. Meenakshi S',
@@ -102,8 +102,8 @@ export const INITIAL_COMMITTEES: Committee[] = [
 
 export const INITIAL_AGENDA: AgendaItem[] = [
   {
-    id: 'ag_1',
-    event_id: 'evt_jkkncet',
+    id: '77777777-7777-4777-8777-777777777777',
+    event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001',
     day: 'Day 1',
     time: '09:00 AM - 09:30 AM',
     title: 'Tamil Thai Vaazhthu & Speaker Opening Address',
@@ -112,8 +112,8 @@ export const INITIAL_AGENDA: AgendaItem[] = [
     is_current: false
   },
   {
-    id: 'ag_2',
-    event_id: 'evt_jkkncet',
+    id: '88888888-8888-4888-8888-888888888888',
+    event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001',
     day: 'Day 1',
     time: '09:30 AM - 11:00 AM',
     title: 'Question Hour',
@@ -124,17 +124,17 @@ export const INITIAL_AGENDA: AgendaItem[] = [
 ];
 
 export const INITIAL_JURY: JuryMember[] = [
-  { id: 'j_1', event_id: 'evt_jkkncet', name: 'Justice K. Chandru (Retd.)', designation: 'Chief Juror', assigned_bench: 'Ruling' }
+  { id: '99999999-9999-4999-8999-999999999999', event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001', name: 'Justice K. Chandru (Retd.)', designation: 'Chief Juror', assigned_bench: 'Ruling' }
 ];
 
 export const INITIAL_VOLUNTEERS: Volunteer[] = [
-  { id: 'v_1', event_id: 'evt_jkkncet', name: 'Gokulnath R', email: 'gokul@jkkncet.ac.in', phone: '+91 9876543201', role: 'Stage Manager' }
+  { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001', name: 'Gokulnath R', email: 'gokul@jkkncet.ac.in', phone: '+91 9876543201', role: 'Stage Manager' }
 ];
 
 export const INITIAL_LEARNERS: Learner[] = [
   {
-    id: 'l_132',
-    event_id: 'evt_jkkncet',
+    id: 'b1111111-1111-4111-8111-111111111111',
+    event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001',
     access_code: '89F2A1',
     full_name: 'A. Sharini',
     email: 'sharini@college.edu',
@@ -145,18 +145,18 @@ export const INITIAL_LEARNERS: Learner[] = [
     constituency_name: '109 - Erode East',
     district: 'Erode',
     party_name: 'Periyar Progressive Alliance',
-    party_id: 'party_b',
+    party_id: '44444444-4444-4444-8444-444444444444',
     bench: 'Opposition',
     role: 'Member of Legislative Assembly (MLA)',
     committee_name: 'Higher Education & Skill Development',
-    committee_id: 'comm_1',
+    committee_id: '55555555-5555-4555-8555-555555555555',
     day1_checked_in: true,
     day2_checked_in: false,
     created_at: '2026-09-01T10:00:00Z'
   },
   {
-    id: 'l_73',
-    event_id: 'evt_jkkncet',
+    id: 'b2222222-2222-4222-8222-222222222222',
+    event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001',
     access_code: '4A1C9D',
     full_name: 'Aaric Oliver J',
     email: 'aaric@college.edu',
@@ -167,18 +167,18 @@ export const INITIAL_LEARNERS: Learner[] = [
     constituency_name: '11 - Dr. Radhakrishnan Nagar',
     district: 'Chennai',
     party_name: 'Periyar Progressive Alliance',
-    party_id: 'party_b',
+    party_id: '44444444-4444-4444-8444-444444444444',
     bench: 'Opposition',
     role: 'Member of Legislative Assembly (MLA)',
     committee_name: 'Higher Education & Skill Development',
-    committee_id: 'comm_1',
+    committee_id: '55555555-5555-4555-8555-555555555555',
     day1_checked_in: true,
     day2_checked_in: true,
     created_at: '2026-09-01T10:05:00Z'
   },
   {
-    id: 'l_1',
-    event_id: 'evt_jkkncet',
+    id: 'b3333333-3333-4333-8333-333333333333',
+    event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001',
     access_code: '3M8W4L',
     full_name: 'Aathira N.S',
     email: 'aathira@college.edu',
@@ -189,11 +189,11 @@ export const INITIAL_LEARNERS: Learner[] = [
     constituency_name: '137 - Coimbatore South',
     district: 'Coimbatore',
     party_name: 'Dr. APJ Abdul Kalam Youth Front',
-    party_id: 'party_a',
+    party_id: '33333333-3333-4333-8333-333333333333',
     bench: 'Ruling',
     role: 'Chief Minister',
     committee_name: 'Higher Education & Skill Development',
-    committee_id: 'comm_1',
+    committee_id: '55555555-5555-4555-8555-555555555555',
     day1_checked_in: true,
     day2_checked_in: true,
     created_at: '2026-09-01T10:15:00Z'
