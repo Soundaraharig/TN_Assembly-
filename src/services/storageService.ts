@@ -265,6 +265,23 @@ class StorageService {
     return this.getItem<Coordinator[]>(STORAGE_KEYS.COORDINATORS, INITIAL_COORDINATORS);
   }
 
+  public updateCoordinator(updated: Coordinator): Coordinator {
+    const coordinators = this.getCoordinators().map(c => c.id === updated.id ? updated : c);
+    this.setItem(STORAGE_KEYS.COORDINATORS, coordinators);
+
+    // Also update corresponding event assigned_coordinator fields if linked
+    const events = this.getEvents();
+    const ev = events.find(e => e.id === updated.event_id || (e.assigned_coordinator_email && e.assigned_coordinator_email.toLowerCase() === updated.email.toLowerCase()));
+    if (ev) {
+      ev.assigned_coordinator_email = updated.email;
+      ev.assigned_coordinator_name = updated.name;
+      this.updateEvent(ev);
+    }
+
+    this.sbUpsert('coordinators', updated as unknown as Record<string, unknown>);
+    return updated;
+  }
+
   public addCoordinator(
     event_id: string,
     name: string,

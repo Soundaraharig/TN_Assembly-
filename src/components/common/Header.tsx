@@ -1,5 +1,5 @@
 import React from 'react';
-import type { UserRole, CollegeEvent, Coordinator, Learner } from '../../types';
+import type { UserRole, CollegeEvent, Coordinator, Learner, UserSession } from '../../types';
 import { LogOut, Landmark, Sun, Moon } from 'lucide-react';
 import type { Theme } from '../../lib/theme';
 
@@ -9,6 +9,7 @@ interface HeaderProps {
   currentEvent: CollegeEvent | null;
   currentCoordinator: Coordinator | null;
   currentStudent: Learner | null;
+  userSession?: UserSession | null;
   onRoleChange: (newRole: UserRole) => void;
   onEventChange: (event: CollegeEvent) => void;
   onLogout: () => void;
@@ -21,12 +22,25 @@ export const Header: React.FC<HeaderProps> = ({
   role,
   currentCoordinator,
   currentStudent,
+  userSession,
   onLogout,
   onGoHome,
   theme,
   onToggleTheme
 }) => {
   const isDark = theme === 'dark';
+
+  // Determine user display name dynamically
+  const displayName =
+    role === 'student' && currentStudent
+      ? currentStudent.full_name
+      : userSession?.name
+      ? userSession.name
+      : currentCoordinator?.name
+      ? currentCoordinator.name
+      : role === 'super_admin'
+      ? 'Super Admin'
+      : '';
 
   return (
     <header className="header-theme sticky top-0 z-40 px-4 lg:px-8 py-2.5 shadow-sm">
@@ -69,15 +83,11 @@ export const Header: React.FC<HeaderProps> = ({
             {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
           </button>
 
-          <span className="text-xs font-semibold hidden md:inline" style={{ color: 'var(--text-secondary)' }}>
-            {role === 'student' && currentStudent
-              ? currentStudent.full_name
-              : currentCoordinator
-              ? currentCoordinator.name
-              : role === 'super_admin'
-              ? 'Super Admin'
-              : ''}
-          </span>
+          {displayName && (
+            <span className="text-xs font-bold hidden md:inline px-2.5 py-1 rounded-lg border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}>
+              {displayName}
+            </span>
+          )}
 
           <button
             onClick={onLogout}

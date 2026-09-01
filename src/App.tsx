@@ -40,6 +40,7 @@ export function App() {
   const [role, setRole] = useState<UserRole>('coordinator');
   const [activeNavTab, setActiveNavTab] = useState<ActiveNavTab>('participants');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [userSession, setUserSession] = useState<UserSession | null>(null);
 
   const [events, setEvents] = useState<CollegeEvent[]>([]);
   const [coordinators, setCoordinators] = useState<Coordinator[]>([]);
@@ -83,6 +84,7 @@ export function App() {
   const clearSession = () => {
     try {
       localStorage.removeItem(SESSION_KEY);
+      setUserSession(null);
     } catch (e) {
       console.error('Failed to clear auth session:', e);
     }
@@ -127,6 +129,12 @@ export function App() {
         if (sess.role) {
           setIsAuthenticated(true);
           setRole(sess.role);
+          setUserSession({
+            role: sess.role,
+            email: sess.email,
+            name: sess.name,
+            assigned_event_ids: sess.assigned_event_ids
+          });
 
           if (sess.role === 'student' && sess.studentCode) {
             const student = storageService.getLearnerByAccessCode(sess.studentCode);
@@ -162,6 +170,7 @@ export function App() {
     const session = storageService.loginWithCredentials(email, pass);
     if (session) {
       setIsAuthenticated(true);
+      setUserSession(session);
       const userRole = session.role === 'super_admin' ? 'super_admin' : 'coordinator';
       setRole(userRole);
 
@@ -183,6 +192,11 @@ export function App() {
       setCurrentStudent(student);
       setIsAuthenticated(true);
       setRole('student');
+      setUserSession({
+        role: 'student',
+        name: student.full_name,
+        email: student.email
+      });
 
       const ev = events.find(e => e.id === student.event_id) || null;
       if (ev) handleEventChange(ev);
@@ -211,6 +225,11 @@ export function App() {
 
     setCurrentEvent(newEvent);
     setCurrentCoordinator(newCoord);
+  };
+
+  const handleUpdateCoordinator = (updated: Coordinator) => {
+    storageService.updateCoordinator(updated);
+    loadState();
   };
 
   // Coordinator learner actions
@@ -298,6 +317,7 @@ export function App() {
         currentEvent={currentEvent}
         currentCoordinator={currentCoordinator}
         currentStudent={currentStudent}
+        userSession={userSession}
         theme={theme}
         onToggleTheme={toggleTheme}
         onRoleChange={(newRole) => {
@@ -338,6 +358,7 @@ export function App() {
               events={events}
               coordinators={coordinators}
               onCreateEvent={handleCreateEvent}
+              onUpdateCoordinator={handleUpdateCoordinator}
               onSelectEvent={(ev) => {
                 handleEventChange(ev);
                 setRole('coordinator');
