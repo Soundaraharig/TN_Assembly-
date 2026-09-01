@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import type { UserRole, CollegeEvent, Coordinator, Learner, Party, Committee, AgendaItem, JuryMember, Volunteer } from './types';
+import type { UserRole, CollegeEvent, Coordinator, Learner, Party, Committee, AgendaItem, JuryMember, Volunteer, UserSession } from './types';
 import { storageService } from './services/storageService';
 import { Header } from './components/common/Header';
 import { Sidebar, type ActiveNavTab } from './components/common/Sidebar';
 import { ToastContainer, type ToastMessage } from './components/common/Toast';
+import { useTheme } from './lib/theme';
 
-import { OrganizerSignIn } from './components/auth/OrganizerSignIn';
+import { UnifiedLoginPage } from './components/auth/UnifiedLoginPage';
 import { MyEventsDashboard } from './components/admin/MyEventsDashboard';
 import { EventOverviewTab } from './components/admin/EventOverviewTab';
 
@@ -21,10 +22,21 @@ import { AddLearnerModal } from './components/coordinator/AddLearnerModal';
 import { CsvImportModal } from './components/coordinator/CsvImportModal';
 import { AllocationModal } from './components/coordinator/AllocationModal';
 
-import { StudentLoginGateway } from './components/student/StudentLoginGateway';
 import { StudentDashboard } from './components/student/StudentDashboard';
 
+const SESSION_KEY = 'tn_assembly_auth_session';
+
+interface SavedAuthSession {
+  role: UserRole;
+  email?: string;
+  name?: string;
+  assigned_event_ids?: string[];
+  studentCode?: string;
+  eventId?: string;
+}
+
 export function App() {
+  const { theme, toggleTheme } = useTheme();
   const [role, setRole] = useState<UserRole>('coordinator');
   const [activeNavTab, setActiveNavTab] = useState<ActiveNavTab>('participants');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -59,6 +71,23 @@ export function App() {
     setToasts(prev => prev.filter(t => t.id !== id));
   };
 
+  // Save session to localStorage to persist across refreshes
+  const saveSession = (sess: SavedAuthSession) => {
+    try {
+      localStorage.setItem(SESSION_KEY, JSON.stringify(sess));
+    } catch (e) {
+      console.error('Failed to save auth session:', e);
+    }
+  };
+
+  const clearSession = () => {
+    try {
+      localStorage.removeItem(SESSION_KEY);
+    } catch (e) {
+      console.error('Failed to clear auth session:', e);
+    }
+  };
+
   // Load and subscribe to storage service state updates
   const loadState = () => {
     const evs = storageService.getEvents();
@@ -89,6 +118,30 @@ export function App() {
     const unsubscribe = storageService.subscribe(() => {
       loadState();
     });
+
+    // Restore saved session on refresh
+    try {
+      const saved = localStorage.getItem(SESSION_KEY);
+      if (saved) {
+        const sess: SavedAuthSession = JSON.parse(saved);
+        if (sess.role) {
+          setIsAuthenticated(true);
+          setRole(sess.role);
+
+          if (sess.role === 'student' && sess.studentCode) {
+            const student = storageService.getLearnerByAccessCode(sess.studentCode);
+            if (student) {
+              setCurrentStudent(student);
+              const ev = storageService.getEvents().find(e => e.id === student.event_id) || null;
+              if (ev) setCurrentEvent(ev);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Error restoring auth session:', e);
+    }
+
     return () => unsubscribe();
   }, []);
 
@@ -104,16 +157,45 @@ export function App() {
     setCurrentCoordinator(coord);
   };
 
-  // Organizer Authentication
-  const handleOrganizerSignIn = (email: string, pass: string): boolean => {
+  // Organizer Authentication (returns UserSession | null for UnifiedLoginPage)
+  const handleOrganizerSignIn = (email: string, pass: string): UserSession | null => {
     const session = storageService.loginWithCredentials(email, pass);
     if (session) {
       setIsAuthenticated(true);
-      setRole(session.role === 'super_admin' ? 'super_admin' : 'coordinator');
-      addToast('Signed In', `Welcome back, ${session.name}`, 'success');
-      return true;
+      const userRole = session.role === 'super_admin' ? 'super_admin' : 'coordinator';
+      setRole(userRole);
+
+      saveSession({
+        role: userRole,
+        email: session.email,
+        name: session.name,
+        assigned_event_ids: session.assigned_event_ids
+      });
+      return session;
     }
-    return false;
+    return null;
+  };
+
+  // Student Access Code Login (returns Learner | null for UnifiedLoginPage)
+  const handleStudentLoginWithCode = (code: string): Learner | null => {
+    const student = storageService.getLearnerByAccessCode(code);
+    if (student) {
+      setCurrentStudent(student);
+      setIsAuthenticated(true);
+      setRole('student');
+
+      const ev = events.find(e => e.id === student.event_id) || null;
+      if (ev) handleEventChange(ev);
+
+      saveSession({
+        role: 'student',
+        name: student.full_name,
+        studentCode: student.access_code,
+        eventId: student.event_id
+      });
+      return student;
+    }
+    return null;
   };
 
   // Super Admin handlers
@@ -129,19 +211,6 @@ export function App() {
 
     setCurrentEvent(newEvent);
     setCurrentCoordinator(newCoord);
-  };
-
-  // Student Access Code Login
-  const handleStudentLoginWithCode = (code: string): boolean => {
-    const student = storageService.getLearnerByAccessCode(code);
-    if (student) {
-      setCurrentStudent(student);
-      const ev = events.find(e => e.id === student.event_id) || null;
-      if (ev) handleEventChange(ev);
-      addToast('Welcome Delegate', `Logged in as ${student.full_name}`, 'success');
-      return true;
-    }
-    return false;
   };
 
   // Coordinator learner actions
@@ -198,21 +267,29 @@ export function App() {
   const handleDeleteVolunteer = (id: string) => setVolunteers(prev => prev.filter(v => v.id !== id));
 
   const existingCodes = new Set(learners.map(l => l.access_code));
-  const sampleStudentCodes = learners.slice(0, 4).map(l => ({ name: l.full_name, code: l.access_code, role: l.role }));
   const activeParty = currentStudent ? parties.find(p => p.name === currentStudent.party_name) || null : null;
   const activeCommittee = currentStudent ? committees.find(c => c.name === currentStudent.committee_name) || null : null;
 
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-slate-100 font-sans antialiased text-slate-900">
-        <OrganizerSignIn onSignIn={handleOrganizerSignIn} />
+      <div className="min-h-screen transition-colors duration-300">
+        <UnifiedLoginPage
+          onLoginCredentials={handleOrganizerSignIn}
+          onLoginAccessCode={handleStudentLoginWithCode}
+          onShowToast={addToast}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+        />
         <ToastContainer toasts={toasts} onDismiss={removeToast} />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 font-sans antialiased text-slate-900 selection:bg-amber-500 selection:text-white">
+    <div
+      className="min-h-screen font-sans antialiased selection:bg-amber-500 selection:text-white transition-colors duration-300"
+      style={{ backgroundColor: 'var(--bg-base)', color: 'var(--text-primary)' }}
+    >
       
       {/* Header Bar */}
       <Header
@@ -221,6 +298,8 @@ export function App() {
         currentEvent={currentEvent}
         currentCoordinator={currentCoordinator}
         currentStudent={currentStudent}
+        theme={theme}
+        onToggleTheme={toggleTheme}
         onRoleChange={(newRole) => {
           setRole(newRole);
           if (newRole === 'student' && !currentStudent && learners.length > 0) {
@@ -231,6 +310,7 @@ export function App() {
         onLogout={() => {
           setIsAuthenticated(false);
           setCurrentStudent(null);
+          clearSession();
           addToast('Signed Out', 'You have been signed out', 'info');
         }}
         onGoHome={() => {
@@ -366,9 +446,15 @@ export function App() {
 
               {/* Fallback for remaining sidebar tabs */}
               {['team', 'checklist', 'nominations', 'questionnaire', 'elections', 'proceedings', 'chat', 'scoregrid', 'media', 'awards', 'chapterawards', 'feedback', 'report'].includes(activeNavTab) && (
-                <div className="bg-white border border-slate-200/90 rounded-2xl p-8 text-center space-y-2">
-                  <h3 className="text-lg font-bold text-slate-800 uppercase tracking-wide">{activeNavTab} Module</h3>
-                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                <div
+                  className="rounded-2xl p-8 text-center space-y-2 border"
+                  style={{
+                    backgroundColor: 'var(--bg-surface)',
+                    borderColor: 'var(--border)'
+                  }}
+                >
+                  <h3 className="text-lg font-bold uppercase tracking-wide" style={{ color: 'var(--text-primary)' }}>{activeNavTab} Module</h3>
+                  <p className="text-xs max-w-md mx-auto" style={{ color: 'var(--text-muted)' }}>
                     This section is active for {currentEvent.college_name}. All parliamentary logs and delegate criteria are synchronized.
                   </p>
                 </div>
@@ -388,10 +474,9 @@ export function App() {
                   onShowToast={addToast}
                 />
               ) : (
-                <StudentLoginGateway
-                  onLoginWithCode={handleStudentLoginWithCode}
-                  sampleCodes={sampleStudentCodes}
-                />
+                <div className="p-8 text-center" style={{ color: 'var(--text-muted)' }}>
+                  No student delegate details found. Please sign in with your access code.
+                </div>
               )}
             </>
           )}

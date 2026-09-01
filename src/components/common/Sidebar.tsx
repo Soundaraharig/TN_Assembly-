@@ -89,12 +89,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab }) => {
   ];
 
   return (
-    <aside className="w-56 bg-slate-50/90 border-r border-slate-200/90 p-3 flex flex-col shrink-0 min-h-[calc(100vh-60px)]">
+    <aside className="sidebar-theme w-56 p-3 flex flex-col shrink-0 min-h-[calc(100vh-60px)]">
       <div className="space-y-6 text-xs overflow-y-auto pr-1">
         
         {/* BEFORE THE EVENT */}
         <div>
-          <h4 className="px-3 text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2">
+          <h4 className="px-3 text-[10px] uppercase font-bold tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>
             BEFORE THE EVENT
           </h4>
           <nav className="space-y-0.5">
@@ -106,23 +106,33 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab }) => {
                 <button
                   key={item.id}
                   onClick={() => onSelectTab(item.id as ActiveNavTab)}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl font-medium transition-all ${
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl font-medium transition-all cursor-pointer ${
                     isActive
-                      ? 'bg-amber-100/70 text-amber-900 font-bold shadow-sm'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+                      ? 'sidebar-item-active shadow-sm'
+                      : 'sidebar-item-hover'
                   }`}
+                  style={{
+                    color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)'
+                  }}
                 >
                   <div className="flex items-center gap-2.5">
-                    <Icon className={`w-4 h-4 ${isActive ? 'text-amber-700' : 'text-slate-500'}`} />
+                    <Icon className="w-4 h-4" style={{ color: isActive ? 'var(--amber)' : 'var(--text-muted)' }} />
                     <span>{item.label}</span>
                   </div>
 
                   {item.completed ? (
-                    <span className="w-4 h-4 rounded-full bg-emerald-500/20 text-emerald-600 border border-emerald-500/30 flex items-center justify-center text-[9px] font-bold">
+                    <span
+                      className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold border"
+                      style={{
+                        background: 'var(--accent-soft)',
+                        color: 'var(--accent)',
+                        borderColor: 'var(--accent)'
+                      }}
+                    >
                       ✓
                     </span>
                   ) : (
-                    <span className="w-3.5 h-3.5 rounded-full border border-slate-300"></span>
+                    <span className="w-3.5 h-3.5 rounded-full border" style={{ borderColor: 'var(--border)' }}></span>
                   )}
                 </button>
               );
@@ -132,7 +142,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab }) => {
 
         {/* EVENT DAY */}
         <div>
-          <h4 className="px-3 text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2">
+          <h4 className="px-3 text-[10px] uppercase font-bold tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>
             EVENT DAY
           </h4>
           <nav className="space-y-0.5">
@@ -144,14 +154,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab }) => {
                 <button
                   key={item.id}
                   onClick={() => onSelectTab(item.id as ActiveNavTab)}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl font-medium transition-all ${
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl font-medium transition-all cursor-pointer ${
                     isActive
-                      ? 'bg-amber-100/70 text-amber-900 font-bold shadow-sm'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+                      ? 'sidebar-item-active shadow-sm'
+                      : 'sidebar-item-hover'
                   }`}
+                  style={{
+                    color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)'
+                  }}
                 >
                   <div className="flex items-center gap-2.5">
-                    <Icon className={`w-4 h-4 ${isActive ? 'text-amber-700' : 'text-slate-500'}`} />
+                    <Icon className="w-4 h-4" style={{ color: isActive ? 'var(--amber)' : 'var(--text-muted)' }} />
                     <span>{item.label}</span>
                   </div>
                 </button>
@@ -162,7 +175,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab }) => {
 
         {/* AFTER THE EVENT */}
         <div>
-          <h4 className="px-3 text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2">
+          <h4 className="px-3 text-[10px] uppercase font-bold tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>
             AFTER THE EVENT
           </h4>
           <nav className="space-y-0.5">
@@ -174,14 +187,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab }) => {
                 <button
                   key={item.id}
                   onClick={() => onSelectTab(item.id as ActiveNavTab)}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl font-medium transition-all ${
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl font-medium transition-all cursor-pointer ${
                     isActive
-                      ? 'bg-amber-100/70 text-amber-900 font-bold shadow-sm'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+                      ? 'sidebar-item-active shadow-sm'
+                      : 'sidebar-item-hover'
                   }`}
+                  style={{
+                    color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)'
+                  }}
                 >
                   <div className="flex items-center gap-2.5">
-                    <Icon className={`w-4 h-4 ${isActive ? 'text-amber-700' : 'text-slate-500'}`} />
+                    <Icon className="w-4 h-4" style={{ color: isActive ? 'var(--amber)' : 'var(--text-muted)' }} />
                     <span>{item.label}</span>
                   </div>
                 </button>

@@ -37,11 +37,13 @@ const STORAGE_KEYS = {
 type Listener = () => void;
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Helpers — use crypto.randomUUID() for Supabase UUID primary key compatibility
 // ---------------------------------------------------------------------------
-function uid(prefix: string): string {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+function uid(_prefix?: string): string {
+  // crypto.randomUUID() is available in all modern browsers and Node 14.17+
+  return crypto.randomUUID();
 }
+
 
 // ---------------------------------------------------------------------------
 // StorageService — hybrid localStorage + Supabase
