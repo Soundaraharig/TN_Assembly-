@@ -199,13 +199,32 @@ export function App() {
       const userRole = session.role === 'super_admin' ? 'super_admin' : 'coordinator';
       setRole(userRole);
 
-      saveSession({
-        role: userRole,
-        email: session.email,
-        name: session.name,
-        assigned_event_ids: session.assigned_event_ids,
-        activeNavTab: 'participants'
-      });
+      if (userRole === 'coordinator') {
+        const coordEvents = storageService.getEvents(session);
+        const targetEv = coordEvents[0] || events[0] || null;
+        if (targetEv) {
+          setCurrentEvent(targetEv);
+          setLearners(storageService.getLearners(targetEv.id));
+          setParties(storageService.getParties(targetEv.id));
+          setCommittees(storageService.getCommittees(targetEv.id));
+          setAgenda(storageService.getAgenda(targetEv.id));
+          saveSession({
+            role: 'coordinator',
+            email: session.email,
+            name: session.name,
+            assigned_event_ids: session.assigned_event_ids,
+            currentEventId: targetEv.id,
+            activeNavTab: 'participants'
+          });
+        }
+      } else {
+        saveSession({
+          role: 'super_admin',
+          email: session.email,
+          name: session.name,
+          activeNavTab: 'participants'
+        });
+      }
       return session;
     }
     return null;
@@ -360,9 +379,15 @@ export function App() {
           addToast('Signed Out', 'You have been signed out', 'info');
         }}
         onGoHome={() => {
-          setRole('super_admin');
-          setActiveNavTab('participants');
-          saveSession({ role: 'super_admin', activeNavTab: 'participants' });
+          if (userSession?.role === 'coordinator') {
+            setRole('coordinator');
+            setActiveNavTab('participants');
+            saveSession({ role: 'coordinator', activeNavTab: 'participants' });
+          } else {
+            setRole('super_admin');
+            setActiveNavTab('participants');
+            saveSession({ role: 'super_admin', activeNavTab: 'participants' });
+          }
         }}
       />
 

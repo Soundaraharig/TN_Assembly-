@@ -33,7 +33,7 @@ export const Header: React.FC<HeaderProps> = ({
   // Determine user display name dynamically
   const displayName =
     role === 'student' && currentStudent
-      ? currentStudent.full_name
+      ? `${currentStudent.full_name} • Code: ${currentStudent.access_code}`
       : userSession?.name
       ? userSession.name
       : currentCoordinator?.name

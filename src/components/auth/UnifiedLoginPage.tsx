@@ -277,7 +277,7 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
                 <button
                   type="submit"
                   disabled={isCodeLoading}
-                  className="flex-1 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                  className="w-full py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer"
                   style={{
                     background: 'var(--amber)',
                     color: '#fff',
@@ -289,13 +289,6 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
                     ? <span className="animate-spin-once inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full" />
                     : <><span>Join Session</span><ArrowRight className="w-3.5 h-3.5" /></>
                   }
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setAccessCode('89F2A1'); setCodeError(''); }}
-                  className="btn-ghost px-3 py-2.5 text-[11px]"
-                >
-                  Sample
                 </button>
               </div>
             </form>
