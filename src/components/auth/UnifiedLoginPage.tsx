@@ -117,8 +117,7 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
             className="text-3xl font-black tracking-tight"
             style={{ color: 'var(--text-primary)' }}
           >
-            Tamil Nadu Youth
-            <span style={{ color: 'var(--accent)' }}> Legislative Assembly</span>
+            TN <span style={{ color: 'var(--accent)' }}>Assembly</span>
           </h1>
           <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
             State Event Governance &amp; Delegation Portal
