@@ -16,18 +16,6 @@ export interface UserSession {
   student?: Learner;            // For student delegate
 }
 
-export interface ChiefGuest {
-  id: string;
-  name: string;
-  designation: string;
-  organization: string;
-}
-
-export interface SocialCoverage {
-  post_links: string;
-  total_reach: string;
-}
-
 export interface CollegeEvent {
   id: string;
   college_name: string;
@@ -42,8 +30,6 @@ export interface CollegeEvent {
   assigned_coordinator_name?: string;
   elections_count?: number;
   is_locked?: boolean;
-  chief_guests?: ChiefGuest[];
-  social_coverage?: SocialCoverage;
   created_at: string;
 }
 
@@ -124,4 +110,161 @@ export interface Volunteer {
   email: string;
   phone: string;
   role: string;
+}
+
+// ── NEW MODULE INTERFACES ──────────────────────────────────────────
+
+export type NominationPosition =
+  | 'Speaker'
+  | 'Deputy Speaker'
+  | 'Ruling Party Leader'
+  | 'Opposition Party Leader'
+  | 'Committee Chair';
+
+export interface Nomination {
+  id: string;
+  event_id: string;
+  position: NominationPosition;
+  candidate_learner_id: string;
+  candidate_name: string;
+  party_name: string;
+  bench: BenchType;
+  manifesto: string;
+  status: 'Pending' | 'Approved' | 'Rejected';
+  votes_received?: number;
+  created_at: string;
+}
+
+export interface ElectionCandidate {
+  id: string;
+  learner_id?: string;
+  name: string;
+  party: string;
+  bench: BenchType;
+  votes: number;
+}
+
+export interface Election {
+  id: string;
+  event_id: string;
+  title: string;
+  position: string;
+  type: 'LEADERSHIP' | 'SPEAKER' | 'DEPUTY_SPEAKER' | 'COMMITTEE';
+  status: 'Upcoming' | 'Live' | 'Closed';
+  candidates: ElectionCandidate[];
+  total_votes: number;
+  winner?: string;
+  voted_delegate_ids?: string[];
+  created_at: string;
+}
+
+export type FlashVoteAudience = 'ALL' | 'MINISTERS' | 'RULING' | 'OPPOSITION' | 'MLAS';
+
+export interface IndividualVote {
+  learner_id: string;
+  learner_name: string;
+  role: string;
+  bench: BenchType;
+  vote: 'AYE' | 'NO' | 'ABSTAIN';
+  timestamp: string;
+}
+
+export interface LiveFlashVote {
+  id: string;
+  event_id: string;
+  question: string;
+  motion_type: 'Division' | 'Confidence Motion' | 'Resolution' | 'Zero Hour Poll' | 'Sudden Yes/No';
+  target_audience: FlashVoteAudience;
+  status: 'ACTIVE' | 'CLOSED';
+  created_at: string;
+  ayes_count: number;
+  noes_count: number;
+  abstain_count: number;
+  voter_ids: string[];
+  votes: IndividualVote[];
+}
+
+export interface BillProceeding {
+  id: string;
+  event_id: string;
+  bill_number: string;
+  title: string;
+  introduced_by: string;
+  bench: BenchType;
+  summary: string;
+  status: 'Introduced' | 'Debating' | 'Voting' | 'Passed' | 'Rejected';
+  ayes: number;
+  noes: number;
+  created_at: string;
+}
+
+export interface ScoreRecord {
+  id: string;
+  event_id: string;
+  learner_id: string;
+  learner_name: string;
+  party_name: string;
+  bench: BenchType;
+  oratory: number;             // Max 25
+  policy_knowledge: number;    // Max 25
+  parliamentary_conduct: number; // Max 25
+  rebuttal_debate: number;     // Max 25
+  total: number;               // Max 100
+  feedback?: string;
+  juror_name?: string;
+  updated_at: string;
+}
+
+export interface ParliamentQuestion {
+  id: string;
+  event_id: string;
+  question_number: string;
+  type: 'Starred' | 'Unstarred' | 'Zero Hour' | 'Calling Attention';
+  ministry: string;
+  submitter_name: string;
+  submitter_party: string;
+  question_text: string;
+  status: 'Submitted' | 'Admitted' | 'Answered' | 'Disallowed';
+  minister_response?: string;
+  created_at: string;
+}
+
+export interface ChecklistItem {
+  id: string;
+  event_id: string;
+  category: 'Venue & Stage' | 'Audio-Visual' | 'Ballot & Voting' | 'Delegate Badges' | 'Protocol & Dossiers' | 'Emergency';
+  task: string;
+  is_completed: boolean;
+  assigned_to?: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  event_id: string;
+  sender_name: string;
+  sender_role: string;
+  message: string;
+  is_announcement: boolean;
+  timestamp: string;
+}
+
+export interface FeedbackEntry {
+  id: string;
+  event_id: string;
+  delegate_name: string;
+  rating: number; // 1-5
+  debate_quality: number; // 1-5
+  logistics_rating: number; // 1-5
+  comments: string;
+  created_at: string;
+}
+
+export interface TeamMember {
+  id: string;
+  event_id: string;
+  name: string;
+  role: string;
+  email: string;
+  phone: string;
+  department?: string;
 }

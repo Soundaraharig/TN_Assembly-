@@ -22,7 +22,8 @@ import {
   Trophy,
   Award,
   MessageCircle,
-  BarChart
+  BarChart,
+  X
 } from 'lucide-react';
 
 export type ActiveNavTab =
@@ -53,9 +54,16 @@ export type ActiveNavTab =
 interface SidebarProps {
   activeTab: ActiveNavTab;
   onSelectTab: (tab: ActiveNavTab) => void;
+  isMobileOpen?: boolean;
+  onCloseMobile?: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab }) => {
+export const Sidebar: React.FC<SidebarProps> = ({
+  activeTab,
+  onSelectTab,
+  isMobileOpen,
+  onCloseMobile
+}) => {
   const beforeEventItems = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'team', label: 'Team', icon: Users, completed: true },
@@ -88,125 +96,170 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onSelectTab }) => {
     { id: 'report', label: 'Report', icon: BarChart }
   ];
 
-  return (
-    <aside className="sidebar-theme w-56 p-3 flex flex-col shrink-0 min-h-[calc(100vh-60px)]">
-      <div className="space-y-6 text-xs overflow-y-auto pr-1">
-        
-        {/* BEFORE THE EVENT */}
-        <div>
-          <h4 className="px-3 text-[10px] uppercase font-bold tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>
-            BEFORE THE EVENT
-          </h4>
-          <nav className="space-y-0.5">
-            {beforeEventItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = activeTab === item.id;
+  const handleTabClick = (tabId: ActiveNavTab) => {
+    onSelectTab(tabId);
+    if (onCloseMobile) onCloseMobile();
+  };
 
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => onSelectTab(item.id as ActiveNavTab)}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl font-medium transition-all cursor-pointer ${
-                    isActive
-                      ? 'sidebar-item-active shadow-sm'
-                      : 'sidebar-item-hover'
-                  }`}
-                  style={{
-                    color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)'
-                  }}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <Icon className="w-4 h-4" style={{ color: isActive ? 'var(--amber)' : 'var(--text-muted)' }} />
-                    <span>{item.label}</span>
-                  </div>
+  const navContent = (
+    <div className="space-y-6 text-xs overflow-y-auto pr-1 pb-10">
+      
+      {/* BEFORE THE EVENT */}
+      <div>
+        <h4 className="px-3 text-[10px] uppercase font-bold tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>
+          BEFORE THE EVENT
+        </h4>
+        <nav className="space-y-0.5">
+          {beforeEventItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
 
-                  {item.completed ? (
-                    <span
-                      className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold border"
-                      style={{
-                        background: 'var(--accent-soft)',
-                        color: 'var(--accent)',
-                        borderColor: 'var(--accent)'
-                      }}
-                    >
-                      ✓
-                    </span>
-                  ) : (
-                    <span className="w-3.5 h-3.5 rounded-full border" style={{ borderColor: 'var(--border)' }}></span>
-                  )}
-                </button>
-              );
-            })}
-          </nav>
-        </div>
+            return (
+              <button
+                key={item.id}
+                onClick={() => handleTabClick(item.id as ActiveNavTab)}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-xl font-medium transition-all cursor-pointer ${
+                  isActive
+                    ? 'sidebar-item-active shadow-sm'
+                    : 'sidebar-item-hover'
+                }`}
+                style={{
+                  color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)'
+                }}
+              >
+                <div className="flex items-center gap-2.5">
+                  <Icon className="w-4 h-4" style={{ color: isActive ? 'var(--amber)' : 'var(--text-muted)' }} />
+                  <span>{item.label}</span>
+                </div>
 
-        {/* EVENT DAY */}
-        <div>
-          <h4 className="px-3 text-[10px] uppercase font-bold tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>
-            EVENT DAY
-          </h4>
-          <nav className="space-y-0.5">
-            {eventDayItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = activeTab === item.id;
-
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => onSelectTab(item.id as ActiveNavTab)}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl font-medium transition-all cursor-pointer ${
-                    isActive
-                      ? 'sidebar-item-active shadow-sm'
-                      : 'sidebar-item-hover'
-                  }`}
-                  style={{
-                    color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)'
-                  }}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <Icon className="w-4 h-4" style={{ color: isActive ? 'var(--amber)' : 'var(--text-muted)' }} />
-                    <span>{item.label}</span>
-                  </div>
-                </button>
-              );
-            })}
-          </nav>
-        </div>
-
-        {/* AFTER THE EVENT */}
-        <div>
-          <h4 className="px-3 text-[10px] uppercase font-bold tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>
-            AFTER THE EVENT
-          </h4>
-          <nav className="space-y-0.5">
-            {afterEventItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = activeTab === item.id;
-
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => onSelectTab(item.id as ActiveNavTab)}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl font-medium transition-all cursor-pointer ${
-                    isActive
-                      ? 'sidebar-item-active shadow-sm'
-                      : 'sidebar-item-hover'
-                  }`}
-                  style={{
-                    color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)'
-                  }}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <Icon className="w-4 h-4" style={{ color: isActive ? 'var(--amber)' : 'var(--text-muted)' }} />
-                    <span>{item.label}</span>
-                  </div>
-                </button>
-              );
-            })}
-          </nav>
-        </div>
-
+                {item.completed ? (
+                  <span
+                    className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold border"
+                    style={{
+                      background: 'var(--accent-soft)',
+                      color: 'var(--accent)',
+                      borderColor: 'var(--accent)'
+                    }}
+                  >
+                    ✓
+                  </span>
+                ) : (
+                  <span className="w-3.5 h-3.5 rounded-full border" style={{ borderColor: 'var(--border)' }}></span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
       </div>
-    </aside>
+
+      {/* EVENT DAY */}
+      <div>
+        <h4 className="px-3 text-[10px] uppercase font-bold tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>
+          EVENT DAY
+        </h4>
+        <nav className="space-y-0.5">
+          {eventDayItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
+
+            return (
+              <button
+                key={item.id}
+                onClick={() => handleTabClick(item.id as ActiveNavTab)}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-xl font-medium transition-all cursor-pointer ${
+                  isActive
+                    ? 'sidebar-item-active shadow-sm'
+                    : 'sidebar-item-hover'
+                }`}
+                style={{
+                  color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)'
+                }}
+              >
+                <div className="flex items-center gap-2.5">
+                  <Icon className="w-4 h-4" style={{ color: isActive ? 'var(--amber)' : 'var(--text-muted)' }} />
+                  <span>{item.label}</span>
+                </div>
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+
+      {/* AFTER THE EVENT */}
+      <div>
+        <h4 className="px-3 text-[10px] uppercase font-bold tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>
+          AFTER THE EVENT
+        </h4>
+        <nav className="space-y-0.5">
+          {afterEventItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
+
+            return (
+              <button
+                key={item.id}
+                onClick={() => handleTabClick(item.id as ActiveNavTab)}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-xl font-medium transition-all cursor-pointer ${
+                  isActive
+                    ? 'sidebar-item-active shadow-sm'
+                    : 'sidebar-item-hover'
+                }`}
+                style={{
+                  color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)'
+                }}
+              >
+                <div className="flex items-center gap-2.5">
+                  <Icon className="w-4 h-4" style={{ color: isActive ? 'var(--amber)' : 'var(--text-muted)' }} />
+                  <span>{item.label}</span>
+                </div>
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+
+    </div>
+  );
+
+  return (
+    <>
+      {/* 1. Desktop Sidebar (Permanent vertical menu on lg screens) */}
+      <aside className="hidden lg:flex sidebar-theme w-60 p-3 flex-col shrink-0 min-h-[calc(100vh-60px)] sticky top-[57px] self-start max-h-[calc(100vh-60px)]">
+        {navContent}
+      </aside>
+
+      {/* 2. Mobile Off-Canvas Drawer (Slide-over overlay on mobile screens) */}
+      {isMobileOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden flex animate-fade-in">
+          {/* Backdrop Blur Overlay */}
+          <div
+            onClick={onCloseMobile}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
+            aria-hidden="true"
+          />
+
+          {/* Drawer Panel */}
+          <aside
+            className="relative z-50 w-72 max-w-[85vw] h-full p-4 flex flex-col shadow-2xl sidebar-theme animate-slide-up"
+            style={{ backgroundColor: 'var(--bg-sidebar)', borderRight: '1px solid var(--border)' }}
+          >
+            <div className="flex items-center justify-between pb-3 border-b mb-3" style={{ borderColor: 'var(--border-soft)' }}>
+              <span className="text-xs font-black uppercase tracking-wider" style={{ color: 'var(--amber)' }}>
+                Navigation Menu
+              </span>
+              <button
+                onClick={onCloseMobile}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 cursor-pointer"
+                title="Close Menu"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {navContent}
+          </aside>
+        </div>
+      )}
+    </>
   );
 };
