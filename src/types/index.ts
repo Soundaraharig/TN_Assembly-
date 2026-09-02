@@ -6,7 +6,7 @@ export type EventStatus = 'Draft' | 'Pre-Event' | 'Day 1 Live' | 'Day 2 Live' | 
 
 export type AcademicYear = '1st Year' | '2nd Year' | '3rd Year' | '4th Year';
 
-export type UserRole = 'super_admin' | 'coordinator' | 'student';
+export type UserRole = 'super_admin' | 'coordinator' | 'student' | 'jury' | 'volunteer';
 
 export interface UserSession {
   role: UserRole;
@@ -14,6 +14,8 @@ export interface UserSession {
   name?: string;
   assigned_event_ids?: string[]; // For coordinator
   student?: Learner;            // For student delegate
+  juryMember?: JuryMember;      // For jury access
+  volunteerMember?: Volunteer;  // For volunteer access
 }
 
 export interface CollegeEvent {
@@ -98,6 +100,7 @@ export interface AgendaItem {
 export interface JuryMember {
   id: string;
   event_id: string;
+  access_code?: string;
   name: string;
   designation: string;
   assigned_bench: BenchType;
@@ -106,6 +109,7 @@ export interface JuryMember {
 export interface Volunteer {
   id: string;
   event_id: string;
+  access_code?: string;
   name: string;
   email: string;
   phone: string;

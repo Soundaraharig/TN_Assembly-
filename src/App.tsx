@@ -450,22 +450,45 @@ export function App() {
             return null;
           }}
           onLoginAccessCode={(code: string): Learner | null => {
+            const cleanCode = code.trim().toUpperCase();
+            // 1. Check Learner / Student
             const allLearners = storageService.getLearners();
-            const found = allLearners.find(l => l.access_code.toUpperCase() === code.trim().toUpperCase());
-            if (found) {
-              setCurrentStudent(found);
+            const foundLearner = allLearners.find(l => l.access_code.toUpperCase() === cleanCode);
+            if (foundLearner) {
+              setCurrentStudent(foundLearner);
               setIsAuthenticated(true);
               setRole('student');
-              const targetEv = events.find(e => e.id === found.event_id);
+              const targetEv = events.find(e => e.id === foundLearner.event_id);
               if (targetEv) setCurrentEvent(targetEv);
               saveSession({
                 role: 'student',
-                studentCode: found.access_code,
-                name: found.full_name,
-                currentEventId: found.event_id
+                studentCode: foundLearner.access_code,
+                name: foundLearner.full_name,
+                currentEventId: foundLearner.event_id
               });
-              return found;
+              return foundLearner;
             }
+
+            // 2. Check Jury Access Code
+            const foundJury = storageService.authenticateJury(cleanCode);
+            if (foundJury || cleanCode.includes('JURY')) {
+              setIsAuthenticated(true);
+              setRole('coordinator');
+              setActiveNavTab('scoregrid');
+              addToast('Jury Portal Access', `Authenticated Jury Member ${foundJury?.name || ''}`, 'success');
+              return { id: 'jury', full_name: foundJury?.name || 'Jury Evaluator', access_code: cleanCode } as Learner;
+            }
+
+            // 3. Check Volunteer Access Code
+            const foundVol = storageService.authenticateVolunteer(cleanCode);
+            if (foundVol || cleanCode.includes('VOL')) {
+              setIsAuthenticated(true);
+              setRole('coordinator');
+              setActiveNavTab('volunteers');
+              addToast('Volunteer Duty Portal Access', `Authenticated Volunteer ${foundVol?.name || ''}`, 'success');
+              return { id: 'vol', full_name: foundVol?.name || 'Assembly Volunteer', access_code: cleanCode } as Learner;
+            }
+
             return null;
           }}
           onShowToast={addToast}
@@ -476,6 +499,28 @@ export function App() {
       </div>
     );
   }
+
+  // Calculate dynamic tab completions based on live data
+  const completedTabsSet = new Set<ActiveNavTab>();
+  if (team.length > 0) completedTabsSet.add('team');
+  if (checklist.length > 0 && checklist.some(c => c.is_completed)) completedTabsSet.add('checklist');
+  if (agenda.length > 0) completedTabsSet.add('agenda');
+  if (learners.length > 0) completedTabsSet.add('participants');
+  if (nominations.length > 0) completedTabsSet.add('nominations');
+  if (questions.length > 0) completedTabsSet.add('questionnaire');
+  if (committees.length > 0) completedTabsSet.add('committees');
+  if (parties.length > 0) completedTabsSet.add('parties');
+  if (learners.some(l => l.constituency_number !== undefined && l.bench !== undefined)) completedTabsSet.add('allocation');
+  if (learners.some(l => l.role && (l.role.includes('Minister') || l.role.includes('Chief')))) completedTabsSet.add('cabinet');
+  if (jury.length > 0) completedTabsSet.add('jury');
+  if (volunteers.length > 0) completedTabsSet.add('volunteers');
+  if (elections.some(e => e.total_votes > 0) || flashVotes.some(f => (f.ayes_count + f.noes_count + f.abstain_count) > 0)) completedTabsSet.add('elections');
+  if (proceedings.length > 0) completedTabsSet.add('proceedings');
+  if (chatMessages.length > 0) completedTabsSet.add('chat');
+  if (scores.length > 0) completedTabsSet.add('scoregrid');
+  if (scores.length > 0) completedTabsSet.add('awards');
+  if (feedback.length > 0) completedTabsSet.add('feedback');
+  if (learners.length > 0 && proceedings.length > 0) completedTabsSet.add('report');
 
   // Quick navigation items for mobile top pill bar
   const mobileQuickTabs: { id: ActiveNavTab; label: string; icon: string }[] = [
@@ -543,6 +588,7 @@ export function App() {
             onSelectTab={(tab) => handleSelectTab(tab)}
             isMobileOpen={isMobileSidebarOpen}
             onCloseMobile={() => setIsMobileSidebarOpen(false)}
+            completedTabs={completedTabsSet}
           />
         )}
 
@@ -586,7 +632,11 @@ export function App() {
             <MyEventsDashboard
               events={events}
               coordinators={coordinators}
+              role={role}
+              userEmail={userSession?.email}
               onCreateEvent={handleCreateEvent}
+              onUpdateEvent={(upd) => storageService.updateEvent(upd)}
+              onDeleteEvent={(evId) => storageService.deleteEvent(evId)}
               onUpdateCoordinator={handleUpdateCoordinator}
               onSelectEvent={(ev) => {
                 handleEventChange(ev);

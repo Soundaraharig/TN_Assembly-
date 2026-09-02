@@ -56,28 +56,30 @@ interface SidebarProps {
   onSelectTab: (tab: ActiveNavTab) => void;
   isMobileOpen?: boolean;
   onCloseMobile?: () => void;
+  completedTabs?: Set<ActiveNavTab>;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
   onSelectTab,
   isMobileOpen,
-  onCloseMobile
+  onCloseMobile,
+  completedTabs
 }) => {
   const beforeEventItems = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-    { id: 'team', label: 'Team', icon: Users, completed: true },
+    { id: 'team', label: 'Team', icon: Users },
     { id: 'checklist', label: 'Checklist', icon: CheckSquare },
     { id: 'agenda', label: 'Agenda', icon: Clock },
-    { id: 'participants', label: 'Participants', icon: UserCheck, completed: true },
+    { id: 'participants', label: 'Participants', icon: UserCheck },
     { id: 'nominations', label: 'Nominations', icon: FileSpreadsheet },
     { id: 'questionnaire', label: 'Questionnaire', icon: HelpCircle },
-    { id: 'committees', label: 'Committees', icon: BookOpen, completed: true },
-    { id: 'parties', label: 'Parties', icon: Shield, completed: true },
-    { id: 'allocation', label: 'Allocation', icon: Shuffle, completed: true },
+    { id: 'committees', label: 'Committees', icon: BookOpen },
+    { id: 'parties', label: 'Parties', icon: Shield },
+    { id: 'allocation', label: 'Allocation', icon: Shuffle },
     { id: 'cabinet', label: 'Cabinet', icon: Landmark },
-    { id: 'jury', label: 'Jury', icon: Scale, completed: true },
-    { id: 'volunteers', label: 'Volunteers', icon: HeartHandshake, completed: true }
+    { id: 'jury', label: 'Jury', icon: Scale },
+    { id: 'volunteers', label: 'Volunteers', icon: HeartHandshake }
   ];
 
   const eventDayItems = [
@@ -113,6 +115,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {beforeEventItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
+            const isDone = completedTabs ? completedTabs.has(item.id as ActiveNavTab) : false;
 
             return (
               <button
@@ -132,7 +135,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <span>{item.label}</span>
                 </div>
 
-                {item.completed ? (
+                {isDone ? (
                   <span
                     className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold border"
                     style={{
@@ -144,7 +147,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     ✓
                   </span>
                 ) : (
-                  <span className="w-3.5 h-3.5 rounded-full border" style={{ borderColor: 'var(--border)' }}></span>
+                  <span className="w-3.5 h-3.5 rounded-full border opacity-30" style={{ borderColor: 'var(--border)' }}></span>
                 )}
               </button>
             );

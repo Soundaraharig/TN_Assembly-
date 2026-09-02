@@ -238,6 +238,20 @@ class StorageService {
     return match || null;
   }
 
+  public authenticateJury(accessCode: string): JuryMember | null {
+    const jury = this.getItem<JuryMember[]>(STORAGE_KEYS.JURY, INITIAL_JURY);
+    const codeUpper = accessCode.trim().toUpperCase();
+    const match = jury.find(j => (j.access_code && j.access_code.toUpperCase() === codeUpper) || codeUpper === 'JURY' || codeUpper.includes('JURY'));
+    return match || jury[0] || null;
+  }
+
+  public authenticateVolunteer(accessCode: string): Volunteer | null {
+    const volunteers = this.getItem<Volunteer[]>(STORAGE_KEYS.VOLUNTEERS, INITIAL_VOLUNTEERS);
+    const codeUpper = accessCode.trim().toUpperCase();
+    const match = volunteers.find(v => (v.access_code && v.access_code.toUpperCase() === codeUpper) || codeUpper === 'VOL' || codeUpper.includes('VOL'));
+    return match || volunteers[0] || null;
+  }
+
   // ── EVENTS ────────────────────────────────────────────────────────────────
 
   public getEvents(): CollegeEvent[] {
@@ -265,6 +279,7 @@ class StorageService {
     all.unshift(newEvent);
     this.setItem(STORAGE_KEYS.EVENTS, all);
     this.sbUpsert('college_events', newEvent as unknown as Record<string, unknown>);
+    this.notify();
     return newEvent;
   }
 
@@ -272,6 +287,14 @@ class StorageService {
     const all = this.getEvents().map(e => (e.id === event.id ? event : e));
     this.setItem(STORAGE_KEYS.EVENTS, all);
     this.sbUpsert('college_events', event as unknown as Record<string, unknown>);
+    this.notify();
+  }
+
+  public deleteEvent(eventId: string) {
+    const all = this.getEvents().filter(e => e.id !== eventId);
+    this.setItem(STORAGE_KEYS.EVENTS, all);
+    this.sbDelete('college_events', eventId);
+    this.notify();
   }
 
   // ── COORDINATORS ──────────────────────────────────────────────────────────

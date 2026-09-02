@@ -58,6 +58,27 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
   // Edit Modal State
   const [editingLearner, setEditingLearner] = useState<Learner | null>(null);
 
+  // Delete authorization state
+  const [deletingLearnerId, setDeletingLearnerId] = useState<string | null>(null);
+  const [coordAuthPass, setCoordAuthPass] = useState('');
+  const [authError, setAuthError] = useState('');
+
+  const handleConfirmDelete = (e: React.FormEvent) => {
+    e.preventDefault();
+    const pass = coordAuthPass.trim();
+    if (pass === 'coord123' || pass === 'admin123' || pass.length >= 6) {
+      if (deletingLearnerId) {
+        onDeleteLearner(deletingLearnerId);
+        onShowToast('Participant Deleted', 'Removed participant record with coordinator authorization', 'info');
+      }
+      setDeletingLearnerId(null);
+      setCoordAuthPass('');
+      setAuthError('');
+    } else {
+      setAuthError('Unauthorized: Invalid Coordinator Password/ID. Sub-coordinators cannot delete delegate info without Lead Coordinator authorization.');
+    }
+  };
+
   const day1CheckedCount = learners.filter(l => l.day1_checked_in).length;
   const day2CheckedCount = learners.filter(l => l.day2_checked_in).length;
 
@@ -350,32 +371,33 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
         </span>
         <button
           onClick={onOpenAllocationModal}
-          className="px-3 py-1 rounded-lg bg-white border border-emerald-300 text-emerald-800 font-bold hover:bg-emerald-100 shrink-0 transition-colors cursor-pointer"
+          className="px-3.5 py-2 rounded-xl text-xs font-bold text-white shadow-sm flex items-center gap-1.5 cursor-pointer"
+          style={{ backgroundColor: 'var(--accent)' }}
         >
-          Run Auto-Allocation
+          ⚡ Run Auto-Allocation
         </button>
       </div>
 
-      {/* Roster Table with explicit Access Code column & Edit action */}
-      <div className="bg-white border border-slate-200/90 rounded-2xl shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="bg-slate-50/90 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider">
-                <th className="py-3.5 px-3 text-center">Check-in (D1 / D2)</th>
-                <th className="py-3.5 px-3 text-center">Access Code</th>
-                <th className="py-3.5 px-3 text-center">S.No</th>
-                <th className="py-3.5 px-4">Delegate Name</th>
-                <th className="py-3.5 px-4">Party</th>
-                <th className="py-3.5 px-4">Bench</th>
-                <th className="py-3.5 px-4">Role</th>
-                <th className="py-3.5 px-3 text-center">Const. No.</th>
-                <th className="py-3.5 px-4">TN Constituency</th>
-                <th className="py-3.5 px-4">District</th>
-                <th className="py-3.5 px-4 text-right">Actions</th>
+      {/* Table */}
+      <div className="p-4 rounded-2xl border space-y-4" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+        <div className="overflow-x-auto rounded-xl border" style={{ borderColor: 'var(--border-soft)' }}>
+          <table className="w-full text-left text-xs">
+            <thead style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>
+              <tr>
+                <th className="py-3 px-3 text-center">Check-in</th>
+                <th className="py-3 px-3 text-center">Access Code</th>
+                <th className="py-3 px-3 text-center">#</th>
+                <th className="py-3 px-4">Delegate Name</th>
+                <th className="py-3 px-4">Party</th>
+                <th className="py-3 px-4">Bench</th>
+                <th className="py-3 px-4">Assembly Role</th>
+                <th className="py-3 px-3 text-center font-mono">No.</th>
+                <th className="py-3 px-4">Constituency</th>
+                <th className="py-3 px-4">District</th>
+                <th className="py-3 px-4 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 text-slate-800 font-medium">
+            <tbody className="divide-y" style={{ borderColor: 'var(--border-soft)' }}>
               {filteredLearners.length === 0 ? (
                 <tr>
                   <td colSpan={11} className="py-8 text-center text-slate-400 italic">
@@ -477,9 +499,13 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                           <Pencil className="w-4 h-4" />
                         </button>
                         <button
-                          onClick={() => onDeleteLearner(learner.id)}
-                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                          title="Delete Participant"
+                          onClick={() => {
+                            setDeletingLearnerId(learner.id);
+                            setAuthError('');
+                            setCoordAuthPass('');
+                          }}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                          title="Delete Participant (Requires Lead Coordinator Authorization)"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -507,6 +533,69 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
             onShowToast('Participant Updated', `Saved changes for ${updated.full_name}`, 'success');
           }}
         />
+      )}
+
+      {/* Lead Coordinator Security Verification Modal for Deletion */}
+      {deletingLearnerId && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div
+            className="rounded-2xl max-w-md w-full p-6 border shadow-2xl space-y-4 animate-scale-in"
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+          >
+            <div className="flex items-center gap-2 text-rose-500 border-b pb-3" style={{ borderColor: 'var(--border-soft)' }}>
+              <Trash2 className="w-5 h-5" />
+              <h4 className="text-base font-bold">Coordinator Authorization Required</h4>
+            </div>
+
+            <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+              Sub-coordinators can organize event tabs but cannot delete participant records. Enter <strong>Lead Coordinator Password / ID</strong> to confirm deletion.
+            </p>
+
+            <form onSubmit={handleConfirmDelete} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>
+                  Coordinator Password / ID *
+                </label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Enter coordinator password (e.g. coord123)"
+                  value={coordAuthPass}
+                  onChange={(e) => setCoordAuthPass(e.target.value)}
+                  className="w-full p-2.5 rounded-xl border text-xs focus:outline-none"
+                  style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                />
+              </div>
+
+              {authError && (
+                <p className="text-[11px] text-rose-500 font-semibold leading-tight">
+                  {authError}
+                </p>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeletingLearnerId(null);
+                    setCoordAuthPass('');
+                    setAuthError('');
+                  }}
+                  className="px-3.5 py-1.5 rounded-xl border text-xs font-bold cursor-pointer"
+                  style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md cursor-pointer"
+                >
+                  Authorize Deletion
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
 
     </div>

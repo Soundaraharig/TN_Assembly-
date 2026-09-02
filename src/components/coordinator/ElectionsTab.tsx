@@ -51,8 +51,25 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   const [pollAudience, setPollAudience] = useState<FlashVoteAudience>('ALL');
   const [pollMotionType, setPollMotionType] = useState<LiveFlashVote['motion_type']>('Division');
 
-  // Voting Delegate simulation selector
-  const [selectedVoterId, setSelectedVoterId] = useState<string>(learners[0]?.id || '');
+  const [selectedVoterId, setSelectedVoterId] = useState<string>('');
+
+  React.useEffect(() => {
+    if (!selectedVoterId && learners.length > 0) {
+      setSelectedVoterId(learners[0].id);
+    }
+  }, [learners, selectedVoterId]);
+
+  // Ensure default flash vote exists if empty so sudden Yes/No is immediately active
+  React.useEffect(() => {
+    if (flashVotes.length === 0 && eventId) {
+      onCreateFlashVote(
+        eventId,
+        'Should the Youth Assembly pass Clause 4 of the Digital University Bill 2026 immediately?',
+        'ALL',
+        'Division'
+      );
+    }
+  }, [flashVotes.length, eventId]);
 
   const handleCreateElectionSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -93,13 +110,21 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   };
 
   const handleVoteCandidate = (electionId: string, candidateId: string) => {
-    onCastVote(electionId, candidateId, selectedVoterId);
+    const voterId = selectedVoterId || learners[0]?.id;
+    if (!voterId) {
+      onShowToast('Voting Error', 'Please select a voting delegate first', 'error');
+      return;
+    }
+    onCastVote(electionId, candidateId, voterId);
     onShowToast('Vote Recorded', 'Digital secret ballot cast successfully!', 'success');
   };
 
   const handleVoteFlash = (voteId: string, decision: 'AYE' | 'NO' | 'ABSTAIN') => {
     const voter = learners.find(l => l.id === selectedVoterId) || learners[0];
-    if (!voter) return;
+    if (!voter) {
+      onShowToast('Voting Error', 'No active delegate selected for flash vote', 'error');
+      return;
+    }
     onCastFlashVote(voteId, voter, decision);
     onShowToast(`Vote Cast: ${decision}`, `Recorded ${decision} from ${voter.full_name}`, 'success');
   };
@@ -254,7 +279,17 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
                   {/* Candidate Vote Tally & Buttons */}
                   <div className="space-y-2.5 pt-1">
-                    {elec.candidates.map((cand) => {
+                    {(elec.candidates && elec.candidates.length > 0
+                      ? elec.candidates
+                      : learners.slice(0, 3).map(l => ({
+                          id: `c_${l.id}`,
+                          learner_id: l.id,
+                          name: l.full_name,
+                          party: l.party_name || 'Independent',
+                          bench: l.bench || 'Ruling',
+                          votes: 0
+                        }))
+                    ).map((cand) => {
                       const pct = elec.total_votes > 0 ? Math.round((cand.votes / elec.total_votes) * 100) : 0;
                       return (
                         <div
