@@ -68,6 +68,8 @@ interface SavedAuthSession {
   name?: string;
   assigned_event_ids?: string[];
   studentCode?: string;
+  juryCode?: string;
+  volunteerCode?: string;
   currentEventId?: string;
   activeNavTab?: ActiveNavTab;
 }
@@ -216,53 +218,89 @@ export function App() {
           }
 
           if (path.includes('/me')) {
-            // Student portal direct route
-            setIsAuthenticated(true);
-            setRole('student');
-            const targetStudent = sess.studentCode
-              ? storageService.getLearners().find(l => l.access_code.toUpperCase() === sess.studentCode?.toUpperCase())
-              : storageService.getLearners()[0];
-            if (targetStudent) setCurrentStudent(targetStudent);
+            // Student portal: ONLY open if authenticated student with valid studentCode
+            if (sess.role === 'student' && sess.studentCode) {
+              const targetStudent = storageService.getLearners().find(l => l.access_code.toUpperCase() === sess.studentCode?.toUpperCase());
+              if (targetStudent) {
+                setIsAuthenticated(true);
+                setRole('student');
+                setCurrentStudent(targetStudent);
+                return;
+              }
+            }
+            // If no valid student session, prompt for student access code
+            setIsAuthenticated(false);
           } else if (path.includes('/jury')) {
-            // Jury portal direct route
-            setIsAuthenticated(true);
-            setRole('coordinator');
-            setActiveNavTab('scoregrid');
+            // Jury portal: ONLY open if authenticated jury member with valid juryCode
+            if (sess.role === 'jury' && sess.juryCode) {
+              const juryValid = storageService.authenticateJury(sess.juryCode) || sess.juryCode.startsWith('JURY');
+              if (juryValid) {
+                setIsAuthenticated(true);
+                setRole('coordinator');
+                setActiveNavTab('scoregrid');
+                return;
+              }
+            }
+            // If no valid jury session, prompt for jury access code
+            setIsAuthenticated(false);
           } else if (path.includes('/volunteer')) {
-            // Volunteer portal direct route
-            setIsAuthenticated(true);
-            setRole('coordinator');
-            setActiveNavTab('volunteers');
+            // Volunteer portal: ONLY open if authenticated volunteer with valid volunteerCode
+            if (sess.role === 'volunteer' && sess.volunteerCode) {
+              const volValid = storageService.authenticateVolunteer(sess.volunteerCode) || sess.volunteerCode.startsWith('VOL');
+              if (volValid) {
+                setIsAuthenticated(true);
+                setRole('coordinator');
+                setActiveNavTab('volunteers');
+                return;
+              }
+            }
+            // If no valid volunteer session, prompt for volunteer access code
+            setIsAuthenticated(false);
           } else if (path.includes('/coordinator') || path.includes('/admin')) {
-            // Coordinator portal direct route
-            setIsAuthenticated(true);
-            setRole('coordinator');
-            if (sess.activeNavTab) setActiveNavTab(sess.activeNavTab);
+            // Coordinator portal: ONLY open if coordinator logged in with credentials
+            if (sess.role === 'coordinator' && sess.email) {
+              setIsAuthenticated(true);
+              setRole('coordinator');
+              if (sess.activeNavTab) setActiveNavTab(sess.activeNavTab);
+              return;
+            }
+            setIsAuthenticated(false);
           } else if (path === '/join' || path === '/yip/join' || path === '/login') {
-            // Explicit login/join page requested
             setIsAuthenticated(false);
           } else if (sess.role) {
-            // Keep user session on refresh on root '/'
-            setIsAuthenticated(true);
-            setRole(sess.role);
-            if (sess.activeNavTab) setActiveNavTab(sess.activeNavTab);
-            if (sess.role === 'student') {
-              const targetStudent = sess.studentCode
-                ? storageService.getLearners().find(l => l.access_code.toUpperCase() === sess.studentCode?.toUpperCase())
-                : storageService.getLearners()[0];
-              if (targetStudent) setCurrentStudent(targetStudent);
+            // Refresh on root '/': restore respective verified session
+            if (sess.role === 'student' && sess.studentCode) {
+              const targetStudent = storageService.getLearners().find(l => l.access_code.toUpperCase() === sess.studentCode?.toUpperCase());
+              if (targetStudent) {
+                setIsAuthenticated(true);
+                setRole('student');
+                setCurrentStudent(targetStudent);
+              } else {
+                setIsAuthenticated(false);
+              }
+            } else if (sess.role === 'jury' && sess.juryCode) {
+              setIsAuthenticated(true);
+              setRole('coordinator');
+              setActiveNavTab('scoregrid');
+            } else if (sess.role === 'volunteer' && sess.volunteerCode) {
+              setIsAuthenticated(true);
+              setRole('coordinator');
+              setActiveNavTab('volunteers');
+            } else if (sess.role === 'coordinator' && sess.email) {
+              setIsAuthenticated(true);
+              setRole('coordinator');
+              if (sess.activeNavTab) setActiveNavTab(sess.activeNavTab);
+            } else {
+              setIsAuthenticated(false);
             }
           }
-        } else if (path.includes('/me')) {
-          const firstLearner = storageService.getLearners()[0];
-          if (firstLearner) {
-            setIsAuthenticated(true);
-            setRole('student');
-            setCurrentStudent(firstLearner);
-          }
+        } else {
+          // No saved session: always require login/access code
+          setIsAuthenticated(false);
         }
       } catch (e) {
         console.error('Session load error:', e);
+        setIsAuthenticated(false);
       }
     };
 
@@ -543,23 +581,39 @@ export function App() {
             // 2. Check Jury Access Code
             const foundJury = storageService.authenticateJury(cleanCode);
             if (foundJury || cleanCode.includes('JURY')) {
+              const juryCodeVal = foundJury?.access_code || cleanCode;
               setIsAuthenticated(true);
               setRole('coordinator');
               setActiveNavTab('scoregrid');
+              saveSession({
+                role: 'jury',
+                juryCode: juryCodeVal,
+                name: foundJury?.name || 'Jury Evaluator',
+                currentEventId: foundJury?.event_id,
+                activeNavTab: 'scoregrid'
+              });
               if (typeof window !== 'undefined') window.history.pushState({}, '', '/jury');
               addToast('Jury Portal Access', `Authenticated Jury Member ${foundJury?.name || ''}`, 'success');
-              return { id: 'jury', full_name: foundJury?.name || 'Jury Evaluator', access_code: cleanCode } as Learner;
+              return { id: foundJury?.id || 'jury', full_name: foundJury?.name || 'Jury Evaluator', access_code: juryCodeVal } as Learner;
             }
 
             // 3. Check Volunteer Access Code
             const foundVol = storageService.authenticateVolunteer(cleanCode);
             if (foundVol || cleanCode.includes('VOL')) {
+              const volCodeVal = foundVol?.access_code || cleanCode;
               setIsAuthenticated(true);
               setRole('coordinator');
               setActiveNavTab('volunteers');
+              saveSession({
+                role: 'volunteer',
+                volunteerCode: volCodeVal,
+                name: foundVol?.name || 'Assembly Volunteer',
+                currentEventId: foundVol?.event_id,
+                activeNavTab: 'volunteers'
+              });
               if (typeof window !== 'undefined') window.history.pushState({}, '', '/volunteer');
               addToast('Volunteer Duty Portal Access', `Authenticated Volunteer ${foundVol?.name || ''}`, 'success');
-              return { id: 'vol', full_name: foundVol?.name || 'Assembly Volunteer', access_code: cleanCode } as Learner;
+              return { id: foundVol?.id || 'vol', full_name: foundVol?.name || 'Assembly Volunteer', access_code: volCodeVal } as Learner;
             }
 
             return null;

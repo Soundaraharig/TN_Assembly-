@@ -318,23 +318,24 @@ class StorageService {
   }
 
   public authenticateStudent(accessCode: string): Learner | null {
+    const clean = accessCode.trim().toUpperCase();
+    if (!clean) return null;
     const learners = this.getLearners();
-    const match = learners.find(l => l.access_code.toUpperCase() === accessCode.trim().toUpperCase());
-    return match || null;
+    return learners.find(l => (l.access_code || '').toUpperCase() === clean) || null;
   }
 
   public authenticateJury(accessCode: string): JuryMember | null {
-    const jury = this.getItem<JuryMember[]>(STORAGE_KEYS.JURY, INITIAL_JURY);
-    const codeUpper = accessCode.trim().toUpperCase();
-    const match = jury.find(j => (j.access_code && j.access_code.toUpperCase() === codeUpper) || codeUpper === 'JURY' || codeUpper.includes('JURY'));
-    return match || jury[0] || null;
+    const clean = accessCode.trim().toUpperCase();
+    if (!clean) return null;
+    const jury = this.getJury();
+    return jury.find(j => (j.access_code || '').toUpperCase() === clean) || null;
   }
 
   public authenticateVolunteer(accessCode: string): Volunteer | null {
-    const volunteers = this.getItem<Volunteer[]>(STORAGE_KEYS.VOLUNTEERS, INITIAL_VOLUNTEERS);
-    const codeUpper = accessCode.trim().toUpperCase();
-    const match = volunteers.find(v => (v.access_code && v.access_code.toUpperCase() === codeUpper) || codeUpper === 'VOL' || codeUpper.includes('VOL'));
-    return match || volunteers[0] || null;
+    const clean = accessCode.trim().toUpperCase();
+    if (!clean) return null;
+    const volunteers = this.getVolunteers();
+    return volunteers.find(v => (v.access_code || '').toUpperCase() === clean) || null;
   }
 
   // ── EVENTS ────────────────────────────────────────────────────────────────
