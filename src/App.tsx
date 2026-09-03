@@ -198,7 +198,7 @@ export function App() {
       loadState();
     });
 
-    // Check current browser path
+    // Check current browser path and restore authenticated session on refresh
     const checkPathAndRestore = () => {
       const path = typeof window !== 'undefined' ? window.location.pathname.toLowerCase() : '/';
       try {
@@ -207,12 +207,20 @@ export function App() {
           const sess: SavedAuthSession = JSON.parse(saved);
           const evs = storageService.getEvents();
 
+          if (sess.currentEventId) {
+            const targetEv = evs.find(e => e.id === sess.currentEventId);
+            if (targetEv) {
+              setCurrentEvent(targetEv);
+              currentEventRef.current = targetEv;
+            }
+          }
+
           if (path.includes('/me')) {
             // Student portal direct route
             setIsAuthenticated(true);
             setRole('student');
             const targetStudent = sess.studentCode
-              ? storageService.getLearners().find(l => l.access_code === sess.studentCode)
+              ? storageService.getLearners().find(l => l.access_code.toUpperCase() === sess.studentCode?.toUpperCase())
               : storageService.getLearners()[0];
             if (targetStudent) setCurrentStudent(targetStudent);
           } else if (path.includes('/jury')) {
@@ -230,20 +238,20 @@ export function App() {
             setIsAuthenticated(true);
             setRole('coordinator');
             if (sess.activeNavTab) setActiveNavTab(sess.activeNavTab);
-            if (sess.currentEventId) {
-              const targetEv = evs.find(e => e.id === sess.currentEventId);
-              if (targetEv) {
-                setCurrentEvent(targetEv);
-                currentEventRef.current = targetEv;
-              }
-            }
-          } else if (path === '/' || path === '/login' || path === '/join' || path === '/yip/join') {
-            // Base Home URL in new window/tab gives fresh login options
+          } else if (path === '/join' || path === '/yip/join' || path === '/login') {
+            // Explicit login/join page requested
             setIsAuthenticated(false);
           } else if (sess.role) {
+            // Keep user session on refresh on root '/'
             setIsAuthenticated(true);
             setRole(sess.role);
             if (sess.activeNavTab) setActiveNavTab(sess.activeNavTab);
+            if (sess.role === 'student') {
+              const targetStudent = sess.studentCode
+                ? storageService.getLearners().find(l => l.access_code.toUpperCase() === sess.studentCode?.toUpperCase())
+                : storageService.getLearners()[0];
+              if (targetStudent) setCurrentStudent(targetStudent);
+            }
           }
         } else if (path.includes('/me')) {
           const firstLearner = storageService.getLearners()[0];
