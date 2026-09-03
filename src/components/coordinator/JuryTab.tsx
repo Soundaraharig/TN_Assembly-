@@ -18,6 +18,7 @@ interface JuryTabProps {
   onAddJury: (j: Partial<JuryMember>) => void;
   onDeleteJury: (id: string) => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
+  juryAccessUrl?: string;
 }
 
 export const JuryTab: React.FC<JuryTabProps> = ({
@@ -25,12 +26,15 @@ export const JuryTab: React.FC<JuryTabProps> = ({
   eventId,
   onAddJury,
   onDeleteJury,
-  onShowToast
+  onShowToast,
+  juryAccessUrl
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSessionsBannerOpen, setIsSessionsBannerOpen] = useState(false);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
+
+  const effectiveJuryUrl = juryAccessUrl || (typeof window !== 'undefined' ? `${window.location.origin}/join` : 'https://tnassembly.vercel.app/join');
 
   // Form State
   const [name, setName] = useState('');
@@ -38,10 +42,8 @@ export const JuryTab: React.FC<JuryTabProps> = ({
   const [designation, setDesignation] = useState('Parliamentary Juror');
   const [bench, setBench] = useState<BenchType>('Ruling');
 
-  const juryAccessUrl = 'https://yi-connect-app.vercel.app/yip/join';
-
   const handleCopyLink = () => {
-    navigator.clipboard.writeText(juryAccessUrl);
+    navigator.clipboard.writeText(effectiveJuryUrl);
     setCopiedLink(true);
     onShowToast('Link Copied', 'Jury access link copied to clipboard', 'info');
     setTimeout(() => setCopiedLink(false), 2000);
@@ -105,7 +107,7 @@ export const JuryTab: React.FC<JuryTabProps> = ({
             Jury access link
           </label>
           <div className="text-sm font-bold text-slate-900 dark:text-white font-mono flex items-center gap-1.5">
-            <span>{juryAccessUrl}</span>
+            <span>{effectiveJuryUrl}</span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400">
             Jurors open this link and enter their access code (below) to start scoring.

@@ -171,28 +171,115 @@ class StorageService {
   public async syncFromSupabase(): Promise<void> {
     if (!supabase) return;
     try {
-      const [
-        { data: events },
-        { data: coordinators },
-        { data: learners },
-        { data: parties },
-        { data: committees },
-        { data: agenda }
-      ] = await Promise.all([
-        supabase.from('college_events').select('*').order('created_at', { ascending: false }),
-        supabase.from('coordinators').select('*'),
-        supabase.from('learners').select('*').order('created_at', { ascending: false }),
-        supabase.from('political_parties').select('*'),
-        supabase.from('committees').select('*'),
-        supabase.from('session_agenda').select('*').order('time', { ascending: true })
-      ]);
+      // 1. College Events
+      try {
+        const { data } = await supabase.from('college_events').select('*').order('created_at', { ascending: false });
+        if (data && data.length > 0) {
+          const local = this.getItem<CollegeEvent[]>(STORAGE_KEYS.EVENTS, INITIAL_EVENTS);
+          const localMap = new Map(local.map(e => [e.id, e]));
+          data.forEach(e => localMap.set(e.id, { ...localMap.get(e.id), ...e }));
+          this.setItem(STORAGE_KEYS.EVENTS, Array.from(localMap.values()));
+        }
+      } catch {}
 
-      if (events && events.length > 0) this.setItem(STORAGE_KEYS.EVENTS, events);
-      if (coordinators && coordinators.length > 0) this.setItem(STORAGE_KEYS.COORDINATORS, coordinators);
-      if (learners && learners.length > 0) this.setItem(STORAGE_KEYS.LEARNERS, learners);
-      if (parties && parties.length > 0) this.setItem(STORAGE_KEYS.PARTIES, parties);
-      if (committees && committees.length > 0) this.setItem(STORAGE_KEYS.COMMITTEES, committees);
-      if (agenda && agenda.length > 0) this.setItem(STORAGE_KEYS.AGENDA, agenda);
+      // 2. Coordinators
+      try {
+        const { data } = await supabase.from('coordinators').select('*');
+        if (data && data.length > 0) this.setItem(STORAGE_KEYS.COORDINATORS, data);
+      } catch {}
+
+      // 3. Learners
+      try {
+        const { data } = await supabase.from('learners').select('*').order('created_at', { ascending: false });
+        if (data && data.length > 0) {
+          const local = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, INITIAL_LEARNERS);
+          const localMap = new Map(local.map(l => [l.id, l]));
+          data.forEach(l => localMap.set(l.id, { ...localMap.get(l.id), ...l }));
+          this.setItem(STORAGE_KEYS.LEARNERS, Array.from(localMap.values()));
+        }
+      } catch {}
+
+      // 4. Political Parties
+      try {
+        const { data } = await supabase.from('political_parties').select('*');
+        if (data && data.length > 0) this.setItem(STORAGE_KEYS.PARTIES, data);
+      } catch {}
+
+      // 5. Committees
+      try {
+        const { data } = await supabase.from('committees').select('*');
+        if (data && data.length > 0) this.setItem(STORAGE_KEYS.COMMITTEES, data);
+      } catch {}
+
+      // 6. Session Agenda
+      try {
+        const { data } = await supabase.from('session_agenda').select('*').order('time', { ascending: true });
+        if (data && data.length > 0) this.setItem(STORAGE_KEYS.AGENDA, data);
+      } catch {}
+
+      // 7. Volunteers
+      try {
+        const { data } = await supabase.from('volunteers').select('*');
+        if (data && data.length > 0) {
+          const local = this.getItem<Volunteer[]>(STORAGE_KEYS.VOLUNTEERS, INITIAL_VOLUNTEERS);
+          const localMap = new Map(local.map(v => [v.id, v]));
+          data.forEach(v => localMap.set(v.id, { ...localMap.get(v.id), ...v }));
+          this.setItem(STORAGE_KEYS.VOLUNTEERS, Array.from(localMap.values()));
+        }
+      } catch {}
+
+      // 8. Jury
+      try {
+        const { data } = await supabase.from('jury_members').select('*');
+        if (data && data.length > 0) {
+          const local = this.getItem<JuryMember[]>(STORAGE_KEYS.JURY, INITIAL_JURY);
+          const localMap = new Map(local.map(j => [j.id, j]));
+          data.forEach(j => localMap.set(j.id, { ...localMap.get(j.id), ...j }));
+          this.setItem(STORAGE_KEYS.JURY, Array.from(localMap.values()));
+        }
+      } catch {}
+
+      // 9. Nominations
+      try {
+        const { data } = await supabase.from('nominations').select('*');
+        if (data && data.length > 0) this.setItem(STORAGE_KEYS.NOMINATIONS, data);
+      } catch {}
+
+      // 10. Elections
+      try {
+        const { data } = await supabase.from('elections').select('*');
+        if (data && data.length > 0) this.setItem(STORAGE_KEYS.ELECTIONS, data);
+      } catch {}
+
+      // 11. Checklist
+      try {
+        const { data } = await supabase.from('checklist_items').select('*');
+        if (data && data.length > 0) this.setItem(STORAGE_KEYS.CHECKLIST, data);
+      } catch {}
+
+      // 12. Questions
+      try {
+        const { data } = await supabase.from('parliament_questions').select('*');
+        if (data && data.length > 0) this.setItem(STORAGE_KEYS.QUESTIONS, data);
+      } catch {}
+
+      // 13. Proceedings
+      try {
+        const { data } = await supabase.from('bill_proceedings').select('*');
+        if (data && data.length > 0) this.setItem(STORAGE_KEYS.PROCEEDINGS, data);
+      } catch {}
+
+      // 14. Scores
+      try {
+        const { data } = await supabase.from('scores').select('*');
+        if (data && data.length > 0) this.setItem(STORAGE_KEYS.SCORES, data);
+      } catch {}
+
+      // 15. Team
+      try {
+        const { data } = await supabase.from('team_members').select('*');
+        if (data && data.length > 0) this.setItem(STORAGE_KEYS.TEAM, data);
+      } catch {}
     } catch (err) {
       console.warn('[Supabase] Sync error:', err);
     }
@@ -329,12 +416,16 @@ class StorageService {
 
   public getLearners(eventId?: string): Learner[] {
     const all = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, INITIAL_LEARNERS);
-    if (eventId) return all.filter(l => l.event_id === eventId);
+    if (eventId) {
+      const filtered = all.filter(l => l.event_id === eventId || !l.event_id);
+      if (filtered.length > 0) return filtered;
+      return all;
+    }
     return all;
   }
 
   public addLearner(learner: Partial<Learner>): Learner {
-    const all = this.getLearners();
+    const all = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, INITIAL_LEARNERS);
     const newLearner: Learner = {
       id: uid('lrn'),
       event_id: learner.event_id || '',
@@ -363,7 +454,7 @@ class StorageService {
     // Update event participant count
     if (learner.event_id) {
       const events = this.getEvents().map(e =>
-        e.id === learner.event_id ? { ...e, participant_count: e.participant_count + 1 } : e
+        e.id === learner.event_id ? { ...e, participant_count: (e.participant_count || 0) + 1 } : e
       );
       this.setItem(STORAGE_KEYS.EVENTS, events);
     }
@@ -405,6 +496,16 @@ class StorageService {
       e.id === eventId ? { ...e, participant_count: e.participant_count + newItems.length } : e
     );
     this.setItem(STORAGE_KEYS.EVENTS, events);
+
+    // Sync to Supabase
+    if (supabase && newItems.length > 0) {
+      supabase
+        .from('learners')
+        .upsert(newItems as unknown as Record<string, unknown>[], { onConflict: 'id' })
+        .then(({ error }) => {
+          if (error) console.warn('[Supabase] import sync error:', error.message);
+        });
+    }
   }
 
   public updateLearner(learner: Learner) {
@@ -578,11 +679,17 @@ class StorageService {
     };
     all.push(newMember);
     this.setItem(STORAGE_KEYS.JURY, all);
+    this.sbUpsert('jury_members', newMember as unknown as Record<string, unknown>);
     return newMember;
   }
 
   public deleteJuryMember(memberId: string) {
     this.setItem(STORAGE_KEYS.JURY, this.getJury().filter(j => j.id !== memberId));
+    if (supabase) {
+      supabase.from('jury_members').delete().eq('id', memberId).then(({ error }) => {
+        if (error) console.warn('[Supabase] jury delete error:', error.message);
+      });
+    }
   }
 
   // ── VOLUNTEERS ────────────────────────────────────────────────────────────
@@ -606,22 +713,28 @@ class StorageService {
       shift: volunteer.shift || 'Both days',
       is_yuva: volunteer.is_yuva !== undefined ? volunteer.is_yuva : true,
       has_arrived: volunteer.has_arrived !== undefined ? volunteer.has_arrived : false,
-      role: volunteer.role || 'YUVA Volunteer',
+      role: volunteer.role || (volunteer.is_yuva ? 'YUVA Volunteer' : 'Volunteer'),
       created_at: new Date().toISOString()
     };
     all.push(newVol);
     this.setItem(STORAGE_KEYS.VOLUNTEERS, all);
+    this.sbUpsert('volunteers', newVol as unknown as Record<string, unknown>);
     return newVol;
   }
 
   public toggleVolunteerArrival(volunteerId: string) {
+    let updatedVol: Volunteer | undefined;
     const all = this.getVolunteers().map(v => {
       if (v.id === volunteerId) {
-        return { ...v, has_arrived: !v.has_arrived };
+        updatedVol = { ...v, has_arrived: !v.has_arrived };
+        return updatedVol;
       }
       return v;
     });
     this.setItem(STORAGE_KEYS.VOLUNTEERS, all);
+    if (updatedVol) {
+      this.sbUpsert('volunteers', updatedVol as unknown as Record<string, unknown>);
+    }
   }
 
   public bulkImportVolunteers(volunteersList: Partial<Volunteer>[], eventId: string) {
@@ -641,10 +754,20 @@ class StorageService {
       created_at: new Date().toISOString()
     }));
     this.setItem(STORAGE_KEYS.VOLUNTEERS, [...existing, ...newItems]);
+    if (supabase && newItems.length > 0) {
+      supabase.from('volunteers').upsert(newItems as unknown as Record<string, unknown>[], { onConflict: 'id' }).then(({ error }) => {
+        if (error) console.warn('[Supabase] bulk volunteers sync error:', error.message);
+      });
+    }
   }
 
   public deleteVolunteer(volunteerId: string) {
     this.setItem(STORAGE_KEYS.VOLUNTEERS, this.getVolunteers().filter(v => v.id !== volunteerId));
+    if (supabase) {
+      supabase.from('volunteers').delete().eq('id', volunteerId).then(({ error }) => {
+        if (error) console.warn('[Supabase] volunteer delete error:', error.message);
+      });
+    }
   }
 
   public saveCabinetMinistries(eventId: string, ministries: string[]) {
@@ -923,10 +1046,16 @@ class StorageService {
   }
 
   public toggleChecklistItem(id: string) {
-    const all = this.getItem<ChecklistItem[]>(STORAGE_KEYS.CHECKLIST, INITIAL_CHECKLIST).map(c =>
-      c.id === id ? { ...c, is_completed: !c.is_completed } : c
-    );
+    let updatedItem: ChecklistItem | undefined;
+    const all = this.getItem<ChecklistItem[]>(STORAGE_KEYS.CHECKLIST, INITIAL_CHECKLIST).map(c => {
+      if (c.id === id) {
+        updatedItem = { ...c, is_completed: !c.is_completed };
+        return updatedItem;
+      }
+      return c;
+    });
     this.setItem(STORAGE_KEYS.CHECKLIST, all);
+    if (updatedItem) this.sbUpsert('checklist_items', updatedItem as unknown as Record<string, unknown>);
   }
 
   public addChecklistItem(item: Partial<ChecklistItem>): ChecklistItem {
@@ -941,12 +1070,14 @@ class StorageService {
     };
     all.push(newItem);
     this.setItem(STORAGE_KEYS.CHECKLIST, all);
+    this.sbUpsert('checklist_items', newItem as unknown as Record<string, unknown>);
     return newItem;
   }
 
   public deleteChecklistItem(id: string) {
     const all = this.getItem<ChecklistItem[]>(STORAGE_KEYS.CHECKLIST, INITIAL_CHECKLIST).filter(c => c.id !== id);
     this.setItem(STORAGE_KEYS.CHECKLIST, all);
+    this.sbDelete('checklist_items', id);
   }
 
   // ── QUESTIONNAIRE ─────────────────────────────────────────────────────────
@@ -973,21 +1104,34 @@ class StorageService {
     };
     all.unshift(newQ);
     this.setItem(STORAGE_KEYS.QUESTIONS, all);
+    this.sbUpsert('parliament_questions', newQ as unknown as Record<string, unknown>);
     return newQ;
   }
 
   public answerQuestion(id: string, response: string) {
-    const all = this.getItem<ParliamentQuestion[]>(STORAGE_KEYS.QUESTIONS, INITIAL_QUESTIONS).map(q =>
-      q.id === id ? { ...q, status: 'Answered' as const, minister_response: response } : q
-    );
+    let updatedQ: ParliamentQuestion | undefined;
+    const all = this.getItem<ParliamentQuestion[]>(STORAGE_KEYS.QUESTIONS, INITIAL_QUESTIONS).map(q => {
+      if (q.id === id) {
+        updatedQ = { ...q, status: 'Answered' as const, minister_response: response };
+        return updatedQ;
+      }
+      return q;
+    });
     this.setItem(STORAGE_KEYS.QUESTIONS, all);
+    if (updatedQ) this.sbUpsert('parliament_questions', updatedQ as unknown as Record<string, unknown>);
   }
 
   public updateQuestionStatus(id: string, status: ParliamentQuestion['status']) {
-    const all = this.getItem<ParliamentQuestion[]>(STORAGE_KEYS.QUESTIONS, INITIAL_QUESTIONS).map(q =>
-      q.id === id ? { ...q, status } : q
-    );
+    let updatedQ: ParliamentQuestion | undefined;
+    const all = this.getItem<ParliamentQuestion[]>(STORAGE_KEYS.QUESTIONS, INITIAL_QUESTIONS).map(q => {
+      if (q.id === id) {
+        updatedQ = { ...q, status };
+        return updatedQ;
+      }
+      return q;
+    });
     this.setItem(STORAGE_KEYS.QUESTIONS, all);
+    if (updatedQ) this.sbUpsert('parliament_questions', updatedQ as unknown as Record<string, unknown>);
   }
 
   // ── PROCEEDINGS ───────────────────────────────────────────────────────────
@@ -1015,22 +1159,26 @@ class StorageService {
     };
     all.unshift(newBill);
     this.setItem(STORAGE_KEYS.PROCEEDINGS, all);
+    this.sbUpsert('bill_proceedings', newBill as unknown as Record<string, unknown>);
     return newBill;
   }
 
   public updateBillStatus(id: string, status: BillProceeding['status'], ayes?: number, noes?: number) {
+    let updatedBill: BillProceeding | undefined;
     const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS).map(b => {
       if (b.id === id) {
-        return {
+        updatedBill = {
           ...b,
           status,
           ayes: ayes !== undefined ? ayes : b.ayes,
           noes: noes !== undefined ? noes : b.noes
         };
+        return updatedBill;
       }
       return b;
     });
     this.setItem(STORAGE_KEYS.PROCEEDINGS, all);
+    if (updatedBill) this.sbUpsert('bill_proceedings', updatedBill as unknown as Record<string, unknown>);
   }
 
   // ── SCORE GRID ────────────────────────────────────────────────────────────
@@ -1050,6 +1198,7 @@ class StorageService {
       all.push(score);
     }
     this.setItem(STORAGE_KEYS.SCORES, all);
+    this.sbUpsert('scores', score as unknown as Record<string, unknown>);
   }
 
   // ── CHAT ──────────────────────────────────────────────────────────────────
@@ -1073,6 +1222,7 @@ class StorageService {
     };
     all.push(newMsg);
     this.setItem(STORAGE_KEYS.CHAT, all);
+    this.sbUpsert('chat_messages', newMsg as unknown as Record<string, unknown>);
     return newMsg;
   }
 
@@ -1098,6 +1248,7 @@ class StorageService {
     };
     all.unshift(newFb);
     this.setItem(STORAGE_KEYS.FEEDBACK, all);
+    this.sbUpsert('feedback', newFb as unknown as Record<string, unknown>);
     return newFb;
   }
 
@@ -1122,12 +1273,14 @@ class StorageService {
     };
     all.push(newTm);
     this.setItem(STORAGE_KEYS.TEAM, all);
+    this.sbUpsert('team_members', newTm as unknown as Record<string, unknown>);
     return newTm;
   }
 
   public deleteTeamMember(id: string) {
     const all = this.getItem<TeamMember[]>(STORAGE_KEYS.TEAM, INITIAL_TEAM).filter(t => t.id !== id);
     this.setItem(STORAGE_KEYS.TEAM, all);
+    this.sbDelete('team_members', id);
   }
 
   // ── AUTO-ALLOCATION & RESET ───────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type {
   UserRole,
   CollegeEvent,
@@ -143,22 +143,34 @@ export function App() {
     }
   };
 
+  const currentEventRef = useRef<CollegeEvent | null>(null);
+
   // Load and subscribe to storage service state updates
-  const loadState = () => {
+  const loadState = (targetEventId?: string) => {
     const evs = storageService.getEvents();
     const coords = storageService.getCoordinators();
 
     setEvents(evs);
     setCoordinators(coords);
 
-    let activeEv = currentEvent;
-    if (!activeEv && evs.length > 0) {
-      activeEv = evs[0];
-      setCurrentEvent(activeEv);
-    }
+    let savedEventId: string | undefined = undefined;
+    try {
+      const saved = localStorage.getItem(SESSION_KEY);
+      if (saved) {
+        const sess = JSON.parse(saved);
+        if (sess.currentEventId) savedEventId = sess.currentEventId;
+      }
+    } catch {}
+
+    const activeId = targetEventId || currentEventRef.current?.id || savedEventId;
+    let activeEv = evs.find(e => e.id === activeId) || evs[0];
 
     if (activeEv) {
-      setLearners(storageService.getLearners(activeEv.id));
+      setCurrentEvent(activeEv);
+      currentEventRef.current = activeEv;
+
+      const eventLearners = storageService.getLearners(activeEv.id);
+      setLearners(eventLearners);
       setParties(storageService.getParties(activeEv.id));
       setCommittees(storageService.getCommittees(activeEv.id));
       setAgenda(storageService.getAgenda(activeEv.id));
@@ -208,6 +220,7 @@ export function App() {
             const targetEv = evs.find(e => e.id === sess.currentEventId);
             if (targetEv) {
               setCurrentEvent(targetEv);
+              currentEventRef.current = targetEv;
               setLearners(storageService.getLearners(targetEv.id));
             }
           }
@@ -228,6 +241,7 @@ export function App() {
   // Handlers for App interactions
   const handleEventChange = (ev: CollegeEvent) => {
     setCurrentEvent(ev);
+    currentEventRef.current = ev;
     setLearners(storageService.getLearners(ev.id));
     setParties(storageService.getParties(ev.id));
     setCommittees(storageService.getCommittees(ev.id));
@@ -1025,6 +1039,7 @@ export function App() {
             existingCodes={existingCodesSet}
             onImportSuccess={(imported: Partial<Learner>[]) => {
               storageService.importLearners(imported, currentEvent.id);
+              setLearners(storageService.getLearners(currentEvent.id));
               addToast('Import Successful', `Imported ${imported.length} delegate participants`, 'success');
             }}
             onShowToast={addToast}

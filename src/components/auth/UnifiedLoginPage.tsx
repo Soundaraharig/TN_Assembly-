@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Landmark, LogIn, KeyRound, ArrowRight, ShieldCheck, UserCheck, Sun, Moon } from 'lucide-react';
 import type { UserSession, Learner } from '../../types';
 import type { Theme } from '../../lib/theme';
@@ -27,7 +27,36 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
   const [isOrganizerLoading, setIsOrganizerLoading] = useState(false);
   const [isCodeLoading, setIsCodeLoading]           = useState(false);
   
-  const [showAccessCodePage, setShowAccessCodePage] = useState(false);
+  const isJoinUrl = () => {
+    if (typeof window === 'undefined') return false;
+    const path = window.location.pathname.toLowerCase();
+    const search = window.location.search.toLowerCase();
+    return path.includes('/join') || path.includes('/yip/join') || search.includes('join') || search.includes('code');
+  };
+
+  const [showAccessCodePage, setShowAccessCodePage] = useState<boolean>(isJoinUrl());
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setShowAccessCodePage(isJoinUrl());
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const navigateToJoin = () => {
+    setShowAccessCodePage(true);
+    if (typeof window !== 'undefined' && !window.location.pathname.includes('/join')) {
+      window.history.pushState({}, '', '/join');
+    }
+  };
+
+  const navigateToLogin = () => {
+    setShowAccessCodePage(false);
+    if (typeof window !== 'undefined' && (window.location.pathname.includes('/join') || window.location.pathname.includes('/yip/join'))) {
+      window.history.pushState({}, '', '/');
+    }
+  };
 
   const handleCredentialsSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -241,7 +270,7 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
               {/* ── Small Join Access Code Button ───────────────────── */}
               <div className="mt-4 flex items-center justify-center">
                 <button
-                  onClick={() => setShowAccessCodePage(true)}
+                  onClick={navigateToJoin}
                   className="px-4 py-2 rounded-xl bg-amber-600 text-white text-xs font-bold shadow-md flex items-center gap-2 cursor-pointer hover:scale-102 transition-transform"
                 >
                   <KeyRound className="w-3.5 h-3.5" />
@@ -262,7 +291,7 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
                   </p>
                 </div>
                 <button
-                  onClick={() => setShowAccessCodePage(false)}
+                  onClick={navigateToLogin}
                   className="px-2.5 py-1 rounded-lg font-bold text-[10px] border flex items-center gap-1 transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
                   style={{ color: 'var(--text-muted)', borderColor: 'var(--border)' }}
                 >
