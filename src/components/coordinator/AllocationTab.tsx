@@ -8,7 +8,10 @@ import {
   Sparkles,
   Zap,
   Scale,
-  AlertCircle
+  AlertCircle,
+  Users,
+  Shield,
+  Table as TableIcon
 } from 'lucide-react';
 
 interface AllocationTabProps {
@@ -30,6 +33,7 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
   onUpdateLearner,
   onShowToast
 }) => {
+  const [activeRosterView, setActiveRosterView] = useState<'party' | 'committee' | 'table'>('party');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedBench, setSelectedBench] = useState<string>('ALL');
   const [selectedParty, setSelectedParty] = useState<string>('ALL');
@@ -321,231 +325,415 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
 
       </div>
 
-      {/* Filter & Search Bar */}
-      <div
-        className="rounded-2xl p-4 border shadow-sm space-y-3"
-        style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
-      >
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          
-          {/* Search Input */}
-          <div className="relative flex-1 max-w-md">
-            <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search delegate, access code, constituency # or name..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-3 py-1.5 rounded-xl border text-xs focus:outline-none focus:ring-1 transition-all"
-              style={{
-                backgroundColor: 'var(--bg-elevated)',
-                borderColor: 'var(--border)',
-                color: 'var(--text-primary)'
-              }}
-            />
-          </div>
+      {/* View Switcher Bar */}
+      <div className="flex items-center justify-between gap-4 flex-wrap border-b border-slate-200 dark:border-slate-800 pb-2">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveRosterView('party')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeRosterView === 'party'
+                ? 'bg-amber-500 text-white shadow-sm'
+                : 'border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>By Party</span>
+          </button>
 
-          {/* Dropdown Filters */}
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <select
-              value={selectedBench}
-              onChange={(e) => setSelectedBench(e.target.value)}
-              className="px-2.5 py-1.5 rounded-xl border text-xs font-semibold focus:outline-none"
-              style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
-            >
-              <option value="ALL">All Benches</option>
-              <option value="Ruling">Ruling Bench</option>
-              <option value="Opposition">Opposition Bench</option>
-              <option value="UNALLOCATED">Unallocated Only</option>
-            </select>
+          <button
+            type="button"
+            onClick={() => setActiveRosterView('committee')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeRosterView === 'committee'
+                ? 'bg-amber-500 text-white shadow-sm'
+                : 'border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
+            }`}
+          >
+            <Shield className="w-3.5 h-3.5" />
+            <span>Committee Distribution</span>
+          </button>
 
-            <select
-              value={selectedParty}
-              onChange={(e) => setSelectedParty(e.target.value)}
-              className="px-2.5 py-1.5 rounded-xl border text-xs font-semibold focus:outline-none"
-              style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
-            >
-              <option value="ALL">All Parties</option>
-              {parties.map(p => (
-                <option key={p.id} value={p.name}>{p.name}</option>
-              ))}
-            </select>
-
-            <select
-              value={selectedCommittee}
-              onChange={(e) => setSelectedCommittee(e.target.value)}
-              className="px-2.5 py-1.5 rounded-xl border text-xs font-semibold focus:outline-none"
-              style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
-            >
-              <option value="ALL">All Committees</option>
-              {committees.map(c => (
-                <option key={c.id} value={c.name}>{c.name}</option>
-              ))}
-            </select>
-
-            <select
-              value={selectedYear}
-              onChange={(e) => setSelectedYear(e.target.value)}
-              className="px-2.5 py-1.5 rounded-xl border text-xs font-semibold focus:outline-none"
-              style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
-            >
-              <option value="ALL">All Years</option>
-              <option value="1st Year">1st Year</option>
-              <option value="2nd Year">2nd Year</option>
-              <option value="3rd Year">3rd Year</option>
-              <option value="4th Year">4th Year</option>
-            </select>
-          </div>
-
+          <button
+            type="button"
+            onClick={() => setActiveRosterView('table')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeRosterView === 'table'
+                ? 'bg-amber-500 text-white shadow-sm'
+                : 'border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
+            }`}
+          >
+            <TableIcon className="w-3.5 h-3.5" />
+            <span>Master Delegate Table</span>
+          </button>
         </div>
 
-        <div className="flex items-center justify-between text-[11px] pt-1 border-t" style={{ borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}>
-          <span>Showing <strong>{filteredLearners.length}</strong> of <strong>{totalLearners}</strong> delegates</span>
-          <span>Click on any row or "Edit" to adjust individual allocations manually</span>
+        <div className="text-xs text-slate-500 font-medium">
+          Showing {allocatedCount} of {totalLearners} allocated
         </div>
       </div>
 
-      {/* Allocated Delegates Roster Table */}
-      <div
-        className="rounded-2xl border shadow-sm overflow-hidden"
-        style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
-      >
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="border-b font-extrabold uppercase tracking-wider" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }}>
-                <th className="py-3 px-3 text-center">S.No</th>
-                <th className="py-3 px-3 text-center">Code</th>
-                <th className="py-3 px-4">Delegate Name</th>
-                <th className="py-3 px-4">Bench</th>
-                <th className="py-3 px-4">Party</th>
-                <th className="py-3 px-3 text-center">Const. No</th>
-                <th className="py-3 px-4">Constituency Name</th>
-                <th className="py-3 px-4">Role / Cabinet</th>
-                <th className="py-3 px-4">Committee</th>
-                <th className="py-3 px-3 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y" style={{ borderColor: 'var(--border-soft)' }}>
-              {filteredLearners.length === 0 ? (
-                <tr>
-                  <td colSpan={10} className="py-10 text-center italic" style={{ color: 'var(--text-muted)' }}>
-                    No delegates found matching filter criteria. Click "⚡ Run Auto-Allocation Now" to allocate all participants.
-                  </td>
-                </tr>
-              ) : (
-                filteredLearners.map((learner, idx) => (
-                  <tr
-                    key={learner.id}
-                    className="hover:bg-slate-500/5 transition-colors cursor-pointer"
-                    onClick={() => setQuickEditLearner(learner)}
-                  >
-                    {/* S.No */}
-                    <td className="py-3 px-3 text-center font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                      {idx + 1}
-                    </td>
+      {/* 1. BY PARTY VIEW (Image 6) */}
+      {activeRosterView === 'party' && (
+        <div className="space-y-4 animate-fade-in">
+          <div className="flex items-center gap-2 text-amber-600 font-black text-sm">
+            <Users className="w-4 h-4" />
+            <span>By Party</span>
+          </div>
 
-                    {/* Access Code */}
-                    <td className="py-3 px-3 text-center">
-                      <code
-                        className="px-2 py-0.5 rounded font-mono font-bold text-xs border"
-                        style={{ backgroundColor: 'var(--amber-soft)', borderColor: 'var(--amber)', color: 'var(--amber)' }}
-                      >
-                        {learner.access_code}
-                      </code>
-                    </td>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {parties.map((party) => {
+              const partyMembers = learners.filter(l => l.party_name === party.name);
 
-                    {/* Full Name */}
-                    <td className="py-3 px-4">
-                      <strong className="block font-bold" style={{ color: 'var(--text-primary)' }}>
-                        {learner.full_name}
-                      </strong>
-                      <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                        {learner.department} • {learner.academic_year}
-                      </span>
-                    </td>
+              return (
+                <div
+                  key={party.id}
+                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-4"
+                >
+                  <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+                    <h4 className="text-xs font-black uppercase text-slate-900 dark:text-white tracking-wide">
+                      {party.name}
+                    </h4>
+                    <span className="text-xs font-bold text-slate-400">
+                      {partyMembers.length}
+                    </span>
+                  </div>
 
-                    {/* Bench */}
-                    <td className="py-3 px-4">
-                      {learner.bench ? (
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                            learner.bench === 'Ruling'
-                              ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
-                              : 'bg-rose-500/10 text-rose-600 border-rose-500/30'
-                          }`}
+                  <div className="max-h-96 overflow-y-auto space-y-2.5 pr-1 text-xs">
+                    {partyMembers.length === 0 ? (
+                      <p className="text-slate-400 italic text-center py-6 text-[11px]">
+                        No delegates assigned to this party yet. Run auto-allocation above.
+                      </p>
+                    ) : (
+                      partyMembers.map((member) => (
+                        <div
+                          key={member.id}
+                          onClick={() => setQuickEditLearner(member)}
+                          className="flex items-center justify-between py-1 text-slate-700 dark:text-slate-300 hover:text-amber-600 cursor-pointer transition-colors"
                         >
-                          {learner.bench}
-                        </span>
-                      ) : (
-                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-500/10 text-slate-400 border border-slate-500/20">
-                          Unallocated
-                        </span>
-                      )}
-                    </td>
-
-                    {/* Party */}
-                    <td className="py-3 px-4 font-semibold" style={{ color: 'var(--text-primary)' }}>
-                      {learner.party_name || '—'}
-                    </td>
-
-                    {/* Constituency Number */}
-                    <td className="py-3 px-3 text-center font-mono font-bold" style={{ color: 'var(--text-primary)' }}>
-                      {learner.constituency_number ? (
-                        <span className="px-2 py-0.5 rounded bg-blue-500/10 text-blue-500 border border-blue-500/20">
-                          #{learner.constituency_number}
-                        </span>
-                      ) : '—'}
-                    </td>
-
-                    {/* Constituency Name */}
-                    <td className="py-3 px-4 font-medium" style={{ color: 'var(--text-primary)' }}>
-                      {learner.constituency_name || '—'}
-                    </td>
-
-                    {/* Role */}
-                    <td className="py-3 px-4">
-                      <span
-                        className="px-2 py-0.5 rounded text-[10px] font-bold border"
-                        style={{
-                          background: learner.role?.includes('Chief') || learner.role?.includes('Speaker') || learner.role?.includes('Minister')
-                            ? 'var(--amber-soft)'
-                            : 'var(--bg-elevated)',
-                          color: learner.role?.includes('Chief') || learner.role?.includes('Speaker') || learner.role?.includes('Minister')
-                            ? 'var(--amber)'
-                            : 'var(--text-secondary)',
-                          borderColor: 'var(--border)'
-                        }}
-                      >
-                        {learner.role || 'Member of Legislative Assembly (MLA)'}
-                      </span>
-                    </td>
-
-                    {/* Committee */}
-                    <td className="py-3 px-4 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
-                      {learner.committee_name || '—'}
-                    </td>
-
-                    {/* Action */}
-                    <td className="py-3 px-3 text-right">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setQuickEditLearner(learner);
-                        }}
-                        className="px-2 py-1 rounded-lg text-[11px] font-bold border transition-colors hover:bg-amber-500 hover:text-white"
-                        style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
-                      >
-                        Edit
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                          <span className="font-semibold">{member.full_name}</span>
+                          {member.role && member.role !== 'Member of Legislative Assembly (MLA)' ? (
+                            <span className="text-[10px] text-slate-400 font-medium text-right shrink-0 ml-2">
+                              {member.role}
+                            </span>
+                          ) : null}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* 2. COMMITTEE DISTRIBUTION VIEW (Image 5) */}
+      {activeRosterView === 'committee' && (
+        <div className="space-y-4 animate-fade-in">
+          <div className="flex items-center gap-2 text-slate-900 dark:text-white font-black text-sm">
+            <Shield className="w-4 h-4 text-purple-500" />
+            <span>Committee Distribution</span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {committees.map((committee, idx) => {
+              const members = learners.filter(
+                l => l.committee_name === committee.name || l.committee_id === committee.id
+              );
+              const cRuling = members.filter(m => m.bench === 'Ruling').length;
+              const cOpp = members.filter(m => m.bench === 'Opposition').length;
+
+              return (
+                <div
+                  key={committee.id}
+                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-extrabold text-slate-900 dark:text-white">
+                      {idx + 1}. {committee.name}
+                    </h4>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-600 text-white">
+                      {members.length}
+                    </span>
+                  </div>
+
+                  <div className="text-[11px] font-bold">
+                    <span className="text-blue-600">Ruling: {cRuling}</span>{' '}
+                    <span className="text-rose-600 ml-2">Opp: {cOpp}</span>
+                  </div>
+
+                  <div className="max-h-80 overflow-y-auto space-y-2 pr-1 text-xs divide-y divide-slate-50 dark:divide-slate-800/40">
+                    {members.length === 0 ? (
+                      <p className="text-slate-400 italic text-center py-6 text-[11px]">
+                        No delegates assigned to this committee yet.
+                      </p>
+                    ) : (
+                      members.map((member) => (
+                        <div
+                          key={member.id}
+                          onClick={() => setQuickEditLearner(member)}
+                          className="flex items-center justify-between pt-1.5 text-slate-700 dark:text-slate-300 hover:text-amber-600 cursor-pointer transition-colors"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`w-2 h-2 rounded-full shrink-0 ${
+                                member.bench === 'Ruling'
+                                  ? 'bg-blue-500'
+                                  : member.bench === 'Opposition'
+                                  ? 'bg-rose-500'
+                                  : 'bg-slate-400'
+                              }`}
+                            />
+                            <span className="font-semibold text-xs">{member.full_name}</span>
+                          </div>
+
+                          {member.role && member.role !== 'Member of Legislative Assembly (MLA)' ? (
+                            <span className="text-[10px] text-slate-400 font-medium text-right shrink-0 ml-2">
+                              {member.role}
+                            </span>
+                          ) : null}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 3. MASTER DELEGATE TABLE VIEW */}
+      {activeRosterView === 'table' && (
+        <div className="space-y-4 animate-fade-in">
+          {/* Filter & Search Bar */}
+          <div
+            className="rounded-2xl p-4 border shadow-sm space-y-3"
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+          >
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+              
+              {/* Search Input */}
+              <div className="relative flex-1 max-w-md">
+                <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search delegate, access code, constituency # or name..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-3 py-1.5 rounded-xl border text-xs focus:outline-none focus:ring-1 transition-all"
+                  style={{
+                    backgroundColor: 'var(--bg-elevated)',
+                    borderColor: 'var(--border)',
+                    color: 'var(--text-primary)'
+                  }}
+                />
+              </div>
+
+              {/* Dropdown Filters */}
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <select
+                  value={selectedBench}
+                  onChange={(e) => setSelectedBench(e.target.value)}
+                  className="px-2.5 py-1.5 rounded-xl border text-xs font-semibold focus:outline-none"
+                  style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                >
+                  <option value="ALL">All Benches</option>
+                  <option value="Ruling">Ruling Bench</option>
+                  <option value="Opposition">Opposition Bench</option>
+                  <option value="UNALLOCATED">Unallocated Only</option>
+                </select>
+
+                <select
+                  value={selectedParty}
+                  onChange={(e) => setSelectedParty(e.target.value)}
+                  className="px-2.5 py-1.5 rounded-xl border text-xs font-semibold focus:outline-none"
+                  style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                >
+                  <option value="ALL">All Parties</option>
+                  {parties.map(p => (
+                    <option key={p.id} value={p.name}>{p.name}</option>
+                  ))}
+                </select>
+
+                <select
+                  value={selectedCommittee}
+                  onChange={(e) => setSelectedCommittee(e.target.value)}
+                  className="px-2.5 py-1.5 rounded-xl border text-xs font-semibold focus:outline-none"
+                  style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                >
+                  <option value="ALL">All Committees</option>
+                  {committees.map(c => (
+                    <option key={c.id} value={c.name}>{c.name}</option>
+                  ))}
+                </select>
+
+                <select
+                  value={selectedYear}
+                  onChange={(e) => setSelectedYear(e.target.value)}
+                  className="px-2.5 py-1.5 rounded-xl border text-xs font-semibold focus:outline-none"
+                  style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                >
+                  <option value="ALL">All Years</option>
+                  <option value="1st Year">1st Year</option>
+                  <option value="2nd Year">2nd Year</option>
+                  <option value="3rd Year">3rd Year</option>
+                  <option value="4th Year">4th Year</option>
+                </select>
+              </div>
+
+            </div>
+
+            <div className="flex items-center justify-between text-[11px] pt-1 border-t" style={{ borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}>
+              <span>Showing <strong>{filteredLearners.length}</strong> of <strong>{totalLearners}</strong> delegates</span>
+              <span>Click on any row or "Edit" to adjust individual allocations manually</span>
+            </div>
+          </div>
+
+          {/* Allocated Delegates Roster Table */}
+          <div
+            className="rounded-2xl border shadow-sm overflow-hidden"
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+          >
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b font-extrabold uppercase tracking-wider" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }}>
+                    <th className="py-3 px-3 text-center">S.No</th>
+                    <th className="py-3 px-3 text-center">Code</th>
+                    <th className="py-3 px-4">Delegate Name</th>
+                    <th className="py-3 px-4">Bench</th>
+                    <th className="py-3 px-4">Party</th>
+                    <th className="py-3 px-3 text-center">Const. No</th>
+                    <th className="py-3 px-4">Constituency Name</th>
+                    <th className="py-3 px-4">Role / Cabinet</th>
+                    <th className="py-3 px-4">Committee</th>
+                    <th className="py-3 px-3 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y" style={{ borderColor: 'var(--border-soft)' }}>
+                  {filteredLearners.length === 0 ? (
+                    <tr>
+                      <td colSpan={10} className="py-10 text-center italic" style={{ color: 'var(--text-muted)' }}>
+                        No delegates found matching filter criteria. Click "⚡ Run Auto-Allocation Now" to allocate all participants.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredLearners.map((learner, idx) => (
+                      <tr
+                        key={learner.id}
+                        className="hover:bg-slate-500/5 transition-colors cursor-pointer"
+                        onClick={() => setQuickEditLearner(learner)}
+                      >
+                        {/* S.No */}
+                        <td className="py-3 px-3 text-center font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                          {idx + 1}
+                        </td>
+
+                        {/* Access Code */}
+                        <td className="py-3 px-3 text-center">
+                          <code
+                            className="px-2 py-0.5 rounded font-mono font-bold text-xs border"
+                            style={{ backgroundColor: 'var(--amber-soft)', borderColor: 'var(--amber)', color: 'var(--amber)' }}
+                          >
+                            {learner.access_code}
+                          </code>
+                        </td>
+
+                        {/* Full Name */}
+                        <td className="py-3 px-4">
+                          <strong className="block font-bold" style={{ color: 'var(--text-primary)' }}>
+                            {learner.full_name}
+                          </strong>
+                          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                            {learner.department} • {learner.academic_year}
+                          </span>
+                        </td>
+
+                        {/* Bench */}
+                        <td className="py-3 px-4">
+                          {learner.bench ? (
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                learner.bench === 'Ruling'
+                                  ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
+                                  : 'bg-rose-500/10 text-rose-600 border-rose-500/30'
+                              }`}
+                            >
+                              {learner.bench}
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-500/10 text-slate-400 border border-slate-500/20">
+                              Unallocated
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Party */}
+                        <td className="py-3 px-4 font-semibold" style={{ color: 'var(--text-primary)' }}>
+                          {learner.party_name || '—'}
+                        </td>
+
+                        {/* Constituency Number */}
+                        <td className="py-3 px-3 text-center font-mono font-bold" style={{ color: 'var(--text-primary)' }}>
+                          {learner.constituency_number ? (
+                            <span className="px-2 py-0.5 rounded bg-blue-500/10 text-blue-500 border border-blue-500/20">
+                              #{learner.constituency_number}
+                            </span>
+                          ) : '—'}
+                        </td>
+
+                        {/* Constituency Name */}
+                        <td className="py-3 px-4 font-medium" style={{ color: 'var(--text-primary)' }}>
+                          {learner.constituency_name || '—'}
+                        </td>
+
+                        {/* Role */}
+                        <td className="py-3 px-4">
+                          <span
+                            className="px-2 py-0.5 rounded text-[10px] font-bold border"
+                            style={{
+                              background: learner.role?.includes('Chief') || learner.role?.includes('Speaker') || learner.role?.includes('Minister')
+                                ? 'var(--amber-soft)'
+                                : 'var(--bg-elevated)',
+                              color: learner.role?.includes('Chief') || learner.role?.includes('Speaker') || learner.role?.includes('Minister')
+                                ? 'var(--amber)'
+                                : 'var(--text-secondary)',
+                              borderColor: 'var(--border)'
+                            }}
+                          >
+                            {learner.role || 'Member of Legislative Assembly (MLA)'}
+                          </span>
+                        </td>
+
+                        {/* Committee */}
+                        <td className="py-3 px-4 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                          {learner.committee_name || '—'}
+                        </td>
+
+                        {/* Action */}
+                        <td className="py-3 px-3 text-right">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setQuickEditLearner(learner);
+                            }}
+                            className="px-2 py-1 rounded-lg text-[11px] font-bold border transition-colors hover:bg-amber-500 hover:text-white"
+                            style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                          >
+                            Edit
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Manual Quick Edit Modal */}
       {quickEditLearner && (

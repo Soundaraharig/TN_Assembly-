@@ -566,11 +566,15 @@ class StorageService {
   public addJuryMember(member: Partial<JuryMember>): JuryMember {
     const all = this.getJury();
     const newMember: JuryMember = {
-      id: uid('jury'),
+      id: member.id || uid('jury'),
       event_id: member.event_id || '',
-      name: member.name || '',
-      designation: member.designation || '',
-      assigned_bench: member.assigned_bench || 'Ruling'
+      access_code: member.access_code || Math.random().toString(36).substring(2, 8).toUpperCase(),
+      name: member.name || 'Jury Member',
+      email: member.email || '',
+      phone: member.phone || '',
+      designation: member.designation || 'Parliamentary Juror',
+      assigned_bench: member.assigned_bench || 'Ruling',
+      status: member.status || 'Active'
     };
     all.push(newMember);
     this.setItem(STORAGE_KEYS.JURY, all);
@@ -592,20 +596,78 @@ class StorageService {
   public addVolunteer(volunteer: Partial<Volunteer>): Volunteer {
     const all = this.getVolunteers();
     const newVol: Volunteer = {
-      id: uid('vol'),
+      id: volunteer.id || uid('vol'),
       event_id: volunteer.event_id || '',
+      access_code: volunteer.access_code || Math.random().toString(36).substring(2, 8).toUpperCase(),
       name: volunteer.name || '',
       email: volunteer.email || '',
       phone: volunteer.phone || '',
-      role: volunteer.role || 'General'
+      station: volunteer.station || 'Floating',
+      shift: volunteer.shift || 'Both days',
+      is_yuva: volunteer.is_yuva !== undefined ? volunteer.is_yuva : true,
+      has_arrived: volunteer.has_arrived !== undefined ? volunteer.has_arrived : false,
+      role: volunteer.role || 'YUVA Volunteer',
+      created_at: new Date().toISOString()
     };
     all.push(newVol);
     this.setItem(STORAGE_KEYS.VOLUNTEERS, all);
     return newVol;
   }
 
+  public toggleVolunteerArrival(volunteerId: string) {
+    const all = this.getVolunteers().map(v => {
+      if (v.id === volunteerId) {
+        return { ...v, has_arrived: !v.has_arrived };
+      }
+      return v;
+    });
+    this.setItem(STORAGE_KEYS.VOLUNTEERS, all);
+  }
+
+  public bulkImportVolunteers(volunteersList: Partial<Volunteer>[], eventId: string) {
+    const existing = this.getVolunteers();
+    const newItems: Volunteer[] = volunteersList.map(v => ({
+      id: v.id || uid('vol'),
+      event_id: eventId,
+      access_code: v.access_code || Math.random().toString(36).substring(2, 8).toUpperCase(),
+      name: v.name || 'Volunteer',
+      email: v.email || '',
+      phone: v.phone || '',
+      station: v.station || 'Floating',
+      shift: v.shift || 'Both days',
+      is_yuva: v.is_yuva !== undefined ? v.is_yuva : true,
+      has_arrived: v.has_arrived || false,
+      role: v.role || 'YUVA Volunteer',
+      created_at: new Date().toISOString()
+    }));
+    this.setItem(STORAGE_KEYS.VOLUNTEERS, [...existing, ...newItems]);
+  }
+
   public deleteVolunteer(volunteerId: string) {
     this.setItem(STORAGE_KEYS.VOLUNTEERS, this.getVolunteers().filter(v => v.id !== volunteerId));
+  }
+
+  public saveCabinetMinistries(eventId: string, ministries: string[]) {
+    const events = this.getEvents().map(e =>
+      e.id === eventId ? { ...e, cabinet_ministries: ministries } : e
+    );
+    this.setItem(STORAGE_KEYS.EVENTS, events);
+  }
+
+  public saveWhatsAppLinks(eventId: string, treasuryLink: string, oppositionLink: string) {
+    const events = this.getEvents().map(e =>
+      e.id === eventId
+        ? { ...e, treasury_whatsapp_link: treasuryLink, opposition_whatsapp_link: oppositionLink }
+        : e
+    );
+    this.setItem(STORAGE_KEYS.EVENTS, events);
+  }
+
+  public updatePartyWhatsAppLink(partyId: string, link: string) {
+    const parties = this.getParties().map(p =>
+      p.id === partyId ? { ...p, whatsapp_group_link: link } : p
+    );
+    this.setItem(STORAGE_KEYS.PARTIES, parties);
   }
 
   // ── NOMINATIONS ───────────────────────────────────────────────────────────
@@ -1115,6 +1177,42 @@ class StorageService {
       return l;
     });
     this.setItem(STORAGE_KEYS.LEARNERS, all);
+  }
+
+  public rebalanceCommittees(eventId: string) {
+    const learners = this.getLearners(eventId);
+    const committees = this.getCommittees(eventId);
+    if (committees.length === 0 || learners.length === 0) return;
+
+    // Filter out Speaker and Deputy Speaker
+    const eligibleLearners = learners.filter(l => 
+      !l.role?.toLowerCase().includes('speaker')
+    );
+
+    // Group eligible learners by party
+    const partyGroups: Record<string, Learner[]> = {};
+    eligibleLearners.forEach(l => {
+      const pKey = l.party_name || 'Independent';
+      if (!partyGroups[pKey]) partyGroups[pKey] = [];
+      partyGroups[pKey].push(l);
+    });
+
+    const updatedLearners: Learner[] = [];
+    // Distribute each party evenly across committees
+    Object.values(partyGroups).forEach(group => {
+      group.forEach((learner, index) => {
+        const comm = committees[index % committees.length];
+        updatedLearners.push({
+          ...learner,
+          committee_id: comm.id,
+          committee_name: comm.name
+        });
+      });
+    });
+
+    const updatedMap = new Map(updatedLearners.map(l => [l.id, l]));
+    const allLearners = this.getLearners().map(l => updatedMap.get(l.id) || l);
+    this.setItem(STORAGE_KEYS.LEARNERS, allLearners);
   }
 }
 

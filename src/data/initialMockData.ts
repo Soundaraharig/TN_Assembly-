@@ -137,13 +137,21 @@ export const INITIAL_AGENDA: AgendaItem[] = [
 ];
 
 export const INITIAL_JURY: JuryMember[] = [
-  { id: '99999999-9999-4999-8999-999999999999', event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001', name: 'Justice K. Chandru (Retd.)', designation: 'Chief Juror', assigned_bench: 'Ruling' },
-  { id: '99999999-9999-4999-8999-999999999998', event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001', name: 'Prof. R. Vijayakumar', designation: 'Parliamentary Debate Expert', assigned_bench: 'Opposition' }
+  { id: '99999999-9999-4999-8999-999999999999', event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001', access_code: '659GTC', name: 'Sasikumar', designation: 'Parliamentary Analyst', assigned_bench: 'Ruling', status: 'Active', email: 'sasikumar@jury.org' },
+  { id: '99999999-9999-4999-8999-999999999998', event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001', access_code: 'P4SZZ5', name: 'dr.Krishnaveni', designation: 'Senior Faculty', assigned_bench: 'Opposition', status: 'Active', email: 'krishnaveni@jury.org' },
+  { id: '99999999-9999-4999-8999-999999999997', event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001', access_code: '2QAVUJ', name: 'Kishore Kumar', designation: 'Debate Evaluator', assigned_bench: 'Ruling', status: 'Active', email: 'kishore@jury.org' },
+  { id: '99999999-9999-4999-8999-999999999996', event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001', access_code: 'SQB3R6', name: 'Sivabalan', designation: 'Policy Expert', assigned_bench: 'Opposition', status: 'Active', email: 'sivabalan@jury.org' },
+  { id: '99999999-9999-4999-8999-999999999995', event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001', access_code: 'LLBBT3', name: 'Sairam', designation: 'Youth Affairs Juror', assigned_bench: 'Ruling', status: 'Active', email: 'sairam@jury.org' }
 ];
 
 export const INITIAL_VOLUNTEERS: Volunteer[] = [
-  { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001', name: 'Gokulnath R', email: 'gokul@jkkncet.ac.in', phone: '+91 9876543201', role: 'Stage & Mic Coordinator' },
-  { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab', event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001', name: 'Kavitha M', email: 'kavitha@jkkncet.ac.in', phone: '+91 9876543202', role: 'Registration & Badges Desk' }
+  { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001', access_code: 'KDVN5M', name: 'Alan', email: 'alan@yuva.org', phone: '8610271640', station: 'Floating', shift: 'both days', is_yuva: true, has_arrived: true, role: 'YUVA Volunteer' },
+  { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab', event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001', access_code: 'SFGP2J', name: 'Bharani', email: 'bharani@yuva.org', phone: '8610768483', station: 'Floating', shift: 'both days', is_yuva: true, has_arrived: true, role: 'YUVA Volunteer' },
+  { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaac', event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001', access_code: 'ALHS6Z', name: 'Brindha', email: 'brindha@yuva.org', phone: '9123525224', station: 'Floating', shift: 'both days', is_yuva: true, has_arrived: true, role: 'YUVA Volunteer' },
+  { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaad', event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001', access_code: 'L7BFBG', name: 'Brindha N', email: 'brindhan@yuva.org', phone: '9025183153', station: 'Floating', shift: 'both days', is_yuva: true, has_arrived: true, role: 'YUVA Volunteer' },
+  { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaae', event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001', access_code: '6G5HMN', name: 'Deeksha', email: 'deeksha@yuva.org', phone: '9600679949', station: 'Floating', shift: 'both days', is_yuva: true, has_arrived: true, role: 'YUVA Volunteer' },
+  { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaf', event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001', access_code: '62G7PW', name: 'Deepika.V', email: 'deepika@yuva.org', phone: '9080370992', station: 'Floating', shift: 'both days', is_yuva: true, has_arrived: true, role: 'YUVA Volunteer' },
+  { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaag', event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001', access_code: '81KL9Q', name: 'Dhanushree', email: 'dhanushree@yuva.org', phone: '8778034328', station: 'Now Speaking (Speaker\'s aide)', shift: 'both days', is_yuva: true, has_arrived: true, role: 'Speaker\'s aide' }
 ];
 
 export const INITIAL_LEARNERS: Learner[] = [

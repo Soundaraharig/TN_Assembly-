@@ -32,6 +32,9 @@ export interface CollegeEvent {
   assigned_coordinator_name?: string;
   elections_count?: number;
   is_locked?: boolean;
+  treasury_whatsapp_link?: string;
+  opposition_whatsapp_link?: string;
+  cabinet_ministries?: string[];
   created_at: string;
 }
 
@@ -75,6 +78,7 @@ export interface Party {
   color: string;
   leader?: string;
   manifesto?: string;
+  whatsapp_group_link?: string;
 }
 
 export interface Committee {
@@ -100,20 +104,28 @@ export interface AgendaItem {
 export interface JuryMember {
   id: string;
   event_id: string;
-  access_code?: string;
+  access_code: string;
   name: string;
-  designation: string;
+  email?: string;
+  phone?: string;
+  designation?: string;
   assigned_bench: BenchType;
+  status?: 'Active' | 'Inactive';
 }
 
 export interface Volunteer {
   id: string;
   event_id: string;
-  access_code?: string;
+  access_code: string;
   name: string;
-  email: string;
-  phone: string;
-  role: string;
+  email?: string;
+  phone?: string;
+  station?: string;
+  shift?: string;
+  is_yuva?: boolean;
+  has_arrived?: boolean;
+  role?: string;
+  created_at?: string;
 }
 
 // ── NEW MODULE INTERFACES ──────────────────────────────────────────

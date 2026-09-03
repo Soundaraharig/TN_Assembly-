@@ -778,9 +778,21 @@ export function App() {
                   parties={parties}
                   learners={learners}
                   eventId={currentEvent.id}
+                  treasuryWhatsApp={currentEvent.treasury_whatsapp_link}
+                  oppositionWhatsApp={currentEvent.opposition_whatsapp_link}
+                  onSaveWhatsAppLinks={(t, o) => {
+                    storageService.saveWhatsAppLinks(currentEvent.id, t, o);
+                    setCurrentEvent(prev => prev ? { ...prev, treasury_whatsapp_link: t, opposition_whatsapp_link: o } : prev);
+                  }}
+                  onUpdatePartyWhatsApp={(id, link) => {
+                    storageService.updatePartyWhatsAppLink(id, link);
+                  }}
                   onAddParty={handleAddParty}
                   onUpdateParty={handleUpdateParty}
                   onDeleteParty={handleDeleteParty}
+                  onRebalanceCommittees={() => {
+                    storageService.rebalanceCommittees(currentEvent.id);
+                  }}
                   onShowToast={addToast}
                 />
               )}
@@ -800,7 +812,16 @@ export function App() {
 
               {/* 11. CABINET TAB */}
               {activeNavTab === 'cabinet' && (
-                <CabinetTab learners={learners} />
+                <CabinetTab
+                  learners={learners}
+                  eventId={currentEvent.id}
+                  savedMinistries={currentEvent.cabinet_ministries}
+                  onSaveCabinet={(ministries) => {
+                    storageService.saveCabinetMinistries(currentEvent.id, ministries);
+                    setCurrentEvent(prev => prev ? { ...prev, cabinet_ministries: ministries } : prev);
+                  }}
+                  onShowToast={addToast}
+                />
               )}
 
               {/* 12. JURY TAB */}
@@ -820,6 +841,12 @@ export function App() {
                   volunteers={volunteers}
                   eventId={currentEvent.id}
                   onAddVolunteer={handleAddVolunteer}
+                  onToggleArrival={(id) => {
+                    storageService.toggleVolunteerArrival(id);
+                  }}
+                  onBulkImportVolunteers={(vols) => {
+                    storageService.bulkImportVolunteers(vols, currentEvent.id);
+                  }}
                   onDeleteVolunteer={handleDeleteVolunteer}
                   onShowToast={addToast}
                 />

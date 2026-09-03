@@ -8,77 +8,176 @@ export interface CSVImportResult {
   errors: string[];
 }
 
+export function parseAcademicYear(val: any): AcademicYear {
+  if (!val) return '1st Year';
+  const str = String(val).trim().toLowerCase();
+  
+  if (
+    str.includes('4th') ||
+    str.includes('fourth') ||
+    str.includes('final') ||
+    str.includes('iv') ||
+    str === '4' ||
+    str === 'iv year' ||
+    str === 'fourth year' ||
+    str.startsWith('4') ||
+    str.includes('senior')
+  ) {
+    return '4th Year';
+  }
+  if (
+    str.includes('3rd') ||
+    str.includes('third') ||
+    str.includes('iii') ||
+    str === '3' ||
+    str === 'iii year' ||
+    str === 'third year' ||
+    str.startsWith('3') ||
+    str.includes('junior')
+  ) {
+    return '3rd Year';
+  }
+  if (
+    str.includes('2nd') ||
+    str.includes('second') ||
+    str.includes('ii') ||
+    str === '2' ||
+    str === 'ii year' ||
+    str === 'second year' ||
+    str.startsWith('2') ||
+    str.includes('sophomore')
+  ) {
+    return '2nd Year';
+  }
+  if (
+    str.includes('1st') ||
+    str.includes('first') ||
+    str.includes('i') ||
+    str === '1' ||
+    str === 'i year' ||
+    str === 'first year' ||
+    str.startsWith('1') ||
+    str.includes('freshman')
+  ) {
+    return '1st Year';
+  }
+  return '1st Year';
+}
+
+function processRows(rows: any[], eventId: string, existingCodes: Set<string>): CSVImportResult {
+  const learners: Partial<Learner>[] = [];
+  const errors: string[] = [];
+
+  const normalizeHeader = (h: string) =>
+    h ? h.trim().toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+
+  rows.forEach((row: any, index: number) => {
+    const rawHeaders = Object.keys(row);
+    const headerMap = new Map(rawHeaders.map(h => [normalizeHeader(h), h]));
+
+    // Find Best Matching Column
+    const findField = (aliases: string[]): string => {
+      for (const alias of aliases) {
+        const norm = normalizeHeader(alias);
+        const actualKey = headerMap.get(norm);
+        if (actualKey && row[actualKey] !== undefined && row[actualKey] !== null) {
+          const val = String(row[actualKey]).trim();
+          if (val) return val;
+        }
+      }
+      return '';
+    };
+
+    const name = findField([
+      'fullname', 'name', 'studentname', 'learnername', 'participantname',
+      'delegatename', 'candidatename', 'firstname', 'nameofstudent'
+    ]);
+
+    const email = findField([
+      'email', 'emailid', 'emailaddress', 'contactemail', 'mail', 'studentemail'
+    ]);
+
+    const phone = findField([
+      'phone', 'phonenumber', 'mobile', 'mobilenumber', 'contact',
+      'contactnumber', 'phoneno', 'mobileno', 'whatsapp', 'cell'
+    ]);
+
+    const department = findField([
+      'department', 'dept', 'branch', 'course', 'major',
+      'program', 'programme', 'specialization', 'stream', 'degree'
+    ]) || 'General';
+
+    const yearVal = findField([
+      'academicyear', 'year', 'yearofstudy', 'studyingyear',
+      'currentyear', 'class', 'batch', 'yr', 'std', 'semester', 'sem'
+    ]);
+
+    const academic_year = parseAcademicYear(yearVal);
+
+    if (!name) {
+      errors.push(`Row ${index + 1}: Missing delegate name`);
+      return;
+    }
+
+    const code = generateAccessCode(existingCodes);
+    existingCodes.add(code);
+
+    learners.push({
+      id: `l_${Date.now()}_${index}_${Math.random().toString(36).substring(2, 6)}`,
+      event_id: eventId,
+      access_code: code,
+      full_name: name,
+      email: email,
+      phone: phone,
+      department: department,
+      academic_year,
+      day1_checked_in: false,
+      day2_checked_in: false,
+      created_at: new Date().toISOString()
+    });
+  });
+
+  return { learners, errors };
+}
+
 export function parseCSVFile(
   file: File,
   eventId: string,
   existingCodes: Set<string>
 ): Promise<CSVImportResult> {
   return new Promise((resolve) => {
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      complete: (results) => {
-        const learners: Partial<Learner>[] = [];
-        const errors: string[] = [];
+    const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
 
-        const normalizeHeader = (h: string) => (h ? h.trim().toLowerCase() : '');
-
-        results.data.forEach((row: any, index: number) => {
-          const rawHeaders = Object.keys(row);
-          const headerMap = new Map(rawHeaders.map(h => [normalizeHeader(h), h]));
-
-          const nameKey = headerMap.get('name') || headerMap.get('full name') || headerMap.get('learner name') || headerMap.get('participant name') || headerMap.get('full name');
-          const name = nameKey ? String(row[nameKey]).trim() : '';
-
-          const emailKey = headerMap.get('email') || headerMap.get('email id') || headerMap.get('email address') || headerMap.get('contact email') || headerMap.get('email addresses');
-          const email = emailKey ? String(row[emailKey]).trim() : '';
-
-          const phoneKey = headerMap.get('phone') || headerMap.get('phone number') || headerMap.get('mobile') || headerMap.get('contact') || headerMap.get('mobile number') || headerMap.get('phone no');
-          const phone = phoneKey ? String(row[phoneKey]).trim() : '';
-
-          const deptKey = headerMap.get('department') || headerMap.get('dept') || headerMap.get('branch') || headerMap.get('course') || headerMap.get('major') || headerMap.get('program') || headerMap.get('specialization') || 'General';
-          const department = deptKey ? String(row[deptKey]).trim() : 'General';
-
-          let rawYear = row['Academic Year'] || row['Year'] || row['Year of Study'] || '1st Year';
-          let academic_year: AcademicYear = '1st Year';
-
-          if (String(rawYear).includes('4') || String(rawYear).toLowerCase().includes('fourth')) {
-            academic_year = '4th Year';
-          } else if (String(rawYear).includes('3') || String(rawYear).toLowerCase().includes('third')) {
-            academic_year = '3rd Year';
-          } else if (String(rawYear).includes('2') || String(rawYear).toLowerCase().includes('second')) {
-            academic_year = '2nd Year';
-          }
-
-          if (!name) {
-            errors.push(`Row ${index + 1}: Missing learner name`);
-            return;
-          }
-
-          const code = generateAccessCode(existingCodes);
-          existingCodes.add(code);
-
-          learners.push({
-            id: `l_${Date.now()}_${index}_${Math.random().toString(36).substring(2, 6)}`,
-            event_id: eventId,
-            access_code: code,
-            full_name: String(name).trim(),
-            email: String(email).trim(),
-            phone: String(phone).trim(),
-            department: String(department).trim(),
-            academic_year,
-            day1_checked_in: false,
-            day2_checked_in: false,
-            created_at: new Date().toISOString()
-          });
-        });
-
-        resolve({ learners, errors });
-      },
-      error: (err) => {
-        resolve({ learners: [], errors: [err.message] });
-      }
-    });
+    if (isExcel) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target?.result as ArrayBuffer);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const firstSheet = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheet];
+          const jsonData = XLSX.utils.sheet_to_json(worksheet);
+          const result = processRows(jsonData, eventId, existingCodes);
+          resolve(result);
+        } catch (err: any) {
+          resolve({ learners: [], errors: [`Excel parse error: ${err.message}`] });
+        }
+      };
+      reader.onerror = () => resolve({ learners: [], errors: ['Failed to read Excel file'] });
+      reader.readAsArrayBuffer(file);
+    } else {
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          const result = processRows(results.data, eventId, existingCodes);
+          resolve(result);
+        },
+        error: (err) => {
+          resolve({ learners: [], errors: [err.message] });
+        }
+      });
+    }
   });
 }
 
