@@ -42,7 +42,7 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
   };
 
   const handleDownloadTemplate = () => {
-    const csvContent = `Learner Name,Email,Phone,Department,Academic Year\nDeepak S,deepak@college.edu,+91 9876543210,Computer Science,3rd Year\nNisha R,nisha@college.edu,+91 9876543211,Electronics & Comm,2nd Year\nVijay M,vijay@college.edu,+91 9876543212,Mechanical,4th Year\nSrinivasan K,srini@college.edu,+91 9876543213,Biotechnology,1st Year`;
+    const csvContent = `Name,Email,Phone,Department,Academic Year\nDeepak S,deepak@college.edu,+91 9876543210,Computer Science,3rd Year\nNisha R,nisha@college.edu,+91 9876543211,Electronics & Comm,2nd Year\nVijay M,vijay@college.edu,+91 9876543212,Mechanical,4th Year\nSrinivasan K,srini@college.edu,+91 9876543213,Biotechnology,1st Year`;
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');

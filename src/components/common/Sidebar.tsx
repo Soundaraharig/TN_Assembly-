@@ -2,11 +2,11 @@ import React from 'react';
 import {
   LayoutDashboard,
   Users,
-  CheckSquare,
+  
   Clock,
   UserCheck,
   FileSpreadsheet,
-  HelpCircle,
+  
   BookOpen,
   Shield,
   Shuffle,
@@ -16,11 +16,11 @@ import {
   Sliders,
   Vote,
   FileText,
-  MessageSquare,
+  
   Grid,
-  Camera,
+  
   Trophy,
-  Award,
+  
   MessageCircle,
   BarChart,
   X
@@ -29,11 +29,9 @@ import {
 export type ActiveNavTab =
   | 'overview'
   | 'team'
-  | 'checklist'
   | 'agenda'
   | 'participants'
   | 'nominations'
-  | 'questionnaire'
   | 'committees'
   | 'parties'
   | 'allocation'
@@ -43,11 +41,7 @@ export type ActiveNavTab =
   | 'control'
   | 'elections'
   | 'proceedings'
-  | 'chat'
-  | 'scoregrid'
-  | 'media'
   | 'awards'
-  | 'chapterawards'
   | 'feedback'
   | 'report';
 
@@ -69,11 +63,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const beforeEventItems = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'team', label: 'Team', icon: Users },
-    { id: 'checklist', label: 'Checklist', icon: CheckSquare },
     { id: 'agenda', label: 'Agenda', icon: Clock },
     { id: 'participants', label: 'Participants', icon: UserCheck },
     { id: 'nominations', label: 'Nominations', icon: FileSpreadsheet },
-    { id: 'questionnaire', label: 'Questionnaire', icon: HelpCircle },
     { id: 'committees', label: 'Committees', icon: BookOpen },
     { id: 'parties', label: 'Parties', icon: Shield },
     { id: 'allocation', label: 'Allocation', icon: Shuffle },
@@ -86,14 +78,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'control', label: 'Control', icon: Sliders },
     { id: 'elections', label: 'Elections', icon: Vote },
     { id: 'proceedings', label: 'Proceedings', icon: FileText },
-    { id: 'chat', label: 'Chat', icon: MessageSquare },
-    { id: 'scoregrid', label: 'Score Grid', icon: Grid },
-    { id: 'media', label: 'Media', icon: Camera }
+    { id: 'scoregrid', label: 'Score Grid', icon: Grid }
   ];
 
   const afterEventItems = [
     { id: 'awards', label: 'Awards', icon: Trophy },
-    { id: 'chapterawards', label: 'Chapter Awards', icon: Award },
     { id: 'feedback', label: 'Feedback', icon: MessageCircle },
     { id: 'report', label: 'Report', icon: BarChart }
   ];

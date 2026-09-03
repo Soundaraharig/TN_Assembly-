@@ -21,15 +21,27 @@ export function parseCSVFile(
         const learners: Partial<Learner>[] = [];
         const errors: string[] = [];
 
+        const normalizeHeader = (h: string) => (h ? h.trim().toLowerCase() : '');
+
         results.data.forEach((row: any, index: number) => {
-          const name = row['Learner Name'] || row['Name'] || row['Full Name'] || row['Student Name'] || row['Delegate Name'] || row['Participant Name'] || row['Student Full Name'] || '';
-          const email = row['Email'] || row['Email ID'] || row['Email Address'] || row['Email Addresses'] || row['Email Id'] || row['Contact Email'] || '';
-          const phone = row['Phone'] || row['Phone Number'] || row['Mobile'] || row['Contact'] || row['Mobile Number'] || row['Phone No'] || '';
-          const department = row['Department'] || row['Dept'] || row['Branch'] || row['Course'] || row['Major'] || row['Program'] || row['Specialization'] || 'General';
-          
+          const rawHeaders = Object.keys(row);
+          const headerMap = new Map(rawHeaders.map(h => [normalizeHeader(h), h]));
+
+          const nameKey = headerMap.get('name') || headerMap.get('full name') || headerMap.get('learner name') || headerMap.get('participant name') || headerMap.get('full name');
+          const name = nameKey ? String(row[nameKey]).trim() : '';
+
+          const emailKey = headerMap.get('email') || headerMap.get('email id') || headerMap.get('email address') || headerMap.get('contact email') || headerMap.get('email addresses');
+          const email = emailKey ? String(row[emailKey]).trim() : '';
+
+          const phoneKey = headerMap.get('phone') || headerMap.get('phone number') || headerMap.get('mobile') || headerMap.get('contact') || headerMap.get('mobile number') || headerMap.get('phone no');
+          const phone = phoneKey ? String(row[phoneKey]).trim() : '';
+
+          const deptKey = headerMap.get('department') || headerMap.get('dept') || headerMap.get('branch') || headerMap.get('course') || headerMap.get('major') || headerMap.get('program') || headerMap.get('specialization') || 'General';
+          const department = deptKey ? String(row[deptKey]).trim() : 'General';
+
           let rawYear = row['Academic Year'] || row['Year'] || row['Year of Study'] || '1st Year';
           let academic_year: AcademicYear = '1st Year';
-          
+
           if (String(rawYear).includes('4') || String(rawYear).toLowerCase().includes('fourth')) {
             academic_year = '4th Year';
           } else if (String(rawYear).includes('3') || String(rawYear).toLowerCase().includes('third')) {

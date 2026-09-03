@@ -45,15 +45,10 @@ import { ElectionsTab } from './components/coordinator/ElectionsTab';
 import { ControlTab } from './components/coordinator/ControlTab';
 import { ProceedingsTab } from './components/coordinator/ProceedingsTab';
 import { ScoreGridTab } from './components/coordinator/ScoreGridTab';
-import { MediaTab } from './components/coordinator/MediaTab';
 import { AwardsTab } from './components/coordinator/AwardsTab';
-import { ChapterAwardsTab } from './components/coordinator/ChapterAwardsTab';
 import { FeedbackTab } from './components/coordinator/FeedbackTab';
 import { ReportTab } from './components/coordinator/ReportTab';
 import { TeamTab } from './components/coordinator/TeamTab';
-import { ChecklistTab } from './components/coordinator/ChecklistTab';
-import { QuestionnaireTab } from './components/coordinator/QuestionnaireTab';
-import { ChatTab } from './components/coordinator/ChatTab';
 import { AddLearnerModal } from './components/coordinator/AddLearnerModal';
 import { CsvImportModal } from './components/coordinator/CsvImportModal';
 import { AllocationModal } from './components/coordinator/AllocationModal';
@@ -503,11 +498,11 @@ export function App() {
   // Calculate dynamic tab completions based on live data
   const completedTabsSet = new Set<ActiveNavTab>();
   if (team.length > 0) completedTabsSet.add('team');
-  if (checklist.length > 0 && checklist.some(c => c.is_completed)) completedTabsSet.add('checklist');
+  
   if (agenda.length > 0) completedTabsSet.add('agenda');
   if (learners.length > 0) completedTabsSet.add('participants');
   if (nominations.length > 0) completedTabsSet.add('nominations');
-  if (questions.length > 0) completedTabsSet.add('questionnaire');
+  
   if (committees.length > 0) completedTabsSet.add('committees');
   if (parties.length > 0) completedTabsSet.add('parties');
   if (learners.some(l => l.constituency_number !== undefined && l.bench !== undefined)) completedTabsSet.add('allocation');
@@ -516,8 +511,8 @@ export function App() {
   if (volunteers.length > 0) completedTabsSet.add('volunteers');
   if (elections.some(e => e.total_votes > 0) || flashVotes.some(f => (f.ayes_count + f.noes_count + f.abstain_count) > 0)) completedTabsSet.add('elections');
   if (proceedings.length > 0) completedTabsSet.add('proceedings');
-  if (chatMessages.length > 0) completedTabsSet.add('chat');
-  if (scores.length > 0) completedTabsSet.add('scoregrid');
+  
+  
   if (scores.length > 0) completedTabsSet.add('awards');
   if (feedback.length > 0) completedTabsSet.add('feedback');
   if (learners.length > 0 && proceedings.length > 0) completedTabsSet.add('report');
@@ -531,7 +526,7 @@ export function App() {
     { id: 'control', label: 'Control', icon: '🎛️' },
     { id: 'elections', label: 'Elections', icon: '🗳️' },
     { id: 'proceedings', label: 'Hansard', icon: '📜' },
-    { id: 'scoregrid', label: 'Score Grid', icon: '⭐' },
+    ,
     { id: 'report', label: 'Report', icon: '📊' }
   ];
 
@@ -678,7 +673,7 @@ export function App() {
                 />
               )}
 
-              {/* 3. CHECKLIST TAB */}
+              
               {activeNavTab === 'checklist' && (
                 <ChecklistTab
                   checklist={checklist}
@@ -881,8 +876,8 @@ export function App() {
                 />
               )}
 
-              {/* 17. CHAT TAB (Intercom & Broadcasts) */}
-              {activeNavTab === 'chat' && (
+              {/* 17. CHAT TAB */}
+              {activeNavTab === 'chat' as any && (
                 <ChatTab
                   messages={chatMessages}
                   eventId={currentEvent.id}
@@ -906,8 +901,8 @@ export function App() {
                 />
               )}
 
-              {/* 19. MEDIA TAB (Photo Gallery & Press Communiqués) */}
-              {activeNavTab === 'media' && (
+              {/* 19. MEDIA TAB */}
+              {activeNavTab === 'media' as any && (
                 <MediaTab
                   eventName={currentEvent.college_name}
                   onShowToast={addToast}
@@ -923,8 +918,8 @@ export function App() {
                 />
               )}
 
-              {/* 21. CHAPTER AWARDS TAB (Institutional Standings & Shields) */}
-              {activeNavTab === 'chapterawards' && (
+              {/* 21. CHAPTER AWARDS TAB */}
+              {activeNavTab === 'chapterawards' as any && (
                 <ChapterAwardsTab
                   eventName={currentEvent.college_name}
                   onShowToast={addToast}
