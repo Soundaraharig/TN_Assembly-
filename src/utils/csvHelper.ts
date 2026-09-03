@@ -22,10 +22,10 @@ export function parseCSVFile(
         const errors: string[] = [];
 
         results.data.forEach((row: any, index: number) => {
-          const name = row['Learner Name'] || row['Name'] || row['Full Name'] || row['Student Name'];
-          const email = row['Email'] || row['Email ID'] || row['Email Address'] || '';
-          const phone = row['Phone'] || row['Phone Number'] || row['Mobile'] || row['Contact'] || '';
-          const department = row['Department'] || row['Dept'] || row['Branch'] || row['Course'] || 'General';
+          const name = row['Learner Name'] || row['Name'] || row['Full Name'] || row['Student Name'] || row['Delegate Name'] || row['Participant Name'] || row['Student Full Name'] || '';
+          const email = row['Email'] || row['Email ID'] || row['Email Address'] || row['Email Addresses'] || row['Email Id'] || row['Contact Email'] || '';
+          const phone = row['Phone'] || row['Phone Number'] || row['Mobile'] || row['Contact'] || row['Mobile Number'] || row['Phone No'] || '';
+          const department = row['Department'] || row['Dept'] || row['Branch'] || row['Course'] || row['Major'] || row['Program'] || row['Specialization'] || 'General';
           
           let rawYear = row['Academic Year'] || row['Year'] || row['Year of Study'] || '1st Year';
           let academic_year: AcademicYear = '1st Year';

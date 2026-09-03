@@ -234,6 +234,17 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
             </div>
           </div>
 
+          {/* ── Small Join Access Code Button ───────────────────── */}
+          <div className="mt-4 flex items-center justify-center">
+            <button
+              onClick={() => { setAccessCode(''); setCodeError(''); }}
+              className="px-4 py-2 rounded-xl bg-amber-600 text-white text-xs font-bold shadow-md flex items-center gap-2 cursor-pointer hover:scale-102 transition-transform"
+            >
+              <KeyRound className="w-3.5 h-3.5" />
+              <span>Join with Access Code</span>
+            </button>
+          </div>
+
           {/* ── Student / Delegate Access ─────────────────────────── */}
           <div
             className="p-4 rounded-2xl border space-y-3"

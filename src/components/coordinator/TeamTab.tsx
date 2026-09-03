@@ -180,15 +180,20 @@ export const TeamTab: React.FC<TeamTabProps> = ({
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>Role / Designation</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Floor Lead"
+                  <select
                     value={role}
                     onChange={(e) => setRole(e.target.value)}
                     className="w-full p-2 rounded-xl border focus:outline-none"
                     style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
-                  />
+                  >
+                    <option value="Floor Lead">Floor Lead</option>
+                    <option value="Chapter">Chapter</option>
+                    <option value="Chair">Chair</option>
+                    <option value="Sub Coordinator">Sub Coordinator</option>
+                    <option value="Co-Coordinator">Co-Coordinator</option>
+                    <option value="Technical Lead">Technical Lead</option>
+                    <option value="Floor Marshal">Floor Marshal</option>
+                  </select>
                 </div>
                 <div>
                   <label className="block font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>Department</label>
