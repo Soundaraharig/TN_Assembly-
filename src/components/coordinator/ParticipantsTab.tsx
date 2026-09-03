@@ -14,7 +14,9 @@ import {
   SlidersHorizontal,
   ChevronDown,
   Trash2,
-  Pencil
+  Pencil,
+  AlertTriangle,
+  X
 } from 'lucide-react';
 
 interface ParticipantsTabProps {
@@ -29,6 +31,8 @@ interface ParticipantsTabProps {
   onOpenAllocationModal: () => void;
   onUpdateLearner: (learner: Learner) => void;
   onDeleteLearner: (learnerId: string) => void;
+  onDeleteMultipleLearners?: (learnerIds: string[]) => void;
+  onClearAllLearners?: () => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -44,6 +48,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
   onOpenAllocationModal,
   onUpdateLearner,
   onDeleteLearner,
+  onDeleteMultipleLearners,
+  onClearAllLearners,
   onShowToast
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -55,29 +61,22 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
   const [selectedCommittee, setSelectedCommittee] = useState<string>('ALL');
   const [selectedBench, setSelectedBench] = useState<string>('ALL');
 
+  // Multi-Selection State for Mass Actions
+  const [selectedLearnerIds, setSelectedLearnerIds] = useState<Set<string>>(new Set());
+
   // Edit Modal State
   const [editingLearner, setEditingLearner] = useState<Learner | null>(null);
 
-  // Delete authorization state
+  // Single Delete authorization state
   const [deletingLearnerId, setDeletingLearnerId] = useState<string | null>(null);
   const [coordAuthPass, setCoordAuthPass] = useState('');
   const [authError, setAuthError] = useState('');
 
-  const handleConfirmDelete = (e: React.FormEvent) => {
-    e.preventDefault();
-    const pass = coordAuthPass.trim();
-    if (pass === 'coord123' || pass === 'admin123' || pass.length >= 6) {
-      if (deletingLearnerId) {
-        onDeleteLearner(deletingLearnerId);
-        onShowToast('Participant Deleted', 'Removed participant record with coordinator authorization', 'info');
-      }
-      setDeletingLearnerId(null);
-      setCoordAuthPass('');
-      setAuthError('');
-    } else {
-      setAuthError('Unauthorized: Invalid Coordinator Password/ID. Sub-coordinators cannot delete delegate info without Lead Coordinator authorization.');
-    }
-  };
+  // Mass Delete Modal State
+  const [isMassDeleteModalOpen, setIsMassDeleteModalOpen] = useState(false);
+  const [massDeleteScope, setMassDeleteScope] = useState<'SELECTED' | 'FILTERED' | 'ALL'>('SELECTED');
+  const [massDeletePass, setMassDeletePass] = useState('');
+  const [massDeleteError, setMassDeleteError] = useState('');
 
   const day1CheckedCount = learners.filter(l => l.day1_checked_in).length;
   const day2CheckedCount = learners.filter(l => l.day2_checked_in).length;
@@ -112,16 +111,141 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
     });
   }, [learners, searchTerm, statusPill, dayPill, selectedParty, selectedRole, selectedCommittee, selectedBench]);
 
+  // Selection toggles
+  const isAllFilteredSelected = filteredLearners.length > 0 && filteredLearners.every(l => selectedLearnerIds.has(l.id));
+
+  const handleToggleSelectAll = () => {
+    if (isAllFilteredSelected) {
+      // Deselect all filtered
+      const next = new Set(selectedLearnerIds);
+      filteredLearners.forEach(l => next.delete(l.id));
+      setSelectedLearnerIds(next);
+    } else {
+      // Select all filtered
+      const next = new Set(selectedLearnerIds);
+      filteredLearners.forEach(l => next.add(l.id));
+      setSelectedLearnerIds(next);
+    }
+  };
+
+  const handleToggleSelectRow = (id: string) => {
+    const next = new Set(selectedLearnerIds);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    setSelectedLearnerIds(next);
+  };
+
+  const handleDeselectAll = () => {
+    setSelectedLearnerIds(new Set());
+  };
+
+  // Single delete handler
+  const handleConfirmSingleDelete = (e: React.FormEvent) => {
+    e.preventDefault();
+    const pass = coordAuthPass.trim();
+    if (pass === 'coord123' || pass === 'admin123' || pass.length >= 6) {
+      if (deletingLearnerId) {
+        onDeleteLearner(deletingLearnerId);
+        setSelectedLearnerIds(prev => {
+          const next = new Set(prev);
+          next.delete(deletingLearnerId);
+          return next;
+        });
+        onShowToast('Participant Deleted', 'Removed participant record with coordinator authorization', 'info');
+      }
+      setDeletingLearnerId(null);
+      setCoordAuthPass('');
+      setAuthError('');
+    } else {
+      setAuthError('Unauthorized: Invalid Coordinator Password/ID. Sub-coordinators cannot delete delegate info without Lead Coordinator authorization.');
+    }
+  };
+
+  // Mass delete handler
+  const handleConfirmMassDelete = (e: React.FormEvent) => {
+    e.preventDefault();
+    const pass = massDeletePass.trim();
+    if (pass !== 'coord123' && pass !== 'admin123' && pass !== 'DELETE' && pass.length < 6) {
+      setMassDeleteError('Unauthorized: Enter valid Coordinator Password (coord123 / admin123) or type DELETE to confirm.');
+      return;
+    }
+
+    if (massDeleteScope === 'SELECTED') {
+      const idsToDelete = Array.from(selectedLearnerIds);
+      if (idsToDelete.length === 0) {
+        setMassDeleteError('No delegates selected to delete.');
+        return;
+      }
+      if (onDeleteMultipleLearners) {
+        onDeleteMultipleLearners(idsToDelete);
+      } else {
+        idsToDelete.forEach(id => onDeleteLearner(id));
+      }
+      onShowToast('Mass Delete Complete', `Successfully removed ${idsToDelete.length} selected delegates`, 'success');
+      setSelectedLearnerIds(new Set());
+    } else if (massDeleteScope === 'FILTERED') {
+      const idsToDelete = filteredLearners.map(l => l.id);
+      if (idsToDelete.length === 0) {
+        setMassDeleteError('No matching filtered delegates to delete.');
+        return;
+      }
+      if (onDeleteMultipleLearners) {
+        onDeleteMultipleLearners(idsToDelete);
+      } else {
+        idsToDelete.forEach(id => onDeleteLearner(id));
+      }
+      onShowToast('Filtered Delegates Deleted', `Removed ${idsToDelete.length} filtered delegates`, 'success');
+      setSelectedLearnerIds(new Set());
+    } else if (massDeleteScope === 'ALL') {
+      if (onClearAllLearners) {
+        onClearAllLearners();
+      } else if (onDeleteMultipleLearners) {
+        onDeleteMultipleLearners(learners.map(l => l.id));
+      } else {
+        learners.forEach(l => onDeleteLearner(l.id));
+      }
+      onShowToast('Roster Cleared', `Successfully wiped all ${learners.length} delegate records`, 'info');
+      setSelectedLearnerIds(new Set());
+    }
+
+    setIsMassDeleteModalOpen(false);
+    setMassDeletePass('');
+    setMassDeleteError('');
+  };
+
+  // Batch Check-in for selected
+  const handleBatchCheckIn = (day: 1 | 2) => {
+    selectedLearnerIds.forEach(id => {
+      const target = learners.find(l => l.id === id);
+      if (target) {
+        if (day === 1 && !target.day1_checked_in) onToggleCheckIn(id, 1);
+        if (day === 2 && !target.day2_checked_in) onToggleCheckIn(id, 2);
+      }
+    });
+    onShowToast(`Day ${day} Batch Check-In`, `Updated check-in status for ${selectedLearnerIds.size} delegates`, 'success');
+  };
+
+  // Batch Badges for selected
+  const handleBatchPrintBadges = () => {
+    const selectedLearners = learners.filter(l => selectedLearnerIds.has(l.id));
+    if (selectedLearners.length === 0) return;
+    generateDelegateBadgesPDF(selectedLearners, eventName);
+    onShowToast('Badges Generated', `Downloaded badges for ${selectedLearners.length} selected delegates`, 'success');
+  };
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 animate-fade-in">
       
       {/* Header Metric Badges */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <h3 className="text-lg font-black text-slate-900">
+          <h3 className="text-lg font-black text-slate-900 dark:text-white">
             Participants ({learners.length})
           </h3>
-          <div className="flex items-center gap-2 text-xs font-semibold text-emerald-700">
+          <div className="flex items-center gap-2 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500"></span> Day 1: {day1CheckedCount}</span>
             <span>•</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500"></span> Day 2: {day2CheckedCount} of {learners.length}</span>
@@ -136,7 +260,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
               onCheckInAll(1, true);
               onShowToast('Day 1 Attendance Updated', 'Checked in all delegates for Day 1', 'success');
             }}
-            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold border border-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
           >
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
             <span>Check In All - Day 1</span>
@@ -147,7 +271,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
               onCheckInAll(2, true);
               onShowToast('Day 2 Attendance Updated', 'Checked in all delegates for Day 2', 'success');
             }}
-            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold border border-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
           >
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
             <span>Check In All - Day 2</span>
@@ -155,7 +279,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
 
           <button
             onClick={onOpenImportCsv}
-            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold border border-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
           >
             <Upload className="w-3.5 h-3.5 text-slate-500" />
             <span>Import CSV / Excel</span>
@@ -163,18 +287,18 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
 
           {/* Export Dropdown */}
           <div className="relative group">
-            <button className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold border border-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer">
+            <button className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer">
               <Download className="w-3.5 h-3.5 text-slate-500" />
               <span>Download List & Attendance</span>
               <ChevronDown className="w-3 h-3 text-slate-400" />
             </button>
-            <div className="absolute right-0 top-full mt-1.5 w-48 bg-white border border-slate-200 rounded-xl shadow-xl py-1.5 hidden group-hover:block z-30">
+            <div className="absolute right-0 top-full mt-1.5 w-48 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl py-1.5 hidden group-hover:block z-30">
               <button
                 onClick={() => {
                   exportFullParticipantDataToExcel(filteredLearners, eventName);
                   onShowToast('Excel Exported', `Exported ${filteredLearners.length} participant records`, 'success');
                 }}
-                className="w-full text-left px-3.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                className="w-full text-left px-3.5 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700"
               >
                 Export to Excel (.xlsx)
               </button>
@@ -183,7 +307,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                   exportFullParticipantDataToCSV(filteredLearners, eventName);
                   onShowToast('CSV Exported', `Exported ${filteredLearners.length} participant records`, 'success');
                 }}
-                className="w-full text-left px-3.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                className="w-full text-left px-3.5 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700"
               >
                 Export to CSV (.csv)
               </button>
@@ -199,7 +323,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
               generateDelegateBadgesPDF(filteredLearners, eventName);
               onShowToast('Badges Generated', 'Downloaded printable PDF delegate badges', 'success');
             }}
-            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold border border-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
           >
             <Printer className="w-3.5 h-3.5 text-slate-500" />
             <span>Print Badges</span>
@@ -207,10 +331,26 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
 
           <button
             onClick={() => onShowToast('Access Codes Emailed', 'Sent access codes to enrolled student emails', 'info')}
-            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold border border-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
           >
             <Mail className="w-3.5 h-3.5 text-slate-500" />
             <span>Email Codes</span>
+          </button>
+
+          {/* Dedicated Mass Delete Button */}
+          <button
+            onClick={() => {
+              setMassDeleteScope(selectedLearnerIds.size > 0 ? 'SELECTED' : 'FILTERED');
+              setMassDeletePass('');
+              setMassDeleteError('');
+              setIsMassDeleteModalOpen(true);
+            }}
+            disabled={learners.length === 0}
+            className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 text-xs font-bold border border-rose-200 dark:border-rose-800/80 flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-40"
+            title="Mass delete or clear delegate roster"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+            <span>Mass Delete</span>
           </button>
 
           <button
@@ -225,7 +365,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
       </div>
 
       {/* Filter Pills & Dropdowns Toolbar */}
-      <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm space-y-3">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-4 shadow-sm space-y-3">
         
         <div className="flex flex-wrap items-center justify-between gap-3">
           
@@ -237,7 +377,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
               placeholder="Search by name or code..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-emerald-600 focus:bg-white"
+              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-9 pr-3 py-1.5 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-emerald-600 focus:bg-white dark:focus:bg-slate-800"
             />
           </div>
 
@@ -245,24 +385,24 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
           <div className="flex items-center gap-1 text-xs">
             <button
               onClick={() => setStatusPill('ALL')}
-              className={`px-3 py-1 rounded-full font-bold transition-all ${
-                statusPill === 'ALL' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              className={`px-3 py-1 rounded-full font-bold transition-all cursor-pointer ${
+                statusPill === 'ALL' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
               }`}
             >
               All ({learners.length})
             </button>
             <button
               onClick={() => setStatusPill('CHECKED_IN')}
-              className={`px-3 py-1 rounded-full font-bold transition-all ${
-                statusPill === 'CHECKED_IN' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              className={`px-3 py-1 rounded-full font-bold transition-all cursor-pointer ${
+                statusPill === 'CHECKED_IN' ? 'bg-emerald-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
               }`}
             >
               Checked in ({day1CheckedCount})
             </button>
             <button
               onClick={() => setStatusPill('NOT_CHECKED_IN')}
-              className={`px-3 py-1 rounded-full font-bold transition-all ${
-                statusPill === 'NOT_CHECKED_IN' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              className={`px-3 py-1 rounded-full font-bold transition-all cursor-pointer ${
+                statusPill === 'NOT_CHECKED_IN' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
               }`}
             >
               Not checked in ({learners.length - day1CheckedCount})
@@ -270,23 +410,23 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
           </div>
 
           {/* Day selection */}
-          <div className="flex items-center gap-1 text-xs bg-slate-100 p-0.5 rounded-xl border border-slate-200">
+          <div className="flex items-center gap-1 text-xs bg-slate-100 dark:bg-slate-800 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700">
             <span className="text-slate-400 px-2 font-medium">for</span>
             <button
               onClick={() => setDayPill('Day 1')}
-              className={`px-2.5 py-1 rounded-lg font-bold ${dayPill === 'Day 1' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600'}`}
+              className={`px-2.5 py-1 rounded-lg font-bold cursor-pointer ${dayPill === 'Day 1' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm' : 'text-slate-600 dark:text-slate-300'}`}
             >
               Day 1
             </button>
             <button
               onClick={() => setDayPill('Day 2')}
-              className={`px-2.5 py-1 rounded-lg font-bold ${dayPill === 'Day 2' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600'}`}
+              className={`px-2.5 py-1 rounded-lg font-bold cursor-pointer ${dayPill === 'Day 2' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm' : 'text-slate-600 dark:text-slate-300'}`}
             >
               Day 2
             </button>
             <button
               onClick={() => setDayPill('Either')}
-              className={`px-2.5 py-1 rounded-lg font-bold ${dayPill === 'Either' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600'}`}
+              className={`px-2.5 py-1 rounded-lg font-bold cursor-pointer ${dayPill === 'Either' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm' : 'text-slate-600 dark:text-slate-300'}`}
             >
               Either
             </button>
@@ -295,7 +435,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
         </div>
 
         {/* Dropdowns Row */}
-        <div className="flex flex-wrap items-center justify-between gap-2.5 border-t border-slate-100 pt-3 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2.5 border-t border-slate-100 dark:border-slate-800 pt-3 text-xs">
           
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-slate-400 font-medium">Filter:</span>
@@ -303,7 +443,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
             <select
               value={selectedParty}
               onChange={(e) => setSelectedParty(e.target.value)}
-              className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-slate-700 font-medium focus:outline-none"
+              className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 text-slate-700 dark:text-slate-200 font-medium focus:outline-none"
             >
               <option value="ALL">All parties</option>
               {parties.map(p => (
@@ -314,7 +454,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
             <select
               value={selectedRole}
               onChange={(e) => setSelectedRole(e.target.value)}
-              className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-slate-700 font-medium focus:outline-none"
+              className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 text-slate-700 dark:text-slate-200 font-medium focus:outline-none"
             >
               <option value="ALL">All roles</option>
               <option value="Chief Minister">Chief Minister</option>
@@ -328,7 +468,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
             <select
               value={selectedCommittee}
               onChange={(e) => setSelectedCommittee(e.target.value)}
-              className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-slate-700 font-medium focus:outline-none"
+              className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 text-slate-700 dark:text-slate-200 font-medium focus:outline-none"
             >
               <option value="ALL">All committees</option>
               {committees.map(c => (
@@ -339,7 +479,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
             <select
               value={selectedBench}
               onChange={(e) => setSelectedBench(e.target.value)}
-              className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-slate-700 font-medium focus:outline-none"
+              className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 text-slate-700 dark:text-slate-200 font-medium focus:outline-none"
             >
               <option value="ALL">All benches</option>
               <option value="Ruling">Ruling</option>
@@ -352,7 +492,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
             <span className="text-slate-400 font-medium">{filteredLearners.length} shown</span>
             <button
               onClick={onOpenAllocationModal}
-              className="px-3 py-1 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 font-semibold text-xs transition-colors flex items-center gap-1"
+              className="px-3 py-1 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 font-semibold text-xs transition-colors flex items-center gap-1 cursor-pointer"
             >
               <SlidersHorizontal className="w-3 h-3 text-slate-500" />
               <span>Set bench for shown rows</span>
@@ -363,10 +503,78 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
 
       </div>
 
+      {/* Floating Selection Action Bar (when rows are selected) */}
+      {selectedLearnerIds.size > 0 && (
+        <div className="bg-slate-900 text-white p-3.5 rounded-2xl shadow-xl flex flex-wrap items-center justify-between gap-3 animate-slide-up border border-slate-800">
+          <div className="flex items-center gap-2">
+            <span className="w-6 h-6 rounded-full bg-amber-500 text-slate-950 font-black text-xs flex items-center justify-center">
+              {selectedLearnerIds.size}
+            </span>
+            <span className="text-xs font-bold">
+              {selectedLearnerIds.size} delegate{selectedLearnerIds.size > 1 ? 's' : ''} selected
+            </span>
+            <span className="text-slate-400 text-xs">•</span>
+            <button
+              onClick={handleToggleSelectAll}
+              className="text-xs text-amber-400 hover:underline font-semibold cursor-pointer"
+            >
+              {isAllFilteredSelected ? 'Deselect filtered' : `Select all ${filteredLearners.length} filtered`}
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleBatchCheckIn(1)}
+              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 flex items-center gap-1 transition-colors cursor-pointer"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Check-In D1</span>
+            </button>
+
+            <button
+              onClick={() => handleBatchCheckIn(2)}
+              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 flex items-center gap-1 transition-colors cursor-pointer"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Check-In D2</span>
+            </button>
+
+            <button
+              onClick={handleBatchPrintBadges}
+              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 flex items-center gap-1 transition-colors cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5 text-amber-400" />
+              <span>Print Badges</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setMassDeleteScope('SELECTED');
+                setMassDeletePass('');
+                setMassDeleteError('');
+                setIsMassDeleteModalOpen(true);
+              }}
+              className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-xs font-bold text-white flex items-center gap-1.5 shadow-md transition-colors cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete Selected ({selectedLearnerIds.size})</span>
+            </button>
+
+            <button
+              onClick={handleDeselectAll}
+              className="p-1.5 text-slate-400 hover:text-white rounded-lg transition-colors cursor-pointer"
+              title="Clear selection"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Green Banner */}
-      <div className="p-3.5 bg-emerald-50/90 border border-emerald-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-emerald-900">
+      <div className="p-3.5 bg-emerald-50/90 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-emerald-900 dark:text-emerald-300">
         <span className="font-semibold flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
           <span>
             {learners.length > 0 
               ? `All ${learners.length} delegates have a recorded bench. Jurors observe bench criteria.` 
@@ -393,6 +601,16 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
           <table className="w-full text-left text-xs">
             <thead style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>
               <tr>
+                {/* Master Checkbox */}
+                <th className="py-3 px-3 text-center w-10">
+                  <input
+                    type="checkbox"
+                    checked={isAllFilteredSelected}
+                    onChange={handleToggleSelectAll}
+                    className="w-4 h-4 rounded text-emerald-600 focus:ring-0 cursor-pointer"
+                    title={isAllFilteredSelected ? 'Deselect all' : 'Select all filtered'}
+                  />
+                </th>
                 <th className="py-3 px-3 text-center">Check-in</th>
                 <th className="py-3 px-3 text-center">Access Code</th>
                 <th className="py-3 px-3 text-center">#</th>
@@ -409,120 +627,154 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
             <tbody className="divide-y" style={{ borderColor: 'var(--border-soft)' }}>
               {filteredLearners.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="py-8 text-center text-slate-400 italic">
+                  <td colSpan={12} className="py-8 text-center text-slate-400 italic">
                     No delegate participants found. Click "+ Quick Add Walk-in" to add delegates.
                   </td>
                 </tr>
               ) : (
-                filteredLearners.map((learner, idx) => (
-                  <tr key={learner.id} className="hover:bg-slate-50/60 transition-colors">
-                    
-                    {/* Check-in D1 / D2 Badges */}
-                    <td className="py-3 px-3 text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        <button
-                          onClick={() => onToggleCheckIn(learner.id, 1)}
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all cursor-pointer ${
-                            learner.day1_checked_in
-                              ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                              : 'bg-slate-100 text-slate-400 border-slate-200 hover:border-slate-300'
-                          }`}
-                        >
-                          ● D1
-                        </button>
-                        <button
-                          onClick={() => onToggleCheckIn(learner.id, 2)}
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all cursor-pointer ${
-                            learner.day2_checked_in
-                              ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                              : 'bg-slate-100 text-slate-400 border-slate-200 hover:border-slate-300'
-                          }`}
-                        >
-                          ● D2
-                        </button>
-                      </div>
-                    </td>
+                filteredLearners.map((learner, idx) => {
+                  const isRowSelected = selectedLearnerIds.has(learner.id);
 
-                    {/* SEPARATE ACCESS CODE COLUMN */}
-                    <td className="py-3 px-3 text-center">
-                      <code className="px-2 py-1 rounded bg-amber-50 text-amber-800 border border-amber-200 font-mono font-bold text-xs">
-                        {learner.access_code}
-                      </code>
-                    </td>
+                  return (
+                    <tr
+                      key={learner.id}
+                      className={`transition-colors ${
+                        isRowSelected
+                          ? 'bg-amber-50/70 dark:bg-amber-950/20'
+                          : 'hover:bg-slate-50/60 dark:hover:bg-slate-800/40'
+                      }`}
+                    >
+                      {/* Row Checkbox */}
+                      <td className="py-3 px-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isRowSelected}
+                          onChange={() => handleToggleSelectRow(learner.id)}
+                          className="w-4 h-4 rounded text-emerald-600 focus:ring-0 cursor-pointer"
+                        />
+                      </td>
 
-                    {/* S.No */}
-                    <td className="py-3 px-3 text-center font-mono text-slate-400 text-[11px]">
-                      {idx + 1}
-                    </td>
+                      {/* Check-in D1 / D2 Badges */}
+                      <td className="py-3 px-3 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => onToggleCheckIn(learner.id, 1)}
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all cursor-pointer ${
+                              learner.day1_checked_in
+                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300'
+                                : 'bg-slate-100 text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700 hover:border-slate-300'
+                            }`}
+                          >
+                            ● D1
+                          </button>
+                          <button
+                            onClick={() => onToggleCheckIn(learner.id, 2)}
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all cursor-pointer ${
+                              learner.day2_checked_in
+                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300'
+                                : 'bg-slate-100 text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700 hover:border-slate-300'
+                            }`}
+                          >
+                            ● D2
+                          </button>
+                        </div>
+                      </td>
 
-                    {/* Delegate Name */}
-                    <td className="py-3 px-4 font-extrabold text-slate-900">
-                      {learner.full_name}
-                      <span className="block text-[10px] text-slate-400 font-normal">{learner.department} • {learner.academic_year}</span>
-                    </td>
+                      {/* SEPARATE ACCESS CODE COLUMN */}
+                      <td className="py-3 px-3 text-center">
+                        <code className="px-2 py-1 rounded bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800 font-mono font-bold text-xs">
+                          {learner.access_code}
+                        </code>
+                      </td>
 
-                    {/* Party */}
-                    <td className="py-3 px-4 font-bold text-slate-700">
-                      {learner.party_name || 'Unassigned'}
-                    </td>
+                      {/* Serial Number */}
+                      <td className="py-3 px-3 text-center font-mono text-slate-400">
+                        {idx + 1}
+                      </td>
 
-                    {/* Bench */}
-                    <td className="py-3 px-4">
-                      <span className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold ${
-                        learner.bench === 'Ruling' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'
-                      }`}>
-                        {learner.bench || 'Unallocated'}
-                      </span>
-                    </td>
+                      {/* Delegate Name & Department */}
+                      <td className="py-3 px-4">
+                        <div>
+                          <strong className="block font-bold text-slate-900 dark:text-white">
+                            {learner.full_name}
+                          </strong>
+                          <span className="text-[11px] text-slate-400">
+                            {learner.department || 'General'} • {learner.academic_year || '1st Year'}
+                          </span>
+                        </div>
+                      </td>
 
-                    {/* Role */}
-                    <td className="py-3 px-4">
-                      <span className="px-2.5 py-0.5 rounded-md text-[10px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                        {learner.role || 'Member of Assembly (MLA)'}
-                      </span>
-                    </td>
+                      {/* Party */}
+                      <td className="py-3 px-4">
+                        <span className="font-semibold text-slate-700 dark:text-slate-300">
+                          {learner.party_name || 'Independent'}
+                        </span>
+                      </td>
 
-                    {/* Const No */}
-                    <td className="py-3 px-3 text-center font-mono font-bold text-slate-600">
-                      {learner.constituency_number || (101 + idx)}
-                    </td>
+                      {/* Bench */}
+                      <td className="py-3 px-4">
+                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                          learner.bench === 'Ruling'
+                            ? 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300'
+                            : learner.bench === 'Opposition'
+                              ? 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300'
+                              : 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300'
+                        }`}>
+                          {learner.bench || 'Unallocated'}
+                        </span>
+                      </td>
 
-                    {/* Constituency */}
-                    <td className="py-3 px-4 font-semibold text-slate-800">
-                      {learner.constituency_name || '109 - Erode East'}
-                    </td>
+                      {/* Assembly Role */}
+                      <td className="py-3 px-4">
+                        <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[11px] font-medium inline-block max-w-[160px] truncate">
+                          {learner.role || 'MLA'}
+                        </span>
+                      </td>
 
-                    {/* District */}
-                    <td className="py-3 px-4 text-slate-600">
-                      {learner.district || 'Tamil Nadu'}
-                    </td>
+                      {/* Constituency No. */}
+                      <td className="py-3 px-3 text-center font-mono font-bold text-slate-600 dark:text-slate-300">
+                        {learner.constituency_number || '—'}
+                      </td>
 
-                    {/* Actions: Edit & Delete */}
-                    <td className="py-3 px-4 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() => setEditingLearner(learner)}
-                          className="p-1.5 text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors"
-                          title="Edit Participant Details"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => {
-                            setDeletingLearnerId(learner.id);
-                            setAuthError('');
-                            setCoordAuthPass('');
-                          }}
-                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                          title="Delete Participant (Requires Lead Coordinator Authorization)"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
+                      {/* Constituency Name */}
+                      <td className="py-3 px-4">
+                        <span className="font-medium text-slate-800 dark:text-slate-200">
+                          {learner.constituency_name ? `${learner.constituency_number ? `${learner.constituency_number} - ` : ''}${learner.constituency_name}` : '—'}
+                        </span>
+                      </td>
 
-                  </tr>
-                ))
+                      {/* District */}
+                      <td className="py-3 px-4 text-slate-500">
+                        {learner.district || 'Tamil Nadu'}
+                      </td>
+
+                      {/* Actions: Edit & Delete */}
+                      <td className="py-3 px-4 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => setEditingLearner(learner)}
+                            className="p-1.5 text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                            title="Edit Participant Details"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => {
+                              setDeletingLearnerId(learner.id);
+                              setAuthError('');
+                              setCoordAuthPass('');
+                            }}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors cursor-pointer"
+                            title="Delete Participant (Requires Lead Coordinator Authorization)"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -544,7 +796,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
         />
       )}
 
-      {/* Lead Coordinator Security Verification Modal for Deletion */}
+      {/* Single Delete Modal */}
       {deletingLearnerId && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div
@@ -560,7 +812,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
               Sub-coordinators can organize event tabs but cannot delete participant records. Enter <strong>Lead Coordinator Password / ID</strong> to confirm deletion.
             </p>
 
-            <form onSubmit={handleConfirmDelete} className="space-y-3">
+            <form onSubmit={handleConfirmSingleDelete} className="space-y-3">
               <div>
                 <label className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>
                   Coordinator Password / ID *
@@ -600,6 +852,137 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                   className="px-4 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md cursor-pointer"
                 >
                   Authorize Deletion
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── MASS DELETE MODAL ──────────────────────────────────────────────── */}
+      {isMassDeleteModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div
+            className="rounded-2xl max-w-lg w-full p-6 border shadow-2xl space-y-4 animate-scale-in"
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+          >
+            <div className="flex items-center gap-2 text-rose-600 border-b pb-3" style={{ borderColor: 'var(--border-soft)' }}>
+              <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
+              <h4 className="text-base font-black">Mass Delete & Roster Cleanup</h4>
+            </div>
+
+            <p className="text-xs text-slate-500">
+              Select the deletion scope below. This action permanently deletes delegates and their constituency/party allocations from Supabase cloud database.
+            </p>
+
+            {/* Scope Selection Radios */}
+            <div className="space-y-2 pt-1">
+              <label className="flex items-start gap-3 p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 cursor-pointer">
+                <input
+                  type="radio"
+                  name="massDeleteScope"
+                  checked={massDeleteScope === 'SELECTED'}
+                  onChange={() => setMassDeleteScope('SELECTED')}
+                  disabled={selectedLearnerIds.size === 0}
+                  className="mt-0.5 text-rose-600 focus:ring-0"
+                />
+                <div className="text-xs">
+                  <strong className="block font-bold text-slate-900 dark:text-white">
+                    Delete Selected Delegates ({selectedLearnerIds.size})
+                  </strong>
+                  <span className="text-slate-500 text-[11px]">
+                    Only removes the {selectedLearnerIds.size} delegates currently checked in the table.
+                  </span>
+                </div>
+              </label>
+
+              <label className="flex items-start gap-3 p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 cursor-pointer">
+                <input
+                  type="radio"
+                  name="massDeleteScope"
+                  checked={massDeleteScope === 'FILTERED'}
+                  onChange={() => setMassDeleteScope('FILTERED')}
+                  className="mt-0.5 text-rose-600 focus:ring-0"
+                />
+                <div className="text-xs">
+                  <strong className="block font-bold text-slate-900 dark:text-white">
+                    Delete All Filtered Delegates ({filteredLearners.length})
+                  </strong>
+                  <span className="text-slate-500 text-[11px]">
+                    Removes all {filteredLearners.length} delegates currently matching your search and filter criteria.
+                  </span>
+                </div>
+              </label>
+
+              <label className="flex items-start gap-3 p-3 rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50/60 dark:bg-rose-950/20 cursor-pointer">
+                <input
+                  type="radio"
+                  name="massDeleteScope"
+                  checked={massDeleteScope === 'ALL'}
+                  onChange={() => setMassDeleteScope('ALL')}
+                  className="mt-0.5 text-rose-600 focus:ring-0"
+                />
+                <div className="text-xs">
+                  <strong className="block font-bold text-rose-700 dark:text-rose-400">
+                    Clear Entire Roster ({learners.length} delegates)
+                  </strong>
+                  <span className="text-rose-600/80 dark:text-rose-300/70 text-[11px]">
+                    Wipes all registered participants for this event. Allows a fresh start for CSV import.
+                  </span>
+                </div>
+              </label>
+            </div>
+
+            {/* Coordinator Authorization Form */}
+            <form onSubmit={handleConfirmMassDelete} className="space-y-3 pt-2">
+              <div>
+                <label className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>
+                  Coordinator Password or Type 'DELETE' to Authorize *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Enter coord123, admin123 or DELETE"
+                  value={massDeletePass}
+                  onChange={(e) => setMassDeletePass(e.target.value)}
+                  className="w-full p-2.5 rounded-xl border text-xs focus:outline-none"
+                  style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                />
+              </div>
+
+              {massDeleteError && (
+                <p className="text-[11px] text-rose-500 font-semibold leading-tight">
+                  {massDeleteError}
+                </p>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMassDeleteModalOpen(false);
+                    setMassDeletePass('');
+                    setMassDeleteError('');
+                  }}
+                  className="px-4 py-2 rounded-xl border text-xs font-bold cursor-pointer"
+                  style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black shadow-md shadow-rose-600/20 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>
+                    Confirm & Delete {
+                      massDeleteScope === 'SELECTED'
+                        ? `(${selectedLearnerIds.size})`
+                        : massDeleteScope === 'FILTERED'
+                          ? `(${filteredLearners.length})`
+                          : `All (${learners.length})`
+                    }
+                  </span>
                 </button>
               </div>
             </form>

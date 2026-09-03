@@ -526,6 +526,44 @@ class StorageService {
     this.sbDelete('learners', learnerId);
   }
 
+  public deleteLearners(learnerIds: string[], eventId?: string) {
+    if (!learnerIds || learnerIds.length === 0) return;
+    const idSet = new Set(learnerIds);
+    const all = this.getLearners().filter(l => !idSet.has(l.id));
+    this.setItem(STORAGE_KEYS.LEARNERS, all);
+
+    if (eventId) {
+      const remainingCount = all.filter(l => l.event_id === eventId).length;
+      const events = this.getEvents().map(e =>
+        e.id === eventId ? { ...e, participant_count: remainingCount } : e
+      );
+      this.setItem(STORAGE_KEYS.EVENTS, events);
+    }
+
+    if (supabase) {
+      supabase.from('learners').delete().in('id', learnerIds).then(({ error }) => {
+        if (error) console.warn('[Supabase] bulk delete error:', error.message);
+      });
+    }
+  }
+
+  public clearAllLearners(eventId: string) {
+    if (!eventId) return;
+    const all = this.getLearners().filter(l => l.event_id !== eventId);
+    this.setItem(STORAGE_KEYS.LEARNERS, all);
+
+    const events = this.getEvents().map(e =>
+      e.id === eventId ? { ...e, participant_count: 0 } : e
+    );
+    this.setItem(STORAGE_KEYS.EVENTS, events);
+
+    if (supabase) {
+      supabase.from('learners').delete().eq('event_id', eventId).then(({ error }) => {
+        if (error) console.warn('[Supabase] clear all learners error:', error.message);
+      });
+    }
+  }
+
   public toggleCheckIn(learnerId: string, day: 1 | 2) {
     const all = this.getLearners().map(l => {
       if (l.id === learnerId) {
@@ -844,26 +882,57 @@ class StorageService {
   }
 
   private syncApprovedNominationToElection(nom: Nomination) {
-    const elections = this.getElections(nom.event_id);
+    let elections = this.getElections(nom.event_id);
     let targetType: 'SPEAKER' | 'LEADERSHIP' | 'DEPUTY_SPEAKER' | 'COMMITTEE' = 'LEADERSHIP';
     if (nom.position === 'Speaker') targetType = 'SPEAKER';
     if (nom.position === 'Deputy Speaker') targetType = 'DEPUTY_SPEAKER';
     if (nom.position === 'Committee Chair') targetType = 'COMMITTEE';
 
-    const election = elections.find(e => e.type === targetType);
-    if (election) {
-      const alreadyHas = election.candidates.some(c => c.name === nom.candidate_name);
-      if (!alreadyHas) {
-        election.candidates.push({
-          id: uid('cand'),
-          learner_id: nom.candidate_learner_id,
-          name: nom.candidate_name,
-          party: nom.party_name,
-          bench: nom.bench,
-          votes: 0
-        });
-        this.updateElection(election);
+    let election = elections.find(e => e.type === targetType);
+    if (!election) {
+      // Create the appropriate election type based on nomination position
+      let electionTitle: string;
+      if (nom.position === 'Speaker') {
+        electionTitle = 'Assembly Speaker Election';
+      } else if (nom.position === 'Ruling Party Leader') {
+        electionTitle = 'Ruling Party Leader Election';
+      } else if (nom.position === 'Opposition Party Leader') {
+        electionTitle = 'Opposition Party Leader Election';
+      } else if (nom.position === 'Deputy Speaker') {
+        electionTitle = 'Deputy Speaker Election';
+      } else if (nom.position === 'Committee Chair') {
+        electionTitle = 'Committee Chairperson Election';
+      } else {
+        electionTitle = 'Election';
       }
+
+      election = {
+        id: uid('elec'),
+        event_id: nom.event_id,
+        title: electionTitle,
+        position: nom.position,
+        type: targetType,
+        status: 'Live',
+        candidates: [],
+        total_votes: 0,
+        voted_delegate_ids: [],
+        created_at: new Date().toISOString()
+      } as Election;
+      elections = [election, ...(elections || [])];
+      this.setItem(STORAGE_KEYS.ELECTIONS, elections);
+    }
+
+    const alreadyHas = election.candidates.some(c => c.name === nom.candidate_name);
+    if (!alreadyHas) {
+      election.candidates.push({
+        id: uid('cand'),
+        learner_id: nom.candidate_learner_id,
+        name: nom.candidate_name,
+        party: nom.party_name,
+        bench: nom.bench,
+        votes: 0
+      });
+      this.updateElection(election);
     }
   }
 

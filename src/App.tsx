@@ -343,6 +343,24 @@ export function App() {
     addToast('Participant Deleted', 'Removed participant from event', 'info');
   };
 
+  const handleDeleteMultipleLearners = (ids: string[]) => {
+    if (currentEvent) {
+      storageService.deleteLearners(ids, currentEvent.id);
+      setLearners(storageService.getLearners(currentEvent.id));
+      setCurrentEvent(prev => prev ? { ...prev, participant_count: Math.max(0, (prev.participant_count || 0) - ids.length) } : prev);
+      addToast('Mass Delete', `Removed ${ids.length} participants`, 'info');
+    }
+  };
+
+  const handleClearAllLearners = () => {
+    if (currentEvent) {
+      storageService.clearAllLearners(currentEvent.id);
+      setLearners([]);
+      setCurrentEvent(prev => prev ? { ...prev, participant_count: 0 } : prev);
+      addToast('Roster Cleared', 'All delegate participants have been removed', 'info');
+    }
+  };
+
   const handleToggleCheckIn = (id: string, day: 1 | 2) => {
     storageService.toggleCheckIn(id, day);
   };
@@ -769,6 +787,8 @@ export function App() {
                   onOpenAllocationModal={() => setIsAllocationModalOpen(true)}
                   onUpdateLearner={handleUpdateLearner}
                   onDeleteLearner={handleDeleteLearner}
+                  onDeleteMultipleLearners={handleDeleteMultipleLearners}
+                  onClearAllLearners={handleClearAllLearners}
                   onShowToast={addToast}
                 />
               )}

@@ -265,54 +265,7 @@ export const INITIAL_NOMINATIONS: Nomination[] = [
   }
 ];
 
-export const INITIAL_ELECTIONS: Election[] = [
-  {
-    id: 'elec-001',
-    event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001',
-    title: 'Assembly Speaker Election',
-    position: 'Speaker of the Legislative Assembly',
-    type: 'SPEAKER',
-    status: 'Live',
-    candidates: [
-      { id: 'c1', learner_id: 'b2222222-2222-4222-8222-222222222222', name: 'Aaric Oliver J', party: 'Periyar Progressive Alliance', bench: 'Opposition', votes: 18 },
-      { id: 'c2', learner_id: 'b3333333-3333-4333-8333-333333333333', name: 'Aathira N.S', party: 'Dr. APJ Abdul Kalam Youth Front', bench: 'Ruling', votes: 15 }
-    ],
-    total_votes: 33,
-    winner: 'Aaric Oliver J',
-    voted_delegate_ids: [],
-    created_at: '2026-09-02T09:00:00Z'
-  },
-  {
-    id: 'elec-002',
-    event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001',
-    title: 'Ruling Party Leader & Chief Minister Election',
-    position: 'Ruling Bench Leader',
-    type: 'LEADERSHIP',
-    status: 'Closed',
-    candidates: [
-      { id: 'c3', learner_id: 'b3333333-3333-4333-8333-333333333333', name: 'Aathira N.S', party: 'Dr. APJ Abdul Kalam Youth Front', bench: 'Ruling', votes: 28 }
-    ],
-    total_votes: 28,
-    winner: 'Aathira N.S',
-    voted_delegate_ids: [],
-    created_at: '2026-09-01T15:00:00Z'
-  },
-  {
-    id: 'elec-003',
-    event_id: '9b1deb4d-3b7d-4bad-9bd2-2ca771300001',
-    title: 'Opposition Party Leader Election',
-    position: 'Leader of Opposition',
-    type: 'LEADERSHIP',
-    status: 'Closed',
-    candidates: [
-      { id: 'c4', learner_id: 'b1111111-1111-4111-8111-111111111111', name: 'A. Sharini', party: 'Periyar Progressive Alliance', bench: 'Opposition', votes: 22 }
-    ],
-    total_votes: 22,
-    winner: 'A. Sharini',
-    voted_delegate_ids: [],
-    created_at: '2026-09-01T15:30:00Z'
-  }
-];
+export const INITIAL_ELECTIONS: Election[] = [];
 
 export const INITIAL_FLASH_VOTES: LiveFlashVote[] = [
   {

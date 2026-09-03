@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { Election, LiveFlashVote, Learner, FlashVoteAudience } from '../../types';
+import type { Election, LiveFlashVote, Learner, FlashVoteAudience, ElectionCandidate } from '../../types';
 import {
   Vote,
   Plus,
@@ -75,15 +75,75 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
     e.preventDefault();
     if (!elecTitle.trim()) return;
 
-    // Pick top candidates from learners matching position
-    const candidates = learners.slice(0, 3).map(l => ({
-      id: `c_${l.id}`,
-      learner_id: l.id,
-      name: l.full_name,
-      party: l.party_name || 'Independent',
-      bench: l.bench || 'Ruling',
-      votes: 0
-    }));
+    // Dynamically select candidates based on election type and learners
+    let candidates: ElectionCandidate[];
+
+    switch (elecType) {
+      case 'SPEAKER':
+        // Speaker election: all learners compete, grouped by bench
+        candidates = learners.map(l => ({
+          id: `c_${l.id}`,
+          learner_id: l.id,
+          name: l.full_name,
+          party: l.party_name || 'Independent',
+          bench: l.bench || 'Ruling',
+          votes: 0
+        }));
+        break;
+
+      case 'LEADERSHIP':
+        // Party Leadership: create one candidate per party
+        const uniqueParties = [...new Set(learners.map(l => l.party_name).filter(Boolean))];
+        candidates = uniqueParties.map(party => {
+          const partyLearners = learners.filter(l => l.party_name === party);
+          // Select the first learner as party leader (could be CM or Opp Leader)
+          const leader = partyLearners[0];
+          return {
+            id: `c_${leader.id}`,
+            learner_id: leader.id,
+            name: leader.full_name,
+            party: party || 'Independent',
+            bench: leader.bench || 'Ruling',
+            votes: 0
+          };
+        });
+        break;
+
+      case 'DEPUTY_SPEAKER':
+        // Deputy Speaker: top learners from ruling and opposition
+        candidates = learners.slice(0, 3).map(l => ({
+          id: `c_${l.id}`,
+          learner_id: l.id,
+          name: l.full_name,
+          party: l.party_name || 'Independent',
+          bench: l.bench || 'Ruling',
+          votes: 0
+        }));
+        break;
+
+      case 'COMMITTEE':
+        // Committee Chairperson: top learners
+        candidates = learners.slice(0, 3).map(l => ({
+          id: `c_${l.id}`,
+          learner_id: l.id,
+          name: l.full_name,
+          party: l.party_name || 'Independent',
+          bench: l.bench || 'Ruling',
+          votes: 0
+        }));
+        break;
+
+      default:
+        // Default: top 3 learners
+        candidates = learners.slice(0, 3).map(l => ({
+          id: `c_${l.id}`,
+          learner_id: l.id,
+          name: l.full_name,
+          party: l.party_name || 'Independent',
+          bench: l.bench || 'Ruling',
+          votes: 0
+        }));
+    }
 
     onCreateElection({
       event_id: eventId,
