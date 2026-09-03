@@ -343,7 +343,7 @@ class StorageService {
       email: learner.email || '',
       phone: learner.phone || '',
       department: learner.department || 'General',
-      academic_year: learner.academic_year || '1st Year',
+      academic_year: learner.academic_year && learner.academic_year !== '1st Year' ? learner.academic_year : '1st Year',
       constituency_number: learner.constituency_number,
       constituency_name: learner.constituency_name,
       district: learner.district,
