@@ -198,44 +198,73 @@ export function App() {
       loadState();
     });
 
-    // Restore saved session on refresh
-    try {
-      const saved = localStorage.getItem(SESSION_KEY);
-      if (saved) {
-        const sess: SavedAuthSession = JSON.parse(saved);
-        if (sess.role) {
-          setIsAuthenticated(true);
-          setRole(sess.role);
-          if (sess.activeNavTab) setActiveNavTab(sess.activeNavTab);
-
-          setUserSession({
-            role: sess.role,
-            email: sess.email,
-            name: sess.name,
-            assigned_event_ids: sess.assigned_event_ids
-          });
-
+    // Check current browser path
+    const checkPathAndRestore = () => {
+      const path = typeof window !== 'undefined' ? window.location.pathname.toLowerCase() : '/';
+      try {
+        const saved = localStorage.getItem(SESSION_KEY);
+        if (saved) {
+          const sess: SavedAuthSession = JSON.parse(saved);
           const evs = storageService.getEvents();
-          if (sess.currentEventId) {
-            const targetEv = evs.find(e => e.id === sess.currentEventId);
-            if (targetEv) {
-              setCurrentEvent(targetEv);
-              currentEventRef.current = targetEv;
-              setLearners(storageService.getLearners(targetEv.id));
-            }
-          }
 
-          if (sess.role === 'student' && sess.studentCode) {
-            const targetStudent = storageService.getLearners().find(l => l.access_code === sess.studentCode);
+          if (path.includes('/me')) {
+            // Student portal direct route
+            setIsAuthenticated(true);
+            setRole('student');
+            const targetStudent = sess.studentCode
+              ? storageService.getLearners().find(l => l.access_code === sess.studentCode)
+              : storageService.getLearners()[0];
             if (targetStudent) setCurrentStudent(targetStudent);
+          } else if (path.includes('/jury')) {
+            // Jury portal direct route
+            setIsAuthenticated(true);
+            setRole('coordinator');
+            setActiveNavTab('scoregrid');
+          } else if (path.includes('/volunteer')) {
+            // Volunteer portal direct route
+            setIsAuthenticated(true);
+            setRole('coordinator');
+            setActiveNavTab('volunteers');
+          } else if (path.includes('/coordinator') || path.includes('/admin')) {
+            // Coordinator portal direct route
+            setIsAuthenticated(true);
+            setRole('coordinator');
+            if (sess.activeNavTab) setActiveNavTab(sess.activeNavTab);
+            if (sess.currentEventId) {
+              const targetEv = evs.find(e => e.id === sess.currentEventId);
+              if (targetEv) {
+                setCurrentEvent(targetEv);
+                currentEventRef.current = targetEv;
+              }
+            }
+          } else if (path === '/' || path === '/login' || path === '/join' || path === '/yip/join') {
+            // Base Home URL in new window/tab gives fresh login options
+            setIsAuthenticated(false);
+          } else if (sess.role) {
+            setIsAuthenticated(true);
+            setRole(sess.role);
+            if (sess.activeNavTab) setActiveNavTab(sess.activeNavTab);
+          }
+        } else if (path.includes('/me')) {
+          const firstLearner = storageService.getLearners()[0];
+          if (firstLearner) {
+            setIsAuthenticated(true);
+            setRole('student');
+            setCurrentStudent(firstLearner);
           }
         }
+      } catch (e) {
+        console.error('Session load error:', e);
       }
-    } catch (e) {
-      console.error('Session load error:', e);
-    }
+    };
 
-    return () => unsubscribe();
+    checkPathAndRestore();
+    window.addEventListener('popstate', checkPathAndRestore);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener('popstate', checkPathAndRestore);
+    };
   }, []);
 
   // Handlers for App interactions
@@ -458,6 +487,7 @@ export function App() {
                 currentEventId: coord.event_id,
                 activeNavTab: 'participants'
               });
+              if (typeof window !== 'undefined') window.history.pushState({}, '', '/coordinator');
               return sess;
             }
 
@@ -480,6 +510,7 @@ export function App() {
                 name: foundLearner.full_name,
                 currentEventId: foundLearner.event_id
               });
+              if (typeof window !== 'undefined') window.history.pushState({}, '', '/me');
               return foundLearner;
             }
 
@@ -489,6 +520,7 @@ export function App() {
               setIsAuthenticated(true);
               setRole('coordinator');
               setActiveNavTab('scoregrid');
+              if (typeof window !== 'undefined') window.history.pushState({}, '', '/jury');
               addToast('Jury Portal Access', `Authenticated Jury Member ${foundJury?.name || ''}`, 'success');
               return { id: 'jury', full_name: foundJury?.name || 'Jury Evaluator', access_code: cleanCode } as Learner;
             }
@@ -499,6 +531,7 @@ export function App() {
               setIsAuthenticated(true);
               setRole('coordinator');
               setActiveNavTab('volunteers');
+              if (typeof window !== 'undefined') window.history.pushState({}, '', '/volunteer');
               addToast('Volunteer Duty Portal Access', `Authenticated Volunteer ${foundVol?.name || ''}`, 'success');
               return { id: 'vol', full_name: foundVol?.name || 'Assembly Volunteer', access_code: cleanCode } as Learner;
             }
@@ -574,6 +607,7 @@ export function App() {
           setIsAuthenticated(false);
           setCurrentStudent(null);
           clearSession();
+          if (typeof window !== 'undefined') window.history.pushState({}, '', '/');
           addToast('Signed Out', 'You have been signed out', 'info');
         }}
         onGoHome={() => {
@@ -668,6 +702,7 @@ export function App() {
               {activeNavTab === 'overview' && (
                 <EventOverviewTab
                   event={currentEvent}
+                  participantCount={learners.length}
                   onUpdateEvent={(upd) => {
                     storageService.updateEvent(upd);
                     setCurrentEvent(upd);
@@ -870,8 +905,15 @@ export function App() {
               {activeNavTab === 'control' && (
                 <ControlTab
                   learners={learners}
+                  parties={parties}
+                  agenda={agenda}
+                  scores={scores}
+                  elections={elections}
+                  flashVotes={flashVotes}
+                  currentEvent={currentEvent}
                   eventName={currentEvent.college_name}
                   onShowToast={addToast}
+                  onSetCurrentAgendaItem={handleSetCurrentAgendaItem}
                   onOpenLivePollModal={() => handleSelectTab('elections')}
                 />
               )}

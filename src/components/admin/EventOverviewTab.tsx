@@ -4,11 +4,17 @@ import { Calendar, MapPin, Users, Vote, Lock, Play, CheckCircle2, Zap, Shield, S
 
 interface EventOverviewTabProps {
   event: CollegeEvent;
+  participantCount?: number;
   onUpdateEvent: (updated: CollegeEvent) => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
 
-export const EventOverviewTab: React.FC<EventOverviewTabProps> = ({ event, onUpdateEvent, onShowToast }) => {
+export const EventOverviewTab: React.FC<EventOverviewTabProps> = ({
+  event,
+  participantCount,
+  onUpdateEvent,
+  onShowToast
+}) => {
   const handleToggleLock = () => {
     const updated = { ...event, is_locked: !event.is_locked };
     onUpdateEvent(updated);
@@ -24,6 +30,8 @@ export const EventOverviewTab: React.FC<EventOverviewTabProps> = ({ event, onUpd
     onUpdateEvent(updated);
     onShowToast('House in Session', 'Day 1 of the Youth Parliament has commenced!', 'success');
   };
+
+  const displayCount = participantCount !== undefined ? participantCount : (event.participant_count || 0);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -83,7 +91,7 @@ export const EventOverviewTab: React.FC<EventOverviewTabProps> = ({ event, onUpd
         >
           <div>
             <p className="text-2xl sm:text-3xl font-black" style={{ color: 'var(--text-primary)' }}>
-              {event.participant_count}
+              {displayCount}
             </p>
             <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
               Registered Delegates
