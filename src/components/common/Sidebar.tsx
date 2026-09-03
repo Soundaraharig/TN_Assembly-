@@ -43,7 +43,13 @@ export type ActiveNavTab =
   | 'proceedings'
   | 'awards'
   | 'feedback'
-  | 'report';
+  | 'report'
+   | 'scoregrid'
+   | 'chat'
+   | 'media'
+   | 'chapterawards'
+   | 'checklist'
+   | 'questionnaire';
 
 interface SidebarProps {
   activeTab: ActiveNavTab;

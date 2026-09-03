@@ -49,6 +49,11 @@ import { AwardsTab } from './components/coordinator/AwardsTab';
 import { FeedbackTab } from './components/coordinator/FeedbackTab';
 import { ReportTab } from './components/coordinator/ReportTab';
 import { TeamTab } from './components/coordinator/TeamTab';
+import { ChatTab } from './components/coordinator/ChatTab';
+import { ChecklistTab } from './components/coordinator/ChecklistTab';
+import { QuestionnaireTab } from './components/coordinator/QuestionnaireTab';
+import { MediaTab } from './components/coordinator/MediaTab';
+import { ChapterAwardsTab } from './components/coordinator/ChapterAwardsTab';
 import { AddLearnerModal } from './components/coordinator/AddLearnerModal';
 import { CsvImportModal } from './components/coordinator/CsvImportModal';
 import { AllocationModal } from './components/coordinator/AllocationModal';
@@ -877,7 +882,7 @@ export function App() {
               )}
 
               {/* 17. CHAT TAB */}
-              {activeNavTab === 'chat' as any && (
+              {activeNavTab === 'chat' && (
                 <ChatTab
                   messages={chatMessages}
                   eventId={currentEvent.id}
@@ -902,7 +907,7 @@ export function App() {
               )}
 
               {/* 19. MEDIA TAB */}
-              {activeNavTab === 'media' as any && (
+              {activeNavTab === 'media' && (
                 <MediaTab
                   eventName={currentEvent.college_name}
                   onShowToast={addToast}
@@ -919,7 +924,7 @@ export function App() {
               )}
 
               {/* 21. CHAPTER AWARDS TAB */}
-              {activeNavTab === 'chapterawards' as any && (
+              {activeNavTab === 'chapterawards' && (
                 <ChapterAwardsTab
                   eventName={currentEvent.college_name}
                   onShowToast={addToast}
