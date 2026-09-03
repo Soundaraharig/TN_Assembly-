@@ -51,7 +51,7 @@ export function runAutoAllocation(
   learners: Learner[],
   parties: Party[],
   committees: Committee[],
-  rulingRatio: number = 0.55
+  _rulingRatio: number = 0.55
 ): AllocationResult {
   if (learners.length === 0 || parties.length === 0 || committees.length === 0) {
     return {
@@ -90,21 +90,7 @@ export function runAutoAllocation(
   // 2. Prepare TN Constituencies (shuffle 1 to 234)
   const availableConstituencies = shuffleArray(TN_CONSTITUENCIES);
 
-  // 3. Separate parties into Ruling and Opposition based on config/party properties
-  const rulingParties = parties.filter(p => p.bench === 'Ruling');
-  const oppositionParties = parties.filter(p => p.bench === 'Opposition');
-  
-  // If no bench configured, split parties automatically according to ratio
-  let targetRulingParties = rulingParties;
-  let targetOppositionParties = oppositionParties;
-
-  if (targetRulingParties.length === 0 && targetOppositionParties.length === 0) {
-    const rulingCount = Math.max(1, Math.round(parties.length * rulingRatio));
-    targetRulingParties = parties.slice(0, rulingCount);
-    targetOppositionParties = parties.slice(rulingCount);
-  }
-
-  const allActiveParties = [...targetRulingParties, ...targetOppositionParties];
+  const allActiveParties = [...parties];
 
   // Interleave learners across years into a master balanced queue
   const balancedQueue: Learner[] = [];

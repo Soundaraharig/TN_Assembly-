@@ -30,7 +30,6 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
   onUpdateLearner,
   onShowToast
 }) => {
-  const [rulingPercent, setRulingPercent] = useState(55);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedBench, setSelectedBench] = useState<string>('ALL');
   const [selectedParty, setSelectedParty] = useState<string>('ALL');
@@ -46,10 +45,6 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
   const rulingCount = learners.filter(l => l.bench === 'Ruling').length;
   const oppCount = learners.filter(l => l.bench === 'Opposition').length;
   const unallocatedCount = totalLearners - allocatedCount;
-
-  // Expected counts based on slider
-  const targetRuling = Math.round(totalLearners * (rulingPercent / 100));
-  const targetOpp = totalLearners - targetRuling;
 
   // Academic year distribution
   const yearCounts = useMemo(() => {
@@ -107,10 +102,10 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
       onShowToast('No Learners Found', 'Please add or import delegates before running allocation', 'error');
       return;
     }
-    onExecuteAllocation(rulingPercent / 100);
+    onExecuteAllocation(0.55);
     onShowToast(
       '⚡ Auto-Allocation Completed',
-      `Allocated ${totalLearners} delegates: ${targetRuling} Ruling, ${targetOpp} Opposition, mapped 1-${Math.min(totalLearners, 234)} TN Constituencies!`,
+      `Allocated ${totalLearners} delegates across ${parties.length} parties, ${committees.length} committees & mapped 1-${Math.min(totalLearners, 234)} TN Constituencies!`,
       'success'
     );
   };
@@ -147,6 +142,7 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
           </div>
           <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
             Equitable bench distribution, cross-year balance, portfolio assignments & 1–234 TN constituency mapping.
+            {learners.length === 0 && <span className="block mt-1 font-semibold" style={{ color: 'var(--rose)' }}>Please add delegates in the Participants Tab before running auto-allocation.</span>}
           </p>
         </div>
 
@@ -172,8 +168,13 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
 
           <button
             onClick={handleRunAutoAllocation}
-            className="px-5 py-2 rounded-xl font-black text-xs text-white shadow-md flex items-center gap-2 cursor-pointer transition-transform hover:scale-102"
-            style={{ backgroundColor: 'var(--amber)' }}
+            disabled={learners.length === 0}
+            className="px-5 py-2 rounded-xl font-black text-xs text-white shadow-md flex items-center gap-2 transition-transform hover:scale-102"
+            style={{ 
+              backgroundColor: 'var(--amber)',
+              opacity: learners.length === 0 ? 0.5 : 1,
+              cursor: learners.length === 0 ? 'not-allowed' : 'pointer'
+            }}
           >
             <Zap className="w-4 h-4 fill-white" />
             <span>⚡ Run Auto-Allocation Now</span>
@@ -184,63 +185,48 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
       {/* Allocation Engine Config & Preview Card */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         
-        {/* Left Column: Bench Ratio Slider & Controls */}
+        {/* Left Column: Allocation Info & Controls */}
         <div
           className="lg:col-span-1 rounded-2xl p-5 border shadow-sm space-y-4"
           style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
         >
           <div className="flex items-center justify-between">
             <h4 className="text-xs font-black uppercase tracking-wider flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
-              <Scale className="w-4 h-4 text-amber-500" /> Bench Ratio Config
+              <Scale className="w-4 h-4 text-amber-500" /> Allocation Config
             </h4>
-            <span
-              className="text-xs font-mono font-extrabold px-2.5 py-1 rounded-lg border"
-              style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--amber)' }}
-            >
-              {rulingPercent}% Ruling / {100 - rulingPercent}% Opp
-            </span>
           </div>
 
-          <div className="space-y-2">
-            <input
-              type="range"
-              min={40}
-              max={70}
-              step={5}
-              value={rulingPercent}
-              onChange={(e) => setRulingPercent(Number(e.target.value))}
-              className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-amber-500"
-              style={{ backgroundColor: 'var(--border)' }}
-            />
-            <div className="flex justify-between text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>
-              <span>40% (Lean Opp)</span>
-              <span>55% (Default)</span>
-              <span>70% (Supermajority)</span>
-            </div>
-          </div>
-
-          {/* Allocation Projected Numbers */}
+          {/* Allocation Summary */}
           <div
             className="p-3.5 rounded-xl border space-y-2"
             style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)' }}
           >
             <div className="flex justify-between text-xs">
-              <span className="text-emerald-500 font-bold">Projected Ruling Seats:</span>
-              <strong style={{ color: 'var(--text-primary)' }}>~{targetRuling} Delegates</strong>
+              <span className="font-bold" style={{ color: 'var(--text-secondary)' }}>Total Delegates:</span>
+              <strong style={{ color: 'var(--text-primary)' }}>{totalLearners}</strong>
             </div>
             <div className="flex justify-between text-xs">
-              <span className="text-rose-500 font-bold">Projected Opposition:</span>
-              <strong style={{ color: 'var(--text-primary)' }}>~{targetOpp} Delegates</strong>
+              <span className="font-bold" style={{ color: 'var(--text-secondary)' }}>Parties Configured:</span>
+              <strong style={{ color: 'var(--text-primary)' }}>{parties.length}</strong>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="font-bold" style={{ color: 'var(--text-secondary)' }}>Committees Configured:</span>
+              <strong style={{ color: 'var(--text-primary)' }}>{committees.length}</strong>
             </div>
             <div className="pt-2 border-t text-[11px]" style={{ borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}>
-              Total pool: <strong>{totalLearners} students</strong> across {parties.length} parties and {committees.length} committees.
+              Set up parties (with Ruling/Opposition bench) in the <strong>Parties Tab</strong> and committees in the <strong>Committees Tab</strong> before running allocation.
             </div>
           </div>
 
           <button
             onClick={handleRunAutoAllocation}
-            className="w-full py-2.5 rounded-xl font-bold text-xs text-white shadow-sm flex items-center justify-center gap-2 cursor-pointer transition-all"
-            style={{ backgroundColor: 'var(--amber)' }}
+            disabled={totalLearners === 0 || parties.length === 0 || committees.length === 0}
+            className="w-full py-2.5 rounded-xl font-bold text-xs text-white shadow-sm flex items-center justify-center gap-2 transition-all"
+            style={{ 
+              backgroundColor: 'var(--amber)',
+              opacity: (totalLearners === 0 || parties.length === 0 || committees.length === 0) ? 0.5 : 1,
+              cursor: (totalLearners === 0 || parties.length === 0 || committees.length === 0) ? 'not-allowed' : 'pointer'
+            }}
           >
             <Zap className="w-3.5 h-3.5" /> Execute & Map Assembly
           </button>

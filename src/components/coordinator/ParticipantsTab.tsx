@@ -367,12 +367,21 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
       <div className="p-3.5 bg-emerald-50/90 border border-emerald-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-emerald-900">
         <span className="font-semibold flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span>All {learners.length} delegates have a recorded bench. Jurors observe bench criteria.</span>
+          <span>
+            {learners.length > 0 
+              ? `All ${learners.length} delegates have a recorded bench. Jurors observe bench criteria.` 
+              : 'No delegates found. Please add participants before running auto-allocation.'}
+          </span>
         </span>
         <button
           onClick={onOpenAllocationModal}
-          className="px-3.5 py-2 rounded-xl text-xs font-bold text-white shadow-sm flex items-center gap-1.5 cursor-pointer"
-          style={{ backgroundColor: 'var(--accent)' }}
+          disabled={learners.length === 0}
+          className="px-3.5 py-2 rounded-xl text-xs font-bold text-white shadow-sm flex items-center gap-1.5 transition-opacity"
+          style={{ 
+            backgroundColor: 'var(--accent)',
+            opacity: learners.length === 0 ? 0.5 : 1,
+            cursor: learners.length === 0 ? 'not-allowed' : 'pointer'
+          }}
         >
           ⚡ Run Auto-Allocation
         </button>

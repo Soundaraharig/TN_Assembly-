@@ -531,7 +531,6 @@ export function App() {
     { id: 'control', label: 'Control', icon: '🎛️' },
     { id: 'elections', label: 'Elections', icon: '🗳️' },
     { id: 'proceedings', label: 'Hansard', icon: '📜' },
-    ,
     { id: 'report', label: 'Report', icon: '📊' }
   ];
 

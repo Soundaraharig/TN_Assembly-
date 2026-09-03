@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import type { Learner, Party, Committee, AcademicYear } from '../../types';
-import { Zap, X, CheckCircle2, Sparkles, Scale } from 'lucide-react';
+import { Zap, X, CheckCircle2, Sparkles } from 'lucide-react';
 
 interface AllocationModalProps {
   isOpen: boolean;
@@ -19,13 +19,9 @@ export const AllocationModal: React.FC<AllocationModalProps> = ({
   committees,
   onExecuteAllocation
 }) => {
-  const [rulingPercent, setRulingPercent] = useState(55);
-
   if (!isOpen) return null;
 
   const totalLearners = learners.length;
-  const rulingCount = Math.round(totalLearners * (rulingPercent / 100));
-  const oppCount = totalLearners - rulingCount;
 
   // Breakdown by year
   const yearCounts = useMemo(() => {
@@ -61,33 +57,6 @@ export const AllocationModal: React.FC<AllocationModalProps> = ({
 
         <div className="space-y-5">
           
-          {/* Bench Split Ratio Control */}
-          <div className="bg-slate-950/80 border border-slate-800/80 rounded-xl p-4 space-y-3">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold text-slate-200 flex items-center gap-1.5">
-                <Scale className="w-4 h-4 text-amber-400" /> Bench Distribution Ratio
-              </span>
-              <span className="font-extrabold text-amber-300 font-mono bg-slate-900 px-2.5 py-1 rounded border border-slate-800">
-                {rulingPercent}% Ruling / {100 - rulingPercent}% Opposition
-              </span>
-            </div>
-
-            <input
-              type="range"
-              min={40}
-              max={70}
-              step={5}
-              value={rulingPercent}
-              onChange={(e) => setRulingPercent(Number(e.target.value))}
-              className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
-            />
-            <div className="flex justify-between text-[11px] text-slate-400">
-              <span>40% Ruling</span>
-              <span>55% Default</span>
-              <span>70% Ruling</span>
-            </div>
-          </div>
-
           {/* Allocation Modal Preview Summary */}
           <div className="border border-amber-500/20 bg-amber-950/10 rounded-xl p-4 space-y-3">
             <h4 className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
@@ -128,12 +97,6 @@ export const AllocationModal: React.FC<AllocationModalProps> = ({
                 <div className="bg-slate-900 p-1.5 rounded">4th Yr: <strong className="text-white">{yearCounts['4th Year']}</strong></div>
               </div>
             </div>
-
-            {/* Bench Distribution Preview */}
-            <div className="flex items-center justify-between text-xs pt-1">
-              <span className="text-emerald-400 font-semibold">Ruling Bench: ~{rulingCount} Delegates</span>
-              <span className="text-rose-400 font-semibold">Opposition Bench: ~{oppCount} Delegates</span>
-            </div>
           </div>
 
           {/* Allocation Rules Checklist */}
@@ -169,7 +132,7 @@ export const AllocationModal: React.FC<AllocationModalProps> = ({
             </button>
             <button
               onClick={() => {
-                onExecuteAllocation(rulingPercent / 100);
+                onExecuteAllocation(0.55);
                 onClose();
               }}
               className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-bold text-xs shadow-lg shadow-amber-950/60 flex items-center gap-1.5"
