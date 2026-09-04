@@ -53,6 +53,7 @@ export const INITIAL_EVENTS: CollegeEvent[] = [
     created_at: '2026-09-01T11:00:00Z'
   }
 ];
+export const INITIAL_EVENTS: CollegeEvent[] = [];
 
 export const INITIAL_COORDINATORS: Coordinator[] = [
   {
@@ -72,6 +73,7 @@ export const INITIAL_COORDINATORS: Coordinator[] = [
     raw_temp_password: 'erode2026'
   }
 ];
+export const INITIAL_COORDINATORS: Coordinator[] = [];
 
 export const INITIAL_PARTIES: Party[] = [
   {

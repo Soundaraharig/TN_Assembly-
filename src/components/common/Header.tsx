@@ -22,6 +22,7 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   role,
+  currentEvent,
   currentCoordinator,
   currentStudent,
   userSession,
@@ -44,6 +45,7 @@ export const Header: React.FC<HeaderProps> = ({
       ? currentCoordinator.name
       : role === 'super_admin'
       ? 'Super Admin'
+      ? currentEvent ? `Super Admin • ${currentEvent.college_name}` : 'Super Admin'
       : '';
 
   return (
@@ -53,6 +55,7 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Left Side: Mobile Menu Button + Brand */}
         <div className="flex items-center gap-2 sm:gap-3">
           {role === 'coordinator' && onToggleMobileMenu && (
+          {(role === 'coordinator' || role === 'super_admin') && onToggleMobileMenu && (
             <button
               onClick={onToggleMobileMenu}
               className="lg:hidden p-2 rounded-xl border text-slate-400 hover:text-slate-100 hover:bg-slate-800 cursor-pointer transition-colors"
@@ -86,6 +89,7 @@ export const Header: React.FC<HeaderProps> = ({
               </h1>
               <span className="text-[10px] font-semibold block" style={{ color: 'var(--text-muted)' }}>
                 {role === 'super_admin' ? 'Super Admin' : role === 'coordinator' ? 'Coordinator Portal' : 'Delegate Portal'}
+                {role === 'super_admin' ? (currentEvent ? 'Super Admin • Event Active' : 'Super Admin') : role === 'coordinator' ? 'Coordinator Portal' : 'Delegate Portal'}
               </span>
             </div>
           </button>
@@ -93,6 +97,24 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right side: theme toggle + user info + sign out */}
         <div className="flex items-center gap-2 sm:gap-3">
+          {/* Quick Hub button for Super Admin inside an event */}
+          {role === 'super_admin' && currentEvent && (
+            <button
+              onClick={onGoHome}
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer shadow-sm hover:opacity-90"
+              style={{
+                backgroundColor: 'var(--accent-soft)',
+                borderColor: 'var(--accent)',
+                color: 'var(--accent)'
+              }}
+              title="Return to All Events Dashboard"
+            >
+              <span>←</span>
+              <span className="hidden sm:inline">All Events Hub</span>
+              <span className="sm:hidden">Events</span>
+            </button>
+          )}
+
           {/* Theme Toggle Button */}
           <button
             onClick={onToggleTheme}
@@ -105,6 +127,7 @@ export const Header: React.FC<HeaderProps> = ({
           {displayName && (
             <span
               className="text-xs font-bold hidden md:inline px-2.5 py-1 rounded-lg border truncate max-w-[200px]"
+              className="text-xs font-bold hidden md:inline px-2.5 py-1 rounded-lg border truncate max-w-[220px]"
               style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
             >
               {displayName}

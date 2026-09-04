@@ -50,6 +50,8 @@ export type ActiveNavTab =
    | 'chapterawards'
    | 'checklist'
    | 'questionnaire';
+   | 'questionnaire'
+   | 'events_dashboard';
 
 interface SidebarProps {
   activeTab: ActiveNavTab;
@@ -57,6 +59,8 @@ interface SidebarProps {
   isMobileOpen?: boolean;
   onCloseMobile?: () => void;
   completedTabs?: Set<ActiveNavTab>;
+  role?: string;
+  onBackToEvents?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -65,6 +69,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isMobileOpen,
   onCloseMobile,
   completedTabs
+  completedTabs,
+  role,
+  onBackToEvents
 }) => {
   const beforeEventItems = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
@@ -100,6 +107,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const navContent = (
     <div className="space-y-6 text-xs overflow-y-auto pr-1 pb-10">
+      {/* Super Admin Back to Hub Button */}
+      {role === 'super_admin' && onBackToEvents && (
+        <div className="pb-3 border-b border-slate-700/40">
+          <button
+            onClick={onBackToEvents}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl font-bold text-xs border transition-all cursor-pointer shadow-sm hover:opacity-95"
+            style={{
+              backgroundColor: 'var(--accent-soft)',
+              borderColor: 'var(--accent)',
+              color: 'var(--accent)'
+            }}
+          >
+            <span>←</span>
+            <span>All Events Hub</span>
+          </button>
+        </div>
+      )}
       
       {/* BEFORE THE EVENT */}
       <div>

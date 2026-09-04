@@ -92,6 +92,7 @@ export function App() {
 
   const [role, setRole] = useState<UserRole>(() => initialSession?.role || 'coordinator');
   const [activeNavTab, setActiveNavTab] = useState<ActiveNavTab>(() => initialSession?.activeNavTab || 'participants');
+  const [activeNavTab, setActiveNavTab] = useState<ActiveNavTab>(() => initialSession?.activeNavTab || (initialSession?.role === 'super_admin' ? 'events_dashboard' : 'participants'));
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     if (!initialSession) return false;
     if (initialSession.role === 'super_admin') return true;
@@ -616,6 +617,8 @@ export function App() {
               setRole('super_admin');
               setActiveNavTab('overview');
               saveSession({ role: 'super_admin', email: emailInput, name: 'Super Admin', activeNavTab: 'overview' });
+              setActiveNavTab('events_dashboard');
+              saveSession({ role: 'super_admin', email: emailInput, name: 'Super Admin', activeNavTab: 'events_dashboard' });
               return sess;
             }
 
@@ -869,6 +872,8 @@ export function App() {
             setRole('super_admin');
             setActiveNavTab('overview');
             saveSession({ role: 'super_admin', activeNavTab: 'overview' });
+            setActiveNavTab('events_dashboard');
+            saveSession({ role: 'super_admin', activeNavTab: 'events_dashboard' });
           }
         }}
         onToggleMobileMenu={() => setIsMobileSidebarOpen(prev => !prev)}
@@ -880,12 +885,18 @@ export function App() {
         
         {/* Left Vertical Sidebar (Desktop + Mobile Slide-Out Drawer) */}
         {role === 'coordinator' && (
+        {(role === 'coordinator' || (role === 'super_admin' && currentEvent && activeNavTab !== 'events_dashboard')) && (
           <Sidebar
             activeTab={activeNavTab}
             onSelectTab={(tab) => handleSelectTab(tab)}
             isMobileOpen={isMobileSidebarOpen}
             onCloseMobile={() => setIsMobileSidebarOpen(false)}
             completedTabs={completedTabsSet}
+            role={role}
+            onBackToEvents={role === 'super_admin' ? () => {
+              setActiveNavTab('events_dashboard');
+              saveSession({ role: 'super_admin', activeNavTab: 'events_dashboard' });
+            } : undefined}
           />
         )}
 
@@ -894,6 +905,7 @@ export function App() {
           
           {/* Mobile Quick-Navigation Pill Bar */}
           {role === 'coordinator' && currentEvent && (
+          {(role === 'coordinator' || (role === 'super_admin' && activeNavTab !== 'events_dashboard')) && currentEvent && (
             <div className="lg:hidden mb-4 overflow-x-auto pb-1 flex items-center gap-1.5 scrollbar-none">
               {mobileQuickTabs.map(qTab => {
                 const isActive = activeNavTab === qTab.id;
@@ -926,6 +938,7 @@ export function App() {
           )}
 
           {role === 'super_admin' && (
+          {role === 'super_admin' && (activeNavTab === 'events_dashboard' || !currentEvent) && (
             <MyEventsDashboard
               events={events}
               coordinators={coordinators}
@@ -940,6 +953,7 @@ export function App() {
                 setRole('coordinator');
                 setActiveNavTab('overview');
                 saveSession({ role: 'coordinator', currentEventId: ev.id, activeNavTab: 'overview' });
+                saveSession({ role: 'super_admin', currentEventId: ev.id, activeNavTab: 'overview' });
                 addToast('Event Selected', `Opened ${ev.college_name}`, 'info');
               }}
               onShowToast={addToast}
@@ -947,6 +961,7 @@ export function App() {
           )}
 
           {role === 'coordinator' && currentEvent && (
+          {(role === 'coordinator' || (role === 'super_admin' && activeNavTab !== 'events_dashboard')) && currentEvent && (
             <>
               {/* 1. OVERVIEW TAB */}
               {activeNavTab === 'overview' && (

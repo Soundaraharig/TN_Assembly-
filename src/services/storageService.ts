@@ -205,9 +205,12 @@ class StorageService {
           localMap.set(e.id, { ...localMap.get(e.id), ...e });
         });
         this.setItem(STORAGE_KEYS.EVENTS, Array.from(localMap.values()));
+      if (events) {
+        this.setItem(STORAGE_KEYS.EVENTS, events);
       }
 
       if (coordinators && coordinators.length > 0) {
+      if (coordinators) {
         this.setItem(STORAGE_KEYS.COORDINATORS, coordinators);
       }
 
@@ -218,6 +221,8 @@ class StorageService {
           localMap.set(l.id, { ...localMap.get(l.id), ...l });
         });
         this.setItem(STORAGE_KEYS.LEARNERS, Array.from(localMap.values()));
+      if (learners) {
+        this.setItem(STORAGE_KEYS.LEARNERS, learners);
       }
 
       if (parties && parties.length > 0) {
