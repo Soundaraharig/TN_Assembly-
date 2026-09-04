@@ -33,9 +33,7 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
     const search = window.location.search.toLowerCase();
     return (
       path.includes('/join') ||
-      path.includes('/yip/join') ||
       path.includes('/jury') ||
-      path.includes('/yip/jury') ||
       path.includes('/me') ||
       path.includes('/student') ||
       search.includes('join') ||
@@ -62,7 +60,7 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
 
   const navigateToLogin = () => {
     setShowAccessCodePage(false);
-    if (typeof window !== 'undefined' && (window.location.pathname.includes('/join') || window.location.pathname.includes('/yip/join'))) {
+    if (typeof window !== 'undefined' && window.location.pathname.includes('/join')) {
       window.history.pushState({}, '', '/');
     }
   };

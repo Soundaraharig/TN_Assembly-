@@ -103,18 +103,18 @@ function getInitialRouteInfo(initialSession: SavedAuthSession | null) {
     return { role: 'coordinator' as UserRole, isAuthenticated: true, activeNavTab: 'projector' as ActiveNavTab };
   }
 
-  // Volunteer Join Link (/join or /yip/join)
-  if (pathname.includes('/join') || pathname.includes('/yip/join')) {
+  // Volunteer Join Link (/join)
+  if (pathname.includes('/join')) {
     return { role: 'volunteer' as UserRole, isAuthenticated: false };
   }
 
-  // Jury Link (/jury or /yip/jury)
-  if (pathname.includes('/jury') || pathname.includes('/yip/jury')) {
+  // Jury Link (/jury)
+  if (pathname.includes('/jury')) {
     return { role: 'jury' as UserRole, isAuthenticated: false };
   }
 
-  // Student Delegate Link (/me, /student, or /yip/me)
-  if (pathname.includes('/me') || pathname.includes('/student') || pathname.includes('/yip/me')) {
+  // Student Delegate Link (/me or /student)
+  if (pathname.includes('/me') || pathname.includes('/student')) {
     return { role: 'student' as UserRole, isAuthenticated: false };
   }
 
@@ -366,8 +366,8 @@ export function App() {
           }
         }
 
-        // 2. Explicit Volunteer Join Link requested (/join or /yip/join)
-        if (pathname.includes('/join') || pathname.includes('/yip/join')) {
+        // 2. Explicit Volunteer Join Link requested (/join)
+        if (pathname.includes('/join')) {
           if (sess && sess.role === 'volunteer' && sess.volunteerCode) {
             const cleanCode = sess.volunteerCode.trim().toUpperCase();
             const allVols = storageService.getVolunteers();
@@ -391,8 +391,8 @@ export function App() {
           return;
         }
 
-        // 3. Explicit Jury Link requested (/jury or /yip/jury)
-        if (pathname.includes('/jury') || pathname.includes('/yip/jury')) {
+        // 3. Explicit Jury Link requested (/jury)
+        if (pathname.includes('/jury')) {
           if (sess && sess.role === 'jury' && sess.juryCode) {
             const cleanCode = sess.juryCode.trim().toUpperCase();
             const allJury = storageService.getJury();
@@ -415,8 +415,8 @@ export function App() {
           return;
         }
 
-        // 4. Explicit Student Delegate Link requested (/me, /student, or /yip/me)
-        if (pathname.includes('/me') || pathname.includes('/student') || pathname.includes('/yip/me')) {
+        // 4. Explicit Student Delegate Link requested (/me or /student)
+        if (pathname.includes('/me') || pathname.includes('/student')) {
           if (sess && sess.role === 'student' && sess.studentCode) {
             const cleanCode = sess.studentCode.trim().toUpperCase();
             const allLearners = storageService.getLearners();

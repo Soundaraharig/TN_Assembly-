@@ -21,7 +21,8 @@ import {
   X,
   Lock,
   Copy,
-  Check
+  Check,
+  Loader2
 } from 'lucide-react';
 
 interface ParticipantsTabProps {
@@ -73,6 +74,22 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
 
   // Multi-Selection State for Mass Actions
   const [selectedLearnerIds, setSelectedLearnerIds] = useState<Set<string>>(new Set());
+
+  // Loading state tracking for check-in button state transitions
+  const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
+
+  const handleToggleWithLoading = (learnerId: string, day: 1 | 2) => {
+    const key = `${learnerId}_${day}`;
+    setTogglingIds(prev => new Set(prev).add(key));
+    onToggleCheckIn(learnerId, day);
+    setTimeout(() => {
+      setTogglingIds(prev => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }, 350);
+  };
 
   // Edit Modal State
   const [editingLearner, setEditingLearner] = useState<Learner | null>(null);
@@ -799,26 +816,40 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                       {/* Check-in D1 / D2 Badges */}
                       <td className="py-3 px-3 text-center">
                         <div className="flex items-center justify-center gap-1">
-                          <button
-                            onClick={() => onToggleCheckIn(learner.id, 1)}
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all cursor-pointer ${
-                              learner.day1_checked_in
-                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300'
-                                : 'bg-slate-100 text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700 hover:border-slate-300'
-                            }`}
-                          >
-                            ● D1
-                          </button>
-                          <button
-                            onClick={() => onToggleCheckIn(learner.id, 2)}
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all cursor-pointer ${
-                              learner.day2_checked_in
-                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300'
-                                : 'bg-slate-100 text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700 hover:border-slate-300'
-                            }`}
-                          >
-                            ● D2
-                          </button>
+                          {(() => {
+                            const isD1Loading = togglingIds.has(`${learner.id}_1`);
+                            const isD2Loading = togglingIds.has(`${learner.id}_2`);
+                            return (
+                              <>
+                                <button
+                                  onClick={() => handleToggleWithLoading(learner.id, 1)}
+                                  disabled={isD1Loading}
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all flex items-center gap-1 cursor-pointer ${
+                                    isD1Loading
+                                      ? 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 opacity-90'
+                                      : learner.day1_checked_in
+                                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300'
+                                      : 'bg-slate-100 text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700 hover:border-slate-300'
+                                  }`}
+                                >
+                                  {isD1Loading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : '●'} D1
+                                </button>
+                                <button
+                                  onClick={() => handleToggleWithLoading(learner.id, 2)}
+                                  disabled={isD2Loading}
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all flex items-center gap-1 cursor-pointer ${
+                                    isD2Loading
+                                      ? 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 opacity-90'
+                                      : learner.day2_checked_in
+                                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300'
+                                      : 'bg-slate-100 text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700 hover:border-slate-300'
+                                  }`}
+                                >
+                                  {isD2Loading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : '●'} D2
+                                </button>
+                              </>
+                            );
+                          })()}
                         </div>
                       </td>
 

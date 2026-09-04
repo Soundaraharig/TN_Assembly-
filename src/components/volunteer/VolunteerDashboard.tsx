@@ -19,7 +19,8 @@ import {
   X,
   Check,
   Flame,
-  AlertCircle
+  AlertCircle,
+  Loader2
 } from 'lucide-react';
 import type { Volunteer, Learner, CollegeEvent, ChecklistItem, Party, Committee, Election, LiveFlashVote } from '../../types';
 import { useTheme } from '../../lib/theme';
@@ -84,6 +85,35 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   const [walkInPhone, setWalkInPhone] = useState('');
   const [walkInDept, setWalkInDept] = useState('');
   const [walkInYear, setWalkInYear] = useState<'1st Year' | '2nd Year' | '3rd Year' | '4th Year'>('1st Year');
+
+  // Loading state tracking for button state transitions
+  const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
+  const [isCheckInAllLoading, setIsCheckInAllLoading] = useState(false);
+  const [isResetAllLoading, setIsResetAllLoading] = useState(false);
+
+  const handleToggleWithLoading = (learnerId: string, day: 1 | 2) => {
+    const key = `${learnerId}_${day}`;
+    setTogglingIds(prev => new Set(prev).add(key));
+    onToggleCheckIn(learnerId, day);
+    setTimeout(() => {
+      setTogglingIds(prev => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }, 350);
+  };
+
+  const handleCheckInAllWithLoading = (day: 1 | 2, state: boolean) => {
+    if (!onCheckInAll) return;
+    if (state) setIsCheckInAllLoading(true);
+    else setIsResetAllLoading(true);
+    onCheckInAll(day, state);
+    setTimeout(() => {
+      setIsCheckInAllLoading(false);
+      setIsResetAllLoading(false);
+    }, 450);
+  };
 
   // YUVA Assignments State (Persisted via StorageService)
   const eventId = event?.id || volunteer?.event_id || 'ev_tn_assembly_2026';
@@ -614,18 +644,30 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
           {(activeTab === 'checkin' || activeTab === 'yuvadesk') && onCheckInAll && (
             <div className="flex items-center gap-2">
               <button
-                onClick={() => onCheckInAll(selectedDay, true)}
-                className="px-3 py-1.5 rounded-lg text-xs font-bold border transition hover:opacity-80 flex items-center gap-1 cursor-pointer"
+                onClick={() => handleCheckInAllWithLoading(selectedDay, true)}
+                disabled={isCheckInAllLoading}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold border transition hover:opacity-80 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                 style={{ background: 'rgba(5,150,105,0.1)', color: 'var(--emerald)', borderColor: 'var(--emerald)' }}
               >
-                <CheckCircle className="w-3 h-3" /> Check In All (Day {selectedDay})
+                {isCheckInAllLoading ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <CheckCircle className="w-3.5 h-3.5" />
+                )}
+                <span>{isCheckInAllLoading ? 'Checking In All...' : `Check In All (Day ${selectedDay})`}</span>
               </button>
               <button
-                onClick={() => onCheckInAll(selectedDay, false)}
-                className="px-3 py-1.5 rounded-lg text-xs font-bold border transition hover:opacity-80 flex items-center gap-1 cursor-pointer"
+                onClick={() => handleCheckInAllWithLoading(selectedDay, false)}
+                disabled={isResetAllLoading}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold border transition hover:opacity-80 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                 style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444', borderColor: '#ef4444' }}
               >
-                <XCircle className="w-3 h-3" /> Reset All
+                {isResetAllLoading ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <XCircle className="w-3.5 h-3.5" />
+                )}
+                <span>{isResetAllLoading ? 'Resetting All...' : 'Reset All'}</span>
               </button>
             </div>
           )}
@@ -781,24 +823,36 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
 
                             {/* Check In Action */}
                             <td className="py-3 px-3 text-center">
-                              <button
-                                onClick={() => onToggleCheckIn(learner.id, selectedDay)}
-                                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 mx-auto cursor-pointer ${
-                                  isPresent
-                                    ? 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700'
-                                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700'
-                                }`}
-                              >
-                                {isPresent ? (
-                                  <>
-                                    <CheckCircle className="w-3.5 h-3.5 text-white" /> PRESENT
-                                  </>
-                                ) : (
-                                  <>
-                                    <XCircle className="w-3.5 h-3.5 text-slate-400" /> ABSENT
-                                  </>
-                                )}
-                              </button>
+                              {(() => {
+                                const isToggling = togglingIds.has(`${learner.id}_${selectedDay}`);
+                                return (
+                                  <button
+                                    onClick={() => handleToggleWithLoading(learner.id, selectedDay)}
+                                    disabled={isToggling}
+                                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 mx-auto cursor-pointer ${
+                                      isToggling
+                                        ? 'bg-amber-500 text-white shadow-sm opacity-90 scale-95'
+                                        : isPresent
+                                        ? 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700'
+                                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700'
+                                    }`}
+                                  >
+                                    {isToggling ? (
+                                      <>
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin text-white" /> PRESENT
+                                      </>
+                                    ) : isPresent ? (
+                                      <>
+                                        <CheckCircle className="w-3.5 h-3.5 text-white" /> PRESENT
+                                      </>
+                                    ) : (
+                                      <>
+                                        <XCircle className="w-3.5 h-3.5 text-slate-400" /> ABSENT
+                                      </>
+                                    )}
+                                  </button>
+                                );
+                              })()}
                             </td>
 
                             {/* Proxy Vote Action */}
@@ -921,24 +975,36 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                             {learner.constituency_name || learner.role || 'Floor Delegate'}
                           </td>
                           <td className="py-3 px-3 text-center">
-                            <button
-                              onClick={() => onToggleCheckIn(learner.id, selectedDay)}
-                              className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 mx-auto cursor-pointer ${
-                                isPresent
-                                  ? 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700'
-                                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700'
-                              }`}
-                            >
-                              {isPresent ? (
-                                <>
-                                  <CheckCircle className="w-3.5 h-3.5 text-white" /> PRESENT
-                                </>
-                              ) : (
-                                <>
-                                  <XCircle className="w-3.5 h-3.5 text-slate-400" /> ABSENT
-                                </>
-                              )}
-                            </button>
+                            {(() => {
+                              const isToggling = togglingIds.has(`${learner.id}_${selectedDay}`);
+                              return (
+                                <button
+                                  onClick={() => handleToggleWithLoading(learner.id, selectedDay)}
+                                  disabled={isToggling}
+                                  className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 mx-auto cursor-pointer ${
+                                    isToggling
+                                      ? 'bg-amber-500 text-white shadow-sm opacity-90 scale-95'
+                                      : isPresent
+                                      ? 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700'
+                                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700'
+                                  }`}
+                                >
+                                  {isToggling ? (
+                                    <>
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin text-white" /> PRESENT
+                                    </>
+                                  ) : isPresent ? (
+                                    <>
+                                      <CheckCircle className="w-3.5 h-3.5 text-white" /> PRESENT
+                                    </>
+                                  ) : (
+                                    <>
+                                      <XCircle className="w-3.5 h-3.5 text-slate-400" /> ABSENT
+                                    </>
+                                  )}
+                                </button>
+                              );
+                            })()}
                           </td>
                         </tr>
                       );
