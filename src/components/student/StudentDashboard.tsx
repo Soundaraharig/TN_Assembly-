@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import type { Learner, CollegeEvent, AgendaItem, Party, Committee, Nomination, NominationPosition } from '../../types';
+import { Landmark, MapPin, BookOpen, Clock, Hand, CheckCircle2, Sparkles, Radio, FileSpreadsheet, Send, Lock, UserCheck } from 'lucide-react';
 import type {
   Learner,
   CollegeEvent,
@@ -152,6 +154,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       
+      {/* Delegate Assembly Pass Card */}
       {/* Delegate Assembly Pass Card (WITHOUT openly exposed access code) */}
       <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 border border-amber-500/30 p-6 md:p-8 shadow-2xl space-y-6">
         
@@ -171,6 +174,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </div>
           </div>
 
+          <div className="bg-slate-950 px-4 py-2 rounded-2xl border border-slate-800 text-center">
+            <span className="text-[10px] uppercase text-slate-400 font-bold block">Access Code</span>
+            <code className="text-lg font-mono font-bold text-emerald-400 tracking-widest">{student.access_code}</code>
           <div className="bg-slate-950 px-4 py-2 rounded-2xl border border-emerald-500/30 text-center flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
             <span className="text-xs uppercase text-emerald-400 font-extrabold tracking-wider">
@@ -687,3 +693,4 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     </div>
   );
 };
+

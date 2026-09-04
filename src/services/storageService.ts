@@ -191,6 +191,7 @@ class StorageService {
         { data: learners },
         { data: parties },
         { data: committees },
+        { data: agenda }
         { data: agenda },
         { data: juryMembers },
         { data: volunteers }
@@ -200,11 +201,13 @@ class StorageService {
         supabase.from('learners').select('*').order('created_at', { ascending: false }),
         supabase.from('political_parties').select('*'),
         supabase.from('committees').select('*'),
+        supabase.from('session_agenda').select('*').order('time', { ascending: true })
         supabase.from('session_agenda').select('*').order('time', { ascending: true }),
         supabase.from('jury_members').select('*'),
         supabase.from('volunteers').select('*')
       ]);
 
+      if (events) {
       if (events && events.length > 0) {
         this.setItem(STORAGE_KEYS.EVENTS, events);
 
@@ -1658,6 +1661,7 @@ class StorageService {
   }
 
   public closeFlashVote(voteId: string) {
+    const all = this.getFlashVoteAll().map(v => (v.id === voteId ? { ...v, status: 'CLOSED' as const } : v));
     let targetEventId = '';
     const all = this.getFlashVoteAll().map(v => {
       if (v.id === voteId) {
