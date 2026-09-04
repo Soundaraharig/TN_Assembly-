@@ -899,6 +899,10 @@ export function App() {
                   onAddCommittee={handleAddCommittee}
                   onUpdateCommittee={handleUpdateCommittee}
                   onDeleteCommittee={handleDeleteCommittee}
+                  onSetCommitteeCount={(count) => {
+                    const newComms = storageService.setCommitteeCount(currentEvent.id, count);
+                    setCommittees(newComms);
+                  }}
                   onShowToast={addToast}
                 />
               )}
@@ -909,20 +913,15 @@ export function App() {
                   parties={parties}
                   learners={learners}
                   eventId={currentEvent.id}
-                  treasuryWhatsApp={currentEvent.treasury_whatsapp_link}
-                  oppositionWhatsApp={currentEvent.opposition_whatsapp_link}
-                  onSaveWhatsAppLinks={(t, o) => {
-                    storageService.saveWhatsAppLinks(currentEvent.id, t, o);
-                    setCurrentEvent(prev => prev ? { ...prev, treasury_whatsapp_link: t, opposition_whatsapp_link: o } : prev);
-                  }}
                   onUpdatePartyWhatsApp={(id, link) => {
                     storageService.updatePartyWhatsAppLink(id, link);
                   }}
                   onAddParty={handleAddParty}
                   onUpdateParty={handleUpdateParty}
                   onDeleteParty={handleDeleteParty}
-                  onRebalanceCommittees={() => {
-                    storageService.rebalanceCommittees(currentEvent.id);
+                  onSetPartyCount={(count) => {
+                    const newParties = storageService.setPartyCount(currentEvent.id, count);
+                    setParties(newParties);
                   }}
                   onShowToast={addToast}
                 />

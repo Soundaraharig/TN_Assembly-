@@ -655,6 +655,44 @@ class StorageService {
     this.notify();
   }
 
+  public setPartyCount(eventId: string, targetCount: number): Party[] {
+    const validCount = Math.max(1, Math.min(20, targetCount));
+    const all = this.getParties();
+    const eventParties = all.filter(p => p.event_id === eventId);
+    const otherParties = all.filter(p => p.event_id !== eventId);
+
+    const updatedEventParties: Party[] = [];
+    const colors = ['#059669', '#2563eb', '#dc2626', '#d97706', '#7c3aed', '#0891b2', '#ea580c', '#4f46e5'];
+
+    for (let i = 0; i < validCount; i++) {
+      if (i < eventParties.length) {
+        updatedEventParties.push(eventParties[i]);
+      } else {
+        const newParty: Party = {
+          id: uid('pty'),
+          event_id: eventId,
+          name: `Party ${i + 1}`,
+          bench: 'Independent',
+          color: colors[i % colors.length],
+          leader: '',
+          manifesto: ''
+        };
+        updatedEventParties.push(newParty);
+        this.sbUpsert('political_parties', newParty as unknown as Record<string, unknown>);
+      }
+    }
+
+    if (validCount < eventParties.length) {
+      const removed = eventParties.slice(validCount);
+      removed.forEach(r => this.sbDelete('political_parties', r.id));
+    }
+
+    const merged = [...otherParties, ...updatedEventParties];
+    this.setItem(STORAGE_KEYS.PARTIES, merged);
+    this.notify();
+    return updatedEventParties;
+  }
+
   public deleteParty(partyId: string) {
     this.setItem(STORAGE_KEYS.PARTIES, this.getParties().filter(p => p.id !== partyId));
     this.sbDelete('political_parties', partyId);
@@ -666,6 +704,53 @@ class StorageService {
     const all = this.getItem<Committee[]>(STORAGE_KEYS.COMMITTEES, INITIAL_COMMITTEES);
     if (eventId) return all.filter(c => c.event_id === eventId);
     return all;
+  }
+
+  public setCommitteeCount(eventId: string, targetCount: number): Committee[] {
+    const validCount = Math.max(1, Math.min(20, targetCount));
+    const all = this.getCommittees();
+    const eventComms = all.filter(c => c.event_id === eventId);
+    const otherComms = all.filter(c => c.event_id !== eventId);
+
+    const defaultTopics = [
+      "Public Accounts & Financial Estimates",
+      "Higher Education, Curriculum & AI Ethics",
+      "Public Health, Infrastructure & Sanitation",
+      "Agriculture, Farmers Welfare & Water Resources",
+      "Industries, IT & Digital Governance",
+      "Environment, Climate Action & Renewable Energy",
+      "Social Justice, Youth Affairs & Sports",
+      "Rural Development & Local Administration"
+    ];
+
+    const updatedEventComms: Committee[] = [];
+    for (let i = 0; i < validCount; i++) {
+      if (i < eventComms.length) {
+        updatedEventComms.push(eventComms[i]);
+      } else {
+        const topicName = defaultTopics[i % defaultTopics.length];
+        const newComm: Committee = {
+          id: uid('cmt'),
+          event_id: eventId,
+          name: `Committee ${i + 1} - ${topicName}`,
+          topic: topicName,
+          chairperson: '',
+          max_capacity: 50
+        };
+        updatedEventComms.push(newComm);
+        this.sbUpsert('committees', newComm as unknown as Record<string, unknown>);
+      }
+    }
+
+    if (validCount < eventComms.length) {
+      const removed = eventComms.slice(validCount);
+      removed.forEach(r => this.sbDelete('committees', r.id));
+    }
+
+    const merged = [...otherComms, ...updatedEventComms];
+    this.setItem(STORAGE_KEYS.COMMITTEES, merged);
+    this.notify();
+    return updatedEventComms;
   }
 
   public addCommittee(com: Partial<Committee>): Committee {

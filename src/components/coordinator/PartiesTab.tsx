@@ -7,7 +7,8 @@ import {
   Trash2,
   X,
   Crown,
-  RefreshCw
+  Shield,
+  Layers
 } from 'lucide-react';
 
 interface PartiesTabProps {
@@ -21,7 +22,7 @@ interface PartiesTabProps {
   onAddParty: (party: Partial<Party>) => void;
   onUpdateParty: (party: Party) => void;
   onDeleteParty: (partyId: string) => void;
-  onRebalanceCommittees?: () => void;
+  onSetPartyCount?: (count: number) => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -29,21 +30,18 @@ export const PartiesTab: React.FC<PartiesTabProps> = ({
   parties,
   learners,
   eventId,
-  treasuryWhatsApp = '',
-  oppositionWhatsApp = '',
-  onSaveWhatsAppLinks,
   onUpdatePartyWhatsApp,
   onAddParty,
   onUpdateParty,
   onDeleteParty,
-  onRebalanceCommittees,
+  onSetPartyCount,
   onShowToast
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingParty, setEditingParty] = useState<Party | null>(null);
 
-  const [treasuryLink, setTreasuryLink] = useState(treasuryWhatsApp);
-  const [oppositionLink, setOppositionLink] = useState(oppositionWhatsApp);
+  // Dynamic Party Count Setup (Party 1 to Party N)
+  const [partyCountInput, setPartyCountInput] = useState<number>(parties.length || 4);
 
   const [name, setName] = useState('');
   const [bench, setBench] = useState<BenchType>('Independent');
@@ -53,7 +51,7 @@ export const PartiesTab: React.FC<PartiesTabProps> = ({
 
   const openCreateModal = () => {
     setEditingParty(null);
-    setName('');
+    setName(`Party ${parties.length + 1}`);
     setBench('Independent');
     setColor('#059669');
     setLeader('');
@@ -71,18 +69,32 @@ export const PartiesTab: React.FC<PartiesTabProps> = ({
     setIsModalOpen(true);
   };
 
-  const handleSaveLinks = () => {
-    if (onSaveWhatsAppLinks) {
-      onSaveWhatsAppLinks(treasuryLink, oppositionLink);
-      onShowToast('Links Saved', 'Updated Bench WhatsApp group links', 'success');
+  const handleApplyPartyCount = (e: React.FormEvent) => {
+    e.preventDefault();
+    const count = Number(partyCountInput);
+    if (isNaN(count) || count < 1) {
+      onShowToast('Invalid Count', 'Please enter a valid number of parties (minimum 1)', 'error');
+      return;
+    }
+    if (onSetPartyCount) {
+      onSetPartyCount(count);
+      onShowToast('Parties Configured', `Configured ${count} parties (Party 1 to Party ${count})`, 'success');
     }
   };
 
   const handlePartyWhatsAppBlur = (partyId: string, link: string) => {
     if (onUpdatePartyWhatsApp) {
       onUpdatePartyWhatsApp(partyId, link);
-      onShowToast('Party Link Updated', 'WhatsApp invite link saved', 'info');
+      onShowToast('Party Link Updated', 'WhatsApp group link saved for this party', 'info');
     }
+  };
+
+  const handleSelectLeader = (party: Party, selectedLeaderName: string) => {
+    onUpdateParty({
+      ...party,
+      leader: selectedLeaderName
+    });
+    onShowToast('Party Leader Appointed', `${selectedLeaderName || 'Leader cleared'} appointed for ${party.name}`, 'success');
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -114,229 +126,260 @@ export const PartiesTab: React.FC<PartiesTabProps> = ({
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6 animate-fade-in max-w-6xl">
       
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-black text-slate-900 dark:text-white">Political Parties</h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Equal parties with manifesto & symbol. Ruling vs Opposition is decided on event day — not here.
-          </p>
-        </div>
-
-        <button
-          onClick={openCreateModal}
-          className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-sm flex items-center gap-1.5 shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Add Party</span>
-        </button>
-      </div>
-
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-3">
-        <div>
-          <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
-            Bench WhatsApp groups
-          </h3>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Each student is shown the group for the bench they sit on, on their own page and in their access-code email. In WhatsApp: open the group → Group info → Invite via link → Copy link. It looks like https://chat.whatsapp.com/...
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Treasury (ruling) bench
-            </label>
-            <input
-              type="text"
-              placeholder="https://chat.whatsapp.com/FOGg0tFOTXx3kyzVVBT9gG"
-              value={treasuryLink}
-              onChange={(e) => setTreasuryLink(e.target.value)}
-              onBlur={handleSaveLinks}
-              className="w-full bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-amber-500 font-mono"
-            />
+      {/* Top Header & Party Count Generator */}
+      <div
+        className="rounded-2xl p-5 border shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+        style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+      >
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <Shield className="w-5 h-5 text-emerald-500" />
+            <h2 className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
+              Political Parties Configuration
+            </h2>
           </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Opposition bench
-            </label>
-            <input
-              type="text"
-              placeholder="https://chat.whatsapp.com/LCJCf92uSMQ0jntlfMk736"
-              value={oppositionLink}
-              onChange={(e) => setOppositionLink(e.target.value)}
-              onBlur={handleSaveLinks}
-              className="w-full bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-amber-500 font-mono"
-            />
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="max-w-2xl">
-          <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">Committees</h3>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Spread students evenly across committees by party (mixed committees). Only the Speaker & Deputy Speakers are excluded — they preside. Allocation runs this automatically; use this to re-balance without changing parties.
+          <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+            Configure political parties and appoint Party Leaders directly from enrolled party delegates.
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            if (onRebalanceCommittees) onRebalanceCommittees();
-            onShowToast('Committees Re-balanced', 'Equalized committee seat distribution across parties', 'success');
-          }}
-          className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 font-bold text-xs shadow-sm flex items-center gap-1.5 shrink-0"
-        >
-          <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
-          <span>Assign / Re-balance Committees</span>
-        </button>
+        {/* Dynamic Number of Parties Form & Quick Add Button */}
+        <div className="flex flex-wrap items-center gap-3">
+          <form onSubmit={handleApplyPartyCount} className="flex items-center gap-2">
+            <div className="flex items-center gap-2 border rounded-xl px-3 py-1.5" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
+              <Layers className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
+              <span className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>Parties:</span>
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={partyCountInput}
+                onChange={(e) => setPartyCountInput(Number(e.target.value))}
+                className="w-12 text-center font-bold text-xs bg-transparent focus:outline-none"
+                style={{ color: 'var(--text-primary)' }}
+                title="Number of political parties"
+              />
+            </div>
+            <button
+              type="submit"
+              className="px-3 py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+            >
+              Set Count (1 to {partyCountInput})
+            </button>
+          </form>
+
+          <button
+            onClick={openCreateModal}
+            className="px-4 py-2 rounded-xl text-white font-bold text-xs shadow-sm flex items-center gap-1.5 cursor-pointer hover:opacity-95 transition-all"
+            style={{ backgroundColor: 'var(--accent)' }}
+          >
+            <Plus className="w-4 h-4" />
+            <span>Add Party</span>
+          </button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* Grid of Political Parties */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {parties.map((party, index) => {
-          const partyLearners = learners.filter(l => l.party_name === party.name);
+          const partyLearners = learners.filter(
+            l => l.party_id === party.id || l.party_name === party.name
+          );
           const memberCount = partyLearners.length;
 
           return (
             <div
               key={party.id}
-              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm flex flex-col justify-between space-y-3.5 hover:border-slate-300 dark:hover:border-slate-700 transition-all"
+              className="rounded-2xl p-4 border shadow-sm flex flex-col justify-between space-y-4 transition-all"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
             >
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center font-bold text-xs text-slate-500">
-                    #
-                  </div>
-                  <span className="px-2 py-0.5 rounded text-[11px] font-extrabold bg-emerald-600 text-white">
-                    #{index + 1}
-                  </span>
-                  <h4 className="text-xs font-black uppercase text-slate-900 dark:text-white tracking-wide">
-                    {party.name}
-                  </h4>
-                </div>
-
-                <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    onClick={() => openEditModal(party)}
-                    className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded"
-                    title="Edit Party"
-                  >
-                    <Edit className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => {
-                      onDeleteParty(party.id);
-                      onShowToast('Party Deleted', `Deleted party ${party.name}`, 'info');
-                    }}
-                    className="p-1 text-slate-400 hover:text-rose-600 rounded"
-                    title="Delete Party"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <input
-                  type="text"
-                  placeholder="https://chat.whatsapp.com/..."
-                  defaultValue={party.whatsapp_group_link || ''}
-                  onBlur={(e) => handlePartyWhatsAppBlur(party.id, e.target.value)}
-                  className="w-full bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-[11px] text-slate-900 dark:text-white focus:outline-none focus:border-amber-500 font-mono"
-                />
-              </div>
-
-              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs gap-2">
-                <div className="flex items-center gap-1.5 text-slate-500 font-medium">
-                  <Users className="w-3.5 h-3.5 text-slate-400" />
-                  <span>{memberCount} members</span>
-                </div>
-
-                <div className="flex items-center gap-1.5">
-                  {party.leader ? (
-                    <span className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1 text-[11px]">
-                      <Crown className="w-3 h-3 text-amber-500" />
-                      <span>{party.leader}</span>
+              {/* Card Header: Party Number & Actions */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="px-2.5 py-0.5 rounded-lg text-xs font-black text-white"
+                      style={{ backgroundColor: party.color || 'var(--accent)' }}
+                    >
+                      #{index + 1}
                     </span>
-                  ) : (
-                    <span className="text-slate-400 text-[11px] italic">No leader</span>
-                  )}
+                    <h4 className="text-sm font-black tracking-wide" style={{ color: 'var(--text-primary)' }}>
+                      {party.name}
+                    </h4>
+                  </div>
 
-                  <button
-                    type="button"
-                    onClick={() => openEditModal(party)}
-                    className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100"
-                  >
-                    {party.leader ? 'Change' : 'Assign'}
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => openEditModal(party)}
+                      className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                      style={{ color: 'var(--text-muted)' }}
+                      title="Edit Party Details"
+                    >
+                      <Edit className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => {
+                        onDeleteParty(party.id);
+                        onShowToast('Party Deleted', `Deleted party ${party.name}`, 'info');
+                      }}
+                      className="p-1 rounded-lg hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
+                      style={{ color: 'var(--text-muted)' }}
+                      title="Delete Party"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Optional WhatsApp Group Link for this party */}
+                <div className="pt-1">
+                  <label className="text-[10px] font-bold uppercase tracking-wider block mb-1" style={{ color: 'var(--text-muted)' }}>
+                    Party WhatsApp Group (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="https://chat.whatsapp.com/..."
+                    defaultValue={party.whatsapp_group_link || ''}
+                    onBlur={(e) => handlePartyWhatsAppBlur(party.id, e.target.value)}
+                    className="w-full rounded-xl px-3 py-1.5 text-[11px] font-mono focus:outline-none border"
+                    style={{
+                      backgroundColor: 'var(--bg-elevated)',
+                      borderColor: 'var(--border)',
+                      color: 'var(--text-primary)'
+                    }}
+                  />
                 </div>
               </div>
+
+              {/* Party Members Count & Leader Selector Dropdown */}
+              <div className="space-y-2 pt-2 border-t" style={{ borderColor: 'var(--border-soft)' }}>
+                <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-1.5 font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                    <Users className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
+                    <span>{memberCount} enrolled members</span>
+                  </div>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
+                    {party.bench || 'Independent'}
+                  </span>
+                </div>
+
+                {/* Party Leader Selection Dropdown */}
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold flex items-center gap-1" style={{ color: 'var(--amber)' }}>
+                    <Crown className="w-3 h-3 text-amber-500" />
+                    <span>Party Leader / Floor Leader:</span>
+                  </label>
+
+                  {memberCount > 0 ? (
+                    <select
+                      value={party.leader || ''}
+                      onChange={(e) => handleSelectLeader(party, e.target.value)}
+                      className="w-full rounded-xl px-3 py-1.5 text-xs font-semibold focus:outline-none border cursor-pointer"
+                      style={{
+                        backgroundColor: 'var(--bg-elevated)',
+                        borderColor: party.leader ? 'var(--amber)' : 'var(--border)',
+                        color: 'var(--text-primary)'
+                      }}
+                    >
+                      <option value="">-- Choose Leader from Members --</option>
+                      {partyLearners.map((learner) => (
+                        <option key={learner.id} value={learner.full_name}>
+                          {learner.full_name} ({learner.department || 'MLA'} • {learner.academic_year || 'Delegate'})
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="p-2 rounded-xl border text-[11px] italic" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}>
+                      No members allocated to {party.name} yet. (Run Auto-Allocation or add participants first).
+                    </div>
+                  )}
+                </div>
+              </div>
+
             </div>
           );
         })}
       </div>
 
+      {/* Modal for Create/Edit Party */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">
+          <div
+            className="rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 border"
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+          >
+            <div className="flex items-center justify-between border-b pb-3" style={{ borderColor: 'var(--border-soft)' }}>
+              <h3 className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>
                 {editingParty ? 'Edit Political Party' : 'Add Political Party'}
               </h3>
-              <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+              <button onClick={() => setIsModalOpen(false)} className="p-1 rounded-lg hover:opacity-80 cursor-pointer" style={{ color: 'var(--text-muted)' }}>
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Party Name *</label>
+                <label className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>Party Name *</label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. RASHTRA NIRMAN PARTY"
+                  placeholder="e.g. Party 1 or TAMIL DESIYA KATCHI"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="w-full bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-amber-500"
+                  className="w-full rounded-xl px-3 py-2 text-xs focus:outline-none border"
+                  style={{
+                    backgroundColor: 'var(--bg-elevated)',
+                    borderColor: 'var(--border)',
+                    color: 'var(--text-primary)'
+                  }}
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Party Leader Name</label>
-                <input
-                  type="text"
-                  placeholder="e.g. D. Arjun"
-                  value={leader}
-                  onChange={(e) => setLeader(e.target.value)}
-                  className="w-full bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none"
-                />
+                <label className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>Party Color Theme</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={color}
+                    onChange={(e) => setColor(e.target.value)}
+                    className="w-10 h-8 rounded-lg border cursor-pointer bg-transparent"
+                  />
+                  <span className="text-xs font-mono font-semibold" style={{ color: 'var(--text-muted)' }}>{color}</span>
+                </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Party Manifesto / Focus</label>
+                <label className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>Party Manifesto / Vision (Optional)</label>
                 <textarea
                   rows={2}
                   placeholder="Brief party vision or policy priorities..."
                   value={manifesto}
                   onChange={(e) => setManifesto(e.target.value)}
-                  className="w-full bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none"
+                  className="w-full rounded-xl px-3 py-2 text-xs focus:outline-none border"
+                  style={{
+                    backgroundColor: 'var(--bg-elevated)',
+                    borderColor: 'var(--border)',
+                    color: 'var(--text-primary)'
+                  }}
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="flex justify-end gap-2 pt-2 border-t" style={{ borderColor: 'var(--border-soft)' }}>
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-500 hover:text-slate-800"
+                  className="px-4 py-2 text-xs font-semibold rounded-xl border hover:opacity-80 cursor-pointer"
+                  style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-sm"
+                  className="px-5 py-2 rounded-xl text-white font-bold text-xs shadow-sm cursor-pointer hover:opacity-95"
+                  style={{ backgroundColor: 'var(--accent)' }}
                 >
                   {editingParty ? 'Save Changes' : 'Create Party'}
                 </button>
