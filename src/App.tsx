@@ -75,12 +75,41 @@ interface SavedAuthSession {
   activeNavTab?: ActiveNavTab;
 }
 
+function getInitialSavedSession(): SavedAuthSession | null {
+  try {
+    if (typeof window === 'undefined') return null;
+    const saved = localStorage.getItem(SESSION_KEY);
+    if (!saved) return null;
+    return JSON.parse(saved);
+  } catch {
+    return null;
+  }
+}
+
 export function App() {
   const { theme, toggleTheme } = useTheme();
-  const [role, setRole] = useState<UserRole>('coordinator');
-  const [activeNavTab, setActiveNavTab] = useState<ActiveNavTab>('participants');
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [userSession, setUserSession] = useState<UserSession | null>(null);
+  const initialSession = getInitialSavedSession();
+
+  const [role, setRole] = useState<UserRole>(() => initialSession?.role || 'coordinator');
+  const [activeNavTab, setActiveNavTab] = useState<ActiveNavTab>(() => initialSession?.activeNavTab || 'participants');
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    if (!initialSession) return false;
+    if (initialSession.role === 'super_admin') return true;
+    if (initialSession.role === 'coordinator') return true;
+    if (initialSession.role === 'student' && initialSession.studentCode) return true;
+    if (initialSession.role === 'jury' && initialSession.juryCode) return true;
+    if (initialSession.role === 'volunteer' && initialSession.volunteerCode) return true;
+    return false;
+  });
+  const [userSession, setUserSession] = useState<UserSession | null>(() => {
+    if (!initialSession) return null;
+    return {
+      role: initialSession.role,
+      email: initialSession.email,
+      name: initialSession.name,
+      assigned_event_ids: initialSession.assigned_event_ids
+    };
+  });
 
   // Mobile sidebar drawer state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -108,9 +137,42 @@ export function App() {
   const [openNominationPositions, setOpenNominationPositions] = useState<string[]>([]);
 
   const [currentCoordinator, setCurrentCoordinator] = useState<Coordinator | null>(null);
-  const [currentStudent, setCurrentStudent] = useState<Learner | null>(null);
-  const [currentJury, setCurrentJury] = useState<JuryMember | null>(null);
-  const [currentVolunteer, setCurrentVolunteer] = useState<Volunteer | null>(null);
+  const [currentStudent, setCurrentStudent] = useState<Learner | null>(() => {
+    if (initialSession?.role === 'student' && initialSession.studentCode) {
+      const code = initialSession.studentCode.trim().toUpperCase();
+      const all = storageService.getLearners();
+      return all.find(l => l.access_code.toUpperCase() === code) || null;
+    }
+    return null;
+  });
+  const [currentJury, setCurrentJury] = useState<JuryMember | null>(() => {
+    if (initialSession?.role === 'jury' && initialSession.juryCode) {
+      const code = initialSession.juryCode.trim().toUpperCase();
+      const all = storageService.getJury();
+      return all.find(j => j.access_code?.toUpperCase() === code) || {
+        id: 'jury',
+        event_id: initialSession.currentEventId || '',
+        access_code: code,
+        name: initialSession.name || 'Jury Evaluator',
+        assigned_bench: 'Ruling'
+      };
+    }
+    return null;
+  });
+  const [currentVolunteer, setCurrentVolunteer] = useState<Volunteer | null>(() => {
+    if (initialSession?.role === 'volunteer' && initialSession.volunteerCode) {
+      const code = initialSession.volunteerCode.trim().toUpperCase();
+      const all = storageService.getVolunteers();
+      return all.find(v => v.access_code?.toUpperCase() === code) || {
+        id: 'vol',
+        event_id: initialSession.currentEventId || '',
+        access_code: code,
+        name: initialSession.name || 'Floor Volunteer',
+        station: 'Main Floor'
+      };
+    }
+    return null;
+  });
 
   // Modals
   const [isAddWalkInOpen, setIsAddWalkInOpen] = useState(false);
@@ -207,108 +269,119 @@ export function App() {
 
     // Check current browser path and restore authenticated session on refresh
     const checkPathAndRestore = () => {
-      const path = typeof window !== 'undefined' ? window.location.pathname.toLowerCase() : '/';
       try {
         const saved = localStorage.getItem(SESSION_KEY);
-        if (saved) {
-          const sess: SavedAuthSession = JSON.parse(saved);
-          const evs = storageService.getEvents();
-
-          if (sess.currentEventId) {
-            const targetEv = evs.find(e => e.id === sess.currentEventId);
-            if (targetEv) {
-              setCurrentEvent(targetEv);
-              currentEventRef.current = targetEv;
-            }
-          }
-
-          if (path.includes('/me')) {
-            // Student portal: ONLY open if authenticated student with valid studentCode
-            if (sess.role === 'student' && sess.studentCode) {
-              const targetStudent = storageService.getLearners().find(l => l.access_code.toUpperCase() === sess.studentCode?.toUpperCase());
-              if (targetStudent) {
-                setIsAuthenticated(true);
-                setRole('student');
-                setCurrentStudent(targetStudent);
-                return;
-              }
-            }
-            // If no valid student session, prompt for student access code
-            setIsAuthenticated(false);
-          } else if (path.includes('/jury')) {
-            // Jury portal: ONLY open if authenticated jury member with valid juryCode
-            if (sess.role === 'jury' && sess.juryCode) {
-              const allJury = storageService.getJury();
-              const foundJury = allJury.find(j => j.access_code?.toUpperCase() === sess.juryCode?.toUpperCase());
-              if (foundJury || sess.juryCode.startsWith('JURY')) {
-                setIsAuthenticated(true);
-                setRole('jury');
-                setCurrentJury(foundJury || { id: 'jury', event_id: sess.currentEventId || '', access_code: sess.juryCode, name: sess.name || 'Jury Evaluator', assigned_bench: 'Ruling' });
-                return;
-              }
-            }
-            // If no valid jury session, prompt for jury access code
-            setIsAuthenticated(false);
-          } else if (path.includes('/volunteer')) {
-            // Volunteer portal: ONLY open if authenticated volunteer with valid volunteerCode
-            if (sess.role === 'volunteer' && sess.volunteerCode) {
-              const allVols = storageService.getVolunteers();
-              const foundVol = allVols.find(v => v.access_code?.toUpperCase() === sess.volunteerCode?.toUpperCase());
-              if (foundVol || sess.volunteerCode.startsWith('VOL')) {
-                setIsAuthenticated(true);
-                setRole('volunteer');
-                setCurrentVolunteer(foundVol || { id: 'vol', event_id: sess.currentEventId || '', access_code: sess.volunteerCode, name: sess.name || 'Floor Volunteer', station: 'Main Floor' });
-                return;
-              }
-            }
-            // If no valid volunteer session, prompt for volunteer access code
-            setIsAuthenticated(false);
-          } else if (path.includes('/coordinator') || path.includes('/admin')) {
-            // Coordinator portal: ONLY open if coordinator logged in with credentials
-            if (sess.role === 'coordinator' && sess.email) {
-              setIsAuthenticated(true);
-              setRole('coordinator');
-              if (sess.activeNavTab) setActiveNavTab(sess.activeNavTab);
-              return;
-            }
-            setIsAuthenticated(false);
-          } else if (path === '/join' || path === '/yip/join' || path === '/login') {
-            setIsAuthenticated(false);
-          } else if (sess.role) {
-            // Refresh on root '/': restore respective verified session
-            if (sess.role === 'student' && sess.studentCode) {
-              const targetStudent = storageService.getLearners().find(l => l.access_code.toUpperCase() === sess.studentCode?.toUpperCase());
-              if (targetStudent) {
-                setIsAuthenticated(true);
-                setRole('student');
-                setCurrentStudent(targetStudent);
-              } else {
-                setIsAuthenticated(false);
-              }
-            } else if (sess.role === 'jury' && sess.juryCode) {
-              const allJury = storageService.getJury();
-              const foundJury = allJury.find(j => j.access_code?.toUpperCase() === sess.juryCode?.toUpperCase());
-              setIsAuthenticated(true);
-              setRole('jury');
-              setCurrentJury(foundJury || { id: 'jury', event_id: sess.currentEventId || '', access_code: sess.juryCode, name: sess.name || 'Jury Evaluator', assigned_bench: 'Ruling' });
-            } else if (sess.role === 'volunteer' && sess.volunteerCode) {
-              const allVols = storageService.getVolunteers();
-              const foundVol = allVols.find(v => v.access_code?.toUpperCase() === sess.volunteerCode?.toUpperCase());
-              setIsAuthenticated(true);
-              setRole('volunteer');
-              setCurrentVolunteer(foundVol || { id: 'vol', event_id: sess.currentEventId || '', access_code: sess.volunteerCode, name: sess.name || 'Floor Volunteer', station: 'Main Floor' });
-            } else if (sess.role === 'coordinator' && sess.email) {
-              setIsAuthenticated(true);
-              setRole('coordinator');
-              if (sess.activeNavTab) setActiveNavTab(sess.activeNavTab);
-            } else {
-              setIsAuthenticated(false);
-            }
-          }
-        } else {
-          // No saved session: always require login/access code
+        if (!saved) {
           setIsAuthenticated(false);
+          return;
         }
+
+        const sess: SavedAuthSession = JSON.parse(saved);
+        const evs = storageService.getEvents();
+
+        if (sess.currentEventId) {
+          const targetEv = evs.find(e => e.id === sess.currentEventId);
+          if (targetEv) {
+            setCurrentEvent(targetEv);
+            currentEventRef.current = targetEv;
+          }
+        }
+
+        // 1. Student Session
+        if (sess.role === 'student' && sess.studentCode) {
+          const cleanCode = sess.studentCode.trim().toUpperCase();
+          const allLearners = storageService.getLearners();
+          const targetStudent: Learner = allLearners.find(l => l.access_code.toUpperCase() === cleanCode) || {
+            id: `learner_${cleanCode}`,
+            event_id: sess.currentEventId || (evs[0]?.id || ''),
+            full_name: sess.name || 'Student Delegate',
+            access_code: cleanCode,
+            email: 'delegate@assembly.edu',
+            phone: '',
+            bench: 'Ruling',
+            department: 'Assembly Delegate',
+            academic_year: '3rd Year',
+            day1_checked_in: true,
+            day2_checked_in: false,
+            created_at: new Date().toISOString()
+          };
+
+          setIsAuthenticated(true);
+          setRole('student');
+          setCurrentStudent(targetStudent);
+          setUserSession({ role: 'student', name: targetStudent.full_name });
+          return;
+        }
+
+        // 2. Jury Session
+        if (sess.role === 'jury' && sess.juryCode) {
+          const cleanCode = sess.juryCode.trim().toUpperCase();
+          const allJury = storageService.getJury();
+          const foundJury = allJury.find(j => j.access_code?.toUpperCase() === cleanCode);
+          const juryObj: JuryMember = foundJury || {
+            id: 'jury',
+            event_id: sess.currentEventId || (evs[0]?.id || ''),
+            access_code: cleanCode,
+            name: sess.name || 'Jury Evaluator',
+            assigned_bench: 'Ruling'
+          };
+
+          setIsAuthenticated(true);
+          setRole('jury');
+          setCurrentJury(juryObj);
+          setUserSession({ role: 'jury', name: juryObj.name });
+          return;
+        }
+
+        // 3. Volunteer Session
+        if (sess.role === 'volunteer' && sess.volunteerCode) {
+          const cleanCode = sess.volunteerCode.trim().toUpperCase();
+          const allVols = storageService.getVolunteers();
+          const foundVol = allVols.find(v => v.access_code?.toUpperCase() === cleanCode);
+          const volObj: Volunteer = foundVol || {
+            id: 'vol',
+            event_id: sess.currentEventId || (evs[0]?.id || ''),
+            access_code: cleanCode,
+            name: sess.name || 'Floor Volunteer',
+            station: 'Main Floor'
+          };
+
+          setIsAuthenticated(true);
+          setRole('volunteer');
+          setCurrentVolunteer(volObj);
+          setUserSession({ role: 'volunteer', name: volObj.name });
+          return;
+        }
+
+        // 4. Super Admin Session
+        if (sess.role === 'super_admin') {
+          setIsAuthenticated(true);
+          setRole('super_admin');
+          if (sess.activeNavTab) setActiveNavTab(sess.activeNavTab);
+          setUserSession({
+            role: 'super_admin',
+            email: sess.email || 'admin@tnassembly.gov.in',
+            name: sess.name || 'Super Admin'
+          });
+          return;
+        }
+
+        // 5. Coordinator Session
+        if (sess.role === 'coordinator') {
+          setIsAuthenticated(true);
+          setRole('coordinator');
+          if (sess.activeNavTab) setActiveNavTab(sess.activeNavTab);
+          setUserSession({
+            role: 'coordinator',
+            email: sess.email || '',
+            name: sess.name || 'Event Coordinator',
+            assigned_event_ids: sess.assigned_event_ids
+          });
+          return;
+        }
+
+        // Fallback: If unknown role in session, require auth
+        setIsAuthenticated(false);
       } catch (e) {
         console.error('Session load error:', e);
         setIsAuthenticated(false);
