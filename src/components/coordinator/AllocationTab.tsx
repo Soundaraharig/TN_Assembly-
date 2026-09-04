@@ -250,19 +250,6 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
               Set up parties (with Ruling/Opposition bench) in the <strong>Parties Tab</strong> and committees in the <strong>Committees Tab</strong> before running allocation.
             </div>
           </div>
-
-          <button
-            onClick={handleRunAutoAllocation}
-            disabled={totalLearners === 0 || parties.length === 0 || committees.length === 0}
-            className="w-full py-2.5 rounded-xl font-bold text-xs text-white shadow-sm flex items-center justify-center gap-2 transition-all"
-            style={{ 
-              backgroundColor: 'var(--amber)',
-              opacity: (totalLearners === 0 || parties.length === 0 || committees.length === 0) ? 0.5 : 1,
-              cursor: (totalLearners === 0 || parties.length === 0 || committees.length === 0) ? 'not-allowed' : 'pointer'
-            }}
-          >
-            <Zap className="w-3.5 h-3.5" /> Execute & Map Assembly
-          </button>
         </div>
 
         {/* Right Column: Key Summary & Party Seats */}

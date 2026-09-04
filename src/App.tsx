@@ -907,11 +907,23 @@ export function App() {
           event={currentEvent}
           learners={learners}
           checklist={checklist}
+          parties={parties}
+          committees={committees}
+          elections={elections}
+          flashVotes={flashVotes}
           onToggleCheckIn={handleToggleCheckIn}
           onCheckInAll={handleCheckInAll}
           onAddWalkIn={(l) => {
             handleAddLearner(l);
             setLearners(storageService.getLearners(currentEvent?.id));
+          }}
+          onCastVote={(elecId, candId, delId) => {
+            storageService.castVoteInElection(elecId, candId, delId);
+            if (currentEvent) setElections(storageService.getElections(currentEvent.id));
+          }}
+          onCastFlashVote={(vId, l, dec) => {
+            storageService.castFlashVote(vId, l, dec);
+            if (currentEvent) setFlashVotes(storageService.getFlashVotes(currentEvent.id));
           }}
           onToggleVolunteerArrival={(id) => storageService.toggleVolunteerArrival(id)}
           onLogout={() => {

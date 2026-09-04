@@ -173,10 +173,11 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
-  const handleCopyCode = (code: string) => {
-    navigator.clipboard.writeText(code);
-    setCopiedCode(code);
-    onShowToast('Copied', `Access code ${code} copied to clipboard`, 'info');
+  const handleCopyCode = (code?: string) => {
+    const cleanCode = code || 'VOL-101';
+    navigator.clipboard.writeText(cleanCode);
+    setCopiedCode(cleanCode);
+    onShowToast('Copied', `Access code ${cleanCode} copied to clipboard`, 'info');
     setTimeout(() => setCopiedCode(null), 2000);
   };
 
@@ -754,22 +755,27 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
                           </div>
 
                           {/* Access code box */}
-                          <div className="pt-1">
-                            <button
-                              type="button"
-                              onClick={() => handleCopyCode(v.access_code)}
-                              className="px-2.5 py-1 rounded-lg border border-amber-200 dark:border-amber-800/50 bg-amber-50/60 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 font-mono font-bold text-xs flex items-center gap-1.5 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors cursor-pointer"
-                              title="Click to copy access code"
-                            >
-                              <KeyRound className="w-3 h-3" />
-                              <span>{v.access_code}</span>
-                              {copiedCode === v.access_code ? (
-                                <Check className="w-3 h-3 text-emerald-600" />
-                              ) : (
-                                <Copy className="w-3 h-3 text-amber-600/70" />
-                              )}
-                            </button>
-                          </div>
+                          {(() => {
+                            const codeVal = v.access_code || v.phone || v.id || 'VOL-101';
+                            return (
+                              <div className="pt-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyCode(codeVal)}
+                                  className="px-2.5 py-1 rounded-lg border border-amber-200 dark:border-amber-800/50 bg-amber-50/60 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 font-mono font-bold text-xs flex items-center gap-1.5 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors cursor-pointer"
+                                  title="Click to copy access code"
+                                >
+                                  <KeyRound className="w-3 h-3" />
+                                  <span>{codeVal}</span>
+                                  {copiedCode === codeVal ? (
+                                    <Check className="w-3 h-3 text-emerald-600" />
+                                  ) : (
+                                    <Copy className="w-3 h-3 text-amber-600/70" />
+                                  )}
+                                </button>
+                              </div>
+                            );
+                          })()}
                         </div>
 
                         {/* Action buttons */}

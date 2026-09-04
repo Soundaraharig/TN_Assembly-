@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   ShieldCheck,
   UserCheck,
@@ -12,20 +12,59 @@ import {
   CheckSquare,
   Sun,
   Moon,
-  Lock
+  Lock,
+  Vote,
+  Shield,
+  Crown,
+  X,
+  Check,
+  Flame,
+  AlertCircle
 } from 'lucide-react';
-import type { Volunteer, Learner, CollegeEvent, ChecklistItem } from '../../types';
+import type { Volunteer, Learner, CollegeEvent, ChecklistItem, Party, Committee, Election, LiveFlashVote } from '../../types';
 import { useTheme } from '../../lib/theme';
 import { storageService } from '../../services/storageService';
+
+export interface YuvaAssignment {
+  id: string;
+  volunteerId: string;
+  volunteerName: string;
+  volunteerPhone: string;
+  targetType: 'party' | 'committee';
+  targetId: string;
+  targetName: string;
+}
+
+const DEFAULT_YUVA_ASSIGNMENTS: YuvaAssignment[] = [
+  { id: 'ya_1', volunteerId: 'v1', volunteerName: 'Deeksha', volunteerPhone: '9600679949', targetType: 'party', targetId: 'p2', targetName: 'NEW INDIAN RENAISSANCE' },
+  { id: 'ya_2', volunteerId: 'v2', volunteerName: 'Gandhavelu', volunteerPhone: '94448 41239', targetType: 'party', targetId: 'p2', targetName: 'NEW INDIAN RENAISSANCE' },
+  { id: 'ya_3', volunteerId: 'v3', volunteerName: 'Deepika.V', volunteerPhone: '9080370992', targetType: 'party', targetId: 'p5', targetName: 'THE NAVODAYA PARTY' },
+  { id: 'ya_4', volunteerId: 'v4', volunteerName: 'Gopika.D', volunteerPhone: '8122967836', targetType: 'party', targetId: 'p5', targetName: 'THE NAVODAYA PARTY' },
+  { id: 'ya_5', volunteerId: 'v5', volunteerName: 'Mellbi', volunteerPhone: '8807564032', targetType: 'party', targetId: 'p1', targetName: 'RASHTRA NIRMAN PARTY' },
+  { id: 'ya_6', volunteerId: 'v6', volunteerName: 'Manju R', volunteerPhone: '8778239050', targetType: 'party', targetId: 'p1', targetName: 'RASHTRA NIRMAN PARTY' },
+  { id: 'ya_7', volunteerId: 'v7', volunteerName: 'Subiksha', volunteerPhone: '9025019197', targetType: 'party', targetId: 'p3', targetName: 'RASHTRA JANASWARA SANGHAM' },
+  { id: 'ya_8', volunteerId: 'v8', volunteerName: 'Brindha N', volunteerPhone: '9025183153', targetType: 'party', targetId: 'p4', targetName: 'REVIA AAROH PARTY' },
+  { id: 'ya_9', volunteerId: 'v9', volunteerName: 'Sharnitha', volunteerPhone: '9894782418', targetType: 'party', targetId: 'p4', targetName: 'REVIA AAROH PARTY' },
+  { id: 'ya_10', volunteerId: 'v10', volunteerName: 'Poovarasan', volunteerPhone: '7418714199', targetType: 'committee', targetId: 'c_edu', targetName: 'Ministry of Education' },
+  { id: 'ya_11', volunteerId: 'v11', volunteerName: 'Soundarahari', volunteerPhone: '7603814898', targetType: 'committee', targetId: 'c_edu', targetName: 'Ministry of Education' },
+  { id: 'ya_12', volunteerId: 'v12', volunteerName: 'Rohan', volunteerPhone: '8489729978', targetType: 'committee', targetId: 'c_it', targetName: 'Ministry of Electronics & Information Technology' },
+  { id: 'ya_13', volunteerId: 'v13', volunteerName: 'Roshna', volunteerPhone: '9965994574', targetType: 'committee', targetId: 'c_it', targetName: 'Ministry of Electronics & Information Technology' }
+];
 
 interface VolunteerDashboardProps {
   volunteer?: Volunteer | null;
   event?: CollegeEvent | null;
   learners: Learner[];
   checklist?: ChecklistItem[];
+  parties?: Party[];
+  committees?: Committee[];
+  elections?: Election[];
+  flashVotes?: LiveFlashVote[];
   onToggleCheckIn: (id: string, day: 1 | 2) => void;
   onCheckInAll?: (day: 1 | 2, state: boolean) => void;
   onAddWalkIn?: (learner: Partial<Learner>) => void;
+  onCastVote?: (electionId: string, candidateId: string, delegateId?: string) => void;
+  onCastFlashVote?: (voteId: string, learner: Learner, decision: 'AYE' | 'NO' | 'ABSTAIN') => void;
   onToggleVolunteerArrival?: (volunteerId: string) => void;
   onLogout: () => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
@@ -36,9 +75,15 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   event,
   learners,
   checklist = [],
+  parties: _parties = [],
+  committees: _committees = [],
+  elections = [],
+  flashVotes = [],
   onToggleCheckIn,
   onCheckInAll,
   onAddWalkIn,
+  onCastVote,
+  onCastFlashVote,
   onToggleVolunteerArrival,
   onLogout,
   onShowToast
@@ -48,7 +93,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PRESENT' | 'ABSENT'>('ALL');
   const [isOnDuty, setIsOnDuty] = useState(volunteer?.has_arrived ?? true);
-  const [activeTab, setActiveTab] = useState<'checkin' | 'walkin' | 'checklist'>('checkin');
+  const [activeTab, setActiveTab] = useState<'yuvadesk' | 'checkin' | 'walkin' | 'checklist'>('yuvadesk');
 
   // Walk-in form state
   const [walkInName, setWalkInName] = useState('');
@@ -56,6 +101,44 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   const [walkInPhone, setWalkInPhone] = useState('');
   const [walkInDept, setWalkInDept] = useState('');
   const [walkInYear, setWalkInYear] = useState<'1st Year' | '2nd Year' | '3rd Year' | '4th Year'>('1st Year');
+
+  // YUVA Assignments State
+  const eventId = event?.id || volunteer?.event_id || 'ev_tn_assembly_2026';
+  const storageKey = `tn_assembly_yuva_assignments_${eventId}`;
+
+  const yuvaAssignments = useMemo<YuvaAssignment[]>(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const saved = localStorage.getItem(storageKey);
+        if (saved) return JSON.parse(saved);
+      }
+    } catch {}
+    return DEFAULT_YUVA_ASSIGNMENTS;
+  }, [storageKey]);
+
+  // Find assignments for logged in volunteer
+  const userAssignments = useMemo(() => {
+    if (!volunteer) return yuvaAssignments;
+    const match = yuvaAssignments.filter(a =>
+      (volunteer.id && a.volunteerId === volunteer.id) ||
+      (volunteer.phone && a.volunteerPhone && volunteer.phone.includes(a.volunteerPhone)) ||
+      (volunteer.name && a.volunteerName && volunteer.name.toLowerCase().includes(a.volunteerName.toLowerCase()))
+    );
+    return match.length > 0 ? match : yuvaAssignments;
+  }, [yuvaAssignments, volunteer]);
+
+  // Selected desk key: 'type:::id:::name' or 'ALL'
+  const [selectedDeskKey, setSelectedDeskKey] = useState<string>(() => {
+    if (userAssignments.length > 0) {
+      const first = userAssignments[0];
+      return `${first.targetType}:::${first.targetId}:::${first.targetName}`;
+    }
+    return 'ALL';
+  });
+
+  // Proxy Voting Modal State
+  const [proxyModalLearner, setProxyModalLearner] = useState<Learner | null>(null);
+  const [selectedCandidateForElection, setSelectedCandidateForElection] = useState<Record<string, string>>({});
 
   const handleToggleDuty = () => {
     const nextState = !isOnDuty;
@@ -103,26 +186,120 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     setActiveTab('checkin');
   };
 
-  const filteredLearners = learners.filter(l => {
-    const matchesSearch =
-      l.full_name.toLowerCase().includes(search.toLowerCase()) ||
-      l.access_code.toLowerCase().includes(search.toLowerCase()) ||
-      (l.party_name && l.party_name.toLowerCase().includes(search.toLowerCase())) ||
-      (l.constituency_name && l.constituency_name.toLowerCase().includes(search.toLowerCase()));
+  // Filter learners for General Terminal
+  const filteredLearners = useMemo(() => {
+    return learners.filter(l => {
+      const matchesSearch =
+        l.full_name.toLowerCase().includes(search.toLowerCase()) ||
+        l.access_code.toLowerCase().includes(search.toLowerCase()) ||
+        (l.party_name && l.party_name.toLowerCase().includes(search.toLowerCase())) ||
+        (l.constituency_name && l.constituency_name.toLowerCase().includes(search.toLowerCase()));
 
-    const isPresent = selectedDay === 1 ? l.day1_checked_in : l.day2_checked_in;
-    const matchesStatus =
-      statusFilter === 'ALL' ||
-      (statusFilter === 'PRESENT' && isPresent) ||
-      (statusFilter === 'ABSENT' && !isPresent);
+      const isPresent = selectedDay === 1 ? l.day1_checked_in : l.day2_checked_in;
+      const matchesStatus =
+        statusFilter === 'ALL' ||
+        (statusFilter === 'PRESENT' && isPresent) ||
+        (statusFilter === 'ABSENT' && !isPresent);
 
-    return matchesSearch && matchesStatus;
-  });
+      return matchesSearch && matchesStatus;
+    });
+  }, [learners, search, selectedDay, statusFilter]);
+
+  // Filter learners for YUVA Desk
+  const assignedDeskLearners = useMemo(() => {
+    if (!selectedDeskKey || selectedDeskKey === 'ALL') {
+      if (userAssignments.length > 0 && userAssignments.length < yuvaAssignments.length) {
+        return learners.filter(l =>
+          userAssignments.some(a =>
+            a.targetType === 'party'
+              ? (l.party_id === a.targetId || (l.party_name && a.targetName.toLowerCase().includes(l.party_name.toLowerCase())))
+              : (l.committee_id === a.targetId || (l.committee_name && a.targetName.toLowerCase().includes(l.committee_name.toLowerCase())))
+          )
+        );
+      }
+      return learners;
+    }
+
+    const [tType, tId, tName] = selectedDeskKey.split(':::');
+    return learners.filter(l => {
+      if (tType === 'party') {
+        return l.party_id === tId || (l.party_name && tName && (
+          l.party_name.toLowerCase().includes(tName.toLowerCase()) ||
+          tName.toLowerCase().includes(l.party_name.toLowerCase())
+        ));
+      } else {
+        return l.committee_id === tId || (l.committee_name && tName && (
+          l.committee_name.toLowerCase().includes(tName.toLowerCase()) ||
+          tName.toLowerCase().includes(l.committee_name.toLowerCase())
+        ));
+      }
+    });
+  }, [learners, selectedDeskKey, userAssignments, yuvaAssignments]);
+
+  const filteredYuvaMembers = useMemo(() => {
+    return assignedDeskLearners.filter(l => {
+      const matchesSearch =
+        l.full_name.toLowerCase().includes(search.toLowerCase()) ||
+        l.access_code.toLowerCase().includes(search.toLowerCase()) ||
+        (l.party_name && l.party_name.toLowerCase().includes(search.toLowerCase())) ||
+        (l.constituency_name && l.constituency_name.toLowerCase().includes(search.toLowerCase()));
+
+      const isPresent = selectedDay === 1 ? l.day1_checked_in : l.day2_checked_in;
+      const matchesStatus =
+        statusFilter === 'ALL' ||
+        (statusFilter === 'PRESENT' && isPresent) ||
+        (statusFilter === 'ABSENT' && !isPresent);
+
+      return matchesSearch && matchesStatus;
+    });
+  }, [assignedDeskLearners, search, selectedDay, statusFilter]);
 
   const day1Present = learners.filter(l => l.day1_checked_in).length;
   const day2Present = learners.filter(l => l.day2_checked_in).length;
   const currentPresent = selectedDay === 1 ? day1Present : day2Present;
   const attendanceRate = learners.length > 0 ? Math.round((currentPresent / learners.length) * 100) : 0;
+
+  // Live Elections & Live Flash Votes
+  const activeElectionsList = useMemo(() => {
+    const list = elections.length > 0 ? elections : storageService.getElections(eventId);
+    return list.filter(e => e.status === 'Live');
+  }, [elections, eventId]);
+
+  const activeFlashVotesList = useMemo(() => {
+    const list = flashVotes.length > 0 ? flashVotes : storageService.getFlashVotes(eventId);
+    return list.filter(f => f.status === 'ACTIVE');
+  }, [flashVotes, eventId]);
+
+  // Execute Proxy Vote for Election
+  const handleExecuteProxyVote = (electionId: string) => {
+    if (!proxyModalLearner) return;
+    const candId = selectedCandidateForElection[electionId];
+    if (!candId) {
+      onShowToast('Select Candidate', 'Please select a candidate before casting vote', 'error');
+      return;
+    }
+
+    if (onCastVote) {
+      onCastVote(electionId, candId, proxyModalLearner.id);
+    } else {
+      storageService.castVoteInElection(electionId, candId, proxyModalLearner.id);
+    }
+
+    onShowToast('Proxy Vote Cast', `Cast vote for ${proxyModalLearner.full_name}`, 'success');
+  };
+
+  // Execute Proxy Vote for Flash Vote
+  const handleExecuteProxyFlashVote = (voteId: string, decision: 'AYE' | 'NO' | 'ABSTAIN') => {
+    if (!proxyModalLearner) return;
+
+    if (onCastFlashVote) {
+      onCastFlashVote(voteId, proxyModalLearner, decision);
+    } else {
+      storageService.castFlashVote(voteId, proxyModalLearner, decision);
+    }
+
+    onShowToast('Proxy Vote Recorded', `Recorded ${decision} for ${proxyModalLearner.full_name}`, 'success');
+  };
 
   return (
     <div
@@ -202,7 +379,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
           {/* Logout */}
           <button
             onClick={onLogout}
-            className="px-3.5 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition-colors hover:bg-rose-500/10 hover:text-rose-500 hover:border-rose-500/30"
+            className="px-3.5 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition-colors hover:bg-rose-500/10 hover:text-rose-500 hover:border-rose-500/30 cursor-pointer"
             style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-muted)' }}
           >
             <LogOut className="w-3.5 h-3.5" /> Sign Out
@@ -264,7 +441,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
             <div className="flex rounded-xl p-1 border" style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
               <button
                 onClick={() => setSelectedDay(1)}
-                className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
                   selectedDay === 1 ? 'shadow-sm' : 'opacity-70 hover:opacity-100'
                 }`}
                 style={{
@@ -276,7 +453,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
               </button>
               <button
                 onClick={() => setSelectedDay(2)}
-                className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
                   selectedDay === 2 ? 'shadow-sm' : 'opacity-70 hover:opacity-100'
                 }`}
                 style={{
@@ -292,10 +469,23 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
 
         {/* View Tabs */}
         <div className="flex items-center justify-between flex-wrap gap-3 border-b pb-3" style={{ borderColor: 'var(--border)' }}>
-          <div className="flex rounded-xl p-1 border" style={{ background: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+          <div className="flex rounded-xl p-1 border flex-wrap gap-1" style={{ background: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+            <button
+              onClick={() => setActiveTab('yuvadesk')}
+              className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                activeTab === 'yuvadesk' ? 'shadow-sm' : 'opacity-70 hover:opacity-100'
+              }`}
+              style={{
+                background: activeTab === 'yuvadesk' ? 'var(--amber)' : 'transparent',
+                color: activeTab === 'yuvadesk' ? '#fff' : 'var(--text-primary)'
+              }}
+            >
+              <Shield className="w-3.5 h-3.5" /> My YUVA Desk & Proxy Voting
+            </button>
+
             <button
               onClick={() => setActiveTab('checkin')}
-              className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+              className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
                 activeTab === 'checkin' ? 'shadow-sm' : 'opacity-70 hover:opacity-100'
               }`}
               style={{
@@ -303,11 +493,12 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                 color: activeTab === 'checkin' ? '#fff' : 'var(--text-primary)'
               }}
             >
-              <UserCheck className="w-3.5 h-3.5" /> Check-in Terminal
+              <UserCheck className="w-3.5 h-3.5" /> All Delegates Terminal
             </button>
+
             <button
               onClick={() => setActiveTab('walkin')}
-              className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+              className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
                 activeTab === 'walkin' ? 'shadow-sm' : 'opacity-70 hover:opacity-100'
               }`}
               style={{
@@ -317,9 +508,10 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
             >
               <UserPlus className="w-3.5 h-3.5" /> Register Walk-In
             </button>
+
             <button
               onClick={() => setActiveTab('checklist')}
-              className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+              className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
                 activeTab === 'checklist' ? 'shadow-sm' : 'opacity-70 hover:opacity-100'
               }`}
               style={{
@@ -331,18 +523,18 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
             </button>
           </div>
 
-          {activeTab === 'checkin' && onCheckInAll && (
+          {(activeTab === 'checkin' || activeTab === 'yuvadesk') && onCheckInAll && (
             <div className="flex items-center gap-2">
               <button
                 onClick={() => onCheckInAll(selectedDay, true)}
-                className="px-3 py-1.5 rounded-lg text-xs font-bold border transition hover:opacity-80 flex items-center gap-1"
+                className="px-3 py-1.5 rounded-lg text-xs font-bold border transition hover:opacity-80 flex items-center gap-1 cursor-pointer"
                 style={{ background: 'rgba(5,150,105,0.1)', color: 'var(--emerald)', borderColor: 'var(--emerald)' }}
               >
                 <CheckCircle className="w-3 h-3" /> Check In All (Day {selectedDay})
               </button>
               <button
                 onClick={() => onCheckInAll(selectedDay, false)}
-                className="px-3 py-1.5 rounded-lg text-xs font-bold border transition hover:opacity-80 flex items-center gap-1"
+                className="px-3 py-1.5 rounded-lg text-xs font-bold border transition hover:opacity-80 flex items-center gap-1 cursor-pointer"
                 style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444', borderColor: '#ef4444' }}
               >
                 <XCircle className="w-3 h-3" /> Reset All
@@ -350,6 +542,195 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
             </div>
           )}
         </div>
+
+        {/* Tab 0: YUVA DESK & PROXY VOTING */}
+        {activeTab === 'yuvadesk' && (
+          <div className="space-y-5 animate-fade-in">
+            {/* Header Desk Info Banner */}
+            <div className="rounded-2xl p-5 border shadow-sm space-y-4" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-amber-500">
+                    <Shield className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-base font-extrabold" style={{ color: 'var(--text-primary)' }}>
+                        YUVA Desk Operations & Proxy Voting
+                      </h2>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-600 dark:text-amber-300 border border-amber-500/30">
+                        Assigned Floor Support
+                      </span>
+                    </div>
+                    <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                      Manage assigned party/committee delegates, perform instant check-ins, and cast votes for delegates without mobile access.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Desk Switcher Select */}
+                <div className="w-full sm:w-auto">
+                  <label className="block text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color: 'var(--text-muted)' }}>
+                    Switch Assigned Desk:
+                  </label>
+                  <select
+                    value={selectedDeskKey}
+                    onChange={(e) => setSelectedDeskKey(e.target.value)}
+                    className="input-theme text-xs font-bold py-2 px-3 rounded-xl border w-full sm:w-72"
+                  >
+                    <option value="ALL">All Assigned Desks ({userAssignments.length})</option>
+                    {userAssignments.map((a) => (
+                      <option key={a.id} value={`${a.targetType}:::${a.targetId}:::${a.targetName}`}>
+                        {a.targetType === 'party' ? '🚩 Party Desk:' : '🏛️ Committee:'} {a.targetName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Quick Live Status Indicators */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
+                <div className="p-3 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
+                  <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>Assigned Members</div>
+                  <div className="text-xl font-black mt-0.5" style={{ color: 'var(--text-primary)' }}>{assignedDeskLearners.length}</div>
+                </div>
+                <div className="p-3 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
+                  <div className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">Day {selectedDay} Present</div>
+                  <div className="text-xl font-black mt-0.5 text-emerald-600 dark:text-emerald-400">
+                    {assignedDeskLearners.filter(l => selectedDay === 1 ? l.day1_checked_in : l.day2_checked_in).length}
+                  </div>
+                </div>
+                <div className="p-3 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
+                  <div className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">Active Live Elections</div>
+                  <div className="text-xl font-black mt-0.5 text-amber-600 dark:text-amber-400">{activeElectionsList.length}</div>
+                </div>
+                <div className="p-3 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
+                  <div className="text-[11px] font-semibold text-sky-600 dark:text-sky-400">Live Flash Votes</div>
+                  <div className="text-xl font-black mt-0.5 text-sky-600 dark:text-sky-400">{activeFlashVotesList.length}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Filter & Search Bar */}
+            <div className="rounded-2xl p-5 border space-y-4" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="relative w-full sm:w-80">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-3" style={{ color: 'var(--text-muted)' }} />
+                  <input
+                    type="text"
+                    placeholder="Search assigned members, code, party..."
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    className="input-theme pl-8 py-2 text-xs w-full"
+                  />
+                </div>
+
+                <div className="flex items-center gap-1">
+                  {(['ALL', 'PRESENT', 'ABSENT'] as const).map(f => (
+                    <button
+                      key={f}
+                      onClick={() => setStatusFilter(f)}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition cursor-pointer ${
+                        statusFilter === f ? 'border-current' : 'opacity-60 hover:opacity-100'
+                      }`}
+                      style={{
+                        background: statusFilter === f ? 'var(--accent-soft)' : 'transparent',
+                        color: statusFilter === f ? 'var(--accent)' : 'var(--text-muted)',
+                        borderColor: statusFilter === f ? 'var(--accent)' : 'var(--border)'
+                      }}
+                    >
+                      {f}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Members Table */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="border-b uppercase" style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
+                    <tr>
+                      <th className="py-2.5 px-3">Access Code</th>
+                      <th className="py-2.5 px-3">Delegate Name</th>
+                      <th className="py-2.5 px-3">Party & Bench</th>
+                      <th className="py-2.5 px-3">Role / Constituency</th>
+                      <th className="py-2.5 px-3 text-center">Floor Check-In</th>
+                      <th className="py-2.5 px-3 text-center">Proxy Voting (No Mobile)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                    {filteredYuvaMembers.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="text-center py-12 text-xs" style={{ color: 'var(--text-muted)' }}>
+                          No members found for this desk assignment.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredYuvaMembers.map(learner => {
+                        const isPresent = selectedDay === 1 ? learner.day1_checked_in : learner.day2_checked_in;
+                        return (
+                          <tr key={learner.id} className="hover:opacity-90">
+                            <td className="py-3 px-3 font-mono font-bold" style={{ color: 'var(--accent)' }}>
+                              {learner.access_code}
+                            </td>
+                            <td className="py-3 px-3 font-bold" style={{ color: 'var(--text-primary)' }}>
+                              {learner.full_name}
+                            </td>
+                            <td className="py-3 px-3" style={{ color: 'var(--text-secondary)' }}>
+                              <span className="font-semibold">{learner.party_name || 'Independent'}</span>
+                              <span className="text-[10px] ml-1.5 px-1.5 py-0.5 rounded bg-slate-500/10 border border-slate-500/20">
+                                {learner.bench || 'Ruling'}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3" style={{ color: 'var(--text-muted)' }}>
+                              {learner.constituency_name || learner.role || 'Floor Delegate'}
+                            </td>
+
+                            {/* Check In Action */}
+                            <td className="py-3 px-3 text-center">
+                              <button
+                                onClick={() => onToggleCheckIn(learner.id, selectedDay)}
+                                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 mx-auto cursor-pointer ${
+                                  isPresent ? 'shadow-sm' : 'hover:scale-102'
+                                }`}
+                                style={{
+                                  backgroundColor: isPresent ? 'var(--emerald)' : 'var(--bg-elevated)',
+                                  color: isPresent ? '#fff' : 'var(--text-muted)',
+                                  border: isPresent ? 'none' : '1px solid var(--border)'
+                                }}
+                              >
+                                {isPresent ? (
+                                  <>
+                                    <CheckCircle className="w-3.5 h-3.5" /> PRESENT
+                                  </>
+                                ) : (
+                                  <>
+                                    <XCircle className="w-3.5 h-3.5" /> ABSENT
+                                  </>
+                                )}
+                              </button>
+                            </td>
+
+                            {/* Proxy Vote Action */}
+                            <td className="py-3 px-3 text-center">
+                              <button
+                                onClick={() => setProxyModalLearner(learner)}
+                                className="px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 mx-auto bg-amber-500 text-white shadow-sm hover:bg-amber-600 hover:scale-102 cursor-pointer"
+                              >
+                                <Vote className="w-3.5 h-3.5" />
+                                <span>Cast Proxy Vote</span>
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Tab 1: Check-in Terminal */}
         {activeTab === 'checkin' && (
@@ -371,7 +752,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                   <button
                     key={f}
                     onClick={() => setStatusFilter(f)}
-                    className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition ${
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition cursor-pointer ${
                       statusFilter === f ? 'border-current' : 'opacity-60 hover:opacity-100'
                     }`}
                     style={{
@@ -392,7 +773,6 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                 <thead className="border-b uppercase" style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
                   <tr>
                     <th className="py-2.5 px-3">Access Code</th>
-                    <th className="py-2.5 px-3">Seat / Const #</th>
                     <th className="py-2.5 px-3">Delegate Name</th>
                     <th className="py-2.5 px-3">Party & Bench</th>
                     <th className="py-2.5 px-3">Constituency / Role</th>
@@ -413,7 +793,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                         <tr key={learner.id} className="hover:opacity-90">
                           <td className="py-3 px-3 font-mono font-bold" style={{ color: 'var(--accent)' }}>
                             {learner.access_code}
-                            {learner.constituency_number !== undefined ? `#${learner.constituency_number}` : '—'}
+                            {learner.constituency_number !== undefined ? ` #${learner.constituency_number}` : ''}
                           </td>
                           <td className="py-3 px-3 font-bold" style={{ color: 'var(--text-primary)' }}>
                             {learner.full_name}
@@ -460,7 +840,6 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
         {/* Tab 2: Walk-In Registration */}
         {activeTab === 'walkin' && (
           <div className="max-w-xl mx-auto rounded-2xl p-6 border space-y-5" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
-            
             {storageService.getRegistrationsFrozen(event?.id) && (
               <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs font-bold flex items-center gap-2">
                 <Lock className="w-4 h-4 text-amber-500 shrink-0" />
@@ -611,6 +990,180 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
           </div>
         )}
       </main>
+
+      {/* PROXY VOTING MODAL FOR DELEGATES WITHOUT MOBILE */}
+      {proxyModalLearner && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-xl w-full p-6 shadow-2xl space-y-5 animate-scale-in max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-amber-500/10 text-amber-500 rounded-2xl border border-amber-500/30">
+                  <Vote className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+                    Proxy Voting: {proxyModalLearner.full_name}
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Code: <strong className="font-mono text-amber-600 dark:text-amber-400">{proxyModalLearner.access_code}</strong> · {proxyModalLearner.party_name || 'Independent'} ({proxyModalLearner.bench || 'Ruling'})
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setProxyModalLearner(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40 text-amber-900 dark:text-amber-200 text-xs flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" />
+              <span>YUVA Volunteer Proxy Mode: Submitting official parliamentary vote on behalf of delegate.</span>
+            </div>
+
+            {/* Section 1: Live Elections */}
+            <div className="space-y-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <Crown className="w-4 h-4 text-amber-500" /> Active Live Elections ({activeElectionsList.length})
+              </h4>
+
+              {activeElectionsList.length === 0 ? (
+                <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 text-center text-xs text-slate-500">
+                  No live elections currently open for voting.
+                </div>
+              ) : (
+                activeElectionsList.map(elec => {
+                  const hasVoted = elec.voted_delegate_ids?.includes(proxyModalLearner.id);
+                  const selectedCandId = selectedCandidateForElection[elec.id];
+
+                  return (
+                    <div
+                      key={elec.id}
+                      className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 space-y-3"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h5 className="font-extrabold text-sm text-slate-900 dark:text-white">{elec.title}</h5>
+                          <p className="text-[11px] text-slate-500">{elec.position}</p>
+                        </div>
+                        {hasVoted && (
+                          <span className="px-2 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
+                            <Check className="w-3 h-3" /> Voted
+                          </span>
+                        )}
+                      </div>
+
+                      {!hasVoted && (
+                        <div className="space-y-2 pt-1">
+                          <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">Select Candidate:</p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {elec.candidates.map(cand => (
+                              <button
+                                key={cand.id}
+                                type="button"
+                                onClick={() => setSelectedCandidateForElection(prev => ({ ...prev, [elec.id]: cand.id }))}
+                                className={`p-2.5 rounded-xl text-left border text-xs font-bold transition-all cursor-pointer ${
+                                  selectedCandId === cand.id
+                                    ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 ring-2 ring-amber-400/30'
+                                    : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200'
+                                }`}
+                              >
+                                <div>{cand.name}</div>
+                                <div className="text-[10px] text-slate-400 font-normal">{cand.party || 'Nominee'}</div>
+                              </button>
+                            ))}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleExecuteProxyVote(elec.id)}
+                            className="w-full mt-2 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <Vote className="w-3.5 h-3.5" /> Cast Proxy Vote in Election
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Section 2: Active Flash Votes */}
+            <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <Flame className="w-4 h-4 text-sky-500" /> Active Live Flash Votes / Polls ({activeFlashVotesList.length})
+              </h4>
+
+              {activeFlashVotesList.length === 0 ? (
+                <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 text-center text-xs text-slate-500">
+                  No active live flash votes / division polls currently running.
+                </div>
+              ) : (
+                activeFlashVotesList.map(flash => {
+                  const hasVoted = flash.voter_ids?.includes(proxyModalLearner.id);
+
+                  return (
+                    <div
+                      key={flash.id}
+                      className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 space-y-3"
+                    >
+                      <div className="flex items-center justify-between">
+                        <h5 className="font-extrabold text-xs text-slate-900 dark:text-white">{flash.question}</h5>
+                        {hasVoted && (
+                          <span className="px-2 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
+                            <Check className="w-3 h-3" /> Voted
+                          </span>
+                        )}
+                      </div>
+
+                      {!hasVoted && (
+                        <div className="grid grid-cols-3 gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => handleExecuteProxyFlashVote(flash.id, 'AYE')}
+                            className="py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-1 cursor-pointer"
+                          >
+                            <Check className="w-3.5 h-3.5" /> AYE (Yes)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleExecuteProxyFlashVote(flash.id, 'NO')}
+                            className="py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-1 cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" /> NO (Against)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleExecuteProxyFlashVote(flash.id, 'ABSTAIN')}
+                            className="py-2.5 rounded-xl bg-slate-600 hover:bg-slate-700 text-white font-bold text-xs shadow-sm flex items-center justify-center gap-1 cursor-pointer"
+                          >
+                            Abstain
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="pt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setProxyModalLearner(null)}
+                className="px-5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
