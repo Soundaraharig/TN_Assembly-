@@ -99,6 +99,7 @@ class StorageService {
   private listeners: Listener[] = [];
   private realtimeChannel: any = null;
   private syncTimer: any = null;
+  private notifyTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     this.initDefaults();
@@ -120,7 +121,14 @@ class StorageService {
   }
 
   private notify() {
-    this.listeners.forEach(l => l());
+    // Debounce: batch rapid successive setItem calls into a single notification.
+    // This prevents cascading re-renders when multiple keys are written together
+    // (e.g., security lock functions writing to 5+ keys).
+    if (this.notifyTimer) clearTimeout(this.notifyTimer);
+    this.notifyTimer = setTimeout(() => {
+      this.notifyTimer = null;
+      this.listeners.forEach(l => l());
+    }, 50);
   }
 
   // ── localStorage helpers ─────────────────────────────────────────────────

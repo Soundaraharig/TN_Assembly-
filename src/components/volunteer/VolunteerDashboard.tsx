@@ -122,7 +122,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
       return false;
     });
 
-    return match.length > 0 ? match : yuvaAssignments;
+    return match.length > 0 ? match : [];
   }, [yuvaAssignments, volunteer]);
 
   // Unique Desk Options without duplicates

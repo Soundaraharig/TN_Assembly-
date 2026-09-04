@@ -85,12 +85,12 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
 
   const [loadedLearnerId, setLoadedLearnerId] = useState<string>('');
 
-  // Load existing score ONLY when learner changes or initial load
+  // Load existing score ONLY when the selected learner changes (different delegate picked)
   useEffect(() => {
-    if (!selectedLearner) return;
-    if (loadedLearnerId === selectedLearner.id) return;
+    if (!selectedLearnerId) return;
+    if (loadedLearnerId === selectedLearnerId) return;
 
-    const existing = scores.find(s => s.learner_id === selectedLearner.id && (!event || s.event_id === event.id));
+    const existing = scores.find(s => s.learner_id === selectedLearnerId && (!event || s.event_id === event.id));
     if (existing) {
       setResearchScore(existing.research_constituency ?? existing.policy_knowledge ?? 2);
       setRelevanceScore(existing.relevance_agenda ?? existing.rebuttal_debate ?? 2);
@@ -111,8 +111,9 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       setIsLocked(false);
       setFeedback('');
     }
-    setLoadedLearnerId(selectedLearner.id);
-  }, [selectedLearner, loadedLearnerId, scores, event]);
+    setLoadedLearnerId(selectedLearnerId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLearnerId]);
 
   const totalScore = researchScore + relevanceScore + commScore + conductScore + originalityScore + timeScore;
 
