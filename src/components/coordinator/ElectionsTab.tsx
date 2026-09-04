@@ -45,7 +45,7 @@ interface ElectionsTabProps {
 const CONSTITUTIONAL_POSTS = [
   {
     key: 'speaker',
-    title: 'Speaker Election',
+    title: 'Assembly Speaker Election',
     position: 'Speaker',
     type: 'SPEAKER' as const,
     electorate: 'ALL' as const,
@@ -54,18 +54,8 @@ const CONSTITUTIONAL_POSTS = [
     icon: Crown
   },
   {
-    key: 'deputy_speaker',
-    title: 'Deputy Speaker Election',
-    position: 'Deputy Speaker',
-    type: 'DEPUTY_SPEAKER' as const,
-    electorate: 'ALL' as const,
-    electorateLabel: 'Whole House (All Delegates)',
-    description: 'Whole House (Ruling, Opposition & Independent delegates)',
-    icon: Crown
-  },
-  {
     key: 'cm',
-    title: 'Prime Minister / Chief Minister Election',
+    title: 'Ruling Party Leader & Chief Minister Election',
     position: 'Ruling Party Leader',
     type: 'LEADERSHIP' as const,
     electorate: 'RULING' as const,
@@ -75,7 +65,7 @@ const CONSTITUTIONAL_POSTS = [
   },
   {
     key: 'lop',
-    title: 'Leader of Opposition Election',
+    title: 'Leader of the Opposition (LOP) Election',
     position: 'Opposition Party Leader',
     type: 'LEADERSHIP' as const,
     electorate: 'OPPOSITION' as const,
@@ -201,6 +191,11 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
       const title = (elec.title || '').toLowerCase();
       const pos = (elec.position || '').toLowerCase();
 
+      // Skip Deputy Speaker election as requested by user
+      if (title.includes('deputy') || pos.includes('deputy')) {
+        return;
+      }
+
       if ((title.includes('party leader') && !title.includes('ruling') && !title.includes('opposition')) || (pos === 'party leader')) {
         partyLeaders.push(elec);
       } else if (
@@ -213,7 +208,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
       }
     });
 
-    const orderMap: Record<string, number> = { 'speaker': 1, 'deputy': 2, 'ruling': 3, 'chief minister': 3, 'prime minister': 3, 'opposition': 4, 'lop': 4 };
+    const orderMap: Record<string, number> = { 'speaker': 1, 'ruling': 2, 'chief minister': 2, 'prime minister': 2, 'opposition': 3, 'lop': 3 };
     constitutional.sort((a, b) => {
       const aKey = Object.keys(orderMap).find(k => (a.title + a.position).toLowerCase().includes(k)) || 'speaker';
       const bKey = Object.keys(orderMap).find(k => (b.title + b.position).toLowerCase().includes(k)) || 'speaker';

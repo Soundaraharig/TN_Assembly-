@@ -10,13 +10,10 @@ import {
   Trash2,
   CheckCircle2,
   Search,
-  Users,
   Info,
   Landmark,
-  Shield,
   Crown,
   Scale,
-  Sparkles,
   Award
 } from 'lucide-react';
 
@@ -37,28 +34,10 @@ interface NominationsTabProps {
 
 export const ALL_NOMINATION_ROLES: { id: NominationPosition; label: string; description: string; icon: any }[] = [
   {
-    id: 'Administrator',
-    label: 'Administrator',
-    description: 'Supports the Speaker with impartial procedure and record-keeping.',
-    icon: Shield
-  },
-  {
     id: 'Speaker',
     label: 'Speaker',
     description: 'Runs the House and every session with strict neutrality.',
     icon: Crown
-  },
-  {
-    id: 'Party Leader',
-    label: 'Party Leader',
-    description: "Leads your party's coalition negotiations and represents it going forward.",
-    icon: Landmark
-  },
-  {
-    id: 'Student Journalist',
-    label: 'Student Journalist',
-    description: 'Covers the House across both days and reports on it — neutral about their own party.',
-    icon: Sparkles
   },
   {
     id: 'Chief Minister',
@@ -73,28 +52,10 @@ export const ALL_NOMINATION_ROLES: { id: NominationPosition; label: string; desc
     icon: Scale
   },
   {
-    id: 'Cabinet Minister',
-    label: 'Cabinet Minister',
-    description: 'Holds portfolios in Government — answers for them in Question Hour and tables Bills.',
-    icon: Users
-  },
-  {
-    id: 'Shadow Minister',
-    label: 'Shadow Minister',
-    description: 'Shadows portfolios from the Opposition benches — scrutinises them and offers the alternative.',
-    icon: Shield
-  },
-  {
-    id: 'Deputy Speaker',
-    label: 'Deputy Speaker',
-    description: 'Assists the Speaker and presides over parliamentary sessions in their absence.',
-    icon: Crown
-  },
-  {
-    id: 'Committee Chair',
-    label: 'Committee Chair',
-    description: 'Presides over committee policy hearings, witness testimonies, and bill scrutiny.',
-    icon: FileSpreadsheet
+    id: 'Party Leader',
+    label: 'Party Leader',
+    description: "Leads your party's coalition negotiations and represents it going forward.",
+    icon: Landmark
   }
 ];
 

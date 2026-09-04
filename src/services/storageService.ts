@@ -1243,8 +1243,12 @@ class StorageService {
 
   public getOpenNominationPositions(eventId?: string): string[] {
     const map = this.getItem<Record<string, string[]>>(STORAGE_KEYS.OPEN_NOMINATIONS, {});
-    if (eventId && map[eventId]) return map[eventId];
-    return [];
+    const validRoles = ['Speaker', 'Chief Minister', 'Leader of Opposition', 'Party Leader'];
+    if (eventId && map[eventId] && map[eventId].length > 0) {
+      const filtered = map[eventId].filter(p => validRoles.includes(p));
+      return filtered.length > 0 ? filtered : validRoles;
+    }
+    return validRoles;
   }
 
   public toggleNominationPositionStatus(eventId: string, position: string): boolean {
