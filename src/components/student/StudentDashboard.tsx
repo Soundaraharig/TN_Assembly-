@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import type { Learner, CollegeEvent, AgendaItem, Party, Committee } from '../../types';
-import { Landmark, MapPin, BookOpen, Clock, Hand, CheckCircle2, Sparkles, Radio } from 'lucide-react';
+import type { Learner, CollegeEvent, AgendaItem, Party, Committee, Nomination, NominationPosition } from '../../types';
+import { Landmark, MapPin, BookOpen, Clock, Hand, CheckCircle2, Sparkles, Radio, FileSpreadsheet, Send } from 'lucide-react';
 
 interface StudentDashboardProps {
   student: Learner;
@@ -8,6 +8,8 @@ interface StudentDashboardProps {
   agenda: AgendaItem[];
   party: Party | null;
   committee: Committee | null;
+  openNominationPositions?: string[];
+  onFileNomination?: (nom: Partial<Nomination>) => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -16,9 +18,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   event,
   agenda,
   committee,
+  openNominationPositions = [],
+  onFileNomination,
   onShowToast
 }) => {
   const [floorRequested, setFloorRequested] = useState(false);
+
+  // Nomination form state
+  const [selectedNomPosition, setSelectedNomPosition] = useState<string>(
+    openNominationPositions.length > 0 ? openNominationPositions[0] : 'Speaker'
+  );
+  const [nomManifesto, setNomManifesto] = useState('');
+  const [nomSubmitted, setNomSubmitted] = useState(false);
 
   const isRuling = student.bench === 'Ruling';
   const currentAgendaItem = agenda.find(a => a.is_current) || agenda[0];
@@ -31,6 +42,31 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       'success'
     );
     setTimeout(() => setFloorRequested(false), 5000);
+  };
+
+  const handleStudentNominationSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onFileNomination) return;
+
+    onFileNomination({
+      event_id: student.event_id || '',
+      position: selectedNomPosition as NominationPosition,
+      candidate_learner_id: student.id,
+      candidate_name: student.full_name,
+      party_name: student.party_name || 'Independent',
+      bench: student.bench || 'Ruling',
+      manifesto: nomManifesto.trim() || 'Committed to upholding parliamentary rules, student welfare, and progressive policy debate.',
+      status: 'Approved'
+    });
+
+    setNomSubmitted(true);
+    setNomManifesto('');
+    onShowToast(
+      'Nomination Submitted',
+      `Your nomination for ${selectedNomPosition} has been filed successfully!`,
+      'success'
+    );
+    setTimeout(() => setNomSubmitted(false), 4000);
   };
 
   return (
@@ -136,6 +172,96 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
       </div>
 
+      {/* Self-Nomination Filing Section (When Nominations are Open) */}
+      {openNominationPositions.length > 0 && onFileNomination && (
+        <div className="bg-gradient-to-br from-emerald-950/40 via-slate-900 to-slate-900 border border-emerald-500/30 rounded-2xl p-5 md:p-6 shadow-xl space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div className="flex items-center gap-2">
+              <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <FileSpreadsheet className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-base font-bold text-white flex items-center gap-2">
+                  Parliamentary Candidacy Nominations
+                  <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-500 text-white animate-pulse">
+                    OPEN NOW
+                  </span>
+                </h4>
+                <p className="text-xs text-slate-400">
+                  File your candidacy nomination for parliamentary leadership positions directly
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <form onSubmit={handleStudentNominationSubmit} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Select Open Position *
+                </label>
+                <select
+                  value={selectedNomPosition}
+                  onChange={(e) => setSelectedNomPosition(e.target.value)}
+                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-semibold focus:outline-none focus:border-emerald-500"
+                >
+                  {openNominationPositions.map(pos => (
+                    <option key={pos} value={pos}>{pos}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Candidate Name & Bench
+                </label>
+                <input
+                  type="text"
+                  readOnly
+                  value={`${student.full_name} (${student.party_name || 'Independent'} • ${student.bench || 'Delegate'})`}
+                  className="w-full p-2.5 rounded-xl bg-slate-950/60 border border-slate-800 text-slate-400 text-xs font-medium focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                Manifesto / Candidacy Statement *
+              </label>
+              <textarea
+                rows={3}
+                value={nomManifesto}
+                onChange={(e) => setNomManifesto(e.target.value)}
+                placeholder="Share your goals, vision for the assembly, and proposed reforms..."
+                className="w-full p-3 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-end">
+              <button
+                type="submit"
+                disabled={nomSubmitted}
+                className={`px-5 py-2.5 rounded-xl font-bold text-xs shadow-lg transition-all flex items-center gap-2 cursor-pointer ${
+                  nomSubmitted
+                    ? 'bg-emerald-600 text-white shadow-emerald-950/50'
+                    : 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-emerald-950/50'
+                }`}
+              >
+                {nomSubmitted ? (
+                  <>
+                    <CheckCircle2 className="w-4 h-4" /> Nomination Filed!
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4" /> Submit Nomination
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {/* Interactive Assembly Floor Request */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4">
         <div>
@@ -211,3 +337,4 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     </div>
   );
 };
+

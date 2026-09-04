@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import type { Volunteer } from '../../types';
+import type { Volunteer, UserRole } from '../../types';
+import { canDelete } from '../../utils/permissions';
 import {
   Shield,
   Users,
@@ -20,6 +21,7 @@ import Papa from 'papaparse';
 interface VolunteersTabProps {
   volunteers: Volunteer[];
   eventId: string;
+  userRole?: UserRole;
   onAddVolunteer: (v: Partial<Volunteer>) => void;
   onToggleArrival?: (id: string) => void;
   onBulkImportVolunteers?: (volunteers: Partial<Volunteer>[]) => void;
@@ -44,6 +46,7 @@ const SHIFTS = [
 export const VolunteersTab: React.FC<VolunteersTabProps> = ({
   volunteers,
   eventId,
+  userRole,
   onAddVolunteer,
   onToggleArrival,
   onBulkImportVolunteers,
@@ -461,14 +464,16 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
                         {v.has_arrived ? <UserCheck className="w-4 h-4" /> : <UserX className="w-4 h-4" />}
                       </button>
 
-                      <button
-                        type="button"
-                        onClick={() => onDeleteVolunteer(v.id)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
-                        title="Delete volunteer"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {canDelete(userRole) && (
+                        <button
+                          type="button"
+                          onClick={() => onDeleteVolunteer(v.id)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                          title="Delete volunteer"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}

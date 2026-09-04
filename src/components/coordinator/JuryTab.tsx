@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import type { JuryMember, BenchType } from '../../types';
+import type { JuryMember, BenchType, UserRole } from '../../types';
+import { canDelete } from '../../utils/permissions';
 import {
   Users,
   Plus,
@@ -15,6 +16,7 @@ import {
 interface JuryTabProps {
   jury: JuryMember[];
   eventId: string;
+  userRole?: UserRole;
   onAddJury: (j: Partial<JuryMember>) => void;
   onDeleteJury: (id: string) => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
@@ -24,6 +26,7 @@ interface JuryTabProps {
 export const JuryTab: React.FC<JuryTabProps> = ({
   jury,
   eventId,
+  userRole,
   onAddJury,
   onDeleteJury,
   onShowToast,
@@ -215,14 +218,16 @@ export const JuryTab: React.FC<JuryTabProps> = ({
 
                     {/* Delete Action */}
                     <td className="py-3.5 px-5 text-right">
-                      <button
-                        type="button"
-                        onClick={() => onDeleteJury(j.id)}
-                        className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
-                        title="Delete jury member"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {canDelete(userRole) && (
+                        <button
+                          type="button"
+                          onClick={() => onDeleteJury(j.id)}
+                          className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
+                          title="Delete jury member"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </td>
 
                   </tr>

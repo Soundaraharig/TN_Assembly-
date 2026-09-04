@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import type { ChecklistItem } from '../../types';
+import type { ChecklistItem, UserRole } from '../../types';
+import { canDelete } from '../../utils/permissions';
 import {
   CheckSquare,
   Plus,
@@ -11,6 +12,7 @@ import {
 interface ChecklistTabProps {
   checklist: ChecklistItem[];
   eventId: string;
+  userRole?: UserRole;
   onToggleItem: (id: string) => void;
   onAddItem: (item: Partial<ChecklistItem>) => void;
   onDeleteItem: (id: string) => void;
@@ -20,6 +22,7 @@ interface ChecklistTabProps {
 export const ChecklistTab: React.FC<ChecklistTabProps> = ({
   checklist,
   eventId,
+  userRole,
   onToggleItem,
   onAddItem,
   onDeleteItem,
@@ -219,18 +222,20 @@ export const ChecklistTab: React.FC<ChecklistTabProps> = ({
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDeleteItem(item.id);
-                  onShowToast('Task Removed', 'Removed checklist task', 'info');
-                }}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
-                title="Delete item"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
+              {canDelete(userRole) && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDeleteItem(item.id);
+                    onShowToast('Task Removed', 'Removed checklist task', 'info');
+                  }}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
+                  title="Delete item"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
             </div>
           ))
         )}

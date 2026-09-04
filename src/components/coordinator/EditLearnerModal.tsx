@@ -40,6 +40,8 @@ export const EditLearnerModal: React.FC<EditLearnerModalProps> = ({
     if (!fullName.trim()) return;
 
     const matchedConst = TN_CONSTITUENCIES.find(c => c.number === Number(selectedConstNo)) || TN_CONSTITUENCIES[0];
+    const selectedParty = parties.find(p => p.name === partyName);
+    const selectedComm = committees.find(c => c.name === committeeName);
 
     const updated: Learner = {
       ...learner,
@@ -49,10 +51,12 @@ export const EditLearnerModal: React.FC<EditLearnerModalProps> = ({
       phone: phone.trim(),
       department: department.trim(),
       academic_year: academicYear,
-      party_name: partyName,
-      bench,
+      party_name: partyName || undefined,
+      party_id: selectedParty?.id || learner.party_id,
+      bench: selectedParty ? selectedParty.bench : bench,
       role: role.trim(),
-      committee_name: committeeName,
+      committee_name: committeeName || undefined,
+      committee_id: selectedComm?.id || learner.committee_id,
       constituency_number: matchedConst.number,
       constituency_name: `${matchedConst.number} - ${matchedConst.name} (${matchedConst.district})`,
       district: matchedConst.district

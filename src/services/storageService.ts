@@ -64,7 +64,8 @@ const STORAGE_KEYS = {
   SCORES: 'tn_assembly_scores_v5',
   CHAT: 'tn_assembly_chat_v5',
   FEEDBACK: 'tn_assembly_feedback_v5',
-  TEAM: 'tn_assembly_team_v5'
+  TEAM: 'tn_assembly_team_v5',
+  OPEN_NOMINATIONS: 'tn_assembly_open_nominations_v5'
 };
 
 type Listener = () => void;
@@ -613,9 +614,79 @@ class StorageService {
   }
 
   public updateParty(party: Party) {
-    const all = this.getParties().map(p => (p.id === party.id ? party : p));
+    const existingParties = this.getParties();
+    const oldParty = existingParties.find(p => p.id === party.id);
+    const oldName = oldParty?.name;
+
+    const all = existingParties.map(p => (p.id === party.id ? party : p));
     this.setItem(STORAGE_KEYS.PARTIES, all);
     this.sbUpsert('political_parties', party as unknown as Record<string, unknown>);
+
+    // Cascade update to all learners who belong to this party
+    const allLearners = this.getLearners();
+    let learnersChanged = false;
+    const updatedLearners = allLearners.map(l => {
+      if (l.party_id === party.id || (oldName && l.party_name === oldName)) {
+        learnersChanged = true;
+        return {
+          ...l,
+          party_id: party.id,
+          party_name: party.name,
+          bench: party.bench
+        };
+      }
+      return l;
+    });
+
+    if (learnersChanged) {
+      this.setItem(STORAGE_KEYS.LEARNERS, updatedLearners);
+      if (supabase) {
+        const learnersToUpdate = updatedLearners.filter(l => l.party_id === party.id || (oldName && l.party_name === oldName));
+        if (learnersToUpdate.length > 0) {
+          const sanitized = learnersToUpdate.map(item => this.sanitizeRecordForTable('learners', item as unknown as Record<string, unknown>));
+          supabase.from('learners').upsert(sanitized, { onConflict: 'id' }).then(({ error }) => {
+            if (error) console.warn('[Supabase] bulk party cascade update error:', error.message);
+          });
+        }
+      }
+    }
+
+    // Cascade update to nominations
+    if (oldName && oldName !== party.name) {
+      const allNoms = this.getNominationAll();
+      const updatedNoms = allNoms.map(n => {
+        if (n.party_name === oldName) {
+          return { ...n, party_name: party.name, bench: party.bench };
+        }
+        return n;
+      });
+      this.setItem(STORAGE_KEYS.NOMINATIONS, updatedNoms);
+
+      // Cascade update to election candidates
+      const allElecs = this.getElectionAll();
+      const updatedElecs = allElecs.map(e => ({
+        ...e,
+        candidates: e.candidates.map(c => {
+          if (c.party === oldName) {
+            return { ...c, party: party.name, bench: party.bench };
+          }
+          return c;
+        })
+      }));
+      this.setItem(STORAGE_KEYS.ELECTIONS, updatedElecs);
+
+      // Cascade update to score records
+      const allScores = this.getScores();
+      const updatedScores = allScores.map(s => {
+        if (s.party_name === oldName) {
+          return { ...s, party_name: party.name, bench: party.bench };
+        }
+        return s;
+      });
+      this.setItem(STORAGE_KEYS.SCORES, updatedScores);
+    }
+
+    this.notify();
   }
 
   public setPartyBench(partyId: string, bench: 'Ruling' | 'Opposition' | 'Independent', _eventId?: string) {
@@ -694,8 +765,25 @@ class StorageService {
   }
 
   public deleteParty(partyId: string) {
+    const targetParty = this.getParties().find(p => p.id === partyId);
     this.setItem(STORAGE_KEYS.PARTIES, this.getParties().filter(p => p.id !== partyId));
     this.sbDelete('political_parties', partyId);
+
+    // Unassign learners from deleted party
+    const allLearners = this.getLearners();
+    const updatedLearners = allLearners.map(l => {
+      if (l.party_id === partyId || (targetParty && l.party_name === targetParty.name)) {
+        return {
+          ...l,
+          party_id: undefined,
+          party_name: undefined,
+          bench: 'Independent' as const
+        };
+      }
+      return l;
+    });
+    this.setItem(STORAGE_KEYS.LEARNERS, updatedLearners);
+    this.notify();
   }
 
   // ── COMMITTEES ────────────────────────────────────────────────────────────
@@ -770,14 +858,63 @@ class StorageService {
   }
 
   public updateCommittee(com: Committee) {
-    const all = this.getCommittees().map(c => (c.id === com.id ? com : c));
+    const existingComms = this.getCommittees();
+    const oldCom = existingComms.find(c => c.id === com.id);
+    const oldName = oldCom?.name;
+
+    const all = existingComms.map(c => (c.id === com.id ? com : c));
     this.setItem(STORAGE_KEYS.COMMITTEES, all);
     this.sbUpsert('committees', com as unknown as Record<string, unknown>);
+
+    // Cascade update to all learners belonging to this committee
+    const allLearners = this.getLearners();
+    let learnersChanged = false;
+    const updatedLearners = allLearners.map(l => {
+      if (l.committee_id === com.id || (oldName && l.committee_name === oldName)) {
+        learnersChanged = true;
+        return {
+          ...l,
+          committee_id: com.id,
+          committee_name: com.name
+        };
+      }
+      return l;
+    });
+
+    if (learnersChanged) {
+      this.setItem(STORAGE_KEYS.LEARNERS, updatedLearners);
+      if (supabase) {
+        const learnersToUpdate = updatedLearners.filter(l => l.committee_id === com.id || (oldName && l.committee_name === oldName));
+        if (learnersToUpdate.length > 0) {
+          const sanitized = learnersToUpdate.map(item => this.sanitizeRecordForTable('learners', item as unknown as Record<string, unknown>));
+          supabase.from('learners').upsert(sanitized, { onConflict: 'id' }).then(({ error }) => {
+            if (error) console.warn('[Supabase] bulk committee cascade update error:', error.message);
+          });
+        }
+      }
+    }
+    this.notify();
   }
 
   public deleteCommittee(comId: string) {
+    const targetCom = this.getCommittees().find(c => c.id === comId);
     this.setItem(STORAGE_KEYS.COMMITTEES, this.getCommittees().filter(c => c.id !== comId));
     this.sbDelete('committees', comId);
+
+    // Unassign learners from deleted committee
+    const allLearners = this.getLearners();
+    const updatedLearners = allLearners.map(l => {
+      if (l.committee_id === comId || (targetCom && l.committee_name === targetCom.name)) {
+        return {
+          ...l,
+          committee_id: undefined,
+          committee_name: undefined
+        };
+      }
+      return l;
+    });
+    this.setItem(STORAGE_KEYS.LEARNERS, updatedLearners);
+    this.notify();
   }
 
   // ── AGENDA ────────────────────────────────────────────────────────────────
@@ -954,7 +1091,66 @@ class StorageService {
     this.setItem(STORAGE_KEYS.PARTIES, parties);
   }
 
+  public assignCabinetRole(eventId: string, learnerId: string, portfolioRole: string) {
+    if (!eventId || !portfolioRole) return;
+    const allLearners = this.getLearners();
+    
+    const updated = allLearners.map(l => {
+      if (l.event_id === eventId || !l.event_id) {
+        // If this learner is target, assign portfolioRole
+        if (l.id === learnerId) {
+          return { ...l, role: portfolioRole };
+        }
+        // If another learner currently holds this portfolioRole, reset them to default MLA
+        if (l.role === portfolioRole && l.id !== learnerId) {
+          return { ...l, role: 'Member of Legislative Assembly (MLA)' };
+        }
+      }
+      return l;
+    });
+
+    this.setItem(STORAGE_KEYS.LEARNERS, updated);
+    if (supabase) {
+      const affected = updated.filter(l => l.role === portfolioRole || (allLearners.find(oldL => oldL.id === l.id)?.role === portfolioRole));
+      if (affected.length > 0) {
+        const sanitizedBatch = affected.map(item => this.sanitizeRecordForTable('learners', item as unknown as Record<string, unknown>));
+        supabase.from('learners').upsert(sanitizedBatch, { onConflict: 'id' }).then(({ error }) => {
+          if (error) console.warn('[Supabase] assign cabinet role sync error:', error.message);
+        });
+      }
+    }
+    this.notify();
+  }
+
   // ── NOMINATIONS ───────────────────────────────────────────────────────────
+
+  public getOpenNominationPositions(eventId?: string): string[] {
+    const defaultOpen = ['Speaker', 'Ruling Party Leader', 'Opposition Party Leader'];
+    const map = this.getItem<Record<string, string[]>>(STORAGE_KEYS.OPEN_NOMINATIONS, {});
+    if (eventId && map[eventId]) return map[eventId];
+    return defaultOpen;
+  }
+
+  public toggleNominationPositionStatus(eventId: string, position: string): boolean {
+    if (!eventId || !position) return false;
+    const map = this.getItem<Record<string, string[]>>(STORAGE_KEYS.OPEN_NOMINATIONS, {});
+    const currentList = map[eventId] || ['Speaker', 'Ruling Party Leader', 'Opposition Party Leader'];
+    
+    let isOpenNow = false;
+    let nextList: string[];
+    if (currentList.includes(position)) {
+      nextList = currentList.filter(p => p !== position);
+      isOpenNow = false;
+    } else {
+      nextList = [...currentList, position];
+      isOpenNow = true;
+    }
+
+    map[eventId] = nextList;
+    this.setItem(STORAGE_KEYS.OPEN_NOMINATIONS, map);
+    this.notify();
+    return isOpenNow;
+  }
 
   public getNominations(eventId?: string): Nomination[] {
     const all = this.getItem<Nomination[]>(STORAGE_KEYS.NOMINATIONS, INITIAL_NOMINATIONS);
@@ -1089,6 +1285,10 @@ class StorageService {
     all.unshift(newElec);
     this.setItem(STORAGE_KEYS.ELECTIONS, all);
     return newElec;
+  }
+
+  public createElection(elec: Partial<Election>): Election {
+    return this.addElection(elec);
   }
 
   private getElectionAll(): Election[] {
@@ -1532,3 +1732,36 @@ class StorageService {
 }
 
 export const storageService = new StorageService();
+
+/**
+ * Dynamically resolves a learner's active party name using the active parties list.
+ */
+export function getResolvedPartyName(learner: Partial<Learner>, parties: Party[]): string {
+  if (learner.party_id) {
+    const found = parties.find(p => p.id === learner.party_id);
+    if (found) return found.name;
+  }
+  if (learner.party_name) {
+    const found = parties.find(p => p.name.toLowerCase() === learner.party_name?.toLowerCase());
+    if (found) return found.name;
+    return learner.party_name;
+  }
+  return 'Independent';
+}
+
+/**
+ * Dynamically resolves a learner's active committee name using the active committees list.
+ */
+export function getResolvedCommitteeName(learner: Partial<Learner>, committees: Committee[]): string {
+  if (learner.committee_id) {
+    const found = committees.find(c => c.id === learner.committee_id);
+    if (found) return found.name;
+  }
+  if (learner.committee_name) {
+    const found = committees.find(c => c.name.toLowerCase() === learner.committee_name?.toLowerCase());
+    if (found) return found.name;
+    return learner.committee_name;
+  }
+  return 'Unassigned';
+}
+

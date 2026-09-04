@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import type { Committee, Learner } from '../../types';
+import type { Committee, Learner, UserRole } from '../../types';
+import { canDelete } from '../../utils/permissions';
 import { Plus, BookOpen, Users, Edit, Trash2, X, Eye, Layers, UserCheck } from 'lucide-react';
 
 interface CommitteesTabProps {
   committees: Committee[];
   learners: Learner[];
   eventId: string;
+  userRole?: UserRole;
   onAddCommittee: (committee: Partial<Committee>) => void;
   onUpdateCommittee: (committee: Committee) => void;
   onDeleteCommittee: (committeeId: string) => void;
@@ -17,6 +19,7 @@ export const CommitteesTab: React.FC<CommitteesTabProps> = ({
   committees,
   learners,
   eventId,
+  userRole,
   onAddCommittee,
   onUpdateCommittee,
   onDeleteCommittee,
@@ -192,17 +195,19 @@ export const CommitteesTab: React.FC<CommitteesTabProps> = ({
                     >
                       <Edit className="w-4 h-4" />
                     </button>
-                    <button
-                      onClick={() => {
-                        onDeleteCommittee(comm.id);
-                        onShowToast('Committee Deleted', `Deleted committee ${comm.name}`, 'info');
-                      }}
-                      className="p-1 rounded-lg hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
-                      style={{ color: 'var(--text-muted)' }}
-                      title="Delete Committee"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {canDelete(userRole) && (
+                      <button
+                        onClick={() => {
+                          onDeleteCommittee(comm.id);
+                          onShowToast('Committee Deleted', `Deleted committee ${comm.name}`, 'info');
+                        }}
+                        className="p-1 rounded-lg hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
+                        style={{ color: 'var(--text-muted)' }}
+                        title="Delete Committee"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
 

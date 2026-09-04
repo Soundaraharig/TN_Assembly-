@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import type { Party, BenchType, Learner } from '../../types';
+import type { Party, BenchType, Learner, UserRole } from '../../types';
+import { canDelete } from '../../utils/permissions';
 import {
   Plus,
   Users,
@@ -15,6 +16,7 @@ interface PartiesTabProps {
   parties: Party[];
   learners: Learner[];
   eventId: string;
+  userRole?: UserRole;
   treasuryWhatsApp?: string;
   oppositionWhatsApp?: string;
   onSaveWhatsAppLinks?: (treasury: string, opposition: string) => void;
@@ -30,6 +32,7 @@ export const PartiesTab: React.FC<PartiesTabProps> = ({
   parties,
   learners,
   eventId,
+  userRole,
   onUpdatePartyWhatsApp,
   onAddParty,
   onUpdateParty,
@@ -220,17 +223,19 @@ export const PartiesTab: React.FC<PartiesTabProps> = ({
                     >
                       <Edit className="w-3.5 h-3.5" />
                     </button>
-                    <button
-                      onClick={() => {
-                        onDeleteParty(party.id);
-                        onShowToast('Party Deleted', `Deleted party ${party.name}`, 'info');
-                      }}
-                      className="p-1 rounded-lg hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
-                      style={{ color: 'var(--text-muted)' }}
-                      title="Delete Party"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {canDelete(userRole) && (
+                      <button
+                        onClick={() => {
+                          onDeleteParty(party.id);
+                          onShowToast('Party Deleted', `Deleted party ${party.name}`, 'info');
+                        }}
+                        className="p-1 rounded-lg hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
+                        style={{ color: 'var(--text-muted)' }}
+                        title="Delete Party"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
 

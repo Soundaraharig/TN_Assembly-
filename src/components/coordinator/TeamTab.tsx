@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import type { TeamMember } from '../../types';
+import type { TeamMember, UserRole } from '../../types';
+import { canDelete } from '../../utils/permissions';
 import {
   Users,
   Plus,
@@ -12,6 +13,7 @@ import {
 interface TeamTabProps {
   team: TeamMember[];
   eventId: string;
+  userRole?: UserRole;
   onAddMember: (tm: Partial<TeamMember>) => void;
   onDeleteMember: (id: string) => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
@@ -20,6 +22,7 @@ interface TeamTabProps {
 export const TeamTab: React.FC<TeamTabProps> = ({
   team,
   eventId,
+  userRole,
   onAddMember,
   onDeleteMember,
   onShowToast
@@ -113,16 +116,18 @@ export const TeamTab: React.FC<TeamTabProps> = ({
                 </div>
               </div>
 
-              <button
-                onClick={() => {
-                  onDeleteMember(member.id);
-                  onShowToast('Member Removed', `Removed ${member.name} from team`, 'info');
-                }}
-                className="text-slate-400 hover:text-rose-500 transition-colors p-1"
-                title="Remove team member"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
+              {canDelete(userRole) && (
+                <button
+                  onClick={() => {
+                    onDeleteMember(member.id);
+                    onShowToast('Member Removed', `Removed ${member.name} from team`, 'info');
+                  }}
+                  className="text-slate-400 hover:text-rose-500 transition-colors p-1"
+                  title="Remove team member"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
             </div>
 
             <div className="space-y-1.5 text-xs pt-2 border-t" style={{ borderColor: 'var(--border-soft)', color: 'var(--text-secondary)' }}>

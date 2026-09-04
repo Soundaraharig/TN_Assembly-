@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { Election, LiveFlashVote, Learner, FlashVoteAudience, ElectionCandidate } from '../../types';
+import type { Election, LiveFlashVote, Learner, FlashVoteAudience, ElectionCandidate, Nomination } from '../../types';
 import {
   Vote,
   Plus,
@@ -14,6 +14,7 @@ interface ElectionsTabProps {
   elections: Election[];
   flashVotes: LiveFlashVote[];
   learners: Learner[];
+  nominations?: Nomination[];
   eventId: string;
   onCastVote: (electionId: string, candidateId: string, delegateId?: string) => void;
   onCloseElection: (electionId: string) => void;
@@ -28,6 +29,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   elections,
   flashVotes,
   learners,
+  nominations = [],
   eventId,
   onCastVote,
   onCloseElection,
@@ -75,74 +77,88 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
     e.preventDefault();
     if (!elecTitle.trim()) return;
 
-    // Dynamically select candidates based on election type and learners
+    // Check if filed nominations exist for this position
+    const matchingNoms = (nominations || []).filter(n => {
+      if (elecType === 'SPEAKER' && (n.position === 'Speaker' || elecPosition.toLowerCase().includes('speaker'))) return true;
+      if (elecType === 'DEPUTY_SPEAKER' && n.position === 'Deputy Speaker') return true;
+      if (elecType === 'LEADERSHIP' && (n.position === 'Ruling Party Leader' || n.position === 'Opposition Party Leader')) return true;
+      if (elecType === 'COMMITTEE' && n.position === 'Committee Chair') return true;
+      return n.position.toLowerCase() === elecPosition.toLowerCase();
+    });
+
     let candidates: ElectionCandidate[];
 
-    switch (elecType) {
-      case 'SPEAKER':
-        // Speaker election: all learners compete, grouped by bench
-        candidates = learners.map(l => ({
-          id: `c_${l.id}`,
-          learner_id: l.id,
-          name: l.full_name,
-          party: l.party_name || 'Independent',
-          bench: l.bench || 'Ruling',
-          votes: 0
-        }));
-        break;
-
-      case 'LEADERSHIP':
-        // Party Leadership: create one candidate per party
-        const uniqueParties = [...new Set(learners.map(l => l.party_name).filter(Boolean))];
-        candidates = uniqueParties.map(party => {
-          const partyLearners = learners.filter(l => l.party_name === party);
-          // Select the first learner as party leader (could be CM or Opp Leader)
-          const leader = partyLearners[0];
-          return {
-            id: `c_${leader.id}`,
-            learner_id: leader.id,
-            name: leader.full_name,
-            party: party || 'Independent',
-            bench: leader.bench || 'Ruling',
+    if (matchingNoms.length > 0) {
+      candidates = matchingNoms.map(nom => ({
+        id: `c_${nom.candidate_learner_id}`,
+        learner_id: nom.candidate_learner_id,
+        name: nom.candidate_name,
+        party: nom.party_name || 'Independent',
+        bench: nom.bench || 'Ruling',
+        votes: 0
+      }));
+    } else {
+      // Fallback candidate generator based on election type and learners
+      switch (elecType) {
+        case 'SPEAKER':
+          candidates = learners.slice(0, 5).map(l => ({
+            id: `c_${l.id}`,
+            learner_id: l.id,
+            name: l.full_name,
+            party: l.party_name || 'Independent',
+            bench: l.bench || 'Ruling',
             votes: 0
-          };
-        });
-        break;
+          }));
+          break;
 
-      case 'DEPUTY_SPEAKER':
-        // Deputy Speaker: top learners from ruling and opposition
-        candidates = learners.slice(0, 3).map(l => ({
-          id: `c_${l.id}`,
-          learner_id: l.id,
-          name: l.full_name,
-          party: l.party_name || 'Independent',
-          bench: l.bench || 'Ruling',
-          votes: 0
-        }));
-        break;
+        case 'LEADERSHIP':
+          const uniqueParties = [...new Set(learners.map(l => l.party_name).filter(Boolean))];
+          candidates = uniqueParties.map(party => {
+            const partyLearners = learners.filter(l => l.party_name === party);
+            const leader = partyLearners[0];
+            return {
+              id: `c_${leader.id}`,
+              learner_id: leader.id,
+              name: leader.full_name,
+              party: party || 'Independent',
+              bench: leader.bench || 'Ruling',
+              votes: 0
+            };
+          });
+          break;
 
-      case 'COMMITTEE':
-        // Committee Chairperson: top learners
-        candidates = learners.slice(0, 3).map(l => ({
-          id: `c_${l.id}`,
-          learner_id: l.id,
-          name: l.full_name,
-          party: l.party_name || 'Independent',
-          bench: l.bench || 'Ruling',
-          votes: 0
-        }));
-        break;
+        case 'DEPUTY_SPEAKER':
+          candidates = learners.slice(0, 3).map(l => ({
+            id: `c_${l.id}`,
+            learner_id: l.id,
+            name: l.full_name,
+            party: l.party_name || 'Independent',
+            bench: l.bench || 'Ruling',
+            votes: 0
+          }));
+          break;
 
-      default:
-        // Default: top 3 learners
-        candidates = learners.slice(0, 3).map(l => ({
-          id: `c_${l.id}`,
-          learner_id: l.id,
-          name: l.full_name,
-          party: l.party_name || 'Independent',
-          bench: l.bench || 'Ruling',
-          votes: 0
-        }));
+        case 'COMMITTEE':
+          candidates = learners.slice(0, 3).map(l => ({
+            id: `c_${l.id}`,
+            learner_id: l.id,
+            name: l.full_name,
+            party: l.party_name || 'Independent',
+            bench: l.bench || 'Ruling',
+            votes: 0
+          }));
+          break;
+
+        default:
+          candidates = learners.slice(0, 3).map(l => ({
+            id: `c_${l.id}`,
+            learner_id: l.id,
+            name: l.full_name,
+            party: l.party_name || 'Independent',
+            bench: l.bench || 'Ruling',
+            votes: 0
+          }));
+      }
     }
 
     onCreateElection({

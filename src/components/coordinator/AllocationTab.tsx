@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import type { Learner, Party, Committee, AcademicYear, BenchType } from '../../types';
+import { getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
 import { exportFullParticipantDataToCSV } from '../../utils/csvHelper';
 import {
   RotateCcw,
@@ -672,7 +673,7 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
 
                         {/* Party */}
                         <td className="py-3 px-4 font-semibold" style={{ color: 'var(--text-primary)' }}>
-                          {learner.party_name || '—'}
+                          {getResolvedPartyName(learner, parties)}
                         </td>
 
                         {/* Constituency Number */}
@@ -709,7 +710,7 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
 
                         {/* Committee */}
                         <td className="py-3 px-4 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
-                          {learner.committee_name || '—'}
+                          {getResolvedCommitteeName(learner, committees)}
                         </td>
 
                         {/* Action */}

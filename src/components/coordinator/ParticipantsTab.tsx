@@ -1,5 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import type { Learner, Party, Committee } from '../../types';
+import type { Learner, Party, Committee, UserRole } from '../../types';
+import { getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
+import { canDelete } from '../../utils/permissions';
 import { exportFullParticipantDataToExcel, exportFullParticipantDataToCSV } from '../../utils/csvHelper';
 import { generateDelegateBadgesPDF } from '../../utils/pdfExport';
 import { EditLearnerModal } from './EditLearnerModal';
@@ -24,6 +26,7 @@ interface ParticipantsTabProps {
   parties: Party[];
   committees: Committee[];
   eventName: string;
+  userRole?: UserRole;
   onToggleCheckIn: (learnerId: string, day: 1 | 2) => void;
   onCheckInAll: (day: 1 | 2, state: boolean) => void;
   onOpenAddWalkIn: () => void;
@@ -41,6 +44,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
   parties,
   committees,
   eventName,
+  userRole,
   onToggleCheckIn,
   onCheckInAll,
   onOpenAddWalkIn,
@@ -102,14 +106,17 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
         if (dayPill === 'Either' && l.day1_checked_in && l.day2_checked_in) return false;
       }
 
-      if (selectedParty !== 'ALL' && l.party_name !== selectedParty) return false;
+      const resolvedParty = getResolvedPartyName(l, parties);
+      const resolvedCommittee = getResolvedCommitteeName(l, committees);
+
+      if (selectedParty !== 'ALL' && resolvedParty !== selectedParty) return false;
       if (selectedRole !== 'ALL' && l.role !== selectedRole) return false;
-      if (selectedCommittee !== 'ALL' && l.committee_name !== selectedCommittee) return false;
+      if (selectedCommittee !== 'ALL' && resolvedCommittee !== selectedCommittee) return false;
       if (selectedBench !== 'ALL' && l.bench !== selectedBench) return false;
 
       return true;
     });
-  }, [learners, searchTerm, statusPill, dayPill, selectedParty, selectedRole, selectedCommittee, selectedBench]);
+  }, [learners, parties, committees, searchTerm, statusPill, dayPill, selectedParty, selectedRole, selectedCommittee, selectedBench]);
 
   // Selection toggles
   const isAllFilteredSelected = filteredLearners.length > 0 && filteredLearners.every(l => selectedLearnerIds.has(l.id));
@@ -351,21 +358,23 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
           </button>
 
           {/* Dedicated Mass Delete Button */}
-          <button
-            onClick={() => {
-              setMassDeleteScope(selectedLearnerIds.size > 0 ? 'SELECTED' : 'FILTERED');
-              setMassDeletePass('');
-              setMassDeleteError('');
-              setIsMassDeleteModalOpen(true);
-            }}
-            disabled={learners.length === 0}
-            className="px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-40"
-            style={{ backgroundColor: 'rgba(239, 68, 68, 0.08)', borderColor: 'rgba(239, 68, 68, 0.3)', color: '#ef4444' }}
-            title="Mass delete or clear delegate roster"
-          >
-            <Trash2 className="w-3.5 h-3.5 text-rose-600" />
-            <span>Mass Delete</span>
-          </button>
+          {canDelete(userRole) && (
+            <button
+              onClick={() => {
+                setMassDeleteScope(selectedLearnerIds.size > 0 ? 'SELECTED' : 'FILTERED');
+                setMassDeletePass('');
+                setMassDeleteError('');
+                setIsMassDeleteModalOpen(true);
+              }}
+              disabled={learners.length === 0}
+              className="px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-40"
+              style={{ backgroundColor: 'rgba(239, 68, 68, 0.08)', borderColor: 'rgba(239, 68, 68, 0.3)', color: '#ef4444' }}
+              title="Mass delete or clear delegate roster"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+              <span>Mass Delete</span>
+            </button>
+          )}
 
           <button
             onClick={onOpenAddWalkIn}
@@ -781,7 +790,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                       {/* Party */}
                       <td className="py-3 px-4">
                         <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>
-                          {learner.party_name || 'Independent'}
+                          {getResolvedPartyName(learner, parties)}
                         </span>
                       </td>
 
@@ -840,18 +849,20 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                           >
                             <Pencil className="w-4 h-4" />
                           </button>
-                          <button
-                            onClick={() => {
-                              setDeletingLearnerId(learner.id);
-                              setAuthError('');
-                              setCoordAuthPass('');
-                            }}
-                            className="p-1.5 rounded-lg transition-colors cursor-pointer hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40"
-                            style={{ color: 'var(--text-muted)' }}
-                            title="Delete Participant"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {canDelete(userRole) && (
+                            <button
+                              onClick={() => {
+                                setDeletingLearnerId(learner.id);
+                                setAuthError('');
+                                setCoordAuthPass('');
+                              }}
+                              className="p-1.5 rounded-lg transition-colors cursor-pointer hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40"
+                              style={{ color: 'var(--text-muted)' }}
+                              title="Delete Participant"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
 

@@ -19,8 +19,7 @@ import type {
   ChecklistItem,
   ChatMessage,
   FeedbackEntry,
-  TeamMember,
-  FlashVoteAudience
+  TeamMember
 } from './types';
 import { storageService } from './services/storageService';
 import { Header } from './components/common/Header';
@@ -59,6 +58,8 @@ import { CsvImportModal } from './components/coordinator/CsvImportModal';
 import { AllocationModal } from './components/coordinator/AllocationModal';
 
 import { StudentDashboard } from './components/student/StudentDashboard';
+import { JuryDashboard } from './components/jury/JuryDashboard';
+import { VolunteerDashboard } from './components/volunteer/VolunteerDashboard';
 
 const SESSION_KEY = 'tn_assembly_auth_session';
 
@@ -104,9 +105,12 @@ export function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [feedback, setFeedback] = useState<FeedbackEntry[]>([]);
   const [team, setTeam] = useState<TeamMember[]>([]);
+  const [openNominationPositions, setOpenNominationPositions] = useState<string[]>([]);
 
   const [currentCoordinator, setCurrentCoordinator] = useState<Coordinator | null>(null);
   const [currentStudent, setCurrentStudent] = useState<Learner | null>(null);
+  const [currentJury, setCurrentJury] = useState<JuryMember | null>(null);
+  const [currentVolunteer, setCurrentVolunteer] = useState<Volunteer | null>(null);
 
   // Modals
   const [isAddWalkInOpen, setIsAddWalkInOpen] = useState(false);
@@ -179,6 +183,7 @@ export function App() {
       setJury(storageService.getJury(activeEv.id));
       setVolunteers(storageService.getVolunteers(activeEv.id));
       setNominations(storageService.getNominations(activeEv.id));
+      setOpenNominationPositions(storageService.getOpenNominationPositions(activeEv.id));
       setElections(storageService.getElections(activeEv.id));
       setFlashVotes(storageService.getFlashVotes(activeEv.id));
       setChecklist(storageService.getChecklist(activeEv.id));
@@ -233,11 +238,12 @@ export function App() {
           } else if (path.includes('/jury')) {
             // Jury portal: ONLY open if authenticated jury member with valid juryCode
             if (sess.role === 'jury' && sess.juryCode) {
-              const juryValid = storageService.authenticateJury(sess.juryCode) || sess.juryCode.startsWith('JURY');
-              if (juryValid) {
+              const allJury = storageService.getJury();
+              const foundJury = allJury.find(j => j.access_code?.toUpperCase() === sess.juryCode?.toUpperCase());
+              if (foundJury || sess.juryCode.startsWith('JURY')) {
                 setIsAuthenticated(true);
-                setRole('coordinator');
-                setActiveNavTab('scoregrid');
+                setRole('jury');
+                setCurrentJury(foundJury || { id: 'jury', event_id: sess.currentEventId || '', access_code: sess.juryCode, name: sess.name || 'Jury Evaluator', assigned_bench: 'Ruling' });
                 return;
               }
             }
@@ -246,11 +252,12 @@ export function App() {
           } else if (path.includes('/volunteer')) {
             // Volunteer portal: ONLY open if authenticated volunteer with valid volunteerCode
             if (sess.role === 'volunteer' && sess.volunteerCode) {
-              const volValid = storageService.authenticateVolunteer(sess.volunteerCode) || sess.volunteerCode.startsWith('VOL');
-              if (volValid) {
+              const allVols = storageService.getVolunteers();
+              const foundVol = allVols.find(v => v.access_code?.toUpperCase() === sess.volunteerCode?.toUpperCase());
+              if (foundVol || sess.volunteerCode.startsWith('VOL')) {
                 setIsAuthenticated(true);
-                setRole('coordinator');
-                setActiveNavTab('volunteers');
+                setRole('volunteer');
+                setCurrentVolunteer(foundVol || { id: 'vol', event_id: sess.currentEventId || '', access_code: sess.volunteerCode, name: sess.name || 'Floor Volunteer', station: 'Main Floor' });
                 return;
               }
             }
@@ -279,13 +286,17 @@ export function App() {
                 setIsAuthenticated(false);
               }
             } else if (sess.role === 'jury' && sess.juryCode) {
+              const allJury = storageService.getJury();
+              const foundJury = allJury.find(j => j.access_code?.toUpperCase() === sess.juryCode?.toUpperCase());
               setIsAuthenticated(true);
-              setRole('coordinator');
-              setActiveNavTab('scoregrid');
+              setRole('jury');
+              setCurrentJury(foundJury || { id: 'jury', event_id: sess.currentEventId || '', access_code: sess.juryCode, name: sess.name || 'Jury Evaluator', assigned_bench: 'Ruling' });
             } else if (sess.role === 'volunteer' && sess.volunteerCode) {
+              const allVols = storageService.getVolunteers();
+              const foundVol = allVols.find(v => v.access_code?.toUpperCase() === sess.volunteerCode?.toUpperCase());
               setIsAuthenticated(true);
-              setRole('coordinator');
-              setActiveNavTab('volunteers');
+              setRole('volunteer');
+              setCurrentVolunteer(foundVol || { id: 'vol', event_id: sess.currentEventId || '', access_code: sess.volunteerCode, name: sess.name || 'Floor Volunteer', station: 'Main Floor' });
             } else if (sess.role === 'coordinator' && sess.email) {
               setIsAuthenticated(true);
               setRole('coordinator');
@@ -324,6 +335,7 @@ export function App() {
     setJury(storageService.getJury(ev.id));
     setVolunteers(storageService.getVolunteers(ev.id));
     setNominations(storageService.getNominations(ev.id));
+    setOpenNominationPositions(storageService.getOpenNominationPositions(ev.id));
     setElections(storageService.getElections(ev.id));
     setFlashVotes(storageService.getFlashVotes(ev.id));
     setChecklist(storageService.getChecklist(ev.id));
@@ -338,6 +350,21 @@ export function App() {
     setCurrentCoordinator(coord);
     saveSession({ currentEventId: ev.id });
   };
+
+  const handleToggleOpenNominationPosition = (position: string) => {
+    if (currentEvent) {
+      storageService.toggleNominationPositionStatus(currentEvent.id, position);
+      setOpenNominationPositions(storageService.getOpenNominationPositions(currentEvent.id));
+    }
+  };
+
+  const handleAssignCabinetRole = (learnerId: string, portfolioRole: string) => {
+    if (currentEvent) {
+      storageService.assignCabinetRole(currentEvent.id, learnerId, portfolioRole);
+      setLearners(storageService.getLearners(currentEvent.id));
+    }
+  };
+
 
   const handleSelectTab = (tab: ActiveNavTab) => {
     setActiveNavTab(tab);
@@ -579,41 +606,49 @@ export function App() {
             }
 
             // 2. Check Jury Access Code
-            const foundJury = storageService.authenticateJury(cleanCode);
+            const foundJury = storageService.authenticateJury(cleanCode) || storageService.getJury().find(j => j.access_code?.toUpperCase() === cleanCode);
             if (foundJury || cleanCode.includes('JURY')) {
               const juryCodeVal = foundJury?.access_code || cleanCode;
+              const juryObj: JuryMember = foundJury || { id: 'jury', name: 'Jury Evaluator', access_code: juryCodeVal, assigned_bench: 'Ruling', event_id: currentEvent?.id || '' };
+              setCurrentJury(juryObj);
               setIsAuthenticated(true);
-              setRole('coordinator');
-              setActiveNavTab('scoregrid');
+              setRole('jury');
+              if (foundJury?.event_id) {
+                const targetEv = events.find(e => e.id === foundJury.event_id);
+                if (targetEv) setCurrentEvent(targetEv);
+              }
               saveSession({
                 role: 'jury',
                 juryCode: juryCodeVal,
                 name: foundJury?.name || 'Jury Evaluator',
-                currentEventId: foundJury?.event_id,
-                activeNavTab: 'scoregrid'
+                currentEventId: foundJury?.event_id || currentEvent?.id
               });
               if (typeof window !== 'undefined') window.history.pushState({}, '', '/jury');
               addToast('Jury Portal Access', `Authenticated Jury Member ${foundJury?.name || ''}`, 'success');
-              return { id: foundJury?.id || 'jury', full_name: foundJury?.name || 'Jury Evaluator', access_code: juryCodeVal } as Learner;
+              return { id: juryObj.id, full_name: juryObj.name, access_code: juryCodeVal } as Learner;
             }
 
             // 3. Check Volunteer Access Code
-            const foundVol = storageService.authenticateVolunteer(cleanCode);
+            const foundVol = storageService.authenticateVolunteer(cleanCode) || storageService.getVolunteers().find(v => v.access_code?.toUpperCase() === cleanCode);
             if (foundVol || cleanCode.includes('VOL')) {
               const volCodeVal = foundVol?.access_code || cleanCode;
+              const volObj: Volunteer = foundVol || { id: 'vol', name: 'Assembly Volunteer', access_code: volCodeVal, event_id: currentEvent?.id || '', station: 'Main Floor' };
+              setCurrentVolunteer(volObj);
               setIsAuthenticated(true);
-              setRole('coordinator');
-              setActiveNavTab('volunteers');
+              setRole('volunteer');
+              if (foundVol?.event_id) {
+                const targetEv = events.find(e => e.id === foundVol.event_id);
+                if (targetEv) setCurrentEvent(targetEv);
+              }
               saveSession({
                 role: 'volunteer',
                 volunteerCode: volCodeVal,
                 name: foundVol?.name || 'Assembly Volunteer',
-                currentEventId: foundVol?.event_id,
-                activeNavTab: 'volunteers'
+                currentEventId: foundVol?.event_id || currentEvent?.id
               });
               if (typeof window !== 'undefined') window.history.pushState({}, '', '/volunteer');
-              addToast('Volunteer Duty Portal Access', `Authenticated Volunteer ${foundVol?.name || ''}`, 'success');
-              return { id: foundVol?.id || 'vol', full_name: foundVol?.name || 'Assembly Volunteer', access_code: volCodeVal } as Learner;
+              addToast('Volunteer Operations Access', `Authenticated Volunteer ${foundVol?.name || ''}`, 'success');
+              return { id: volObj.id, full_name: volObj.name, access_code: volCodeVal } as Learner;
             }
 
             return null;
@@ -621,6 +656,64 @@ export function App() {
           onShowToast={addToast}
           theme={theme}
           onToggleTheme={toggleTheme}
+        />
+        <ToastContainer toasts={toasts} onDismiss={removeToast} />
+      </div>
+    );
+  }
+
+  // Dedicated Jury Portal
+  if (role === 'jury') {
+    return (
+      <div className="min-h-screen font-sans" style={{ backgroundColor: 'var(--bg-base)' }}>
+        <JuryDashboard
+          jury={currentJury}
+          event={currentEvent}
+          learners={learners}
+          agenda={agenda}
+          scores={scores}
+          onSaveScore={(s) => {
+            storageService.saveScoreRecord(s);
+            setScores(storageService.getScores(currentEvent?.id));
+          }}
+          onLogout={() => {
+            setIsAuthenticated(false);
+            setCurrentJury(null);
+            clearSession();
+            if (typeof window !== 'undefined') window.history.pushState({}, '', '/');
+            addToast('Signed Out', 'You have been signed out from Jury Portal', 'info');
+          }}
+          onShowToast={addToast}
+        />
+        <ToastContainer toasts={toasts} onDismiss={removeToast} />
+      </div>
+    );
+  }
+
+  // Dedicated Volunteer Operations Desk
+  if (role === 'volunteer') {
+    return (
+      <div className="min-h-screen font-sans" style={{ backgroundColor: 'var(--bg-base)' }}>
+        <VolunteerDashboard
+          volunteer={currentVolunteer}
+          event={currentEvent}
+          learners={learners}
+          checklist={checklist}
+          onToggleCheckIn={handleToggleCheckIn}
+          onCheckInAll={handleCheckInAll}
+          onAddWalkIn={(l) => {
+            handleAddLearner(l);
+            setLearners(storageService.getLearners(currentEvent?.id));
+          }}
+          onToggleVolunteerArrival={(id) => storageService.toggleVolunteerArrival(id)}
+          onLogout={() => {
+            setIsAuthenticated(false);
+            setCurrentVolunteer(null);
+            clearSession();
+            if (typeof window !== 'undefined') window.history.pushState({}, '', '/');
+            addToast('Signed Out', 'You have been signed out from Volunteer Operations Desk', 'info');
+          }}
+          onShowToast={addToast}
         />
         <ToastContainer toasts={toasts} onDismiss={removeToast} />
       </div>
@@ -796,6 +889,7 @@ export function App() {
                 <TeamTab
                   team={team}
                   eventId={currentEvent.id}
+                  userRole={userSession?.role || role}
                   onAddMember={(tm) => {
                     storageService.addTeamMember(tm);
                   }}
@@ -806,11 +900,12 @@ export function App() {
                 />
               )}
 
-              
+              {/* 3. CHECKLIST TAB */}
               {activeNavTab === 'checklist' && (
                 <ChecklistTab
                   checklist={checklist}
                   eventId={currentEvent.id}
+                  userRole={userSession?.role || role}
                   onToggleItem={(id) => {
                     storageService.toggleChecklistItem(id);
                   }}
@@ -842,6 +937,7 @@ export function App() {
                   parties={parties}
                   committees={committees}
                   eventName={currentEvent.college_name}
+                  userRole={userSession?.role || role}
                   onToggleCheckIn={handleToggleCheckIn}
                   onCheckInAll={handleCheckInAll}
                   onOpenAddWalkIn={() => setIsAddWalkInOpen(true)}
@@ -860,15 +956,22 @@ export function App() {
                 <NominationsTab
                   nominations={nominations}
                   learners={learners}
+                  parties={parties}
                   eventId={currentEvent.id}
+                  userRole={userSession?.role || role}
+                  openPositions={openNominationPositions}
+                  onToggleOpenPosition={handleToggleOpenNominationPosition}
                   onAddNomination={(nom) => {
                     storageService.addNomination(nom);
+                    setNominations(storageService.getNominations(currentEvent.id));
                   }}
                   onUpdateStatus={(id, status) => {
                     storageService.updateNominationStatus(id, status);
+                    setNominations(storageService.getNominations(currentEvent.id));
                   }}
                   onDeleteNomination={(id) => {
                     storageService.deleteNomination(id);
+                    setNominations(storageService.getNominations(currentEvent.id));
                   }}
                   onShowToast={addToast}
                 />
@@ -896,6 +999,7 @@ export function App() {
                   committees={committees}
                   learners={learners}
                   eventId={currentEvent.id}
+                  userRole={userSession?.role || role}
                   onAddCommittee={handleAddCommittee}
                   onUpdateCommittee={handleUpdateCommittee}
                   onDeleteCommittee={handleDeleteCommittee}
@@ -913,6 +1017,7 @@ export function App() {
                   parties={parties}
                   learners={learners}
                   eventId={currentEvent.id}
+                  userRole={userSession?.role || role}
                   onUpdatePartyWhatsApp={(id, link) => {
                     storageService.updatePartyWhatsAppLink(id, link);
                   }}
@@ -950,6 +1055,7 @@ export function App() {
                     storageService.saveCabinetMinistries(currentEvent.id, ministries);
                     setCurrentEvent(prev => prev ? { ...prev, cabinet_ministries: ministries } : prev);
                   }}
+                  onAssignCabinetRole={handleAssignCabinetRole}
                   onShowToast={addToast}
                 />
               )}
@@ -959,6 +1065,7 @@ export function App() {
                 <JuryTab
                   jury={jury}
                   eventId={currentEvent.id}
+                  userRole={userSession?.role || role}
                   onAddJury={handleAddJury}
                   onDeleteJury={handleDeleteJury}
                   onShowToast={addToast}
@@ -970,6 +1077,7 @@ export function App() {
                 <VolunteersTab
                   volunteers={volunteers}
                   eventId={currentEvent.id}
+                  userRole={userSession?.role || role}
                   onAddVolunteer={handleAddVolunteer}
                   onToggleArrival={(id) => {
                     storageService.toggleVolunteerArrival(id);
@@ -1010,24 +1118,32 @@ export function App() {
                   elections={elections}
                   flashVotes={flashVotes}
                   learners={learners}
+                  nominations={nominations}
                   eventId={currentEvent.id}
                   onCastVote={(elecId, candId, delId) => {
                     storageService.castVoteInElection(elecId, candId, delId);
+                    setElections(storageService.getElections(currentEvent.id));
                   }}
                   onCloseElection={(elecId) => {
                     storageService.closeElection(elecId);
+                    setElections(storageService.getElections(currentEvent.id));
                   }}
                   onCreateElection={(elec) => {
-                    storageService.addElection(elec);
+                    storageService.createElection(elec);
+                    setElections(storageService.getElections(currentEvent.id));
                   }}
-                  onCreateFlashVote={(evId: string, q: string, aud: FlashVoteAudience, mot: LiveFlashVote['motion_type']) => {
-                    storageService.createFlashVote(evId, q, aud, mot);
+                  onCreateFlashVote={(evId, q, audience, motion) => {
+                    storageService.createFlashVote(evId || currentEvent.id, q, audience, motion);
+                    setFlashVotes(storageService.getFlashVotes(currentEvent.id));
                   }}
-                  onCastFlashVote={(voteId, lrn, dec) => {
-                    storageService.castFlashVote(voteId, lrn, dec);
+                  onCastFlashVote={(vId, learner, decision) => {
+                    const res = storageService.castFlashVote(vId, learner, decision);
+                    setFlashVotes(storageService.getFlashVotes(currentEvent.id));
+                    return res;
                   }}
-                  onCloseFlashVote={(voteId) => {
-                    storageService.closeFlashVote(voteId);
+                  onCloseFlashVote={(vId) => {
+                    storageService.closeFlashVote(vId);
+                    setFlashVotes(storageService.getFlashVotes(currentEvent.id));
                   }}
                   onShowToast={addToast}
                 />
@@ -1132,6 +1248,13 @@ export function App() {
                   agenda={agenda}
                   party={activeParty}
                   committee={activeCommittee}
+                  openNominationPositions={openNominationPositions}
+                  onFileNomination={(nom) => {
+                    storageService.addNomination(nom);
+                    if (currentEvent) {
+                      setNominations(storageService.getNominations(currentEvent.id));
+                    }
+                  }}
                   onShowToast={addToast}
                 />
               ) : (
