@@ -48,25 +48,25 @@ import { supabase, isSupabaseEnabled } from '../lib/supabase';
 // Local-storage keys (cache layer)
 // ---------------------------------------------------------------------------
 const STORAGE_KEYS = {
-  EVENTS: 'tn_assembly_events_v5',
-  COORDINATORS: 'tn_assembly_coordinators_v5',
-  LEARNERS: 'tn_assembly_learners_v5',
-  PARTIES: 'tn_assembly_parties_v5',
-  COMMITTEES: 'tn_assembly_committees_v5',
-  AGENDA: 'tn_assembly_agenda_v5',
-  JURY: 'tn_assembly_jury_v5',
-  VOLUNTEERS: 'tn_assembly_volunteers_v5',
-  NOMINATIONS: 'tn_assembly_nominations_v5',
-  ELECTIONS: 'tn_assembly_elections_v5',
-  FLASH_VOTES: 'tn_assembly_flash_votes_v5',
-  CHECKLIST: 'tn_assembly_checklist_v5',
-  QUESTIONS: 'tn_assembly_questions_v5',
-  PROCEEDINGS: 'tn_assembly_proceedings_v5',
-  SCORES: 'tn_assembly_scores_v5',
-  CHAT: 'tn_assembly_chat_v5',
-  FEEDBACK: 'tn_assembly_feedback_v5',
-  TEAM: 'tn_assembly_team_v5',
-  OPEN_NOMINATIONS: 'tn_assembly_open_nominations_v5'
+  EVENTS: 'tn_assembly_events_v6',
+  COORDINATORS: 'tn_assembly_coordinators_v6',
+  LEARNERS: 'tn_assembly_learners_v6',
+  PARTIES: 'tn_assembly_parties_v6',
+  COMMITTEES: 'tn_assembly_committees_v6',
+  AGENDA: 'tn_assembly_agenda_v6',
+  JURY: 'tn_assembly_jury_v6',
+  VOLUNTEERS: 'tn_assembly_volunteers_v6',
+  NOMINATIONS: 'tn_assembly_nominations_v6',
+  ELECTIONS: 'tn_assembly_elections_v6',
+  FLASH_VOTES: 'tn_assembly_flash_votes_v6',
+  CHECKLIST: 'tn_assembly_checklist_v6',
+  QUESTIONS: 'tn_assembly_questions_v6',
+  PROCEEDINGS: 'tn_assembly_proceedings_v6',
+  SCORES: 'tn_assembly_scores_v6',
+  CHAT: 'tn_assembly_chat_v6',
+  FEEDBACK: 'tn_assembly_feedback_v6',
+  TEAM: 'tn_assembly_team_v6',
+  OPEN_NOMINATIONS: 'tn_assembly_open_nominations_v6'
 };
 
 type Listener = () => void;
@@ -198,29 +198,14 @@ class StorageService {
         supabase.from('session_agenda').select('*').order('time', { ascending: true })
       ]);
 
-      if (events && events.length > 0) {
-        const local = this.getItem<CollegeEvent[]>(STORAGE_KEYS.EVENTS, INITIAL_EVENTS);
-        const localMap = new Map(local.map(e => [e.id, e]));
-        events.forEach(e => {
-          localMap.set(e.id, { ...localMap.get(e.id), ...e });
-        });
-        this.setItem(STORAGE_KEYS.EVENTS, Array.from(localMap.values()));
       if (events) {
         this.setItem(STORAGE_KEYS.EVENTS, events);
       }
 
-      if (coordinators && coordinators.length > 0) {
       if (coordinators) {
         this.setItem(STORAGE_KEYS.COORDINATORS, coordinators);
       }
 
-      if (learners && learners.length > 0) {
-        const local = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, INITIAL_LEARNERS);
-        const localMap = new Map(local.map(l => [l.id, l]));
-        learners.forEach(l => {
-          localMap.set(l.id, { ...localMap.get(l.id), ...l });
-        });
-        this.setItem(STORAGE_KEYS.LEARNERS, Array.from(localMap.values()));
       if (learners) {
         this.setItem(STORAGE_KEYS.LEARNERS, learners);
       }

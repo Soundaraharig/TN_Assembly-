@@ -44,14 +44,13 @@ export type ActiveNavTab =
   | 'awards'
   | 'feedback'
   | 'report'
-   | 'scoregrid'
-   | 'chat'
-   | 'media'
-   | 'chapterawards'
-   | 'checklist'
-   | 'questionnaire';
-   | 'questionnaire'
-   | 'events_dashboard';
+  | 'scoregrid'
+  | 'chat'
+  | 'media'
+  | 'chapterawards'
+  | 'checklist'
+  | 'questionnaire'
+  | 'events_dashboard';
 
 interface SidebarProps {
   activeTab: ActiveNavTab;
@@ -68,7 +67,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectTab,
   isMobileOpen,
   onCloseMobile,
-  completedTabs
   completedTabs,
   role,
   onBackToEvents

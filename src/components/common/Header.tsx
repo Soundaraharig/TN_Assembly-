@@ -44,7 +44,6 @@ export const Header: React.FC<HeaderProps> = ({
       : currentCoordinator?.name
       ? currentCoordinator.name
       : role === 'super_admin'
-      ? 'Super Admin'
       ? currentEvent ? `Super Admin • ${currentEvent.college_name}` : 'Super Admin'
       : '';
 
@@ -54,7 +53,6 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Left Side: Mobile Menu Button + Brand */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {role === 'coordinator' && onToggleMobileMenu && (
           {(role === 'coordinator' || role === 'super_admin') && onToggleMobileMenu && (
             <button
               onClick={onToggleMobileMenu}
@@ -88,7 +86,6 @@ export const Header: React.FC<HeaderProps> = ({
                 TN Assembly
               </h1>
               <span className="text-[10px] font-semibold block" style={{ color: 'var(--text-muted)' }}>
-                {role === 'super_admin' ? 'Super Admin' : role === 'coordinator' ? 'Coordinator Portal' : 'Delegate Portal'}
                 {role === 'super_admin' ? (currentEvent ? 'Super Admin • Event Active' : 'Super Admin') : role === 'coordinator' ? 'Coordinator Portal' : 'Delegate Portal'}
               </span>
             </div>
@@ -126,7 +123,6 @@ export const Header: React.FC<HeaderProps> = ({
 
           {displayName && (
             <span
-              className="text-xs font-bold hidden md:inline px-2.5 py-1 rounded-lg border truncate max-w-[200px]"
               className="text-xs font-bold hidden md:inline px-2.5 py-1 rounded-lg border truncate max-w-[220px]"
               style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
             >
