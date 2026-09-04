@@ -1,24 +1,31 @@
-import React, { useState, useMemo } from 'react';
-import type { Election, LiveFlashVote, Learner, FlashVoteAudience, ElectionCandidate, Nomination } from '../../types';
+import React, { useState, useMemo, useEffect } from 'react';
+import type { Election, LiveFlashVote, Learner, FlashVoteAudience, ElectionCandidate, Nomination, Party } from '../../types';
 import {
   Vote,
   Plus,
   Trophy,
   Users,
-  CheckCircle2,
-  XCircle,
   Zap,
-  Search,
-  Lock,
   Play,
   RotateCcw,
-  UserPlus
+  UserPlus,
+  ChevronDown,
+  ChevronRight,
+  Crown,
+  Scale,
+  Landmark,
+  Layers,
+  Check,
+  Search,
+  X,
+  AlertCircle
 } from 'lucide-react';
 
 interface ElectionsTabProps {
   elections: Election[];
   flashVotes: LiveFlashVote[];
   learners: Learner[];
+  parties?: Party[];
   nominations?: Nomination[];
   eventId: string;
   onCastVote: (electionId: string, candidateId: string, delegateId?: string) => void;
@@ -30,39 +37,51 @@ interface ElectionsTabProps {
   onDeleteElection?: (electionId: string) => void;
   onCreateElection: (elec: Partial<Election>) => void;
   onCreateFlashVote: (eventId: string, question: string, audience: FlashVoteAudience, motionType: LiveFlashVote['motion_type']) => void;
-  onCastFlashVote: (voteId: string, learner: Learner, decision: 'AYE' | 'NO' | 'ABSTAIN') => void;
+  onCastFlashVote?: (voteId: string, learner: Learner, decision: 'AYE' | 'NO' | 'ABSTAIN') => void;
   onCloseFlashVote: (voteId: string) => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
 
-const DEFAULT_POSTS = [
+const CONSTITUTIONAL_POSTS = [
   {
-    title: 'Assembly Speaker Election',
+    key: 'speaker',
+    title: 'Speaker Election',
     position: 'Speaker',
     type: 'SPEAKER' as const,
     electorate: 'ALL' as const,
-    description: 'Whole House (Ruling + Opposition + Independent delegates)'
+    electorateLabel: 'Whole House (All Delegates)',
+    description: 'Whole House (Ruling, Opposition & Independent delegates)',
+    icon: Crown
   },
   {
+    key: 'deputy_speaker',
     title: 'Deputy Speaker Election',
     position: 'Deputy Speaker',
     type: 'DEPUTY_SPEAKER' as const,
     electorate: 'ALL' as const,
-    description: 'Whole House (Ruling + Opposition + Independent delegates)'
+    electorateLabel: 'Whole House (All Delegates)',
+    description: 'Whole House (Ruling, Opposition & Independent delegates)',
+    icon: Crown
   },
   {
-    title: 'Ruling Party Leader & Chief Minister Election',
+    key: 'cm',
+    title: 'Prime Minister / Chief Minister Election',
     position: 'Ruling Party Leader',
     type: 'LEADERSHIP' as const,
     electorate: 'RULING' as const,
-    description: 'Ruling Bench delegates only'
+    electorateLabel: 'Ruling Bench Only',
+    description: 'Ruling Bench delegates only',
+    icon: Trophy
   },
   {
-    title: 'Leader of the Opposition (LOP) Election',
+    key: 'lop',
+    title: 'Leader of Opposition Election',
     position: 'Opposition Party Leader',
     type: 'LEADERSHIP' as const,
     electorate: 'OPPOSITION' as const,
-    description: 'Opposition Bench delegates only'
+    electorateLabel: 'Opposition Bench Only',
+    description: 'Opposition Bench delegates only',
+    icon: Scale
   }
 ];
 
@@ -70,6 +89,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   elections,
   flashVotes,
   learners,
+  parties = [],
   nominations = [],
   eventId,
   onCastVote,
@@ -80,994 +100,966 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   onResetElection,
   onCreateElection,
   onCreateFlashVote,
-  onCastFlashVote,
+  onCloseFlashVote,
   onShowToast
 }) => {
   const [activeTabSection, setActiveTabSection] = useState<'ELECTIONS' | 'FLASH_VOTES'>('ELECTIONS');
-  const [selectedVoterId, setSelectedVoterId] = useState<string>('');
-
-  // Modal State for adding a new election post
-  const [isNewPostModalOpen, setIsNewPostModalOpen] = useState(false);
-  const [customPostTitle, setCustomPostTitle] = useState('');
-  const [customPosition, setCustomPosition] = useState('Speaker');
-  const [customElectorate, setCustomElectorate] = useState<'ALL' | 'RULING' | 'OPPOSITION'>('ALL');
-
-  // Modal State for Nominating / Adding candidates to an election
+  
+  const [expandedElectionIds, setExpandedElectionIds] = useState<Set<string>>(new Set());
+  const [selectedVoterPerElection, setSelectedVoterPerElection] = useState<Record<string, string>>({});
   const [activeNominateElectionId, setActiveNominateElectionId] = useState<string | null>(null);
-  const [candidateSearchQuery, setCandidateSearchQuery] = useState('');
   const [nominationSourceTab, setNominationSourceTab] = useState<'NOMINATIONS' | 'ALL_DELEGATES'>('NOMINATIONS');
-
-  // Flash vote form
+  const [candidateSearchQuery, setCandidateSearchQuery] = useState('');
   const [isNewPollOpen, setIsNewPollOpen] = useState(false);
   const [pollQuestion, setPollQuestion] = useState('');
-  const [pollAudience, setPollAudience] = useState<FlashVoteAudience>('ALL');
   const [pollMotionType, setPollMotionType] = useState<LiveFlashVote['motion_type']>('Division');
 
-  // Default selected voter
-  React.useEffect(() => {
-    if (!selectedVoterId && learners.length > 0) {
-      setSelectedVoterId(learners[0].id);
-    }
-  }, [learners, selectedVoterId]);
-
-  // Active selected voter object
-  const currentVoter = useMemo(() => {
-    return learners.find(l => l.id === selectedVoterId) || learners[0] || null;
-  }, [learners, selectedVoterId]);
-
-  // Auto-initialize standard 4 posts if no elections exist for this event
-  React.useEffect(() => {
-    if (elections.length === 0 && eventId) {
-      DEFAULT_POSTS.forEach(p => {
-        onCreateElection({
-          event_id: eventId,
-          title: p.title,
-          position: p.position,
-          type: p.type,
-          status: 'Upcoming',
-          candidates: [],
-          total_votes: 0,
-          voted_delegate_ids: []
-        });
+  // Auto-create standard constitutional election rows if missing
+  useEffect(() => {
+    if (eventId) {
+      CONSTITUTIONAL_POSTS.forEach(post => {
+        const exists = elections.some(e =>
+          e.position?.toLowerCase() === post.position.toLowerCase() ||
+          e.title?.toLowerCase() === post.title.toLowerCase()
+        );
+        if (!exists) {
+          onCreateElection({
+            event_id: eventId,
+            title: post.title,
+            position: post.position,
+            type: post.type,
+            status: 'Upcoming',
+            candidates: [],
+            total_votes: 0,
+            voted_delegate_ids: []
+          });
+        }
       });
     }
-  }, [elections.length, eventId]);
+  }, [elections, eventId]);
 
-  const getElectorateType = (election: Election): 'ALL' | 'RULING' | 'OPPOSITION' => {
-    const pos = (election.position || election.title || '').toLowerCase();
-    if (pos.includes('opposition') || pos.includes('lop')) return 'OPPOSITION';
-    if (pos.includes('ruling') || pos.includes('chief minister')) return 'RULING';
-    return 'ALL';
+  const toggleAccordion = (id: string) => {
+    setExpandedElectionIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
   };
 
-  const isVoterEligibleForElection = (voter: Learner | null, election: Election): { eligible: boolean; reason?: string } => {
-    if (!voter) return { eligible: false, reason: 'No voter selected' };
-    const electorate = getElectorateType(election);
+  const getElectorateRule = (election: Election): { type: 'ALL' | 'RULING' | 'OPPOSITION' | 'PARTY'; partyId?: string; partyName?: string; label: string } => {
+    const title = (election.title || '').toLowerCase();
+    const pos = (election.position || '').toLowerCase();
 
-    if (electorate === 'OPPOSITION' && voter.bench !== 'Opposition') {
-      return { eligible: false, reason: 'Leader of Opposition (LOP) election is restricted to Opposition Bench delegates only.' };
+    if (title.includes('party leader') && !title.includes('ruling') && !title.includes('opposition')) {
+      const matchParty = parties.find(p => title.toLowerCase().includes(p.name.toLowerCase()));
+      if (matchParty) {
+        return { type: 'PARTY', partyId: matchParty.id, partyName: matchParty.name, label: `${matchParty.name} MLAs Only` };
+      }
+      return { type: 'PARTY', label: 'Party Members Only' };
     }
-    if (electorate === 'RULING' && voter.bench !== 'Ruling') {
-      return { eligible: false, reason: 'Ruling Party Leader election is restricted to Ruling Bench delegates only.' };
+
+    if (pos.includes('opposition') || title.includes('opposition') || title.includes('lop')) {
+      return { type: 'OPPOSITION', label: 'Opposition Bench Only' };
     }
+    if (pos.includes('ruling') || title.includes('ruling') || title.includes('chief minister') || title.includes('prime minister')) {
+      return { type: 'RULING', label: 'Ruling Bench Only' };
+    }
+    return { type: 'ALL', label: 'Whole Assembly (All Delegates)' };
+  };
+
+  const checkVoterEligibility = (voter: Learner | null, election: Election): { eligible: boolean; reason?: string } => {
+    if (!voter) return { eligible: false, reason: 'No voter selected' };
+    const rule = getElectorateRule(election);
+
+    if (rule.type === 'PARTY') {
+      if (rule.partyId && voter.party_id !== rule.partyId && voter.party_name?.toLowerCase() !== rule.partyName?.toLowerCase()) {
+        return { eligible: false, reason: `This election is restricted to ${rule.partyName || 'Party'} delegates only.` };
+      }
+    } else if (rule.type === 'OPPOSITION' && voter.bench !== 'Opposition') {
+      return { eligible: false, reason: 'Restricted to Opposition Bench delegates only.' };
+    } else if (rule.type === 'RULING' && voter.bench !== 'Ruling') {
+      return { eligible: false, reason: 'Restricted to Ruling Bench delegates only.' };
+    }
+
+    if (election.voted_delegate_ids?.includes(voter.id)) {
+      return { eligible: false, reason: `${voter.full_name} has already voted in this election.` };
+    }
+
     return { eligible: true };
   };
 
-  const handleCreateCustomPostSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!customPostTitle.trim()) return;
+  const { constitutionalElections, partyLeaderElections, customElections } = useMemo(() => {
+    const constitutional: Election[] = [];
+    const partyLeaders: Election[] = [];
+    const custom: Election[] = [];
 
-    onCreateElection({
-      event_id: eventId,
-      title: customPostTitle.trim(),
-      position: customPosition,
-      type: customPosition === 'Speaker' ? 'SPEAKER' : customPosition === 'Deputy Speaker' ? 'DEPUTY_SPEAKER' : customPosition === 'Committee Chair' ? 'COMMITTEE' : 'LEADERSHIP',
-      status: 'Upcoming',
-      candidates: [],
-      total_votes: 0,
-      voted_delegate_ids: []
+    elections.forEach(elec => {
+      const title = (elec.title || '').toLowerCase();
+      const pos = (elec.position || '').toLowerCase();
+
+      if ((title.includes('party leader') && !title.includes('ruling') && !title.includes('opposition')) || (pos === 'party leader')) {
+        partyLeaders.push(elec);
+      } else if (
+        pos.includes('speaker') || pos.includes('ruling') || pos.includes('opposition') ||
+        title.includes('speaker') || title.includes('chief minister') || title.includes('prime minister') || title.includes('leader of opposition')
+      ) {
+        constitutional.push(elec);
+      } else {
+        custom.push(elec);
+      }
     });
 
-    setIsNewPostModalOpen(false);
-    setCustomPostTitle('');
-    onShowToast('Election Post Created', `Created ${customPostTitle}`, 'success');
+    const orderMap: Record<string, number> = { 'speaker': 1, 'deputy': 2, 'ruling': 3, 'chief minister': 3, 'prime minister': 3, 'opposition': 4, 'lop': 4 };
+    constitutional.sort((a, b) => {
+      const aKey = Object.keys(orderMap).find(k => (a.title + a.position).toLowerCase().includes(k)) || 'speaker';
+      const bKey = Object.keys(orderMap).find(k => (b.title + b.position).toLowerCase().includes(k)) || 'speaker';
+      return (orderMap[aKey] || 99) - (orderMap[bKey] || 99);
+    });
+
+    return { constitutionalElections: constitutional, partyLeaderElections: partyLeaders, customElections: custom };
+  }, [elections]);
+
+  const handleEnsurePartyLeaderElection = (party: Party) => {
+    const exists = elections.some(e =>
+      e.title.toLowerCase().includes(party.name.toLowerCase()) &&
+      (e.title.toLowerCase().includes('leader') || e.position?.toLowerCase().includes('leader'))
+    );
+    if (!exists) {
+      onCreateElection({
+        event_id: eventId,
+        title: `${party.name} Leader Election`,
+        position: 'Party Leader',
+        type: 'LEADERSHIP',
+        status: 'Upcoming',
+        candidates: [],
+        total_votes: 0,
+        voted_delegate_ids: []
+      });
+      onShowToast('Party Election Created', `Created election for ${party.name} Leader`, 'success');
+    }
   };
 
   const activeElectionForNominate = useMemo(() => {
     return elections.find(e => e.id === activeNominateElectionId) || null;
   }, [elections, activeNominateElectionId]);
 
-  // Matching filed nominations for this active election post
-  const relevantFiledNominations = useMemo(() => {
+  const relevantStudentNominations = useMemo(() => {
     if (!activeElectionForNominate) return [];
-    const targetPos = activeElectionForNominate.position.toLowerCase();
+    const targetPos = (activeElectionForNominate.position || activeElectionForNominate.title).toLowerCase();
     return nominations.filter(n => {
-      if (n.position.toLowerCase() === targetPos) return true;
-      if (targetPos.includes('speaker') && n.position === 'Speaker') return true;
-      if (targetPos.includes('deputy') && n.position === 'Deputy Speaker') return true;
-      if (targetPos.includes('ruling') && n.position === 'Ruling Party Leader') return true;
-      if ((targetPos.includes('opposition') || targetPos.includes('lop')) && n.position === 'Opposition Party Leader') return true;
+      const nPos = n.position.toLowerCase();
+      if (targetPos.includes('speaker') && !targetPos.includes('deputy') && nPos.includes('speaker') && !nPos.includes('deputy')) return true;
+      if (targetPos.includes('deputy') && nPos.includes('deputy')) return true;
+      if ((targetPos.includes('ruling') || targetPos.includes('chief minister') || targetPos.includes('prime minister')) && (nPos.includes('ruling') || nPos.includes('chief minister') || nPos.includes('prime minister'))) return true;
+      if ((targetPos.includes('opposition') || targetPos.includes('lop')) && (nPos.includes('opposition') || nPos.includes('leader of opposition'))) return true;
+      if (targetPos.includes('party leader') && nPos.includes('party leader')) return true;
+      if (nPos === targetPos) return true;
       return false;
     });
   }, [nominations, activeElectionForNominate]);
 
-  // Filtered all learners for candidate search
-  const filteredCandidateLearners = useMemo(() => {
+  const filteredCandidatePool = useMemo(() => {
     if (!activeElectionForNominate) return [];
-    const electorate = getElectorateType(activeElectionForNominate);
+    const rule = getElectorateRule(activeElectionForNominate);
     let pool = learners;
-    if (electorate === 'OPPOSITION') {
-      pool = learners.filter(l => l.bench === 'Opposition');
-    } else if (electorate === 'RULING') {
-      pool = learners.filter(l => l.bench === 'Ruling');
+
+    if (rule.type === 'PARTY' && rule.partyId) {
+      pool = pool.filter(l => l.party_id === rule.partyId || l.party_name?.toLowerCase() === rule.partyName?.toLowerCase());
+    } else if (rule.type === 'OPPOSITION') {
+      pool = pool.filter(l => l.bench === 'Opposition');
+    } else if (rule.type === 'RULING') {
+      pool = pool.filter(l => l.bench === 'Ruling');
     }
 
-    if (!candidateSearchQuery.trim()) return pool.slice(0, 30);
-    const q = candidateSearchQuery.toLowerCase();
-    return pool.filter(l =>
-      l.full_name.toLowerCase().includes(q) ||
-      l.access_code.toLowerCase().includes(q) ||
-      (l.constituency_name && l.constituency_name.toLowerCase().includes(q)) ||
-      (l.constituency_number !== undefined && l.constituency_number.toString().includes(q)) ||
-      (l.party_name && l.party_name.toLowerCase().includes(q))
-    );
-  }, [learners, candidateSearchQuery, activeElectionForNominate]);
-
-  const handleAddCandidateToActiveElection = (cand: { id?: string; learner_id?: string; name: string; party: string; bench: Learner['bench'] }) => {
-    if (!activeNominateElectionId) return;
-    if (onAddCandidate) {
-      onAddCandidate(activeNominateElectionId, {
-        learner_id: cand.learner_id || cand.id,
-        name: cand.name,
-        party: cand.party || 'Independent',
-        bench: cand.bench || 'Ruling',
-        votes: 0
-      });
-      onShowToast('Candidate Nominated', `Added ${cand.name} to ballot`, 'success');
+    if (candidateSearchQuery.trim()) {
+      const q = candidateSearchQuery.toLowerCase();
+      pool = pool.filter(l =>
+        l.full_name?.toLowerCase().includes(q) ||
+        l.party_name?.toLowerCase().includes(q) ||
+        l.constituency_name?.toLowerCase().includes(q) ||
+        String(l.constituency_number || '').includes(q)
+      );
     }
+
+    return pool;
+  }, [learners, activeElectionForNominate, candidateSearchQuery]);
+
+  const handleAddCandidateToElection = (learner: Learner) => {
+    if (!activeElectionForNominate || !onAddCandidate) return;
+
+    const alreadyIn = activeElectionForNominate.candidates?.some(c => c.name.toLowerCase() === learner.full_name.toLowerCase());
+    if (alreadyIn) {
+      onShowToast('Candidate Exists', `${learner.full_name} is already nominated for this election.`, 'error');
+      return;
+    }
+
+    onAddCandidate(activeElectionForNominate.id, {
+      name: learner.full_name,
+      party: learner.party_name || 'Independent',
+      bench: learner.bench || 'Opposition',
+      votes: 0
+    });
+
+    onShowToast('Candidate Nominated', `${learner.full_name} was added to the ballot.`, 'success');
   };
 
-  return (
-    <div className="space-y-6 animate-fade-in">
-      
-      {/* Top Header & Voting Delegate Selector */}
+  const renderElectionRow = (elec: Election, index: number) => {
+    const isExpanded = expandedElectionIds.has(elec.id);
+    const isLive = elec.status === 'Live';
+    const isClosed = elec.status === 'Closed';
+    const isUpcoming = elec.status === 'Upcoming' || !elec.status;
+    const sortedCandidates = [...(elec.candidates || [])].sort((a, b) => (b.votes || 0) - (a.votes || 0));
+    const leader = sortedCandidates.length > 0 && sortedCandidates[0].votes > 0 ? sortedCandidates[0] : null;
+    const rule = getElectorateRule(elec);
+
+    const selectedVoterId = selectedVoterPerElection[elec.id] || (learners[0]?.id || '');
+    const currentVoter = learners.find(l => l.id === selectedVoterId) || learners[0] || null;
+    const voterCheck = checkVoterEligibility(currentVoter, elec);
+    const hasVoted = currentVoter && elec.voted_delegate_ids?.includes(currentVoter.id);
+
+    return (
       <div
-        className="rounded-2xl p-5 md:p-6 border shadow-sm space-y-4"
-        style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+        key={elec.id}
+        className="rounded-2xl border transition-all duration-200 overflow-hidden"
+        style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}
       >
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <div className="p-2 rounded-xl text-amber-500" style={{ backgroundColor: 'var(--accent-soft)' }}>
-                <Vote className="w-5 h-5" />
-              </div>
-              <h3 className="text-xl font-black tracking-tight" style={{ color: 'var(--text-primary)' }}>
-                Assembly Leadership Elections & Ballots
-              </h3>
+        {/* Accordion Row Header (Image 2 style) */}
+        <div
+          onClick={() => toggleAccordion(elec.id)}
+          className="p-4 md:p-5 flex items-center justify-between gap-4 cursor-pointer hover:bg-slate-500/5 transition-colors select-none"
+        >
+          <div className="flex items-center gap-3.5 flex-1 min-w-0">
+            {/* Chevron toggle */}
+            <div className="text-slate-400">
+              {isExpanded ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
             </div>
-            <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
-              Nominate candidates from student self-nominations or searchable delegate directory, then open voting with automatic bench-eligibility validation.
-            </p>
+
+            {/* Status Circle Indicator */}
+            {isClosed ? (
+              <div className="w-7 h-7 rounded-full bg-emerald-500/20 text-emerald-500 border border-emerald-500/40 flex items-center justify-center flex-shrink-0">
+                <Check className="w-4 h-4 stroke-[3]" />
+              </div>
+            ) : isLive ? (
+              <div className="w-7 h-7 rounded-full bg-amber-500/20 text-amber-500 border border-amber-500/40 flex items-center justify-center flex-shrink-0 animate-pulse">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+              </div>
+            ) : (
+              <div className="w-7 h-7 rounded-full bg-slate-500/10 text-slate-400 border border-slate-500/20 flex items-center justify-center text-xs font-bold flex-shrink-0">
+                {index + 1}
+              </div>
+            )}
+
+            {/* Election Icon + Title */}
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="text-amber-500">
+                <Crown className="w-4 h-4" />
+              </span>
+              <span className="font-serif font-bold text-base md:text-lg tracking-tight truncate" style={{ color: 'var(--text-primary)' }}>
+                {elec.title}
+              </span>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setActiveTabSection('ELECTIONS')}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
-                activeTabSection === 'ELECTIONS'
-                  ? 'bg-amber-500 text-white border-amber-600 shadow-sm'
-                  : 'bg-transparent text-slate-400 border-slate-700 hover:text-slate-200'
-              }`}
-            >
-              Post Elections ({elections.length})
-            </button>
-            <button
-              onClick={() => setActiveTabSection('FLASH_VOTES')}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
-                activeTabSection === 'FLASH_VOTES'
-                  ? 'bg-emerald-500 text-white border-emerald-600 shadow-sm'
-                  : 'bg-transparent text-slate-400 border-slate-700 hover:text-slate-200'
-              }`}
-            >
-              <Zap className="w-3.5 h-3.5" /> Division Polls ({flashVotes.length})
-            </button>
-            <button
-              onClick={() => setIsNewPostModalOpen(true)}
-              className="px-3.5 py-2 rounded-xl font-bold text-xs text-white shadow-md flex items-center gap-1.5 cursor-pointer bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-transform hover:scale-102"
-            >
-              <Plus className="w-3.5 h-3.5" /> + New Post
-            </button>
+          {/* Right Status Badge (Done / Not started / Live) */}
+          <div className="flex items-center gap-3 flex-shrink-0">
+            {isClosed ? (
+              <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/15 text-emerald-500 border border-emerald-500/30">
+                Done
+              </span>
+            ) : isLive ? (
+              <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-500/15 text-amber-500 border border-amber-500/30 animate-pulse">
+                Live Voting
+              </span>
+            ) : (
+              <span className="px-3 py-1 rounded-full text-xs font-semibold bg-slate-500/10 text-slate-400 border border-slate-500/20">
+                Not started
+              </span>
+            )}
           </div>
         </div>
 
-        {/* Current Voting Delegate Picker */}
-        {activeTabSection === 'ELECTIONS' && (
-          <div
-            className="p-4 rounded-xl border flex flex-col md:flex-row md:items-center justify-between gap-4"
-            style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)' }}
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/20 flex items-center justify-center font-bold">
-                <Users className="w-5 h-5" />
-              </div>
-              <div>
-                <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                  Active Voting Delegate
-                </span>
-                {currentVoter ? (
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>
-                      {currentVoter.full_name}
-                    </span>
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold border ${
-                        currentVoter.bench === 'Ruling'
-                          ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30'
-                          : 'bg-rose-500/10 text-rose-500 border-rose-500/30'
-                      }`}
-                    >
-                      {currentVoter.bench} Bench
-                    </span>
-                    <span className="text-xs text-slate-400 font-mono">
-                      {currentVoter.party_name || 'Independent'} {currentVoter.constituency_number !== undefined ? `• #${currentVoter.constituency_number} ${currentVoter.constituency_name || ''}` : ''}
-                    </span>
-                  </div>
-                ) : (
-                  <span className="text-xs text-slate-500 italic">No delegate selected</span>
-                )}
-              </div>
-            </div>
-
-            {/* Voter Select Dropdown with Live Filter */}
-            <div className="flex items-center gap-2 w-full md:w-80">
-              <select
-                value={selectedVoterId}
-                onChange={(e) => setSelectedVoterId(e.target.value)}
-                className="w-full p-2 rounded-xl border text-xs font-semibold focus:outline-none"
-                style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
-              >
-                {learners.map(l => (
-                  <option key={l.id} value={l.id}>
-                    {l.full_name} ({l.bench || 'Delegate'} • {l.party_name || 'Ind'}{l.constituency_number !== undefined ? ` • #${l.constituency_number}` : ''})
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* ELECTIONS POSTS GRID */}
-      {activeTabSection === 'ELECTIONS' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {elections.map((elec) => {
-            const electorate = getElectorateType(elec);
-            const voterCheck = isVoterEligibleForElection(currentVoter, elec);
-            const hasVoted = currentVoter && elec.voted_delegate_ids?.includes(currentVoter.id);
-            const isLive = elec.status === 'Live';
-            const isClosed = elec.status === 'Closed';
-            const isUpcoming = elec.status === 'Upcoming' || !elec.status;
-            const sortedCandidates = [...(elec.candidates || [])].sort((a, b) => b.votes - a.votes);
-            const leader = sortedCandidates.length > 0 && sortedCandidates[0].votes > 0 ? sortedCandidates[0] : null;
-
-            return (
-              <div
-                key={elec.id}
-                className={`rounded-2xl p-5 md:p-6 border shadow-md space-y-4 flex flex-col justify-between transition-all ${
-                  isLive
-                    ? 'border-emerald-500/40 ring-1 ring-emerald-500/20'
-                    : isClosed
-                    ? 'border-slate-800'
-                    : 'border-amber-500/30'
-                }`}
-                style={{ backgroundColor: 'var(--bg-surface)' }}
-              >
-                {/* Post Header */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <span
-                      className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider border ${
-                        electorate === 'OPPOSITION'
-                          ? 'bg-rose-500/10 text-rose-500 border-rose-500/30'
-                          : electorate === 'RULING'
-                          ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30'
-                          : 'bg-amber-500/10 text-amber-500 border-amber-500/30'
-                      }`}
-                    >
-                      {electorate === 'OPPOSITION'
-                        ? '🔴 Opposition Bench Only (LOP)'
-                        : electorate === 'RULING'
-                        ? '🟢 Ruling Bench Only'
-                        : '👥 Entire Assembly'}
-                    </span>
-
-                    <span
-                      className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1 border ${
-                        isLive
-                          ? 'bg-emerald-500 text-white border-emerald-600 animate-pulse'
-                          : isClosed
-                          ? 'bg-slate-800 text-slate-400 border-slate-700'
-                          : 'bg-amber-500/20 text-amber-400 border-amber-500/30'
-                      }`}
-                    >
-                      {isLive ? '● Live Voting Open' : isClosed ? '✓ Voting Closed' : '📝 Nomination Phase'}
-                    </span>
-                  </div>
-
-                  <div>
-                    <h4 className="text-lg font-black tracking-tight" style={{ color: 'var(--text-primary)' }}>
-                      {elec.title}
-                    </h4>
-                    <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-                      Target Post: <strong className="text-amber-400">{elec.position}</strong> • Total Votes Cast: <strong>{elec.total_votes || 0}</strong>
-                    </p>
-                  </div>
+        {/* Accordion Content when Expanded */}
+        {isExpanded && (
+          <div className="p-5 md:p-6 border-t space-y-6" style={{ borderColor: 'var(--border-soft)', backgroundColor: 'var(--bg-elevated)' }}>
+            {/* Action Bar / Electorate Rule & Status Controls */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 rounded-xl border" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Electorate:</span>
+                  <span className="px-2 py-0.5 rounded text-xs font-extrabold bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                    {rule.label}
+                  </span>
+                  <span className="text-xs text-slate-400">• Total Votes: <strong>{elec.total_votes || 0}</strong></span>
                 </div>
+                <p className="text-xs text-slate-400">
+                  {rule.type === 'OPPOSITION' && 'Only Opposition Bench delegates are permitted to vote.'}
+                  {rule.type === 'RULING' && 'Only Ruling Bench delegates are permitted to vote.'}
+                  {rule.type === 'PARTY' && `Only members of ${rule.partyName || 'the party'} are permitted to vote.`}
+                  {rule.type === 'ALL' && 'All delegates across the House are eligible to participate.'}
+                </p>
+              </div>
 
-                {/* Closed Winner Banner */}
+              {/* Status Action Buttons */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {isUpcoming && (
+                  <button
+                    onClick={() => onSetElectionStatus && onSetElectionStatus(elec.id, 'Live')}
+                    className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-amber-600 hover:bg-amber-500 shadow-md flex items-center gap-1.5 cursor-pointer transition-all"
+                  >
+                    <Play className="w-3.5 h-3.5" /> Open Ballot & Start Live Voting
+                  </button>
+                )}
+
+                {isLive && (
+                  <button
+                    onClick={() => onCloseElection(elec.id)}
+                    className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 shadow-md flex items-center gap-1.5 cursor-pointer transition-all"
+                  >
+                    <Trophy className="w-3.5 h-3.5" /> Close Ballot & Announce Winner
+                  </button>
+                )}
+
                 {isClosed && (
-                  <div className="p-4 rounded-xl bg-gradient-to-r from-amber-500/10 via-amber-500/20 to-amber-500/10 border border-amber-500/30 flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-extrabold shadow-md">
-                      <Trophy className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <span className="text-[10px] uppercase font-black tracking-widest text-amber-400 block">
-                        Elected Winner
-                      </span>
-                      <h5 className="text-base font-black text-white">
-                        {elec.winner || (leader ? leader.name : 'No winner recorded')}
-                      </h5>
-                      {leader && (
-                        <p className="text-xs text-amber-200/80">
-                          {leader.votes} votes ({elec.total_votes > 0 ? Math.round((leader.votes / elec.total_votes) * 100) : 0}%) • {leader.party}
-                        </p>
-                      )}
-                    </div>
-                  </div>
+                  <button
+                    onClick={() => onResetElection && onResetElection(elec.id)}
+                    className="px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-600 flex items-center gap-1 cursor-pointer transition-all"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" /> Reset Ballot
+                  </button>
                 )}
+              </div>
+            </div>
 
-                {/* Candidates Roster & Live Voting Bars */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between border-b pb-1.5" style={{ borderColor: 'var(--border-soft)' }}>
-                    <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                      Nominated Candidates ({elec.candidates?.length || 0})
-                    </span>
-                    {!isClosed && (
-                      <button
-                        onClick={() => {
-                          setActiveNominateElectionId(elec.id);
-                          setCandidateSearchQuery('');
-                          setNominationSourceTab('NOMINATIONS');
-                        }}
-                        className="text-xs font-bold text-amber-400 hover:text-amber-300 flex items-center gap-1 cursor-pointer transition-colors"
-                      >
-                        <UserPlus className="w-3.5 h-3.5" /> + Nominate Candidate
-                      </button>
-                    )}
-                  </div>
-
-                  {(!elec.candidates || elec.candidates.length === 0) ? (
-                    <div
-                      className="p-6 rounded-xl border text-center text-xs italic"
-                      style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}
-                    >
-                      No candidates nominated yet. Click <strong>"+ Nominate Candidate"</strong> to select from student nominations or the delegate directory.
-                    </div>
-                  ) : (
-                    <div className="space-y-2.5">
-                      {elec.candidates.map((cand) => {
-                        const pct = elec.total_votes > 0 ? Math.round(((cand.votes || 0) / elec.total_votes) * 100) : 0;
-                        const isCandWinner = isClosed && (elec.winner === cand.name || leader?.id === cand.id);
-
-                        return (
-                          <div
-                            key={cand.id}
-                            className={`p-3.5 rounded-xl border space-y-2 transition-all ${
-                              isCandWinner
-                                ? 'bg-amber-500/10 border-amber-500/40'
-                                : 'bg-slate-950/60 border-slate-800/80'
-                            }`}
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <div>
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-sm font-bold text-white">{cand.name}</span>
-                                  {isCandWinner && <Trophy className="w-3.5 h-3.5 text-amber-400" />}
-                                </div>
-                                <span className="text-[11px] text-slate-400">
-                                  {cand.party} • <span className={cand.bench === 'Ruling' ? 'text-emerald-400' : 'text-rose-400'}>{cand.bench} Bench</span>
-                                </span>
-                              </div>
-
-                              <div className="text-right">
-                                <div className="text-sm font-mono font-black text-white">
-                                  {cand.votes || 0} <span className="text-xs font-normal text-slate-400">({pct}%)</span>
-                                </div>
-                                {!isClosed && !isLive && onRemoveCandidate && (
-                                  <button
-                                    onClick={() => onRemoveCandidate(elec.id, cand.id)}
-                                    className="text-[10px] text-rose-400 hover:text-rose-300 cursor-pointer"
-                                    title="Remove candidate from ballot"
-                                  >
-                                    Remove
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-
-                            {/* Progress bar */}
-                            <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
-                              <div
-                                className={`h-full transition-all duration-500 ${
-                                  cand.bench === 'Ruling' ? 'bg-emerald-500' : 'bg-rose-500'
-                                }`}
-                                style={{ width: `${pct}%` }}
-                              />
-                            </div>
-
-                            {/* Vote button if Live */}
-                            {isLive && (
-                              <div className="pt-1">
-                                {hasVoted ? (
-                                  <button
-                                    disabled
-                                    className="w-full py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-400 border border-slate-700 flex items-center justify-center gap-1 cursor-not-allowed opacity-75"
-                                  >
-                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> Delegate Already Voted
-                                  </button>
-                                ) : !voterCheck.eligible ? (
-                                  <button
-                                    disabled
-                                    className="w-full py-1.5 rounded-lg text-xs font-semibold bg-rose-950/40 text-rose-400 border border-rose-900/50 flex items-center justify-center gap-1 cursor-not-allowed opacity-75"
-                                  >
-                                    <XCircle className="w-3.5 h-3.5" /> Ineligible ({electorate === 'OPPOSITION' ? 'Opposition Only' : 'Ruling Only'})
-                                  </button>
-                                ) : (
-                                  <button
-                                    onClick={() => {
-                                      if (currentVoter) {
-                                        onCastVote(elec.id, cand.id, currentVoter.id);
-                                        onShowToast('Vote Recorded', `Cast vote for ${cand.name} on behalf of ${currentVoter.full_name}`, 'success');
-                                      }
-                                    }}
-                                    className="w-full py-2 rounded-xl text-xs font-bold text-white shadow-md bg-amber-500 hover:bg-amber-600 transition-all cursor-pointer flex items-center justify-center gap-1.5 hover:scale-101"
-                                  >
-                                    <Vote className="w-3.5 h-3.5" /> Cast Vote for {cand.name}
-                                  </button>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+            {/* Winner Banner if Closed */}
+            {isClosed && (
+              <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center gap-4">
+                <div className="w-12 h-12 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-black">
+                  <Trophy className="w-6 h-6" />
                 </div>
-
-                {/* Footer Controls / Phase Switchers */}
-                <div className="pt-3 border-t flex items-center justify-between gap-2 flex-wrap" style={{ borderColor: 'var(--border-soft)' }}>
-                  {isUpcoming && (
-                    <div className="flex items-center justify-between w-full gap-2">
-                      <span className="text-[11px] text-slate-400">
-                        {elec.candidates?.length || 0} candidate(s) ready
-                      </span>
-                      <button
-                        onClick={() => {
-                          if (!elec.candidates || elec.candidates.length === 0) {
-                            onShowToast('Nominate Candidates', 'Please add at least 1 candidate before opening voting', 'error');
-                            return;
-                          }
-                          if (onSetElectionStatus) onSetElectionStatus(elec.id, 'Live');
-                          onShowToast('Voting Opened', `Voting is now Live for ${elec.title}`, 'success');
-                        }}
-                        disabled={!elec.candidates || elec.candidates.length === 0}
-                        className={`px-4 py-2 rounded-xl text-xs font-bold text-white flex items-center gap-1.5 shadow-md cursor-pointer transition-all ${
-                          !elec.candidates || elec.candidates.length === 0
-                            ? 'bg-slate-700 opacity-50 cursor-not-allowed'
-                            : 'bg-emerald-500 hover:bg-emerald-600 shadow-emerald-950/40'
-                        }`}
-                      >
-                        <Play className="w-3.5 h-3.5 fill-current" /> Open Voting
-                      </button>
-                    </div>
-                  )}
-
-                  {isLive && (
-                    <div className="flex items-center justify-between w-full gap-2">
-                      <button
-                        onClick={() => {
-                          if (onSetElectionStatus) onSetElectionStatus(elec.id, 'Upcoming');
-                          onShowToast('Nomination Phase', 'Returned to candidate nomination phase', 'info');
-                        }}
-                        className="px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-400 hover:text-slate-200 border border-slate-700 cursor-pointer"
-                      >
-                        ← Back to Nominations
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          onCloseElection(elec.id);
-                          onShowToast('Election Concluded', `Voting closed and winner declared for ${elec.title}`, 'success');
-                        }}
-                        className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 shadow-md shadow-rose-950/40 flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Lock className="w-3.5 h-3.5" /> Close Voting & Declare Winner
-                      </button>
-                    </div>
-                  )}
-
-                  {isClosed && (
-                    <div className="flex items-center justify-between w-full gap-2">
-                      <button
-                        onClick={() => {
-                          if (onResetElection) onResetElection(elec.id);
-                          onShowToast('Election Reset', 'Reset candidate votes and status to upcoming', 'info');
-                        }}
-                        className="px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-400 hover:text-slate-200 border border-slate-700 flex items-center gap-1 cursor-pointer"
-                      >
-                        <RotateCcw className="w-3 h-3" /> Reset Election
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          if (onSetElectionStatus) onSetElectionStatus(elec.id, 'Live');
-                          onShowToast('Voting Re-opened', 'Re-opened voting for this election', 'success');
-                        }}
-                        className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow-md flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Play className="w-3.5 h-3.5 fill-current" /> Re-open Voting
-                      </button>
-                    </div>
+                <div>
+                  <span className="text-[10px] uppercase font-black tracking-widest text-amber-500 block">
+                    Elected Winner
+                  </span>
+                  <h4 className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
+                    {elec.winner || (leader ? leader.name : 'No winner declared')}
+                  </h4>
+                  {leader && (
+                    <p className="text-xs text-slate-400">
+                      Won with {leader.votes} votes ({elec.total_votes > 0 ? Math.round((leader.votes / elec.total_votes) * 100) : 0}%) • {leader.party}
+                    </p>
                   )}
                 </div>
               </div>
-            );
-          })}
-        </div>
-      )}
+            )}
 
-      {/* FLASH DIVISION VOTES SECTION */}
-      {activeTabSection === 'FLASH_VOTES' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <div>
-              <h4 className="text-base font-bold text-white flex items-center gap-2">
-                <Zap className="w-4 h-4 text-emerald-400" /> Real-time Division Motions & Rapid Yes/No Polls
-              </h4>
-              <p className="text-xs text-slate-400">
-                Instant electronic division voting on legislative amendments, bills, and urgency motions.
-              </p>
-            </div>
-            <button
-              onClick={() => setIsNewPollOpen(true)}
-              className="px-3.5 py-2 rounded-xl text-xs font-bold text-white bg-emerald-500 hover:bg-emerald-600 shadow-md flex items-center gap-1 cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5" /> + New Division Motion
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {flashVotes.map(vote => {
-              const total = (vote.ayes_count || 0) + (vote.noes_count || 0) + (vote.abstain_count || 0);
-              const ayePct = total > 0 ? Math.round(((vote.ayes_count || 0) / total) * 100) : 0;
-              const noPct = total > 0 ? Math.round(((vote.noes_count || 0) / total) * 100) : 0;
-
-              return (
-                <div
-                  key={vote.id}
-                  className="rounded-2xl p-5 border border-slate-800 bg-slate-900/90 shadow-md space-y-3"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                      {vote.motion_type || 'Division'} • {vote.target_audience} Audience
-                    </span>
-                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${vote.status === 'ACTIVE' ? 'bg-emerald-500 text-white animate-pulse' : 'bg-slate-800 text-slate-400'}`}>
-                      {vote.status === 'ACTIVE' ? '● LIVE' : 'CLOSED'}
-                    </span>
-                  </div>
-
-                  <h5 className="text-sm font-extrabold text-white leading-snug">{vote.question}</h5>
-
-                  {/* Results bars */}
-                  <div className="grid grid-cols-3 gap-2 text-center text-xs font-bold">
-                    <div className="p-2 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-400">
-                      AYE: {vote.ayes_count || 0} ({ayePct}%)
-                    </div>
-                    <div className="p-2 rounded-xl bg-rose-950/40 border border-rose-500/30 text-rose-400">
-                      NO: {vote.noes_count || 0} ({noPct}%)
-                    </div>
-                    <div className="p-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-400">
-                      ABSTAIN: {vote.abstain_count || 0}
-                    </div>
-                  </div>
-
-                  {/* Voting Controls */}
-                  {vote.status === 'ACTIVE' && currentVoter && (
-                    <div className="flex items-center gap-2 pt-2 border-t border-slate-800">
-                      <button
-                        onClick={() => {
-                          onCastFlashVote(vote.id, currentVoter, 'AYE');
-                          onShowToast('Voted AYE', `Recorded AYE for ${currentVoter.full_name}`, 'success');
-                        }}
-                        className="flex-1 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer"
-                      >
-                        ✓ AYE
-                      </button>
-                      <button
-                        onClick={() => {
-                          onCastFlashVote(vote.id, currentVoter, 'NO');
-                          onShowToast('Voted NO', `Recorded NO for ${currentVoter.full_name}`, 'info');
-                        }}
-                        className="flex-1 py-1.5 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white cursor-pointer"
-                      >
-                        ✕ NO
-                      </button>
-                      <button
-                        onClick={() => {
-                          onCastFlashVote(vote.id, currentVoter, 'ABSTAIN');
-                          onShowToast('Voted ABSTAIN', `Recorded ABSTAIN for ${currentVoter.full_name}`, 'info');
-                        }}
-                        className="py-1.5 px-3 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
-                      >
-                        Abstain
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* CANDIDATE NOMINATION MODAL (From Filed Nominations or Search Entire Delegate List) */}
-      {activeNominateElectionId && activeElectionForNominate && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div
-            className="rounded-2xl max-w-xl w-full p-6 border shadow-2xl space-y-4 animate-scale-in max-h-[90vh] flex flex-col justify-between"
-            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
-          >
-            <div className="flex items-center justify-between border-b pb-3" style={{ borderColor: 'var(--border-soft)' }}>
-              <div>
-                <span className="text-[10px] uppercase font-bold text-amber-500 tracking-wider">
-                  Nominate Candidates for Ballot
+            {/* Nominated Candidates Roster */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between border-b pb-2" style={{ borderColor: 'var(--border-soft)' }}>
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                  Ballot Candidates ({elec.candidates?.length || 0})
                 </span>
-                <h4 className="text-base font-extrabold text-white">
-                  {activeElectionForNominate.title}
-                </h4>
+                {!isClosed && (
+                  <button
+                    onClick={() => {
+                      setActiveNominateElectionId(elec.id);
+                      setCandidateSearchQuery('');
+                      setNominationSourceTab('NOMINATIONS');
+                    }}
+                    className="text-xs font-bold text-amber-500 hover:text-amber-400 flex items-center gap-1.5 cursor-pointer transition-colors"
+                  >
+                    <UserPlus className="w-4 h-4" /> + Nominate Candidate
+                  </button>
+                )}
               </div>
-              <button
-                onClick={() => setActiveNominateElectionId(null)}
-                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-200 cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
 
-            {/* Source Tabs */}
-            <div className="flex items-center gap-2 border-b pb-2" style={{ borderColor: 'var(--border-soft)' }}>
-              <button
-                onClick={() => setNominationSourceTab('NOMINATIONS')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  nominationSourceTab === 'NOMINATIONS'
-                    ? 'bg-amber-500 text-white'
-                    : 'bg-slate-800/80 text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                1. From Student Nominations ({relevantFiledNominations.length})
-              </button>
-              <button
-                onClick={() => setNominationSourceTab('ALL_DELEGATES')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  nominationSourceTab === 'ALL_DELEGATES'
-                    ? 'bg-amber-500 text-white'
-                    : 'bg-slate-800/80 text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                2. Search All Assembly Delegates ({learners.length})
-              </button>
-            </div>
-
-            {/* Content Area */}
-            <div className="overflow-y-auto max-h-[50vh] space-y-3 pr-1">
-              
-              {/* TAB 1: From Filed Nominations */}
-              {nominationSourceTab === 'NOMINATIONS' && (
-                <div className="space-y-2">
-                  {relevantFiledNominations.length === 0 ? (
-                    <div className="p-6 text-center text-xs text-slate-500 italic rounded-xl border border-dashed border-slate-800">
-                      No self-nominations filed yet for <strong>{activeElectionForNominate.position}</strong>.
-                      <br />You can nominate delegates directly from Tab 2 "Search All Assembly Delegates".
-                    </div>
-                  ) : (
-                    relevantFiledNominations.map(nom => {
-                      const alreadyIn = activeElectionForNominate.candidates?.some(
-                        c => (c.learner_id && c.learner_id === nom.candidate_learner_id) || c.name === nom.candidate_name
-                      );
-
-                      return (
-                        <div
-                          key={nom.id}
-                          className="p-3.5 rounded-xl border border-slate-800 bg-slate-950/70 flex items-center justify-between gap-3"
-                        >
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-bold text-white">{nom.candidate_name}</span>
-                              <span className={`px-2 py-0.2 rounded-full text-[9px] font-bold ${nom.bench === 'Ruling' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
-                                {nom.bench} Bench
-                              </span>
-                            </div>
-                            <p className="text-[11px] text-slate-400">{nom.party_name}</p>
-                            {nom.manifesto && (
-                              <p className="text-[10px] text-slate-500 italic line-clamp-2">"{nom.manifesto}"</p>
-                            )}
-                          </div>
-
-                          <button
-                            onClick={() => handleAddCandidateToActiveElection({
-                              learner_id: nom.candidate_learner_id,
-                              name: nom.candidate_name,
-                              party: nom.party_name,
-                              bench: nom.bench
-                            })}
-                            disabled={alreadyIn}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all cursor-pointer ${
-                              alreadyIn
-                                ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                                : 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-md'
-                            }`}
-                          >
-                            {alreadyIn ? '✓ On Ballot' : '+ Add to Ballot'}
-                          </button>
-                        </div>
-                      );
-                    })
-                  )}
+              {(!elec.candidates || elec.candidates.length === 0) ? (
+                <div className="p-6 rounded-xl border border-dashed text-center text-xs italic" style={{ borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}>
+                  No candidates nominated yet. Click <strong>"+ Nominate Candidate"</strong> to select from student nominations or the delegate directory.
                 </div>
-              )}
-
-              {/* TAB 2: Search All Delegates by Name or Constituency # */}
-              {nominationSourceTab === 'ALL_DELEGATES' && (
+              ) : (
                 <div className="space-y-3">
-                  <div className="relative">
-                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                    <input
-                      type="text"
-                      placeholder="Search by Delegate Name, Constituency # (e.g. #13), or Party..."
-                      value={candidateSearchQuery}
-                      onChange={(e) => setCandidateSearchQuery(e.target.value)}
-                      className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-amber-500"
-                    />
-                  </div>
+                  {elec.candidates.map((cand) => {
+                    const pct = elec.total_votes > 0 ? Math.round(((cand.votes || 0) / elec.total_votes) * 100) : 0;
+                    const isWinner = isClosed && (elec.winner === cand.name || leader?.id === cand.id);
 
-                  <div className="space-y-2">
-                    {filteredCandidateLearners.map(learner => {
-                      const alreadyIn = activeElectionForNominate.candidates?.some(
-                        c => (c.learner_id && c.learner_id === learner.id) || c.name === learner.full_name
-                      );
-
-                      return (
-                        <div
-                          key={learner.id}
-                          className="p-3 rounded-xl border border-slate-800 bg-slate-950/60 flex items-center justify-between gap-3 hover:border-slate-700 transition-colors"
-                        >
+                    return (
+                      <div
+                        key={cand.id}
+                        className={`p-4 rounded-xl border space-y-2.5 transition-all ${
+                          isWinner
+                            ? 'bg-amber-500/10 border-amber-500/40'
+                            : 'border-slate-800'
+                        }`}
+                        style={{ backgroundColor: isWinner ? undefined : 'var(--bg-surface)' }}
+                      >
+                        <div className="flex items-center justify-between gap-3">
                           <div>
                             <div className="flex items-center gap-2">
-                              <span className="text-xs font-bold text-white">{learner.full_name}</span>
-                              <span className={`px-2 py-0.2 rounded-full text-[9px] font-bold ${learner.bench === 'Ruling' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
-                                {learner.bench || 'Delegate'}
-                              </span>
+                              <span className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{cand.name}</span>
+                              {isWinner && <Trophy className="w-4 h-4 text-amber-500" />}
                             </div>
-                            <span className="text-[10px] text-slate-400 font-mono">
-                              {learner.party_name || 'Independent'} {learner.constituency_number !== undefined ? `• #${learner.constituency_number} ${learner.constituency_name || ''}` : ''} • Code: {learner.access_code}
+                            <span className="text-xs text-slate-400">
+                              {cand.party} • <span className={cand.bench === 'Ruling' ? 'text-emerald-400' : 'text-rose-400'}>{cand.bench} Bench</span>
                             </span>
                           </div>
 
-                          <button
-                            onClick={() => handleAddCandidateToActiveElection({
-                              learner_id: learner.id,
-                              name: learner.full_name,
-                              party: learner.party_name || 'Independent',
-                              bench: learner.bench || 'Ruling'
-                            })}
-                            disabled={alreadyIn}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all cursor-pointer ${
-                              alreadyIn
-                                ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                                : 'bg-amber-500 hover:bg-amber-600 text-white shadow-md'
-                            }`}
-                          >
-                            {alreadyIn ? '✓ On Ballot' : '+ Nominate'}
-                          </button>
+                          <div className="text-right">
+                            <div className="text-sm font-mono font-black" style={{ color: 'var(--text-primary)' }}>
+                              {cand.votes || 0} <span className="text-xs font-normal text-slate-400">({pct}%)</span>
+                            </div>
+                            {!isClosed && !isLive && onRemoveCandidate && (
+                              <button
+                                onClick={() => onRemoveCandidate(elec.id, cand.id)}
+                                className="text-[11px] text-rose-400 hover:text-rose-300 cursor-pointer"
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
                         </div>
-                      );
-                    })}
-                  </div>
+
+                        {/* Progress bar */}
+                        <div className="w-full h-2.5 rounded-full bg-slate-800 overflow-hidden">
+                          <div
+                            className={`h-full transition-all duration-500 ${
+                              cand.bench === 'Ruling' ? 'bg-emerald-500' : 'bg-rose-500'
+                            }`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
+              )}
+            </div>
+
+            {/* LIVE FLOOR VOTING CONSOLE (when Live) */}
+            {isLive && (
+              <div className="p-4 md:p-5 rounded-2xl border space-y-4" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}>
+                <div className="flex items-center justify-between border-b pb-2.5" style={{ borderColor: 'var(--border-soft)' }}>
+                  <div className="flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-amber-500" />
+                    <h5 className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-primary)' }}>
+                      Cast Floor Ballot
+                    </h5>
+                  </div>
+                  <span className="text-xs text-slate-400 font-mono">
+                    {elec.voted_delegate_ids?.length || 0} / {learners.length} Voted
+                  </span>
+                </div>
+
+                {/* Delegate Selector */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                    Select Voting Delegate:
+                  </label>
+                  <select
+                    value={selectedVoterId}
+                    onChange={(e) => setSelectedVoterPerElection(prev => ({ ...prev, [elec.id]: e.target.value }))}
+                    className="w-full p-2.5 rounded-xl border text-xs font-semibold focus:outline-none"
+                    style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                  >
+                    {learners.map(l => (
+                      <option key={l.id} value={l.id}>
+                        {l.full_name} ({l.bench || 'Delegate'} • {l.party_name || 'Ind'}{l.constituency_number !== undefined ? ` • #${l.constituency_number}` : ''})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Voter eligibility notice */}
+                {!voterCheck.eligible && (
+                  <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                    <span>{voterCheck.reason}</span>
+                  </div>
+                )}
+
+                {/* Candidate Voting Buttons */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
+                  {elec.candidates?.map((cand) => (
+                    <button
+                      key={cand.id}
+                      disabled={!voterCheck.eligible || hasVoted}
+                      onClick={() => onCastVote(elec.id, cand.id, currentVoter?.id)}
+                      className={`p-3 rounded-xl border text-left flex items-center justify-between gap-2 transition-all ${
+                        voterCheck.eligible && !hasVoted
+                          ? 'bg-amber-500/10 border-amber-500/40 hover:bg-amber-500/20 text-white cursor-pointer'
+                          : 'opacity-50 cursor-not-allowed border-slate-800'
+                      }`}
+                    >
+                      <div>
+                        <div className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>Vote for {cand.name}</div>
+                        <div className="text-[10px] text-slate-400">{cand.party}</div>
+                      </div>
+                      <Vote className="w-4 h-4 text-amber-500" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-8 animate-fadeIn">
+      {/* HEADER SECTION */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-6" style={{ borderColor: 'var(--border-soft)' }}>
+        <div className="space-y-1">
+          <h2 className="text-2xl md:text-3xl font-serif font-black tracking-tight" style={{ color: 'var(--text-primary)' }}>
+            Elections & House Ballots
+          </h2>
+          <p className="text-xs md:text-sm text-slate-400">
+            Official legislative ballots, Speaker elections, Party Leadership votes, and live House divisions.
+          </p>
+        </div>
+
+        {/* Sub-tabs */}
+        <div className="flex items-center gap-2 p-1 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)' }}>
+          <button
+            onClick={() => setActiveTabSection('ELECTIONS')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+              activeTabSection === 'ELECTIONS'
+                ? 'bg-amber-500 text-slate-950 shadow-md font-black'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Crown className="w-4 h-4" />
+            Leadership Ballots ({elections.length})
+          </button>
+          <button
+            onClick={() => setActiveTabSection('FLASH_VOTES')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+              activeTabSection === 'FLASH_VOTES'
+                ? 'bg-amber-500 text-slate-950 shadow-md font-black'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Zap className="w-4 h-4" />
+            Floor Divisions ({flashVotes.length})
+          </button>
+        </div>
+      </div>
+
+      {/* ELECTIONS TAB CONTENT */}
+      {activeTabSection === 'ELECTIONS' && (
+        <div className="space-y-10">
+          {/* DIVISION 1: HOUSE LEADERSHIP & CONSTITUTIONAL ELECTIONS */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between border-b pb-2" style={{ borderColor: 'var(--border-soft)' }}>
+              <div className="flex items-center gap-2.5">
+                <Landmark className="w-5 h-5 text-amber-500" />
+                <h3 className="text-base md:text-lg font-serif font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
+                  House Leadership & Key Constitutional Elections
+                </h3>
+              </div>
+              <span className="text-xs text-slate-400 font-mono">
+                {constitutionalElections.length} Ballots
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              {constitutionalElections.map((elec, idx) => renderElectionRow(elec, idx))}
+            </div>
+          </div>
+
+          {/* DIVISION 2: POLITICAL PARTY LEADER ELECTIONS */}
+          <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-2" style={{ borderColor: 'var(--border-soft)' }}>
+              <div className="flex items-center gap-2.5">
+                <Layers className="w-5 h-5 text-amber-500" />
+                <h3 className="text-base md:text-lg font-serif font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
+                  Political Party Leader Elections
+                </h3>
+              </div>
+
+              {/* Party creation helper buttons */}
+              {parties.length > 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[11px] text-slate-400 mr-1">Add Party Ballot:</span>
+                  {parties.map(p => (
+                    <button
+                      key={p.id}
+                      onClick={() => handleEnsurePartyLeaderElection(p)}
+                      className="px-2.5 py-1 rounded-lg text-[11px] font-bold border hover:border-amber-500 hover:text-amber-400 cursor-pointer transition-colors"
+                      style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)', color: 'var(--text-primary)' }}
+                    >
+                      + {p.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {partyLeaderElections.length === 0 ? (
+              <div className="p-8 rounded-2xl border border-dashed text-center space-y-3" style={{ borderColor: 'var(--border-soft)' }}>
+                <p className="text-xs text-slate-400">
+                  No party leader elections initialized yet. Click on any party above or register parties in the Configuration tab.
+                </p>
+                {parties.length > 0 && (
+                  <button
+                    onClick={() => parties.forEach(p => handleEnsurePartyLeaderElection(p))}
+                    className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-amber-600 hover:bg-amber-500 cursor-pointer shadow"
+                  >
+                    Generate Leader Ballots for All Parties
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {partyLeaderElections.map((elec, idx) => renderElectionRow(elec, idx))}
+              </div>
+            )}
+          </div>
+
+          {/* CUSTOM ELECTIONS (if any) */}
+          {customElections.length > 0 && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between border-b pb-2" style={{ borderColor: 'var(--border-soft)' }}>
+                <div className="flex items-center gap-2.5">
+                  <Vote className="w-5 h-5 text-amber-500" />
+                  <h3 className="text-base md:text-lg font-serif font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
+                    Special & Custom Ballots
+                  </h3>
+                </div>
+                <span className="text-xs text-slate-400 font-mono">{customElections.length} Ballots</span>
+              </div>
+              <div className="space-y-3">
+                {customElections.map((elec, idx) => renderElectionRow(elec, idx))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* FLASH VOTES TAB CONTENT */}
+      {activeTabSection === 'FLASH_VOTES' && (
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
+              Live Assembly Floor Divisions & Motions
+            </h3>
+            <button
+              onClick={() => setIsNewPollOpen(true)}
+              className="px-4 py-2 rounded-xl font-bold text-xs text-white bg-emerald-600 hover:bg-emerald-500 shadow-md flex items-center gap-1.5 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" /> New Floor Division
+            </button>
+          </div>
+
+          {flashVotes.length === 0 ? (
+            <div className="p-12 text-center rounded-2xl border border-dashed" style={{ borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}>
+              No active flash votes or floor divisions. Launch one using the button above.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {flashVotes.map((fv) => (
+                <div key={fv.id} className="p-5 rounded-2xl border space-y-4" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-amber-400 tracking-wider">
+                        {fv.motion_type || 'Division Motion'}
+                      </span>
+                      <h4 className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>{fv.question}</h4>
+                    </div>
+                    {fv.status === 'ACTIVE' ? (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 animate-pulse">
+                        Active
+                      </span>
+                    ) : (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                        Concluded
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                      <div className="text-lg font-black text-emerald-400">{fv.ayes_count || 0}</div>
+                      <div className="text-[10px] uppercase font-bold text-emerald-500/80">AYES</div>
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20">
+                      <div className="text-lg font-black text-rose-400">{fv.noes_count || 0}</div>
+                      <div className="text-[10px] uppercase font-bold text-rose-500/80">NOES</div>
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-slate-500/10 border border-slate-500/20">
+                      <div className="text-lg font-black text-slate-400">{fv.abstain_count || 0}</div>
+                      <div className="text-[10px] uppercase font-bold text-slate-400">ABSTAIN</div>
+                    </div>
+                  </div>
+
+                  {fv.status === 'ACTIVE' && (
+                    <button
+                      onClick={() => onCloseFlashVote(fv.id)}
+                      className="w-full py-2 rounded-xl text-xs font-bold text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 cursor-pointer"
+                    >
+                      Close Floor Division
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* CANDIDATE NOMINATION MODAL (From Student Nominations or Delegate Directory) */}
+      {activeElectionForNominate && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div
+            className="w-full max-w-2xl rounded-2xl border shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-scaleIn"
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}
+          >
+            {/* Modal Header */}
+            <div className="p-5 border-b flex items-center justify-between" style={{ borderColor: 'var(--border-soft)' }}>
+              <div>
+                <span className="text-[10px] font-extrabold uppercase text-amber-500 tracking-wider">
+                  Nominate Candidate for Ballot
+                </span>
+                <h3 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
+                  {activeElectionForNominate.title}
+                </h3>
+              </div>
+              <button
+                onClick={() => setActiveNominateElectionId(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Source Tab Switcher */}
+            <div className="px-5 pt-4 pb-2 border-b flex items-center gap-2" style={{ borderColor: 'var(--border-soft)' }}>
+              <button
+                onClick={() => setNominationSourceTab('NOMINATIONS')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  nominationSourceTab === 'NOMINATIONS'
+                    ? 'bg-amber-500 text-slate-950 font-black'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Crown className="w-3.5 h-3.5" />
+                From Student Submissions ({relevantStudentNominations.length})
+              </button>
+              <button
+                onClick={() => setNominationSourceTab('ALL_DELEGATES')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  nominationSourceTab === 'ALL_DELEGATES'
+                    ? 'bg-amber-500 text-slate-950 font-black'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                From Delegate Directory ({filteredCandidatePool.length})
+              </button>
+            </div>
+
+            {/* Search Input */}
+            <div className="p-4 border-b" style={{ borderColor: 'var(--border-soft)' }}>
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search delegate by name, party, or constituency number..."
+                  value={candidateSearchQuery}
+                  onChange={(e) => setCandidateSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 rounded-xl border text-xs focus:outline-none"
+                  style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                />
+              </div>
+            </div>
+
+            {/* Candidate List Body */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-2.5">
+              {nominationSourceTab === 'NOMINATIONS' ? (
+                relevantStudentNominations.length === 0 ? (
+                  <div className="p-8 text-center text-xs text-slate-400 italic">
+                    No student submissions found for this position. Switch to "From Delegate Directory" to nominate any MLA.
+                  </div>
+                ) : (
+                  relevantStudentNominations.map((nom) => {
+                    const matchLearner = learners.find(l => l.full_name?.toLowerCase() === nom.candidate_name?.toLowerCase() || l.id === nom.candidate_learner_id);
+                    const isAlreadyCandidate = activeElectionForNominate.candidates?.some(c => c.name.toLowerCase() === nom.candidate_name.toLowerCase());
+
+                    return (
+                      <div
+                        key={nom.id}
+                        className="p-3.5 rounded-xl border flex items-center justify-between gap-3"
+                        style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)' }}
+                      >
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{nom.candidate_name}</span>
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                              {nom.position}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-400">
+                            {nom.party_name || matchLearner?.party_name || 'Independent'} • {matchLearner?.bench || nom.bench || 'Opposition'} Bench
+                            {nom.manifesto ? ` • "${nom.manifesto.substring(0, 60)}..."` : ''}
+                          </p>
+                        </div>
+
+                        <button
+                          disabled={isAlreadyCandidate}
+                          onClick={() => {
+                            if (matchLearner) {
+                              handleAddCandidateToElection(matchLearner);
+                            } else {
+                              onAddCandidate && onAddCandidate(activeElectionForNominate.id, {
+                                name: nom.candidate_name,
+                                party: nom.party_name || 'Independent',
+                                bench: nom.bench || 'Opposition',
+                                votes: 0
+                              });
+                              onShowToast('Candidate Added', `${nom.candidate_name} nominated for ballot`, 'success');
+                            }
+                          }}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            isAlreadyCandidate
+                              ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                              : 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow'
+                          }`}
+                        >
+                          {isAlreadyCandidate ? 'Nominated ✓' : '+ Add to Ballot'}
+                        </button>
+                      </div>
+                    );
+                  })
+                )
+              ) : (
+                filteredCandidatePool.length === 0 ? (
+                  <div className="p-8 text-center text-xs text-slate-400 italic">
+                    No delegates match your search or eligibility criteria.
+                  </div>
+                ) : (
+                  filteredCandidatePool.map((l) => {
+                    const isAlreadyCandidate = activeElectionForNominate.candidates?.some(c => c.name.toLowerCase() === l.full_name.toLowerCase());
+
+                    return (
+                      <div
+                        key={l.id}
+                        className="p-3.5 rounded-xl border flex items-center justify-between gap-3"
+                        style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)' }}
+                      >
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{l.full_name}</span>
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                              l.bench === 'Ruling'
+                                ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30'
+                                : 'bg-rose-500/10 text-rose-500 border-rose-500/30'
+                            }`}>
+                              {l.bench || 'Opposition'} Bench
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-400">
+                            {l.party_name || 'Independent'} {l.constituency_number !== undefined ? `• Const #${l.constituency_number} ${l.constituency_name || ''}` : ''}
+                          </p>
+                        </div>
+
+                        <button
+                          disabled={isAlreadyCandidate}
+                          onClick={() => handleAddCandidateToElection(l)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            isAlreadyCandidate
+                              ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                              : 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow'
+                          }`}
+                        >
+                          {isAlreadyCandidate ? 'Nominated ✓' : '+ Add to Ballot'}
+                        </button>
+                      </div>
+                    );
+                  })
+                )
               )}
             </div>
 
             {/* Modal Footer */}
-            <div className="pt-3 border-t flex items-center justify-end" style={{ borderColor: 'var(--border-soft)' }}>
+            <div className="p-4 border-t flex justify-end" style={{ borderColor: 'var(--border-soft)' }}>
               <button
                 onClick={() => setActiveNominateElectionId(null)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-slate-800 hover:bg-slate-700 cursor-pointer"
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-white cursor-pointer"
               >
-                Done / Close
+                Done
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* CREATE NEW POST MODAL */}
-      {isNewPostModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div
-            className="rounded-2xl max-w-md w-full p-6 border shadow-2xl space-y-4 animate-scale-in"
-            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
-          >
-            <div className="flex items-center justify-between border-b pb-3" style={{ borderColor: 'var(--border-soft)' }}>
-              <h4 className="text-base font-bold text-white">Create New Election Post</h4>
-              <button
-                onClick={() => setIsNewPostModalOpen(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-200 cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateCustomPostSubmit} className="space-y-3 text-xs">
-              <div>
-                <label className="block font-semibold mb-1 text-slate-300">Election Post Title *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Public Accounts Committee Chair Election"
-                  value={customPostTitle}
-                  onChange={(e) => setCustomPostTitle(e.target.value)}
-                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-amber-500"
-                />
-              </div>
-
-              <div>
-                <label className="block font-semibold mb-1 text-slate-300">Target Role Category</label>
-                <select
-                  value={customPosition}
-                  onChange={(e) => setCustomPosition(e.target.value)}
-                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none"
-                >
-                  <option value="Speaker">Speaker of Assembly</option>
-                  <option value="Deputy Speaker">Deputy Speaker</option>
-                  <option value="Ruling Party Leader">Ruling Party Leader</option>
-                  <option value="Opposition Party Leader">Leader of Opposition (LOP)</option>
-                  <option value="Committee Chair">Committee Chairperson</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block font-semibold mb-1 text-slate-300">Electorate Restriction</label>
-                <select
-                  value={customElectorate}
-                  onChange={(e) => setCustomElectorate(e.target.value as any)}
-                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none"
-                >
-                  <option value="ALL">All Assembly Delegates (Whole House)</option>
-                  <option value="RULING">Ruling Bench Delegates Only</option>
-                  <option value="OPPOSITION">Opposition Bench Delegates Only (LOP)</option>
-                </select>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setIsNewPostModalOpen(false)}
-                  className="px-3.5 py-1.5 rounded-xl text-slate-400 hover:text-slate-200 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 rounded-xl font-bold text-xs text-white bg-amber-500 hover:bg-amber-600 shadow-md cursor-pointer"
-                >
-                  Create Post
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* CREATE FLASH DIVISION VOTE MODAL */}
+      {/* NEW FLASH VOTE MODAL */}
       {isNewPollOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div
-            className="rounded-2xl max-w-md w-full p-6 border shadow-2xl space-y-4 animate-scale-in"
-            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
-          >
-            <div className="flex items-center justify-between border-b pb-3" style={{ borderColor: 'var(--border-soft)' }}>
-              <h4 className="text-base font-bold text-white">Create Real-Time Division Motion</h4>
-              <button
-                onClick={() => setIsNewPollOpen(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-200 cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg rounded-2xl border p-6 space-y-4 shadow-2xl animate-scaleIn" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}>
+            <h3 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Launch House Floor Division</h3>
             <form
               onSubmit={(e) => {
                 e.preventDefault();
                 if (!pollQuestion.trim()) return;
-                onCreateFlashVote(eventId, pollQuestion.trim(), pollAudience, pollMotionType);
-                setIsNewPollOpen(false);
+                onCreateFlashVote(eventId, pollQuestion, 'ALL', pollMotionType);
                 setPollQuestion('');
-                onShowToast('Division Motion Created', 'Active for instant Aye/No voting', 'success');
+                setIsNewPollOpen(false);
+                onShowToast('Floor Division Launched', 'Delegates can now vote AYE / NO / ABSTAIN', 'success');
               }}
-              className="space-y-3 text-xs"
+              className="space-y-4"
             >
-              <div>
-                <label className="block font-semibold mb-1 text-slate-300">Division Question / Motion *</label>
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-400 block uppercase tracking-wider">Motion Question / Title</label>
                 <textarea
                   rows={3}
-                  required
-                  placeholder="Should the Youth Legislative Assembly pass Clause 4 of the Digital University Bill?"
                   value={pollQuestion}
                   onChange={(e) => setPollQuestion(e.target.value)}
-                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-emerald-500"
+                  placeholder="e.g., That this House has no confidence in the Council of Ministers..."
+                  className="w-full p-3 rounded-xl border text-xs focus:outline-none"
+                  style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                  required
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold mb-1 text-slate-300">Target Audience</label>
-                  <select
-                    value={pollAudience}
-                    onChange={(e) => setPollAudience(e.target.value as FlashVoteAudience)}
-                    className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none"
-                  >
-                    <option value="ALL">Entire House</option>
-                    <option value="RULING">Ruling Bench</option>
-                    <option value="OPPOSITION">Opposition Bench</option>
-                    <option value="MINISTERS">Ministers Only</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-semibold mb-1 text-slate-300">Motion Type</label>
-                  <select
-                    value={pollMotionType}
-                    onChange={(e) => setPollMotionType(e.target.value as any)}
-                    className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none"
-                  >
-                    <option value="Division">Division</option>
-                    <option value="Closure Motion">Closure Motion</option>
-                    <option value="Point of Order">Point of Order</option>
-                    <option value="No Confidence">No Confidence</option>
-                  </select>
-                </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-400 block uppercase tracking-wider">Motion Type</label>
+                <select
+                  value={pollMotionType}
+                  onChange={(e) => setPollMotionType(e.target.value as any)}
+                  className="w-full p-2.5 rounded-xl border text-xs font-semibold focus:outline-none"
+                  style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                >
+                  <option value="Division">Division</option>
+                  <option value="Closure Motion">Closure Motion</option>
+                  <option value="Point of Order">Point of Order</option>
+                  <option value="No Confidence">No Confidence</option>
+                </select>
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
+              <div className="flex justify-end gap-2 pt-3 border-t" style={{ borderColor: 'var(--border-soft)' }}>
                 <button
                   type="button"
                   onClick={() => setIsNewPollOpen(false)}
-                  className="px-3.5 py-1.5 rounded-xl text-slate-400 hover:text-slate-200 cursor-pointer"
+                  className="px-4 py-2 rounded-xl text-xs text-slate-400 hover:text-white cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-xl font-bold text-xs text-white bg-emerald-500 hover:bg-emerald-600 shadow-md cursor-pointer"
+                  className="px-4 py-2 rounded-xl font-bold text-xs text-slate-950 bg-amber-500 hover:bg-amber-400 shadow cursor-pointer"
                 >
-                  Launch Division Vote
+                  Launch Division
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
-
     </div>
   );
 };

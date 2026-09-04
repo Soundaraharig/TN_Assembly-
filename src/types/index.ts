@@ -133,9 +133,16 @@ export interface Volunteer {
 export type NominationPosition =
   | 'Speaker'
   | 'Deputy Speaker'
+  | 'Party Leader'
+  | 'Chief Minister'
   | 'Ruling Party Leader'
+  | 'Leader of Opposition'
   | 'Opposition Party Leader'
-  | 'Committee Chair';
+  | 'Cabinet Minister'
+  | 'Shadow Minister'
+  | 'Committee Chair'
+  | 'Student Journalist'
+  | 'Administrator';
 
 export interface Nomination {
   id: string;

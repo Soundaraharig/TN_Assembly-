@@ -1201,6 +1201,7 @@ export function App() {
                   elections={elections}
                   flashVotes={flashVotes}
                   learners={learners}
+                  parties={parties}
                   nominations={nominations}
                   eventId={currentEvent.id}
                   onCastVote={(elecId, candId, delId) => {

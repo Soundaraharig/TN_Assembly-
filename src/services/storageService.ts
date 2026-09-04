@@ -1141,6 +1141,23 @@ class StorageService {
     return isOpenNow;
   }
 
+  public setAllNominationPositionsStatus(eventId: string, open: boolean, allPositions: string[] = []): string[] {
+    if (!eventId) return [];
+    const map = this.getItem<Record<string, string[]>>(STORAGE_KEYS.OPEN_NOMINATIONS, {});
+    const nextList = open ? [...allPositions] : [];
+    map[eventId] = nextList;
+    this.setItem(STORAGE_KEYS.OPEN_NOMINATIONS, map);
+    return nextList;
+  }
+
+  public setOpenNominationPositions(eventId: string, positions: string[]): string[] {
+    if (!eventId) return [];
+    const map = this.getItem<Record<string, string[]>>(STORAGE_KEYS.OPEN_NOMINATIONS, {});
+    map[eventId] = positions;
+    this.setItem(STORAGE_KEYS.OPEN_NOMINATIONS, map);
+    return positions;
+  }
+
   public getNominations(eventId?: string): Nomination[] {
     const all = this.getItem<Nomination[]>(STORAGE_KEYS.NOMINATIONS, INITIAL_NOMINATIONS);
     if (eventId) return all.filter(n => n.event_id === eventId);
