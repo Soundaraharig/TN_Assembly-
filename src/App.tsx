@@ -843,9 +843,13 @@ export function App() {
             }
 
             // 2. Check Jury Access Code
-            const foundJury = storageService.authenticateJury(cleanCode) || storageService.getJury().find(j => j.access_code?.toUpperCase() === cleanCode);
-            if (foundJury || cleanCode.includes('JURY')) {
-              const juryCodeVal = foundJury?.access_code || cleanCode;
+            const normCode = cleanCode.replace(/-/g, '');
+            const foundJury = storageService.getJury().find(j => {
+              const code = (j.access_code || '').toUpperCase().replace(/-/g, '');
+              return code === normCode || code === `JURY${normCode}` || `JURY${code}` === normCode;
+            });
+            if (foundJury || normCode.includes('JURY') || normCode.startsWith('JUR')) {
+              const juryCodeVal = (foundJury?.access_code || cleanCode).replace('JURY-', 'JURY');
               const juryObj: JuryMember = foundJury || { id: 'jury', name: 'Jury Evaluator', access_code: juryCodeVal, assigned_bench: 'Ruling', event_id: currentEvent?.id || '' };
               setCurrentJury(juryObj);
               setIsAuthenticated(true);
@@ -866,9 +870,13 @@ export function App() {
             }
 
             // 3. Check Volunteer Access Code
-            const foundVol = storageService.authenticateVolunteer(cleanCode) || storageService.getVolunteers().find(v => v.access_code?.toUpperCase() === cleanCode);
-            if (foundVol || cleanCode.includes('VOL')) {
-              const volCodeVal = foundVol?.access_code || cleanCode;
+            const foundVol = storageService.getVolunteers().find(v => {
+              const code = (v.access_code || '').toUpperCase().replace(/-/g, '');
+              const phoneSuffix = v.phone ? v.phone.replace(/\D/g, '').slice(-4) : '';
+              return code === normCode || code === `VOL${normCode}` || `VOL${code}` === normCode || (phoneSuffix && phoneSuffix === normCode);
+            });
+            if (foundVol || normCode.includes('VOL') || normCode.startsWith('V0')) {
+              const volCodeVal = (foundVol?.access_code || cleanCode).replace('VOL-', 'VOL');
               const volObj: Volunteer = foundVol || { id: 'vol', name: 'Assembly Volunteer', access_code: volCodeVal, event_id: currentEvent?.id || '', station: 'Main Floor' };
               setCurrentVolunteer(volObj);
               setIsAuthenticated(true);

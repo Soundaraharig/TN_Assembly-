@@ -154,7 +154,7 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
   };
 
   const handleCopyCode = (code?: string) => {
-    const cleanCode = code || 'VOL-101';
+    const cleanCode = (code || 'VOL101').replace('VOL-', 'VOL');
     navigator.clipboard.writeText(cleanCode);
     setCopiedCode(cleanCode);
     onShowToast('Copied', `Access code ${cleanCode} copied to clipboard`, 'info');
@@ -733,9 +733,9 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
                           {/* Access code box */}
                           {(() => {
                             const isPhoneLike = !v.access_code || v.access_code === v.phone || /^\d{10}$/.test(v.access_code.replace(/\s+/g, ''));
-                            const codeVal = isPhoneLike
-                              ? `VOL-${v.phone ? v.phone.replace(/\D/g, '').slice(-4) : (v.id || '101')}`
-                              : v.access_code;
+                            const codeVal = (isPhoneLike
+                              ? `VOL${v.phone ? v.phone.replace(/\D/g, '').slice(-4) : (v.id || '101')}`
+                              : v.access_code).replace('VOL-', 'VOL');
 
                             return (
                               <div className="pt-1">

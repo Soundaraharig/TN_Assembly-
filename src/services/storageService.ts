@@ -1125,12 +1125,15 @@ class StorageService {
     const all = this.getItem<JuryMember[]>(STORAGE_KEYS.JURY, INITIAL_JURY);
     let updated = false;
     const sanitized = all.map((j, idx) => {
-      if (!j.access_code || j.access_code.trim() === '') {
+      let code = j.access_code || '';
+      if (!code || code.trim() === '' || code.includes('JURY-')) {
         updated = true;
         const codeNum = String(idx + 1).padStart(2, '0');
+        code = code.replace('JURY-', 'JURY');
+        if (!code || code.trim() === '') code = `JURY${codeNum}`;
         return {
           ...j,
-          access_code: `JURY-${codeNum}`
+          access_code: code
         };
       }
       return j;
@@ -1146,11 +1149,11 @@ class StorageService {
   public addJuryMember(member: Partial<JuryMember>): JuryMember {
     const all = this.getJury();
     const codeNum = String(all.length + 1).padStart(2, '0');
-    const defaultCode = `JURY-${codeNum}`;
+    const defaultCode = `JURY${codeNum}`;
     const newMember: JuryMember = {
       id: member.id || uid('jury'),
       event_id: member.event_id || '',
-      access_code: member.access_code || defaultCode,
+      access_code: (member.access_code || defaultCode).replace('JURY-', 'JURY'),
       name: member.name || 'Jury Member',
       email: member.email || '',
       phone: member.phone || '',
@@ -1179,13 +1182,15 @@ class StorageService {
     const all = this.getItem<Volunteer[]>(STORAGE_KEYS.VOLUNTEERS, INITIAL_VOLUNTEERS);
     let updated = false;
     const sanitized = all.map((v, idx) => {
-      const isPhoneCode = !v.access_code || v.access_code === v.phone || /^\d{10}$/.test(v.access_code.replace(/\s+/g, ''));
+      let code = v.access_code || '';
+      const isPhoneCode = !code || code === v.phone || /^\d{10}$/.test(code.replace(/\s+/g, '')) || code.includes('VOL-');
       if (isPhoneCode) {
         updated = true;
         const numPart = (v.phone ? v.phone.replace(/\D/g, '').slice(-4) : (101 + idx).toString());
+        const cleanCode = code ? code.replace('VOL-', 'VOL') : `VOL${numPart}`;
         return {
           ...v,
-          access_code: `VOL-${numPart}`
+          access_code: cleanCode.startsWith('VOL') ? cleanCode : `VOL${cleanCode}`
         };
       }
       return v;
@@ -1201,11 +1206,11 @@ class StorageService {
   public addVolunteer(volunteer: Partial<Volunteer>): Volunteer {
     const all = this.getVolunteers();
     const codeNum = volunteer.phone ? volunteer.phone.replace(/\D/g, '').slice(-4) : Math.floor(100 + Math.random() * 900).toString();
-    const defaultCode = `VOL-${codeNum}`;
+    const defaultCode = `VOL${codeNum}`;
     const newVol: Volunteer = {
       id: volunteer.id || uid('vol'),
       event_id: volunteer.event_id || '',
-      access_code: volunteer.access_code || defaultCode,
+      access_code: (volunteer.access_code || defaultCode).replace('VOL-', 'VOL'),
       name: volunteer.name || '',
       email: volunteer.email || '',
       phone: volunteer.phone || '',
@@ -1241,11 +1246,11 @@ class StorageService {
     const existing = this.getVolunteers();
     const newItems: Volunteer[] = volunteersList.map((v, idx) => {
       const codeNum = v.phone ? v.phone.replace(/\D/g, '').slice(-4) : (101 + idx).toString();
-      const defaultCode = `VOL-${codeNum}`;
+      const defaultCode = `VOL${codeNum}`;
       return {
         id: v.id || uid('vol'),
         event_id: eventId,
-        access_code: v.access_code || defaultCode,
+        access_code: (v.access_code || defaultCode).replace('VOL-', 'VOL'),
         name: v.name || 'Volunteer',
         email: v.email || '',
         phone: v.phone || '',

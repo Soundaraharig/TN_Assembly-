@@ -167,7 +167,7 @@ export const JuryTab: React.FC<JuryTabProps> = ({
                 </tr>
               ) : (
                 jury.map((j, idx) => {
-                  const displayCode = j.access_code && j.access_code.trim() ? j.access_code : `JURY-${String(idx + 1).padStart(2, '0')}`;
+                  const displayCode = (j.access_code && j.access_code.trim() ? j.access_code : `JURY${String(idx + 1).padStart(2, '0')}`).replace('JURY-', 'JURY');
 
                   return (
                     <tr key={j.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">

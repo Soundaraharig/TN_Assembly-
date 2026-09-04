@@ -11,6 +11,16 @@
         "meta/llama-3.1-405b-instruct"
       ]
     },
+    "deepseek": {
+      "name": "DeepSeek",
+      "type": "openai",
+      "baseURL": "https://integrate.api.nvidia.com/v1",
+      "apiKey": "{env:DEEPSEEK_API_KEY}",
+      "models": [
+        "deepseek-coder",
+        "deepseek-chat"
+      ]
+    },
     "aws": {
       "name": "AWS Agent Toolkit",
       "type": "remote",
