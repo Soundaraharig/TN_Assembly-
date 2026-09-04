@@ -869,27 +869,48 @@ export function App() {
               return { id: juryObj.id, full_name: juryObj.name, access_code: juryCodeVal } as Learner;
             }
 
-            // 3. Check Volunteer Access Code
-            const foundVol = storageService.getVolunteers().find(v => {
-              const code = (v.access_code || '').toUpperCase().replace(/-/g, '');
-              const phoneSuffix = v.phone ? v.phone.replace(/\D/g, '').slice(-4) : '';
-              return code === normCode || code === `VOL${normCode}` || `VOL${code}` === normCode || (phoneSuffix && phoneSuffix === normCode);
-            });
+            // 3. Check Volunteer Access Code - normalized matching
+            // Normalize both the input code and stored code for comparison
+            const normalizedInput = cleanCode.replace(/-/g, '').toUpperCase();
+            const storedCode = (v.access_code || '').toUpperCase().replace(/-/g, '');
+            const phoneSuffix = v.phone ? v.phone.replace(/\D/g, '').slice(-4) : '';
+            
+            // Multiple matching strategies
+            const codeMatches = 
+              storedCode === normalizedInput ||                    // Exact match
+              storedCode === `VOL${normalizedInput}` ||           // VOL prefix
+              normalizedInput === `VOL${storedCode}` ||           // Reverse VOL prefix  
+              (phoneSuffix && phoneSuffix === normalizedInput);   // Phone suffix only
+            
+            const codeFormatMatch = 
+              storedCode.startsWith('VOL') &&                     // Stored has VOL prefix
+              normalizedInput.replace('VOL', '').length > 0;      // Input has content after VOL
+            
+            return codeMatches || codeFormatMatch || (phoneSuffix && phoneSuffix === normalizedInput);
             if (foundVol || normCode.includes('VOL') || normCode.startsWith('V0')) {
               const volCodeVal = (foundVol?.access_code || cleanCode).replace('VOL-', 'VOL');
               const volObj: Volunteer = foundVol || { id: 'vol', name: 'Assembly Volunteer', access_code: volCodeVal, event_id: currentEvent?.id || '', station: 'Main Floor' };
               setCurrentVolunteer(volObj);
               setIsAuthenticated(true);
               setRole('volunteer');
+              
+              // CRITICAL FIX: Always set currentEvent from foundVol event_id, even if undefined
+              // This ensures the dashboard loads learners from the correct event
               if (foundVol?.event_id) {
                 const targetEv = events.find(e => e.id === foundVol.event_id);
-                if (targetEv) setCurrentEvent(targetEv);
+                if (targetEv) {
+                  setCurrentEvent(targetEv);
+                }
+              } else if (!currentEvent && events.length > 0) {
+                // Fallback: use first event if no specific event tied to volunteer
+                setCurrentEvent(events[0]);
               }
+              
               saveSession({
                 role: 'volunteer',
                 volunteerCode: volCodeVal,
                 name: foundVol?.name || 'Assembly Volunteer',
-                currentEventId: foundVol?.event_id || currentEvent?.id
+                currentEventId: foundVol?.event_id || (currentEvent?.id || '')
               });
               if (typeof window !== 'undefined') window.history.pushState({}, '', '/volunteer');
               addToast('Volunteer Operations Access', `Authenticated Volunteer ${foundVol?.name || ''}`, 'success');
