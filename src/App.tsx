@@ -87,23 +87,63 @@ function getInitialSavedSession(): SavedAuthSession | null {
   }
 }
 
+function getInitialRouteInfo(initialSession: SavedAuthSession | null) {
+  if (typeof window === 'undefined') {
+    return {
+      role: initialSession?.role || ('coordinator' as UserRole),
+      isAuthenticated: !!initialSession
+    };
+  }
+
+  const pathname = window.location.pathname.toLowerCase();
+  const search = window.location.search.toLowerCase();
+
+  // Standalone Projector View (/display, /projector, or ?projector=true)
+  if (pathname.includes('/display') || pathname.includes('/projector') || search.includes('projector=true')) {
+    return { role: 'coordinator' as UserRole, isAuthenticated: true, activeNavTab: 'projector' as ActiveNavTab };
+  }
+
+  // Volunteer Join Link (/join or /yip/join)
+  if (pathname.includes('/join') || pathname.includes('/yip/join')) {
+    if (initialSession?.role === 'volunteer' && initialSession.volunteerCode) {
+      return { role: 'volunteer' as UserRole, isAuthenticated: true };
+    }
+    return { role: 'volunteer' as UserRole, isAuthenticated: false };
+  }
+
+  // Jury Link (/jury or /yip/jury)
+  if (pathname.includes('/jury') || pathname.includes('/yip/jury')) {
+    if (initialSession?.role === 'jury' && initialSession.juryCode) {
+      return { role: 'jury' as UserRole, isAuthenticated: true };
+    }
+    return { role: 'jury' as UserRole, isAuthenticated: false };
+  }
+
+  // Student Delegate Link (/me, /student, or /yip/me)
+  if (pathname.includes('/me') || pathname.includes('/student') || pathname.includes('/yip/me')) {
+    if (initialSession?.role === 'student' && initialSession.studentCode) {
+      return { role: 'student' as UserRole, isAuthenticated: true };
+    }
+    return { role: 'student' as UserRole, isAuthenticated: false };
+  }
+
+  // Default: Use initialSession
+  if (!initialSession) {
+    return { role: 'coordinator' as UserRole, isAuthenticated: false };
+  }
+  return { role: initialSession.role, isAuthenticated: true };
+}
+
 export function App() {
   const { theme, toggleTheme } = useTheme();
   const initialSession = getInitialSavedSession();
+  const routeInfo = getInitialRouteInfo(initialSession);
 
-  const [role, setRole] = useState<UserRole>(() => initialSession?.role || 'coordinator');
-  const [activeNavTab, setActiveNavTab] = useState<ActiveNavTab>(() => initialSession?.activeNavTab || (initialSession?.role === 'super_admin' ? 'events_dashboard' : 'participants'));
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    if (!initialSession) return false;
-    if (initialSession.role === 'super_admin') return true;
-    if (initialSession.role === 'coordinator') return true;
-    if (initialSession.role === 'student' && initialSession.studentCode) return true;
-    if (initialSession.role === 'jury' && initialSession.juryCode) return true;
-    if (initialSession.role === 'volunteer' && initialSession.volunteerCode) return true;
-    return false;
-  });
+  const [role, setRole] = useState<UserRole>(() => routeInfo.role);
+  const [activeNavTab, setActiveNavTab] = useState<ActiveNavTab>(() => routeInfo.activeNavTab || initialSession?.activeNavTab || (initialSession?.role === 'super_admin' ? 'events_dashboard' : 'participants'));
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => routeInfo.isAuthenticated);
   const [userSession, setUserSession] = useState<UserSession | null>(() => {
-    if (!initialSession) return null;
+    if (!routeInfo.isAuthenticated || !initialSession) return null;
     return {
       role: initialSession.role,
       email: initialSession.email,
@@ -277,16 +317,22 @@ export function App() {
     // Check current browser path and restore authenticated session on refresh
     const checkPathAndRestore = () => {
       try {
-        const saved = localStorage.getItem(SESSION_KEY);
-        if (!saved) {
-          setIsAuthenticated(false);
+        const pathname = (typeof window !== 'undefined' ? window.location.pathname : '').toLowerCase();
+        const search = (typeof window !== 'undefined' ? window.location.search : '').toLowerCase();
+
+        // 1. Standalone Projector View requested (/display, /projector, or ?projector=true)
+        if (pathname.includes('/display') || pathname.includes('/projector') || search.includes('projector=true')) {
+          setRole('coordinator');
+          setActiveNavTab('projector');
+          setIsAuthenticated(true);
           return;
         }
 
-        const sess: SavedAuthSession = JSON.parse(saved);
+        const saved = localStorage.getItem(SESSION_KEY);
+        const sess: SavedAuthSession | null = saved ? JSON.parse(saved) : null;
         const evs = storageService.getEvents();
 
-        if (sess.currentEventId) {
+        if (sess?.currentEventId) {
           const targetEv = evs.find(e => e.id === sess.currentEventId);
           if (targetEv) {
             setCurrentEvent(targetEv);
@@ -294,7 +340,91 @@ export function App() {
           }
         }
 
-        // 1. Student Session
+        // 2. Explicit Volunteer Join Link requested (/join or /yip/join)
+        if (pathname.includes('/join') || pathname.includes('/yip/join')) {
+          if (sess && sess.role === 'volunteer' && sess.volunteerCode) {
+            const cleanCode = sess.volunteerCode.trim().toUpperCase();
+            const allVols = storageService.getVolunteers();
+            const foundVol = allVols.find(v => v.access_code?.toUpperCase() === cleanCode);
+            const volObj: Volunteer = foundVol || {
+              id: 'vol',
+              event_id: sess.currentEventId || (evs[0]?.id || ''),
+              access_code: cleanCode,
+              name: sess.name || 'Floor Volunteer',
+              station: 'Main Floor'
+            };
+            setIsAuthenticated(true);
+            setRole('volunteer');
+            setCurrentVolunteer(volObj);
+            setUserSession({ role: 'volunteer', name: volObj.name });
+            return;
+          }
+          // If no active volunteer session, present Volunteer Access Sign-in page
+          setIsAuthenticated(false);
+          setRole('volunteer');
+          return;
+        }
+
+        // 3. Explicit Jury Link requested (/jury or /yip/jury)
+        if (pathname.includes('/jury') || pathname.includes('/yip/jury')) {
+          if (sess && sess.role === 'jury' && sess.juryCode) {
+            const cleanCode = sess.juryCode.trim().toUpperCase();
+            const allJury = storageService.getJury();
+            const foundJury = allJury.find(j => j.access_code?.toUpperCase() === cleanCode);
+            const juryObj: JuryMember = foundJury || {
+              id: 'jury',
+              event_id: sess.currentEventId || (evs[0]?.id || ''),
+              access_code: cleanCode,
+              name: sess.name || 'Jury Evaluator',
+              assigned_bench: 'Ruling'
+            };
+            setIsAuthenticated(true);
+            setRole('jury');
+            setCurrentJury(juryObj);
+            setUserSession({ role: 'jury', name: juryObj.name });
+            return;
+          }
+          setIsAuthenticated(false);
+          setRole('jury');
+          return;
+        }
+
+        // 4. Explicit Student Delegate Link requested (/me, /student, or /yip/me)
+        if (pathname.includes('/me') || pathname.includes('/student') || pathname.includes('/yip/me')) {
+          if (sess && sess.role === 'student' && sess.studentCode) {
+            const cleanCode = sess.studentCode.trim().toUpperCase();
+            const allLearners = storageService.getLearners();
+            const targetStudent: Learner = allLearners.find(l => l.access_code.toUpperCase() === cleanCode) || {
+              id: `learner_${cleanCode}`,
+              event_id: sess.currentEventId || (evs[0]?.id || ''),
+              full_name: sess.name || 'Student Delegate',
+              access_code: cleanCode,
+              email: 'delegate@assembly.edu',
+              phone: '',
+              bench: 'Ruling',
+              department: 'Assembly Delegate',
+              academic_year: '3rd Year',
+              day1_checked_in: true,
+              day2_checked_in: false,
+              created_at: new Date().toISOString()
+            };
+            setIsAuthenticated(true);
+            setRole('student');
+            setCurrentStudent(targetStudent);
+            setUserSession({ role: 'student', name: targetStudent.full_name });
+            return;
+          }
+          setIsAuthenticated(false);
+          setRole('student');
+          return;
+        }
+
+        if (!sess) {
+          setIsAuthenticated(false);
+          return;
+        }
+
+        // Standard Session Restoration (Default Route /)
         if (sess.role === 'student' && sess.studentCode) {
           const cleanCode = sess.studentCode.trim().toUpperCase();
           const allLearners = storageService.getLearners();
@@ -312,7 +442,6 @@ export function App() {
             day2_checked_in: false,
             created_at: new Date().toISOString()
           };
-
           setIsAuthenticated(true);
           setRole('student');
           setCurrentStudent(targetStudent);
@@ -320,7 +449,6 @@ export function App() {
           return;
         }
 
-        // 2. Jury Session
         if (sess.role === 'jury' && sess.juryCode) {
           const cleanCode = sess.juryCode.trim().toUpperCase();
           const allJury = storageService.getJury();
@@ -332,7 +460,6 @@ export function App() {
             name: sess.name || 'Jury Evaluator',
             assigned_bench: 'Ruling'
           };
-
           setIsAuthenticated(true);
           setRole('jury');
           setCurrentJury(juryObj);
@@ -340,7 +467,6 @@ export function App() {
           return;
         }
 
-        // 3. Volunteer Session
         if (sess.role === 'volunteer' && sess.volunteerCode) {
           const cleanCode = sess.volunteerCode.trim().toUpperCase();
           const allVols = storageService.getVolunteers();
@@ -352,7 +478,6 @@ export function App() {
             name: sess.name || 'Floor Volunteer',
             station: 'Main Floor'
           };
-
           setIsAuthenticated(true);
           setRole('volunteer');
           setCurrentVolunteer(volObj);
@@ -360,7 +485,6 @@ export function App() {
           return;
         }
 
-        // 4. Super Admin Session
         if (sess.role === 'super_admin') {
           setIsAuthenticated(true);
           setRole('super_admin');
@@ -373,7 +497,6 @@ export function App() {
           return;
         }
 
-        // 5. Coordinator Session
         if (sess.role === 'coordinator') {
           setIsAuthenticated(true);
           setRole('coordinator');
@@ -387,7 +510,6 @@ export function App() {
           return;
         }
 
-        // Fallback: If unknown role in session, require auth
         setIsAuthenticated(false);
       } catch (e) {
         console.error('Session load error:', e);

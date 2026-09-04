@@ -31,7 +31,16 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
     if (typeof window === 'undefined') return false;
     const path = window.location.pathname.toLowerCase();
     const search = window.location.search.toLowerCase();
-    return path.includes('/join') || path.includes('/yip/join') || search.includes('join') || search.includes('code');
+    return (
+      path.includes('/join') ||
+      path.includes('/yip/join') ||
+      path.includes('/jury') ||
+      path.includes('/yip/jury') ||
+      path.includes('/me') ||
+      path.includes('/student') ||
+      search.includes('join') ||
+      search.includes('code')
+    );
   };
 
   const [showAccessCodePage, setShowAccessCodePage] = useState<boolean>(isJoinUrl());
