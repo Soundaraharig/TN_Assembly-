@@ -687,21 +687,34 @@ class StorageService {
   }
 
   public toggleCheckIn(learnerId: string, day: 1 | 2) {
-    const all = this.getLearners().map(l => {
+    let updatedLearner: Learner | null = null;
+    const all = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, INITIAL_LEARNERS).map(l => {
       if (l.id === learnerId) {
-        if (day === 1) return { ...l, day1_checked_in: !l.day1_checked_in };
-        return { ...l, day2_checked_in: !l.day2_checked_in };
+        updatedLearner = {
+          ...l,
+          day1_checked_in: day === 1 ? !l.day1_checked_in : l.day1_checked_in,
+          day2_checked_in: day === 2 ? !l.day2_checked_in : l.day2_checked_in
+        };
+        return updatedLearner;
       }
       return l;
     });
     this.setItem(STORAGE_KEYS.LEARNERS, all);
+    if (updatedLearner) {
+      this.sbUpsert('learners', updatedLearner as unknown as Record<string, unknown>);
+    }
   }
 
   public checkInAll(eventId: string, day: 1 | 2, state: boolean) {
-    const all = this.getLearners().map(l => {
-      if (l.event_id === eventId) {
-        if (day === 1) return { ...l, day1_checked_in: state };
-        return { ...l, day2_checked_in: state };
+    const all = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, INITIAL_LEARNERS).map(l => {
+      if (l.event_id === eventId || !l.event_id || !eventId) {
+        const updated = {
+          ...l,
+          day1_checked_in: day === 1 ? state : l.day1_checked_in,
+          day2_checked_in: day === 2 ? state : l.day2_checked_in
+        };
+        this.sbUpsert('learners', updated as unknown as Record<string, unknown>);
+        return updated;
       }
       return l;
     });

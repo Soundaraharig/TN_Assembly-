@@ -228,13 +228,19 @@ export interface ScoreRecord {
   learner_name: string;
   party_name: string;
   bench: BenchType;
-  oratory: number;             // Max 25
-  policy_knowledge: number;    // Max 25
-  parliamentary_conduct: number; // Max 25
-  rebuttal_debate: number;     // Max 25
-  total: number;               // Max 100
+  research_constituency?: number;       // Max 30
+  relevance_agenda?: number;            // Max 20
+  communication_delivery?: number;      // Max 20
+  parliamentary_conduct: number;        // Max 12
+  originality_preparation?: number;     // Max 12
+  time_management?: number;             // Max 6
+  oratory: number;                       // Max 25
+  policy_knowledge: number;              // Max 25
+  rebuttal_debate: number;               // Max 25
+  total: number;                         // Max 100
   feedback?: string;
   juror_name?: string;
+  is_locked?: boolean;
   updated_at: string;
 }
 

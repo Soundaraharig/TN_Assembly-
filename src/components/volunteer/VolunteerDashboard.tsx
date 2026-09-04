@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   ShieldCheck,
   UserCheck,
@@ -150,6 +150,18 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
 
   const [checkinScope, setCheckinScope] = useState<'ASSIGNED' | 'ALL'>('ASSIGNED');
 
+  const [isRegistrationsFrozen, setIsRegistrationsFrozen] = useState<boolean>(() =>
+    storageService.getRegistrationsFrozen(eventId)
+  );
+
+  useEffect(() => {
+    setIsRegistrationsFrozen(storageService.getRegistrationsFrozen(eventId));
+    const unsubscribe = storageService.subscribe(() => {
+      setIsRegistrationsFrozen(storageService.getRegistrationsFrozen(eventId));
+    });
+    return unsubscribe;
+  }, [eventId]);
+
   // Proxy Voting Modal State
   const [proxyModalLearner, setProxyModalLearner] = useState<Learner | null>(null);
   const [selectedCandidateForElection, setSelectedCandidateForElection] = useState<Record<string, string>>({});
@@ -210,45 +222,61 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
 
   // Filter learners for YUVA Desk & Assigned Scope
   const assignedDeskLearners = useMemo(() => {
-    if (!selectedDeskKey || selectedDeskKey === 'ALL') {
-      if (userAssignments.length > 0 && userAssignments.length < yuvaAssignments.length) {
-        return learners.filter(l => {
-          const pName = getResolvedPartyName(l, activeParties);
-          const cName = getResolvedCommitteeName(l, activeCommittees);
-          return userAssignments.some(a =>
-            a.targetType === 'party'
-              ? (l.party_id === a.targetId || (pName && (pName.toLowerCase().includes(a.targetName.toLowerCase()) || a.targetName.toLowerCase().includes(pName.toLowerCase()))))
-              : (l.committee_id === a.targetId || (cName && (cName.toLowerCase().includes(a.targetName.toLowerCase()) || a.targetName.toLowerCase().includes(cName.toLowerCase()))))
+    if (selectedDeskKey && selectedDeskKey !== 'ALL') {
+      const [tType, tId, tName] = selectedDeskKey.split(':::');
+      return learners.filter(l => {
+        const pName = getResolvedPartyName(l, activeParties);
+        const cName = getResolvedCommitteeName(l, activeCommittees);
+
+        if (tType === 'party') {
+          return (
+            l.party_id === tId ||
+            (pName && tName && (
+              pName.toLowerCase().includes(tName.toLowerCase()) ||
+              tName.toLowerCase().includes(pName.toLowerCase())
+            ))
           );
-        });
-      }
-      return learners;
+        } else {
+          return (
+            l.committee_id === tId ||
+            (cName && tName && (
+              cName.toLowerCase().includes(tName.toLowerCase()) ||
+              tName.toLowerCase().includes(cName.toLowerCase())
+            ))
+          );
+        }
+      });
     }
 
-    const [tType, tId, tName] = selectedDeskKey.split(':::');
-    return learners.filter(l => {
-      const pName = getResolvedPartyName(l, activeParties);
-      const cName = getResolvedCommitteeName(l, activeCommittees);
+    if (userAssignments.length > 0) {
+      return learners.filter(l => {
+        const pName = getResolvedPartyName(l, activeParties);
+        const cName = getResolvedCommitteeName(l, activeCommittees);
+        return userAssignments.some(a =>
+          a.targetType === 'party'
+            ? (l.party_id === a.targetId || (pName && (pName.toLowerCase().includes(a.targetName.toLowerCase()) || a.targetName.toLowerCase().includes(pName.toLowerCase()))))
+            : (l.committee_id === a.targetId || (cName && (cName.toLowerCase().includes(a.targetName.toLowerCase()) || a.targetName.toLowerCase().includes(cName.toLowerCase()))))
+        );
+      });
+    }
 
-      if (tType === 'party') {
+    if (volunteer?.station || volunteer?.role) {
+      const vStation = (volunteer.station || volunteer.role || '').toLowerCase();
+      const matched = learners.filter(l => {
+        const pName = getResolvedPartyName(l, activeParties);
+        const cName = getResolvedCommitteeName(l, activeCommittees);
         return (
-          l.party_id === tId ||
-          (pName && tName && (
-            pName.toLowerCase().includes(tName.toLowerCase()) ||
-            tName.toLowerCase().includes(pName.toLowerCase())
-          ))
+          (pName && vStation.includes(pName.toLowerCase())) ||
+          (cName && vStation.includes(cName.toLowerCase())) ||
+          (l.party_name && vStation.includes(l.party_name.toLowerCase())) ||
+          (l.committee_name && vStation.includes(l.committee_name.toLowerCase()))
         );
-      } else {
-        return (
-          l.committee_id === tId ||
-          (cName && tName && (
-            cName.toLowerCase().includes(tName.toLowerCase()) ||
-            tName.toLowerCase().includes(cName.toLowerCase())
-          ))
-        );
-      }
-    });
-  }, [learners, selectedDeskKey, userAssignments, yuvaAssignments, activeParties, activeCommittees]);
+      });
+      if (matched.length > 0) return matched;
+    }
+
+    return [];
+  }, [learners, selectedDeskKey, userAssignments, activeParties, activeCommittees, volunteer]);
 
   // Filter learners for General Check-in Terminal
   const filteredLearners = useMemo(() => {
@@ -538,11 +566,17 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                 activeTab === 'walkin' ? 'shadow-sm' : 'opacity-70 hover:opacity-100'
               }`}
               style={{
-                background: activeTab === 'walkin' ? 'var(--accent)' : 'transparent',
+                background: activeTab === 'walkin' ? (isRegistrationsFrozen ? 'var(--amber)' : 'var(--accent)') : 'transparent',
                 color: activeTab === 'walkin' ? '#fff' : 'var(--text-primary)'
               }}
             >
-              <UserPlus className="w-3.5 h-3.5" /> Register Walk-In
+              <UserPlus className="w-3.5 h-3.5" />
+              <span>Register Walk-In</span>
+              {isRegistrationsFrozen && (
+                <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase bg-amber-500 text-white flex items-center gap-0.5 ml-0.5">
+                  <Lock className="w-2.5 h-2.5" /> LOCKED
+                </span>
+              )}
             </button>
 
             <button
@@ -898,108 +932,122 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
         {/* Tab 2: Walk-In Registration */}
         {activeTab === 'walkin' && (
           <div className="max-w-xl mx-auto rounded-2xl p-6 border space-y-5" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
-            {storageService.getRegistrationsFrozen(event?.id) && (
-              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs font-bold flex items-center gap-2">
-                <Lock className="w-4 h-4 text-amber-500 shrink-0" />
-                <span>Walk-in registrations are currently frozen by Assembly Coordinator.</span>
-              </div>
-            )}
-
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-xl border" style={{ background: 'var(--accent-soft)', color: 'var(--accent)', borderColor: 'var(--accent)' }}>
-                <UserPlus className="w-5 h-5" />
-              </div>
-              <div>
-                <h2 className="text-base font-extrabold" style={{ color: 'var(--text-primary)' }}>
-                  Floor Walk-in Registration
-                </h2>
-                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  Directly register a new delegate on the spot and generate their access badge.
-                </p>
-              </div>
-            </div>
-
-            <form onSubmit={handleWalkInSubmit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold mb-1" style={{ color: 'var(--text-secondary)' }}>
-                  Delegate Full Name *
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. S. Vignesh"
-                  value={walkInName}
-                  onChange={e => setWalkInName(e.target.value)}
-                  className="input-theme text-xs w-full"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold mb-1" style={{ color: 'var(--text-secondary)' }}>
-                    Email Address
-                  </label>
-                  <input
-                    type="email"
-                    placeholder="delegate@college.edu"
-                    value={walkInEmail}
-                    onChange={e => setWalkInEmail(e.target.value)}
-                    className="input-theme text-xs w-full"
-                  />
+            {isRegistrationsFrozen ? (
+              <div className="py-8 text-center space-y-4">
+                <div className="w-14 h-14 rounded-2xl bg-amber-500/10 text-amber-500 border border-amber-500/30 flex items-center justify-center mx-auto">
+                  <Lock className="w-7 h-7" />
                 </div>
-
-                <div>
-                  <label className="block text-xs font-bold mb-1" style={{ color: 'var(--text-secondary)' }}>
-                    Phone Number
-                  </label>
-                  <input
-                    type="tel"
-                    placeholder="+91 98765 43210"
-                    value={walkInPhone}
-                    onChange={e => setWalkInPhone(e.target.value)}
-                    className="input-theme text-xs w-full"
-                  />
+                <div className="space-y-1">
+                  <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
+                    Floor Walk-in Registration Frozen
+                  </h2>
+                  <p className="text-xs max-w-md mx-auto text-slate-500 dark:text-slate-400">
+                    On-the-spot delegate registration has been frozen/locked by the Assembly Coordinator. No new walk-in badges can be issued at this time.
+                  </p>
+                </div>
+                <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs font-bold border border-amber-500/20">
+                  <Lock className="w-3.5 h-3.5" /> Registrations Locked by Admin
                 </div>
               </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold mb-1" style={{ color: 'var(--text-secondary)' }}>
-                    Department / Major
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Computer Science"
-                    value={walkInDept}
-                    onChange={e => setWalkInDept(e.target.value)}
-                    className="input-theme text-xs w-full"
-                  />
+            ) : (
+              <>
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl border" style={{ background: 'var(--accent-soft)', color: 'var(--accent)', borderColor: 'var(--accent)' }}>
+                    <UserPlus className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-extrabold" style={{ color: 'var(--text-primary)' }}>
+                      Floor Walk-in Registration
+                    </h2>
+                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                      Directly register a new delegate on the spot and generate their access badge.
+                    </p>
+                  </div>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold mb-1" style={{ color: 'var(--text-secondary)' }}>
-                    Academic Year
-                  </label>
-                  <select
-                    value={walkInYear}
-                    onChange={e => setWalkInYear(e.target.value as any)}
-                    className="input-theme text-xs w-full"
+                <form onSubmit={handleWalkInSubmit} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold mb-1" style={{ color: 'var(--text-secondary)' }}>
+                      Delegate Full Name *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. S. Vignesh"
+                      value={walkInName}
+                      onChange={e => setWalkInName(e.target.value)}
+                      className="input-theme text-xs w-full"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        Email Address
+                      </label>
+                      <input
+                        type="email"
+                        placeholder="delegate@college.edu"
+                        value={walkInEmail}
+                        onChange={e => setWalkInEmail(e.target.value)}
+                        className="input-theme text-xs w-full"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        Phone Number
+                      </label>
+                      <input
+                        type="tel"
+                        placeholder="+91 98765 43210"
+                        value={walkInPhone}
+                        onChange={e => setWalkInPhone(e.target.value)}
+                        className="input-theme text-xs w-full"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        Department / Major
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Computer Science"
+                        value={walkInDept}
+                        onChange={e => setWalkInDept(e.target.value)}
+                        className="input-theme text-xs w-full"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        Academic Year
+                      </label>
+                      <select
+                        value={walkInYear}
+                        onChange={e => setWalkInYear(e.target.value as any)}
+                        className="input-theme text-xs w-full"
+                      >
+                        <option value="1st Year">1st Year</option>
+                        <option value="2nd Year">2nd Year</option>
+                        <option value="3rd Year">3rd Year</option>
+                        <option value="4th Year">4th Year</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="btn-primary w-full justify-center py-2.5 text-xs font-bold shadow-md cursor-pointer hover:scale-102 transition-transform"
                   >
-                    <option value="1st Year">1st Year</option>
-                    <option value="2nd Year">2nd Year</option>
-                    <option value="3rd Year">3rd Year</option>
-                    <option value="4th Year">4th Year</option>
-                  </select>
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                className="btn-primary w-full justify-center py-2.5 text-xs font-bold shadow-md cursor-pointer hover:scale-102 transition-transform"
-              >
-                <UserPlus className="w-4 h-4" /> Register & Check In Immediately
-              </button>
-            </form>
+                    <UserPlus className="w-4 h-4" /> Register & Check In Immediately
+                  </button>
+                </form>
+              </>
+            )}
           </div>
         )}
 
