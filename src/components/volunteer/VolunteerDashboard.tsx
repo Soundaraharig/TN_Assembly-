@@ -34,9 +34,6 @@ export interface YuvaAssignment {
   targetId: string;
   targetName: string;
 }
-
-const DEFAULT_YUVA_ASSIGNMENTS: YuvaAssignment[] = [];
-
 interface VolunteerDashboardProps {
   volunteer?: Volunteer | null;
   event?: CollegeEvent | null;
@@ -88,38 +85,39 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   const [walkInDept, setWalkInDept] = useState('');
   const [walkInYear, setWalkInYear] = useState<'1st Year' | '2nd Year' | '3rd Year' | '4th Year'>('1st Year');
 
-  // YUVA Assignments State
+  // YUVA Assignments State (Persisted via StorageService)
   const eventId = event?.id || volunteer?.event_id || 'ev_tn_assembly_2026';
-  const storageKey = `tn_assembly_yuva_assignments_${eventId}`;
 
-  const yuvaAssignments = useMemo<YuvaAssignment[]>(() => {
-    try {
-      if (typeof window !== 'undefined') {
-        const saved = localStorage.getItem(storageKey);
-        if (saved) return JSON.parse(saved);
-      }
-    } catch {}
-    return DEFAULT_YUVA_ASSIGNMENTS;
-  }, [storageKey]);
+  const [yuvaAssignments, setYuvaAssignments] = useState<YuvaAssignment[]>(() =>
+    storageService.getYuvaAssignments(eventId)
+  );
+
+  useEffect(() => {
+    setYuvaAssignments(storageService.getYuvaAssignments(eventId));
+    const unsubscribe = storageService.subscribe(() => {
+      setYuvaAssignments(storageService.getYuvaAssignments(eventId));
+    });
+    return unsubscribe;
+  }, [eventId]);
 
   // Find assignments for logged in volunteer
   const userAssignments = useMemo(() => {
     if (!volunteer) return yuvaAssignments;
-    const vName = (volunteer.name || '').toLowerCase();
+    const vName = (volunteer.name || '').toLowerCase().trim();
     const vPhone = (volunteer.phone || '').replace(/\D/g, '');
-    const vStation = (volunteer.station || '').toLowerCase();
-    const vRole = (volunteer.role || '').toLowerCase();
+    const vStation = (volunteer.station || '').toLowerCase().trim();
+    const vRole = (volunteer.role || '').toLowerCase().trim();
 
     const match = yuvaAssignments.filter(a => {
-      const aName = a.volunteerName.toLowerCase();
-      const aPhone = a.volunteerPhone.replace(/\D/g, '');
-      const aTarget = a.targetName.toLowerCase();
+      const aName = (a.volunteerName || '').toLowerCase().trim();
+      const aPhone = (a.volunteerPhone || '').replace(/\D/g, '');
+      const aTarget = (a.targetName || '').toLowerCase().trim();
 
       if (volunteer.id && a.volunteerId === volunteer.id) return true;
       if (vPhone && aPhone && (vPhone.endsWith(aPhone) || aPhone.endsWith(vPhone))) return true;
       if (vName && aName && (vName.includes(aName) || aName.includes(vName))) return true;
-      if (vStation && (vStation.includes(aTarget) || aTarget.includes(vStation))) return true;
-      if (vRole && (vRole.includes(aTarget) || aTarget.includes(vRole))) return true;
+      if (vStation && aTarget && (vStation.includes(aTarget) || aTarget.includes(vStation))) return true;
+      if (vRole && aTarget && (vRole.includes(aTarget) || aTarget.includes(vRole))) return true;
 
       return false;
     });
@@ -139,26 +137,33 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     return Array.from(map.values());
   }, [userAssignments]);
 
-  // Selected desk key: 'type:::id:::name' or 'ALL'
+  // Selected desk key: 'type:::id:::name' or 'ALL' or 'NONE'
   const [selectedDeskKey, setSelectedDeskKey] = useState<string>(() => {
     if (uniqueDesks.length > 0 && uniqueDesks.length < 6) {
       const first = uniqueDesks[0];
       return first.key;
     }
-    return 'ALL';
+    return uniqueDesks.length > 0 ? 'ALL' : 'NONE';
   });
+
+  useEffect(() => {
+    if (uniqueDesks.length > 0 && (!selectedDeskKey || selectedDeskKey === 'NONE')) {
+      setSelectedDeskKey(uniqueDesks[0].key);
+    }
+  }, [uniqueDesks]);
 
   const [checkinScope, setCheckinScope] = useState<'ASSIGNED' | 'ALL'>('ASSIGNED');
 
   const [isRegistrationsFrozen, setIsRegistrationsFrozen] = useState<boolean>(() =>
-    storageService.getRegistrationsFrozen(eventId)
+    storageService.getRegistrationsFrozen(eventId) || storageService.getRegistrationsFrozen()
   );
 
   useEffect(() => {
-    setIsRegistrationsFrozen(storageService.getRegistrationsFrozen(eventId));
-    const unsubscribe = storageService.subscribe(() => {
-      setIsRegistrationsFrozen(storageService.getRegistrationsFrozen(eventId));
-    });
+    const checkFrozen = () => {
+      setIsRegistrationsFrozen(storageService.getRegistrationsFrozen(eventId) || storageService.getRegistrationsFrozen());
+    };
+    checkFrozen();
+    const unsubscribe = storageService.subscribe(checkFrozen);
     return unsubscribe;
   }, [eventId]);
 
@@ -650,6 +655,9 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                   >
                     {uniqueDesks.length > 1 && (
                       <option value="ALL">All Assigned Desks ({uniqueDesks.length})</option>
+                    )}
+                    {uniqueDesks.length === 0 && (
+                      <option value="NONE">No Desks Assigned</option>
                     )}
                     {uniqueDesks.map((d) => (
                       <option key={d.key} value={d.key}>

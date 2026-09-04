@@ -69,7 +69,8 @@ const STORAGE_KEYS = {
   OPEN_NOMINATIONS: 'tn_assembly_open_nominations_v6',
   ALLOCATION_LOCK: 'tn_assembly_allocation_lock_v6',
   REGISTRATIONS_FROZEN: 'tn_assembly_registrations_frozen_v6',
-  SCORES_LOCKED: 'tn_assembly_scores_locked_v6'
+  SCORES_LOCKED: 'tn_assembly_scores_locked_v6',
+  YUVA_ASSIGNMENTS: 'tn_assembly_yuva_assignments_v6'
 };
 
 type Listener = () => void;
@@ -2048,11 +2049,11 @@ class StorageService {
 
   // ── Security Locks (Allocation Lock, Registrations Frozen, Scores Locked) ──
   getAllocationLock(eventId?: string): boolean {
+    if (this.getItem<boolean>(STORAGE_KEYS.ALLOCATION_LOCK, false)) return true;
+    if (this.getItem<boolean>(`${STORAGE_KEYS.ALLOCATION_LOCK}_default`, false)) return true;
     if (eventId && this.getItem<boolean>(`${STORAGE_KEYS.ALLOCATION_LOCK}_${eventId}`, false)) {
       return true;
     }
-    if (this.getItem<boolean>(`${STORAGE_KEYS.ALLOCATION_LOCK}_default`, false)) return true;
-    if (this.getItem<boolean>(STORAGE_KEYS.ALLOCATION_LOCK, false)) return true;
 
     try {
       if (typeof window !== 'undefined') {
@@ -2073,12 +2074,12 @@ class StorageService {
     this.setItem(key, locked);
     this.setItem(`${STORAGE_KEYS.ALLOCATION_LOCK}_default`, locked);
     this.setItem(STORAGE_KEYS.ALLOCATION_LOCK, locked);
-    if (!locked && typeof window !== 'undefined') {
+    if (typeof window !== 'undefined') {
       try {
         for (let i = 0; i < localStorage.length; i++) {
           const k = localStorage.key(i);
           if (k && k.startsWith(STORAGE_KEYS.ALLOCATION_LOCK)) {
-            this.setItem(k, false);
+            this.setItem(k, locked);
           }
         }
       } catch {}
@@ -2087,11 +2088,11 @@ class StorageService {
   }
 
   getRegistrationsFrozen(eventId?: string): boolean {
+    if (this.getItem<boolean>(STORAGE_KEYS.REGISTRATIONS_FROZEN, false)) return true;
+    if (this.getItem<boolean>(`${STORAGE_KEYS.REGISTRATIONS_FROZEN}_default`, false)) return true;
     if (eventId && this.getItem<boolean>(`${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${eventId}`, false)) {
       return true;
     }
-    if (this.getItem<boolean>(`${STORAGE_KEYS.REGISTRATIONS_FROZEN}_default`, false)) return true;
-    if (this.getItem<boolean>(STORAGE_KEYS.REGISTRATIONS_FROZEN, false)) return true;
 
     try {
       if (typeof window !== 'undefined') {
@@ -2112,12 +2113,12 @@ class StorageService {
     this.setItem(key, frozen);
     this.setItem(`${STORAGE_KEYS.REGISTRATIONS_FROZEN}_default`, frozen);
     this.setItem(STORAGE_KEYS.REGISTRATIONS_FROZEN, frozen);
-    if (!frozen && typeof window !== 'undefined') {
+    if (typeof window !== 'undefined') {
       try {
         for (let i = 0; i < localStorage.length; i++) {
           const k = localStorage.key(i);
           if (k && k.startsWith(STORAGE_KEYS.REGISTRATIONS_FROZEN)) {
-            this.setItem(k, false);
+            this.setItem(k, frozen);
           }
         }
       } catch {}
@@ -2126,11 +2127,11 @@ class StorageService {
   }
 
   getScoresLocked(eventId?: string): boolean {
+    if (this.getItem<boolean>(STORAGE_KEYS.SCORES_LOCKED, false)) return true;
+    if (this.getItem<boolean>(`${STORAGE_KEYS.SCORES_LOCKED}_default`, false)) return true;
     if (eventId && this.getItem<boolean>(`${STORAGE_KEYS.SCORES_LOCKED}_${eventId}`, false)) {
       return true;
     }
-    if (this.getItem<boolean>(`${STORAGE_KEYS.SCORES_LOCKED}_default`, false)) return true;
-    if (this.getItem<boolean>(STORAGE_KEYS.SCORES_LOCKED, false)) return true;
 
     try {
       if (typeof window !== 'undefined') {
@@ -2151,12 +2152,58 @@ class StorageService {
     this.setItem(key, locked);
     this.setItem(`${STORAGE_KEYS.SCORES_LOCKED}_default`, locked);
     this.setItem(STORAGE_KEYS.SCORES_LOCKED, locked);
-    if (!locked && typeof window !== 'undefined') {
+    if (typeof window !== 'undefined') {
       try {
         for (let i = 0; i < localStorage.length; i++) {
           const k = localStorage.key(i);
           if (k && k.startsWith(STORAGE_KEYS.SCORES_LOCKED)) {
-            this.setItem(k, false);
+            this.setItem(k, locked);
+          }
+        }
+      } catch {}
+    }
+    this.notify();
+  }
+
+  // ── YUVA Desk Assignments ───────────────────────────────────────────────
+  getYuvaAssignments(eventId?: string): any[] {
+    const key = `${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${eventId || 'default'}`;
+    const primary = this.getItem<any[] | null>(key, null);
+    if (primary && Array.isArray(primary) && primary.length > 0) return primary;
+
+    const def = this.getItem<any[] | null>(`${STORAGE_KEYS.YUVA_ASSIGNMENTS}_default`, null);
+    if (def && Array.isArray(def) && def.length > 0) return def;
+
+    const global = this.getItem<any[] | null>(STORAGE_KEYS.YUVA_ASSIGNMENTS, null);
+    if (global && Array.isArray(global) && global.length > 0) return global;
+
+    try {
+      if (typeof window !== 'undefined') {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.includes('yuva_assignments')) {
+            const val = JSON.parse(localStorage.getItem(k) || '[]');
+            if (Array.isArray(val) && val.length > 0) return val;
+          }
+        }
+      }
+    } catch {}
+
+    return [];
+  }
+
+  setYuvaAssignments(assignments: any[], eventId?: string): void {
+    const key = `${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${eventId || 'default'}`;
+    this.setItem(key, assignments);
+    this.setItem(`${STORAGE_KEYS.YUVA_ASSIGNMENTS}_default`, assignments);
+    this.setItem(STORAGE_KEYS.YUVA_ASSIGNMENTS, assignments);
+
+    if (typeof window !== 'undefined') {
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.includes('yuva_assignments')) {
+            this.setItem(k, assignments);
           }
         }
       } catch {}

@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import type { Volunteer, UserRole, Party, Committee } from '../../types';
+import { storageService } from '../../services/storageService';
 import { canDelete } from '../../utils/permissions';
 import {
   Shield,
@@ -90,25 +91,18 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<Partial<Volunteer>[]>([]);
 
-  // YUVA Desks Assignments State (Persisted)
-  const storageKey = `tn_assembly_yuva_assignments_${eventId}`;
-  const [yuvaAssignments, setYuvaAssignments] = useState<YuvaAssignment[]>(() => {
-    try {
-      if (typeof window !== 'undefined') {
-        const saved = localStorage.getItem(storageKey);
-        if (saved) return JSON.parse(saved);
-      }
-    } catch {}
-    return [];
-  });
+  // YUVA Desks Assignments State (Persisted via StorageService)
+  const [yuvaAssignments, setYuvaAssignments] = useState<YuvaAssignment[]>(() =>
+    storageService.getYuvaAssignments(eventId)
+  );
 
   useEffect(() => {
-    try {
-      if (typeof window !== 'undefined') {
-        localStorage.setItem(storageKey, JSON.stringify(yuvaAssignments));
-      }
-    } catch {}
-  }, [yuvaAssignments, storageKey]);
+    setYuvaAssignments(storageService.getYuvaAssignments(eventId));
+    const unsubscribe = storageService.subscribe(() => {
+      setYuvaAssignments(storageService.getYuvaAssignments(eventId));
+    });
+    return unsubscribe;
+  }, [eventId]);
 
   // Form State for YUVA Desk Assignment
   const [selectedYuvaVolId, setSelectedYuvaVolId] = useState('');
@@ -210,14 +204,18 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
       targetName: tName || tId
     };
 
-    setYuvaAssignments(prev => [...prev, newAssign]);
+    const updated = [...yuvaAssignments, newAssign];
+    setYuvaAssignments(updated);
+    storageService.setYuvaAssignments(updated, eventId);
     onShowToast('YUVA Assigned', `Assigned ${volName} to ${tName}`, 'success');
     setSelectedYuvaVolId('');
     setSelectedTargetKey('');
   };
 
   const handleRemoveYuvaAssignment = (assignId: string) => {
-    setYuvaAssignments(prev => prev.filter(a => a.id !== assignId));
+    const updated = yuvaAssignments.filter(a => a.id !== assignId);
+    setYuvaAssignments(updated);
+    storageService.setYuvaAssignments(updated, eventId);
     onShowToast('Assignment Removed', 'Unassigned YUVA volunteer', 'info');
   };
 
