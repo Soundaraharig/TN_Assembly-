@@ -90,7 +90,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     if (!selectedLearnerId) return;
     if (loadedLearnerId === selectedLearnerId) return;
 
-    const existing = scores.find(s => s.learner_id === selectedLearnerId && (!event || s.event_id === event.id));
+    const existing = scores.find(s => s.learner_id === selectedLearnerId && (!event || !s.event_id || s.event_id === event.id));
     if (existing) {
       setResearchScore(existing.research_constituency ?? existing.policy_knowledge ?? 2);
       setRelevanceScore(existing.relevance_agenda ?? existing.rebuttal_debate ?? 2);
@@ -141,7 +141,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
 
     const currentTotal = rScore + relScore + cScore + condScore + origScore + tScore;
 
-    const existing = scores.find(s => s.learner_id === selectedLearner.id && (!event || s.event_id === event.id));
+    const existing = scores.find(s => s.learner_id === selectedLearner.id && (!event || !s.event_id || s.event_id === event.id));
     const record: ScoreRecord = {
       id: existing?.id || `score_${selectedLearner.id}_${Date.now()}`,
       event_id: event?.id || selectedLearner.event_id || '',

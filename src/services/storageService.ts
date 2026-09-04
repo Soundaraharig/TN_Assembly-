@@ -260,7 +260,31 @@ class StorageService {
         if (allFVotes.length > 0) this.setItem(STORAGE_KEYS.FLASH_VOTES, allFVotes);
         if (allProcs.length > 0) this.setItem(STORAGE_KEYS.PROCEEDINGS, allProcs);
         if (allQs.length > 0) this.setItem(STORAGE_KEYS.QUESTIONS, allQs);
-        if (allScores.length > 0) this.setItem(STORAGE_KEYS.SCORES, allScores);
+
+        // Smart merge local and remote scores by learner_id & timestamp so local scores are never overwritten by stale remote sync
+        const localScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
+        const scoreMap = new Map<string, ScoreRecord>();
+        localScores.forEach(s => {
+          const key = `${s.learner_id}:::${s.event_id || ''}`;
+          scoreMap.set(key, s);
+        });
+        allScores.forEach(s => {
+          const key = `${s.learner_id}:::${s.event_id || ''}`;
+          const existing = scoreMap.get(key);
+          if (!existing) {
+            scoreMap.set(key, s);
+          } else {
+            const localTime = new Date(existing.updated_at || 0).getTime();
+            const remoteTime = new Date(s.updated_at || 0).getTime();
+            if (remoteTime > localTime) {
+              scoreMap.set(key, s);
+            }
+          }
+        });
+        const mergedScores = Array.from(scoreMap.values());
+        if (mergedScores.length > 0) {
+          this.setItem(STORAGE_KEYS.SCORES, mergedScores);
+        }
       }
 
       if (coordinators) {
@@ -1869,19 +1893,26 @@ class StorageService {
 
   public getScores(eventId?: string): ScoreRecord[] {
     const all = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, INITIAL_SCORES);
-    if (eventId) return all.filter(s => s.event_id === eventId);
+    if (eventId) return all.filter(s => s.event_id === eventId || !s.event_id);
     return all;
   }
 
   public saveScoreRecord(score: ScoreRecord) {
     const all = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, INITIAL_SCORES);
-    const idx = all.findIndex(s => s.learner_id === score.learner_id && s.event_id === score.event_id);
+    const idx = all.findIndex(s =>
+      (s.id && score.id && s.id === score.id) ||
+      (s.learner_id === score.learner_id && (s.event_id === score.event_id || !s.event_id || !score.event_id))
+    );
     if (idx >= 0) {
-      all[idx] = score;
+      all[idx] = { ...all[idx], ...score };
     } else {
       all.push(score);
     }
     this.setItem(STORAGE_KEYS.SCORES, all);
+
+    if (score.event_id) {
+      this.syncEventStateToSupabase(score.event_id);
+    }
   }
 
   // ── CHAT ──────────────────────────────────────────────────────────────────
