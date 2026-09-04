@@ -863,7 +863,6 @@ export function App() {
           addToast('Signed Out', 'You have been signed out', 'info');
         }}
         onGoHome={() => {
-          if (userSession?.role === 'coordinator') {
           if (role === 'student') {
             if (typeof window !== 'undefined') window.history.pushState({}, '', '/me');
             return;
