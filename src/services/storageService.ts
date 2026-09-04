@@ -92,6 +92,18 @@ function uid(_prefix?: string): string {
   return genUuid();
 }
 
+function sortLearnersStably(list: Learner[]): Learner[] {
+  return [...list].sort((a, b) => {
+    const numA = Number(a.constituency_number) || 999999;
+    const numB = Number(b.constituency_number) || 999999;
+    if (numA !== numB) return numA - numB;
+    const codeA = a.access_code || '';
+    const codeB = b.access_code || '';
+    if (codeA !== codeB) return codeA.localeCompare(codeB);
+    return (a.full_name || '').localeCompare(b.full_name || '');
+  });
+}
+
 // ---------------------------------------------------------------------------
 // StorageService — hybrid localStorage + Supabase with pub/sub
 // ---------------------------------------------------------------------------
@@ -307,7 +319,7 @@ class StorageService {
       }
 
       if (learners && learners.length > 0) {
-        this.setItem(STORAGE_KEYS.LEARNERS, learners);
+        this.setItem(STORAGE_KEYS.LEARNERS, sortLearnersStably(learners));
       }
 
       if (parties && parties.length > 0) {
@@ -585,12 +597,13 @@ class StorageService {
 
   public getLearners(eventId?: string): Learner[] {
     const all = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, INITIAL_LEARNERS);
+    const sortedAll = sortLearnersStably(all);
     if (eventId) {
-      const filtered = all.filter(l => l.event_id === eventId || !l.event_id);
+      const filtered = sortedAll.filter(l => l.event_id === eventId || !l.event_id);
       if (filtered.length > 0) return filtered;
-      return all;
+      return sortedAll;
     }
-    return all;
+    return sortedAll;
   }
 
   public addLearner(learner: Partial<Learner>): Learner {

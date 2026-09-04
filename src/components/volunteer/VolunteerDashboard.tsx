@@ -226,11 +226,25 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     return _committees.length > 0 ? _committees : storageService.getCommittees(eventId);
   }, [_committees, eventId]);
 
+  // Helper for deterministic, stable sorting by constituency number then name
+  const sortLearners = (list: Learner[]): Learner[] => {
+    return [...list].sort((a, b) => {
+      const numA = Number(a.constituency_number) || 999999;
+      const numB = Number(b.constituency_number) || 999999;
+      if (numA !== numB) return numA - numB;
+      const codeA = a.access_code || '';
+      const codeB = b.access_code || '';
+      if (codeA !== codeB) return codeA.localeCompare(codeB);
+      return (a.full_name || '').localeCompare(b.full_name || '');
+    });
+  };
+
   // Filter learners for YUVA Desk & Assigned Scope
   const assignedDeskLearners = useMemo(() => {
+    let result: Learner[] = [];
     if (selectedDeskKey && selectedDeskKey !== 'ALL') {
       const [tType, tId, tName] = selectedDeskKey.split(':::');
-      return learners.filter(l => {
+      result = learners.filter(l => {
         const pName = getResolvedPartyName(l, activeParties);
         const cName = getResolvedCommitteeName(l, activeCommittees);
 
@@ -252,10 +266,8 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
           );
         }
       });
-    }
-
-    if (userAssignments.length > 0) {
-      return learners.filter(l => {
+    } else if (userAssignments.length > 0) {
+      result = learners.filter(l => {
         const pName = getResolvedPartyName(l, activeParties);
         const cName = getResolvedCommitteeName(l, activeCommittees);
         return userAssignments.some(a =>
@@ -264,9 +276,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
             : (l.committee_id === a.targetId || (cName && (cName.toLowerCase().includes(a.targetName.toLowerCase()) || a.targetName.toLowerCase().includes(cName.toLowerCase()))))
         );
       });
-    }
-
-    if (volunteer?.station || volunteer?.role) {
+    } else if (volunteer?.station || volunteer?.role) {
       const vStation = (volunteer.station || volunteer.role || '').toLowerCase();
       const matched = learners.filter(l => {
         const pName = getResolvedPartyName(l, activeParties);
@@ -278,16 +288,16 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
           (l.committee_name && vStation.includes(l.committee_name.toLowerCase()))
         );
       });
-      if (matched.length > 0) return matched;
+      if (matched.length > 0) result = matched;
     }
 
-    return [];
+    return sortLearners(result);
   }, [learners, selectedDeskKey, userAssignments, activeParties, activeCommittees, volunteer]);
 
   // Filter learners for General Check-in Terminal
   const filteredLearners = useMemo(() => {
     const baseList = checkinScope === 'ASSIGNED' ? assignedDeskLearners : learners;
-    return baseList.filter(l => {
+    const filtered = baseList.filter(l => {
       const pName = getResolvedPartyName(l, activeParties);
       const matchesSearch =
         l.full_name.toLowerCase().includes(search.toLowerCase()) ||
@@ -303,10 +313,11 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
 
       return matchesSearch && matchesStatus;
     });
+    return sortLearners(filtered);
   }, [learners, assignedDeskLearners, checkinScope, search, selectedDay, statusFilter, activeParties]);
 
   const filteredYuvaMembers = useMemo(() => {
-    return assignedDeskLearners.filter(l => {
+    const filtered = assignedDeskLearners.filter(l => {
       const pName = getResolvedPartyName(l, activeParties);
       const matchesSearch =
         l.full_name.toLowerCase().includes(search.toLowerCase()) ||
@@ -322,6 +333,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
 
       return matchesSearch && matchesStatus;
     });
+    return sortLearners(filtered);
   }, [assignedDeskLearners, search, selectedDay, statusFilter, activeParties]);
 
   const day1Present = learners.filter(l => l.day1_checked_in).length;

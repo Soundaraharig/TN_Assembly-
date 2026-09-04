@@ -131,6 +131,14 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
       if (selectedBench !== 'ALL' && l.bench !== selectedBench) return false;
 
       return true;
+    }).sort((a, b) => {
+      const numA = Number(a.constituency_number) || 999999;
+      const numB = Number(b.constituency_number) || 999999;
+      if (numA !== numB) return numA - numB;
+      const codeA = a.access_code || '';
+      const codeB = b.access_code || '';
+      if (codeA !== codeB) return codeA.localeCompare(codeB);
+      return (a.full_name || '').localeCompare(b.full_name || '');
     });
   }, [learners, parties, committees, searchTerm, statusPill, dayPill, selectedParty, selectedRole, selectedCommittee, selectedBench]);
 
