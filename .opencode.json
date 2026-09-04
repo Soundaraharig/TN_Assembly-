@@ -2,23 +2,17 @@
   "$schema": "https://opencode.ai/config.json",
   "providers": {
     "nvidia": {
+      "npm": "@ai-sdk/openai-compatible",
       "name": "NVIDIA NIM",
+      "options": {
+        "baseURL": "https://integrate.api.nvidia.com/v1"
+      },
       "type": "openai",
-      "baseURL": "https://integrate.api.nvidia.com/v1",
       "apiKey": "{env:NVIDIA_API_KEY}",
       "models": [
         "nvidia/nemotron-3.5-lightning-30b-a3b",
-        "meta/llama-3.1-405b-instruct"
-      ]
-    },
-    "deepseek": {
-      "name": "DeepSeek",
-      "type": "openai",
-      "baseURL": "https://integrate.api.nvidia.com/v1",
-      "apiKey": "{env:DEEPSEEK_API_KEY}",
-      "models": [
-        "deepseek-coder",
-        "deepseek-chat"
+        "meta/llama-3.1-405b-instruct",
+        "deepseek-ai/deepseek-v4-pro-0813"
       ]
     },
     "aws": {
@@ -31,6 +25,6 @@
     }
   },
   "awsExperience": "new",
-  "awsRegion": "ap-south-1",
+  "awsRegion": "us-east-1",
   "awsProfile": "soundarahari"
 }
