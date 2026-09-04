@@ -10,6 +10,7 @@ import type {
   UserSession,
   Nomination,
   Election,
+  ElectionCandidate,
   LiveFlashVote,
   BillProceeding,
   ScoreRecord,
@@ -1331,11 +1332,85 @@ class StorageService {
     const all = this.getElectionAll().map(e => {
       if (e.id === electionId) {
         const sorted = [...e.candidates].sort((a, b) => b.votes - a.votes);
-        const win = sorted.length > 0 ? sorted[0].name : undefined;
+        const win = sorted.length > 0 && sorted[0].votes > 0 ? sorted[0].name : undefined;
         return { ...e, status: 'Closed' as const, winner: win };
       }
       return e;
     });
+    this.setItem(STORAGE_KEYS.ELECTIONS, all);
+  }
+
+  public setElectionStatus(electionId: string, status: 'Upcoming' | 'Live' | 'Closed') {
+    const all = this.getElectionAll().map(e => {
+      if (e.id === electionId) {
+        let winner = e.winner;
+        if (status === 'Closed') {
+          const sorted = [...e.candidates].sort((a, b) => b.votes - a.votes);
+          winner = sorted.length > 0 && sorted[0].votes > 0 ? sorted[0].name : undefined;
+        }
+        return { ...e, status, winner };
+      }
+      return e;
+    });
+    this.setItem(STORAGE_KEYS.ELECTIONS, all);
+  }
+
+  public addCandidateToElection(electionId: string, candidate: Partial<ElectionCandidate>): boolean {
+    const all = this.getElectionAll();
+    const election = all.find(e => e.id === electionId);
+    if (!election) return false;
+
+    // Check if already in ballot
+    const existing = election.candidates.find(
+      c => (candidate.learner_id && c.learner_id === candidate.learner_id) || c.name.toLowerCase() === candidate.name?.toLowerCase()
+    );
+    if (existing) return false;
+
+    const newCandidate: ElectionCandidate = {
+      id: candidate.id || uid('cand'),
+      learner_id: candidate.learner_id,
+      name: candidate.name || 'Nominated Candidate',
+      party: candidate.party || 'Independent',
+      bench: candidate.bench || 'Ruling',
+      votes: 0
+    };
+
+    election.candidates.push(newCandidate);
+    this.setItem(STORAGE_KEYS.ELECTIONS, all);
+    return true;
+  }
+
+  public removeCandidateFromElection(electionId: string, candidateId: string): boolean {
+    const all = this.getElectionAll();
+    const election = all.find(e => e.id === electionId);
+    if (!election) return false;
+
+    election.candidates = election.candidates.filter(c => c.id !== candidateId && c.learner_id !== candidateId);
+    // Recalculate total votes
+    election.total_votes = election.candidates.reduce((sum, c) => sum + (c.votes || 0), 0);
+    this.setItem(STORAGE_KEYS.ELECTIONS, all);
+    return true;
+  }
+
+  public resetElection(electionId: string) {
+    const all = this.getElectionAll().map(e => {
+      if (e.id === electionId) {
+        return {
+          ...e,
+          status: 'Upcoming' as const,
+          total_votes: 0,
+          winner: undefined,
+          voted_delegate_ids: [],
+          candidates: e.candidates.map(c => ({ ...c, votes: 0 }))
+        };
+      }
+      return e;
+    });
+    this.setItem(STORAGE_KEYS.ELECTIONS, all);
+  }
+
+  public deleteElection(electionId: string) {
+    const all = this.getElectionAll().filter(e => e.id !== electionId);
     this.setItem(STORAGE_KEYS.ELECTIONS, all);
   }
 

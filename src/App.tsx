@@ -1205,6 +1205,26 @@ export function App() {
                     storageService.closeElection(elecId);
                     setElections(storageService.getElections(currentEvent.id));
                   }}
+                  onSetElectionStatus={(elecId, status) => {
+                    storageService.setElectionStatus(elecId, status);
+                    setElections(storageService.getElections(currentEvent.id));
+                  }}
+                  onAddCandidate={(elecId, cand) => {
+                    storageService.addCandidateToElection(elecId, cand);
+                    setElections(storageService.getElections(currentEvent.id));
+                  }}
+                  onRemoveCandidate={(elecId, candId) => {
+                    storageService.removeCandidateFromElection(elecId, candId);
+                    setElections(storageService.getElections(currentEvent.id));
+                  }}
+                  onResetElection={(elecId) => {
+                    storageService.resetElection(elecId);
+                    setElections(storageService.getElections(currentEvent.id));
+                  }}
+                  onDeleteElection={(elecId) => {
+                    storageService.deleteElection(elecId);
+                    setElections(storageService.getElections(currentEvent.id));
+                  }}
                   onCreateElection={(elec) => {
                     storageService.createElection(elec);
                     setElections(storageService.getElections(currentEvent.id));
