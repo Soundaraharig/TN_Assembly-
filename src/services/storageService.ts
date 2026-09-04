@@ -1332,7 +1332,6 @@ class StorageService {
     const all = this.getElectionAll().map(e => {
       if (e.id === electionId) {
         const sorted = [...e.candidates].sort((a, b) => b.votes - a.votes);
-        const win = sorted.length > 0 ? sorted[0].name : undefined;
         const win = sorted.length > 0 && sorted[0].votes > 0 ? sorted[0].name : undefined;
         return { ...e, status: 'Closed' as const, winner: win };
       }
