@@ -11,9 +11,7 @@ import {
   Plus,
   ChevronRight,
   ChevronLeft,
-  Eye,
   CheckCircle2,
-  XCircle,
   Lock,
   Sparkles,
   Edit2,
@@ -43,7 +41,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   parties = [],
   agenda = [],
   scores = [],
-  elections = [],
+  elections: _elections = [],
   flashVotes: _flashVotes = [],
   currentEvent,
   eventName: _eventName = 'TN Youth Assembly',
@@ -205,21 +203,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   const [registrationsFrozen, setRegistrationsFrozen] = useState(false);
   const [scoresLocked, setScoresLocked] = useState(false);
 
-  // ── Live Election/Poll Card State ────────────────────────────────────────
-  const activeElection = elections.find(e => e.status === 'Live') || {
-    id: 'elec_speaker',
-    event_id: currentEvent?.id || '',
-    title: 'Speaker Election',
-    position: 'Speaker of the Assembly',
-    type: 'SPEAKER' as const,
-    status: 'Closed' as const,
-    candidates: [
-      { id: 'c1', name: 'Deekshaa', party: 'Ruling Party', bench: 'Ruling' as const, votes: 0 },
-      { id: 'c2', name: 'Raghavan', party: 'Opposition', bench: 'Opposition' as const, votes: 0 }
-    ],
-    total_votes: 0,
-    created_at: new Date().toISOString()
-  };
+
 
   const handleNextAgenda = () => {
     if (currentAgendaIndex < currentAgendaList.length - 1) {
@@ -572,55 +556,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
             )}
           </div>
 
-          {/* 5. LIVE CONTROL CARD (Speaker Election / Ballot Poll) */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
-            <span className="text-[10px] font-black uppercase tracking-wider text-amber-600 dark:text-amber-400">
-              LIVE CONTROL
-            </span>
 
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-slate-400" />
-                <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">
-                  {activeElection.title}
-                </h4>
-              </div>
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300">
-                {activeElection.status}
-              </span>
-            </div>
-
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
-                <Users className="w-3.5 h-3.5" />
-                <span>Votes Cast</span>
-                <strong className="text-slate-900 dark:text-white font-mono ml-auto">
-                  {activeElection.total_votes} / {learners.length || 0}
-                </strong>
-              </div>
-              <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                <div
-                  className="bg-amber-500 h-full transition-all"
-                  style={{ width: `${learners.length > 0 ? (activeElection.total_votes / learners.length) * 100 : 0}%` }}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 pt-2">
-              <button
-                onClick={() => onShowToast('Election Results', `Revealed winner: ${activeElection.winner || 'Majority Voice Vote Confirmed'}`, 'success')}
-                className="py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-black text-xs shadow-md shadow-amber-500/20 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-              >
-                <Eye className="w-3.5 h-3.5" /> Reveal Results
-              </button>
-              <button
-                onClick={() => onShowToast('Session Resumed', 'Live floor discussion resumed', 'info')}
-                className="py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-              >
-                <XCircle className="w-3.5 h-3.5" /> Dismiss & show session
-              </button>
-            </div>
-          </div>
 
           {/* 6. SPEAKERS SECTION */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">

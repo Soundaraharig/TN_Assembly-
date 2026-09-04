@@ -85,7 +85,8 @@ const SearchableDelegateSelect: React.FC<{
     <div ref={containerRef} className="relative w-full">
       <div
         onClick={() => setIsOpen(!isOpen)}
-        className="p-2.5 rounded-xl border bg-slate-900 border-slate-700 text-white text-xs font-semibold flex items-center justify-between cursor-pointer hover:border-amber-500 transition-colors shadow-sm"
+        className="p-2.5 rounded-xl border text-xs font-semibold flex items-center justify-between cursor-pointer hover:border-amber-500 transition-colors shadow-xs"
+        style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
       >
         <span className="truncate">
           {selectedLearner
@@ -96,8 +97,11 @@ const SearchableDelegateSelect: React.FC<{
       </div>
 
       {isOpen && (
-        <div className="absolute z-40 left-0 right-0 mt-1 rounded-xl bg-slate-900 border border-slate-700 shadow-2xl p-2 space-y-2 max-h-64 overflow-y-auto">
-          <div className="flex items-center gap-2 bg-slate-950 p-2 rounded-lg border border-slate-800">
+        <div
+          className="absolute z-40 left-0 right-0 mt-1 rounded-xl border shadow-2xl p-2 space-y-2 max-h-64 overflow-y-auto"
+          style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+        >
+          <div className="flex items-center gap-2 p-2 rounded-lg border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)' }}>
             <Search className="w-3.5 h-3.5 text-slate-400" />
             <input
               type="text"
@@ -105,7 +109,8 @@ const SearchableDelegateSelect: React.FC<{
               value={query}
               onChange={e => setQuery(e.target.value)}
               placeholder={placeholder}
-              className="w-full bg-transparent text-white text-xs focus:outline-none placeholder:text-slate-500"
+              className="w-full bg-transparent text-xs focus:outline-none placeholder:text-slate-400"
+              style={{ color: 'var(--text-primary)' }}
             />
           </div>
 
@@ -115,12 +120,12 @@ const SearchableDelegateSelect: React.FC<{
                 onSelect('');
                 setIsOpen(false);
               }}
-              className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+              className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
             >
               ✕ Unassign / Clear Role
             </button>
             {filtered.length === 0 ? (
-              <p className="text-[11px] text-slate-500 px-2 py-2 italic text-center">No matching delegates found</p>
+              <p className="text-[11px] text-slate-400 px-2 py-2 italic text-center">No matching delegates found</p>
             ) : (
               filtered.map(l => (
                 <button
@@ -131,9 +136,10 @@ const SearchableDelegateSelect: React.FC<{
                   }}
                   className={`w-full text-left px-2.5 py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-between gap-2 cursor-pointer ${
                     l.id === currentLearnerId
-                      ? 'bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30'
-                      : 'text-slate-200 hover:bg-slate-800'
+                      ? 'bg-amber-500/20 text-amber-500 font-bold border border-amber-500/30'
+                      : 'hover:bg-slate-500/10'
                   }`}
+                  style={{ color: l.id === currentLearnerId ? undefined : 'var(--text-primary)' }}
                 >
                   <div className="truncate">
                     <span className="font-bold">{l.full_name}</span>
@@ -141,7 +147,7 @@ const SearchableDelegateSelect: React.FC<{
                       ({l.party_name || 'Independent'})
                     </span>
                   </div>
-                  <span className="text-[10px] font-mono text-amber-400 shrink-0">
+                  <span className="text-[10px] font-mono text-amber-500 shrink-0">
                     {l.constituency_number ? `#${l.constituency_number} ` : ''}{l.constituency_name || ''}
                   </span>
                 </button>
@@ -326,10 +332,9 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
               <Sparkles className="w-3.5 h-3.5 text-amber-500" /> Key Assembly Leadership Roles
             </h3>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {[
                 { role: 'Speaker of Legislative Assembly', title: 'Assembly Speaker', bench: 'Neutral / Presiding' },
-                { role: 'Deputy Speaker', title: 'Deputy Speaker', bench: 'Neutral / Presiding' },
                 { role: 'Chief Minister (Leader of the House)', title: 'Chief Minister', bench: 'Ruling Bench' },
                 { role: 'Leader of the Opposition', title: 'Leader of Opposition', bench: 'Opposition Bench' }
               ].map(item => {
@@ -337,17 +342,18 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                 return (
                   <div
                     key={item.role}
-                    className="rounded-2xl p-4 border bg-slate-900 border-slate-800 space-y-3 shadow-sm"
+                    className="rounded-2xl p-4 border space-y-3 shadow-sm transition-all"
+                    style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}
                   >
                     <div className="flex items-center justify-between">
                       <div>
-                        <span className="text-[10px] font-black uppercase text-amber-400 tracking-wider">
+                        <span className="text-[10px] font-black uppercase text-amber-500 tracking-wider">
                           {item.bench}
                         </span>
-                        <h4 className="text-sm font-extrabold text-white">{item.title}</h4>
+                        <h4 className="text-sm font-extrabold" style={{ color: 'var(--text-primary)' }}>{item.title}</h4>
                       </div>
                       {holder && (
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-500 border border-emerald-500/30 flex items-center gap-1">
                           <UserCheck className="w-3 h-3" /> Appointed
                         </span>
                       )}
@@ -384,10 +390,11 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                 return (
                   <div
                     key={port.ministry}
-                    className="rounded-2xl p-5 border bg-slate-900 border-slate-800 space-y-4 shadow-sm"
+                    className="rounded-2xl p-5 border space-y-4 shadow-sm transition-all"
+                    style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}
                   >
-                    <div className="border-b border-slate-800 pb-2">
-                      <h4 className="text-base font-extrabold text-white">{port.ministry}</h4>
+                    <div className="border-b pb-2" style={{ borderColor: 'var(--border-soft)' }}>
+                      <h4 className="text-base font-extrabold" style={{ color: 'var(--text-primary)' }}>{port.ministry}</h4>
                       <p className="text-[11px] text-slate-400">Assign Cabinet Minister & Opposition Counterpart</p>
                     </div>
 
@@ -395,7 +402,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                       {/* Ruling Cabinet Minister */}
                       <div className="space-y-1.5">
                         <div className="flex items-center justify-between text-xs">
-                          <span className="font-bold text-emerald-400 flex items-center gap-1">
+                          <span className="font-bold text-emerald-500 flex items-center gap-1">
                             ● {port.rulingRole}
                           </span>
                           {rulingHolder && (
@@ -413,9 +420,9 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                       </div>
 
                       {/* Shadow Cabinet Minister */}
-                      <div className="space-y-1.5 pt-1 border-t border-slate-800/80">
+                      <div className="space-y-1.5 pt-1 border-t" style={{ borderColor: 'var(--border-soft)' }}>
                         <div className="flex items-center justify-between text-xs">
-                          <span className="font-bold text-rose-400 flex items-center gap-1">
+                          <span className="font-bold text-rose-500 flex items-center gap-1">
                             ● {port.shadowRole}
                           </span>
                           {shadowHolder && (

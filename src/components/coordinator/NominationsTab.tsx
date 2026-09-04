@@ -34,20 +34,20 @@ interface NominationsTabProps {
 
 export const ALL_NOMINATION_ROLES: { id: NominationPosition; label: string; description: string; icon: any }[] = [
   {
+    id: 'Chief Minister',
+    label: 'Chief Minister (CM)',
+    description: 'Heads the Government, sets the legislative agenda, and answers for the ruling bench.',
+    icon: Award
+  },
+  {
     id: 'Speaker',
     label: 'Speaker',
     description: 'Runs the House and every session with strict neutrality.',
     icon: Crown
   },
   {
-    id: 'Chief Minister',
-    label: 'Prime Minister / CM',
-    description: 'Heads the Government, sets the legislative agenda, and answers for the ruling coalition.',
-    icon: Award
-  },
-  {
     id: 'Leader of Opposition',
-    label: 'Leader of Opposition',
+    label: 'Leader of Opposition (LOP)',
     description: 'Leads the Opposition benches, holds the Government to account, and offers the alternative.',
     icon: Scale
   },
@@ -309,8 +309,8 @@ export const NominationsTab: React.FC<NominationsTabProps> = ({
         </div>
       </div>
 
-      {/* ── 3. METRIC SUMMARY CARDS GRID (Matching Image 3) ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+      {/* ── 3. METRIC SUMMARY CARDS GRID ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
         
         {/* Card 1: Total Students Nominated (Highlighted) */}
         <div
@@ -329,142 +329,36 @@ export const NominationsTab: React.FC<NominationsTabProps> = ({
             {uniqueStudentIds}
           </div>
           <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 leading-tight">
-            Total unique delegates filed nominations across all assembly roles.
+            Total unique delegates filed nominations across assembly roles.
           </p>
         </div>
 
-        {/* Card 2: Speaker */}
-        <div
-          onClick={() => setSelectedFilter('Speaker')}
-          className={`rounded-2xl p-4 border shadow-sm transition-all cursor-pointer hover:shadow-md ${
-            selectedFilter === 'Speaker' ? 'ring-2 ring-emerald-500 border-emerald-500/40 bg-emerald-500/5' : ''
-          }`}
-          style={{ backgroundColor: selectedFilter === 'Speaker' ? undefined : 'var(--bg-surface)', borderColor: 'var(--border)' }}
-        >
-          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-            SPEAKER
-          </span>
-          <div className="text-3xl font-black my-1 text-slate-900 dark:text-white">
-            {roleCounts['Speaker'] || 0}
-          </div>
-          <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 leading-tight">
-            Runs the House and every session with strict neutrality.
-          </p>
-        </div>
+        {/* Cards for each election nomination role */}
+        {ALL_NOMINATION_ROLES.map((roleItem) => {
+          const isSelected = selectedFilter === roleItem.id;
+          const count = roleCounts[roleItem.id] || 0;
 
-        {/* Card 3: Party Leader */}
-        <div
-          onClick={() => setSelectedFilter('Party Leader')}
-          className={`rounded-2xl p-4 border shadow-sm transition-all cursor-pointer hover:shadow-md ${
-            selectedFilter === 'Party Leader' ? 'ring-2 ring-emerald-500 border-emerald-500/40 bg-emerald-500/5' : ''
-          }`}
-          style={{ backgroundColor: selectedFilter === 'Party Leader' ? undefined : 'var(--bg-surface)', borderColor: 'var(--border)' }}
-        >
-          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-            PARTY LEADER
-          </span>
-          <div className="text-3xl font-black my-1 text-slate-900 dark:text-white">
-            {roleCounts['Party Leader'] || 0}
-          </div>
-          <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 leading-tight">
-            Leads your party's coalition negotiations and represents it going forward.
-          </p>
-        </div>
-
-        {/* Card 4: Student Journalist */}
-        <div
-          onClick={() => setSelectedFilter('Student Journalist')}
-          className={`rounded-2xl p-4 border shadow-sm transition-all cursor-pointer hover:shadow-md ${
-            selectedFilter === 'Student Journalist' ? 'ring-2 ring-emerald-500 border-emerald-500/40 bg-emerald-500/5' : ''
-          }`}
-          style={{ backgroundColor: selectedFilter === 'Student Journalist' ? undefined : 'var(--bg-surface)', borderColor: 'var(--border)' }}
-        >
-          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-            STUDENT JOURNALIST
-          </span>
-          <div className="text-3xl font-black my-1 text-slate-900 dark:text-white">
-            {roleCounts['Student Journalist'] || 0}
-          </div>
-          <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 leading-tight">
-            Covers the House across both days and reports on it — neutral about party.
-          </p>
-        </div>
-
-        {/* Card 5: Chief Minister */}
-        <div
-          onClick={() => setSelectedFilter('Chief Minister')}
-          className={`rounded-2xl p-4 border shadow-sm transition-all cursor-pointer hover:shadow-md ${
-            selectedFilter === 'Chief Minister' ? 'ring-2 ring-emerald-500 border-emerald-500/40 bg-emerald-500/5' : ''
-          }`}
-          style={{ backgroundColor: selectedFilter === 'Chief Minister' ? undefined : 'var(--bg-surface)', borderColor: 'var(--border)' }}
-        >
-          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-            PRIME MINISTER / CM
-          </span>
-          <div className="text-3xl font-black my-1 text-slate-900 dark:text-white">
-            {roleCounts['Chief Minister'] || 0}
-          </div>
-          <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 leading-tight">
-            Heads the Government, sets legislative agenda, and answers for ruling coalition.
-          </p>
-        </div>
-
-        {/* Card 6: Leader of Opposition */}
-        <div
-          onClick={() => setSelectedFilter('Leader of Opposition')}
-          className={`rounded-2xl p-4 border shadow-sm transition-all cursor-pointer hover:shadow-md ${
-            selectedFilter === 'Leader of Opposition' ? 'ring-2 ring-emerald-500 border-emerald-500/40 bg-emerald-500/5' : ''
-          }`}
-          style={{ backgroundColor: selectedFilter === 'Leader of Opposition' ? undefined : 'var(--bg-surface)', borderColor: 'var(--border)' }}
-        >
-          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-            LEADER OF OPPOSITION
-          </span>
-          <div className="text-3xl font-black my-1 text-slate-900 dark:text-white">
-            {roleCounts['Leader of Opposition'] || 0}
-          </div>
-          <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 leading-tight">
-            Leads the Opposition benches, holds Government to account, and offers alternative.
-          </p>
-        </div>
-
-        {/* Card 7: Cabinet Minister */}
-        <div
-          onClick={() => setSelectedFilter('Cabinet Minister')}
-          className={`rounded-2xl p-4 border shadow-sm transition-all cursor-pointer hover:shadow-md ${
-            selectedFilter === 'Cabinet Minister' ? 'ring-2 ring-emerald-500 border-emerald-500/40 bg-emerald-500/5' : ''
-          }`}
-          style={{ backgroundColor: selectedFilter === 'Cabinet Minister' ? undefined : 'var(--bg-surface)', borderColor: 'var(--border)' }}
-        >
-          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-            CABINET MINISTER
-          </span>
-          <div className="text-3xl font-black my-1 text-slate-900 dark:text-white">
-            {roleCounts['Cabinet Minister'] || 0}
-          </div>
-          <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 leading-tight">
-            Holds portfolios in Government — answers in Question Hour and tables Bills.
-          </p>
-        </div>
-
-        {/* Card 8: Shadow Minister */}
-        <div
-          onClick={() => setSelectedFilter('Shadow Minister')}
-          className={`rounded-2xl p-4 border shadow-sm transition-all cursor-pointer hover:shadow-md ${
-            selectedFilter === 'Shadow Minister' ? 'ring-2 ring-emerald-500 border-emerald-500/40 bg-emerald-500/5' : ''
-          }`}
-          style={{ backgroundColor: selectedFilter === 'Shadow Minister' ? undefined : 'var(--bg-surface)', borderColor: 'var(--border)' }}
-        >
-          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-            SHADOW MINISTER
-          </span>
-          <div className="text-3xl font-black my-1 text-slate-900 dark:text-white">
-            {roleCounts['Shadow Minister'] || 0}
-          </div>
-          <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 leading-tight">
-            Shadows portfolios from Opposition benches — scrutinises and offers alternative.
-          </p>
-        </div>
+          return (
+            <div
+              key={roleItem.id}
+              onClick={() => setSelectedFilter(roleItem.id)}
+              className={`rounded-2xl p-4 border shadow-sm transition-all cursor-pointer hover:shadow-md ${
+                isSelected ? 'ring-2 ring-emerald-500 border-emerald-500/40 bg-emerald-500/5' : ''
+              }`}
+              style={{ backgroundColor: isSelected ? undefined : 'var(--bg-surface)', borderColor: 'var(--border)' }}
+            >
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                {roleItem.label.toUpperCase()}
+              </span>
+              <div className="text-3xl font-black my-1 text-slate-900 dark:text-white">
+                {count}
+              </div>
+              <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 leading-tight">
+                {roleItem.description}
+              </p>
+            </div>
+          );
+        })}
 
       </div>
 

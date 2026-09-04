@@ -153,27 +153,27 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     <div className="max-w-4xl mx-auto space-y-6">
       
       {/* Delegate Assembly Pass Card (WITHOUT openly exposed access code) */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 border border-amber-500/30 p-6 md:p-8 shadow-2xl space-y-6">
+      <div className="relative overflow-hidden rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-amber-500/30 p-6 md:p-8 shadow-xl space-y-6 transition-colors">
         
         {/* Pass Header Banner */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-200 dark:border-slate-800">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-700 flex items-center justify-center text-white shadow-lg shadow-emerald-950/40">
               <Landmark className="w-6 h-6" />
             </div>
             <div>
-              <span className="text-[10px] uppercase font-bold tracking-widest text-amber-400">
+              <span className="text-[10px] uppercase font-bold tracking-widest text-amber-600 dark:text-amber-400">
                 Official Delegate Pass
               </span>
-              <h2 className="text-xl font-extrabold text-white tracking-tight">
+              <h2 className="text-xl font-extrabold text-slate-900 dark:text-white tracking-tight">
                 {event ? event.college_name : 'Tamil Nadu Youth Legislative Assembly'}
               </h2>
             </div>
           </div>
 
-          <div className="bg-slate-950 px-4 py-2 rounded-2xl border border-emerald-500/30 text-center flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-xs uppercase text-emerald-400 font-extrabold tracking-wider">
+          <div className="bg-emerald-50 dark:bg-slate-950 px-4 py-2 rounded-2xl border border-emerald-500/30 text-center flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-xs uppercase text-emerald-700 dark:text-emerald-400 font-extrabold tracking-wider">
               Verified MLA Delegate
             </span>
           </div>
@@ -183,14 +183,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
           
           {/* Avatar & Name */}
-          <div className="space-y-3 md:col-span-1 border-b md:border-b-0 md:border-r border-slate-800 pb-6 md:pb-0 md:pr-6">
+          <div className="space-y-3 md:col-span-1 border-b md:border-b-0 md:border-r border-slate-200 dark:border-slate-800 pb-6 md:pb-0 md:pr-6">
             <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-amber-500 to-amber-700 flex items-center justify-center text-white font-extrabold text-2xl shadow-xl shadow-amber-950/40 mx-auto md:mx-0">
               {student.full_name.charAt(0)}
             </div>
             <div className="text-center md:text-left">
-              <h3 className="text-lg font-extrabold text-white leading-snug">{student.full_name}</h3>
-              <p className="text-xs text-slate-400">{student.department} • <span className="text-amber-400">{student.academic_year}</span></p>
-              <p className="text-xs text-slate-500 mt-1">{student.email}</p>
+              <h3 className="text-lg font-extrabold text-slate-900 dark:text-white leading-snug">{student.full_name}</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">{student.department} • <span className="text-amber-600 dark:text-amber-400 font-semibold">{student.academic_year}</span></p>
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">{student.email}</p>
             </div>
           </div>
 
@@ -198,10 +198,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           <div className="space-y-4 md:col-span-2">
             
             {/* Role & Portfolio Highlight */}
-            <div className="p-4 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-1">
-              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Assigned Legislative Role</span>
-              <p className="text-base font-extrabold text-amber-300 flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-amber-400" />
+            <div className="p-4 bg-slate-50 dark:bg-slate-950/80 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-1">
+              <span className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 tracking-wider">Assigned Legislative Role</span>
+              <p className="text-base font-extrabold text-amber-600 dark:text-amber-300 flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-500" />
                 <span>{student.role || 'Member of Legislative Assembly (MLA)'}</span>
               </p>
             </div>
@@ -209,26 +209,26 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               
               {/* Bench & Party */}
-              <div className="p-3.5 bg-slate-950/80 rounded-xl border border-slate-800 space-y-1">
-                <span className="text-[10px] uppercase font-bold text-slate-400">Bench Position</span>
+              <div className="p-3.5 bg-slate-50 dark:bg-slate-950/80 rounded-xl border border-slate-200 dark:border-slate-800 space-y-1">
+                <span className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Bench Position</span>
                 <div className="flex items-center gap-2">
                   <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide border ${
                     isRuling
-                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                      : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                      : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30'
                   }`}>
                     {student.bench || 'DELEGATE'}
                   </span>
-                  <span className="text-xs font-bold text-white truncate">{student.party_name || 'Unassigned'}</span>
+                  <span className="text-xs font-bold text-slate-900 dark:text-white truncate">{student.party_name || 'Unassigned'}</span>
                 </div>
               </div>
 
               {/* TN Constituency */}
-              <div className="p-3.5 bg-slate-950/80 rounded-xl border border-slate-800 space-y-1">
-                <span className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
-                  <MapPin className="w-3 h-3 text-amber-400" /> TN Assembly Constituency
+              <div className="p-3.5 bg-slate-50 dark:bg-slate-950/80 rounded-xl border border-slate-200 dark:border-slate-800 space-y-1">
+                <span className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                  <MapPin className="w-3 h-3 text-amber-500" /> TN Assembly Constituency
                 </span>
-                <p className="text-xs font-bold text-white font-mono">
+                <p className="text-xs font-bold text-slate-900 dark:text-white font-mono">
                   {student.constituency_number !== undefined ? `#${student.constituency_number} ` : ''}
                   {student.constituency_name || 'Unassigned'}
                 </p>
@@ -237,15 +237,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </div>
 
             {/* Committee Room */}
-            <div className="p-3.5 bg-slate-950/80 rounded-xl border border-slate-800 space-y-1">
-              <span className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
-                <BookOpen className="w-3 h-3 text-blue-400" /> Legislative Committee Room
+            <div className="p-3.5 bg-slate-50 dark:bg-slate-950/80 rounded-xl border border-slate-200 dark:border-slate-800 space-y-1">
+              <span className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                <BookOpen className="w-3 h-3 text-blue-500" /> Legislative Committee Room
               </span>
-              <p className="text-xs font-bold text-slate-200">
+              <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
                 {student.committee_name || 'Unassigned Committee'}
               </p>
               {committee?.topic && (
-                <p className="text-[11px] text-slate-400 italic mt-0.5">Topic: "{committee.topic}"</p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 italic mt-0.5">Topic: "{committee.topic}"</p>
               )}
             </div>
 
@@ -257,25 +257,25 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
       {/* ── LIVE ELECTIONS & BALLOT VOTING SECTION ── */}
       {liveElections.length > 0 && onCastVote && (
-        <div className="bg-gradient-to-br from-amber-950/40 via-slate-900 to-slate-900 border border-amber-500/40 rounded-3xl p-5 md:p-6 shadow-2xl space-y-6">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div className="bg-white dark:bg-slate-900 border border-amber-500/40 rounded-3xl p-5 md:p-6 shadow-xl space-y-6 transition-colors">
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-500 border border-amber-500/30 flex items-center justify-center">
                 <Vote className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-base md:text-lg font-bold text-white flex items-center gap-2">
+                <h3 className="text-base md:text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
                   Official Assembly Ballots (Live Now)
-                  <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-amber-500 text-slate-950 animate-pulse">
+                  <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-amber-500 text-white animate-pulse">
                     VOTING OPEN
                   </span>
                 </h3>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-slate-500 dark:text-slate-400">
                   Cast your official vote for House Leadership and Party Leader positions
                 </p>
               </div>
             </div>
-            <span className="text-xs font-mono font-bold text-amber-400">
+            <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">
               {liveElections.length} Active Ballot{liveElections.length > 1 ? 's' : ''}
             </span>
           </div>
@@ -288,30 +288,30 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               return (
                 <div
                   key={elec.id}
-                  className="p-5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-4 shadow-inner"
+                  className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 space-y-4 shadow-inner"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
-                        <Crown className="w-4 h-4 text-amber-400" />
-                        <h4 className="text-base font-bold text-white">{elec.title}</h4>
+                        <Crown className="w-4 h-4 text-amber-500" />
+                        <h4 className="text-base font-bold text-slate-900 dark:text-white">{elec.title}</h4>
                       </div>
-                      <p className="text-xs text-slate-400">
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
                         Total Ballots Cast in House: <strong>{elec.total_votes || 0}</strong>
                       </p>
                     </div>
 
                     <div>
                       {hasVoted ? (
-                        <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center gap-1">
+                        <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/40 flex items-center gap-1">
                           <Check className="w-3.5 h-3.5 stroke-[3]" /> Ballot Cast
                         </span>
                       ) : eligibleCheck.eligible ? (
-                        <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40 animate-pulse">
+                        <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/40 animate-pulse">
                           Your Vote Awaited
                         </span>
                       ) : (
-                        <span className="px-3 py-1 rounded-full text-xs font-semibold bg-slate-800 text-slate-400 border border-slate-700">
+                        <span className="px-3 py-1 rounded-full text-xs font-semibold bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-700">
                           Ineligible
                         </span>
                       )}
@@ -319,15 +319,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   </div>
 
                   {!eligibleCheck.eligible && (
-                    <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-400 flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                    <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0" />
                       <span>{eligibleCheck.reason}</span>
                     </div>
                   )}
 
                   {/* Candidate Ballot Options */}
                   {(!elec.candidates || elec.candidates.length === 0) ? (
-                    <div className="p-4 text-center rounded-xl bg-slate-900 text-xs text-slate-500 italic">
+                    <div className="p-4 text-center rounded-xl bg-slate-100 dark:bg-slate-900 text-xs text-slate-500 italic">
                       Candidates for this election are being finalized by the Presiding Officer.
                     </div>
                   ) : (
@@ -337,20 +337,20 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           key={cand.id}
                           className={`p-4 rounded-xl border space-y-3 transition-all ${
                             hasVoted
-                              ? 'bg-slate-900/60 border-slate-800/80 opacity-80'
+                              ? 'bg-slate-100/80 dark:bg-slate-900/60 border-slate-200 dark:border-slate-800/80 opacity-80'
                               : eligibleCheck.eligible
-                              ? 'bg-slate-900 border-slate-700 hover:border-amber-500/60'
-                              : 'bg-slate-900/40 border-slate-800 opacity-60'
+                              ? 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 hover:border-amber-500/60'
+                              : 'bg-slate-100/50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800 opacity-60'
                           }`}
                         >
                           <div className="flex items-center justify-between">
                             <div>
-                              <h5 className="text-sm font-bold text-white">{cand.name}</h5>
-                              <p className="text-xs text-slate-400">
-                                {cand.party} • <span className={cand.bench === 'Ruling' ? 'text-emerald-400' : 'text-rose-400'}>{cand.bench} Bench</span>
+                              <h5 className="text-sm font-bold text-slate-900 dark:text-white">{cand.name}</h5>
+                              <p className="text-xs text-slate-500 dark:text-slate-400">
+                                {cand.party} • <span className={cand.bench === 'Ruling' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>{cand.bench} Bench</span>
                               </p>
                             </div>
-                            <span className="text-xs font-mono font-bold text-slate-400">
+                            <span className="text-xs font-mono font-bold text-slate-500 dark:text-slate-400">
                               {cand.votes || 0} votes
                             </span>
                           </div>
@@ -361,7 +361,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                                 onCastVote(elec.id, cand.id, student.id);
                                 onShowToast('Vote Recorded', `You voted for ${cand.name} in ${elec.title}`, 'success');
                               }}
-                              className="w-full py-2 rounded-xl text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 shadow-md flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+                              className="w-full py-2 rounded-xl text-xs font-bold text-white bg-amber-500 hover:bg-amber-600 shadow-md flex items-center justify-center gap-1.5 cursor-pointer transition-all"
                             >
                               <Vote className="w-4 h-4" /> Vote for {cand.name}
                             </button>
@@ -379,18 +379,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
       {/* ── LIVE FLOOR DIVISIONS / FLASH VOTES ── */}
       {activeFlashVotes.length > 0 && onCastFlashVote && (
-        <div className="bg-gradient-to-br from-teal-950/40 via-slate-900 to-slate-900 border border-teal-500/40 rounded-3xl p-5 md:p-6 shadow-2xl space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div className="bg-white dark:bg-slate-900 border border-teal-500/40 rounded-3xl p-5 md:p-6 shadow-xl space-y-4 transition-colors">
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-teal-500/20 text-teal-400 border border-teal-500/30 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-xl bg-teal-500/20 text-teal-500 border border-teal-500/30 flex items-center justify-center">
                 <Zap className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-white">Live Floor Division & Motion</h3>
-                <p className="text-xs text-slate-400">Cast your division vote: AYE / NO / ABSTAIN</p>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">Live Floor Division & Motion</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Cast your division vote: AYE / NO / ABSTAIN</p>
               </div>
             </div>
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/20 text-teal-400 border border-teal-500/40 animate-pulse">
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/20 text-teal-600 dark:text-teal-400 border border-teal-500/40 animate-pulse">
               Active Division
             </span>
           </div>
@@ -400,16 +400,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               const myVote = fv.votes?.find(v => v.learner_id === student.id)?.vote;
 
               return (
-                <div key={fv.id} className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-3">
+                <div key={fv.id} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 space-y-3">
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <span className="text-[10px] uppercase font-bold text-amber-400 tracking-wider">
+                      <span className="text-[10px] uppercase font-bold text-amber-600 dark:text-amber-400 tracking-wider">
                         {fv.motion_type || 'Floor Motion'}
                       </span>
-                      <h4 className="text-base font-bold text-white">{fv.question}</h4>
+                      <h4 className="text-base font-bold text-slate-900 dark:text-white">{fv.question}</h4>
                     </div>
                     {myVote && (
-                      <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
                         Voted: {myVote}
                       </span>
                     )}
@@ -424,7 +424,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
                         myVote === 'AYE'
                           ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg'
-                          : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                          : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
                       }`}
                     >
                       AYE ({fv.ayes_count || 0})
@@ -437,7 +437,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
                         myVote === 'NO'
                           ? 'bg-rose-500 text-white border-rose-400 shadow-lg'
-                          : 'bg-rose-500/10 text-rose-400 border-rose-500/30 hover:bg-rose-500/20'
+                          : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30 hover:bg-rose-500/20'
                       }`}
                     >
                       NO ({fv.noes_count || 0})
@@ -450,7 +450,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
                         myVote === 'ABSTAIN'
                           ? 'bg-slate-600 text-white border-slate-500 shadow-lg'
-                          : 'bg-slate-500/10 text-slate-400 border-slate-500/30 hover:bg-slate-500/20'
+                          : 'bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/30 hover:bg-slate-500/20'
                       }`}
                     >
                       ABSTAIN ({fv.abstain_count || 0})
@@ -465,21 +465,21 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
       {/* Self-Nomination Filing Section */}
       {openNominationPositions.length > 0 && onFileNomination ? (
-        <div className="bg-gradient-to-br from-emerald-950/40 via-slate-900 to-slate-900 border border-emerald-500/30 rounded-2xl p-5 md:p-6 shadow-xl space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div className="bg-white dark:bg-slate-900 border border-emerald-500/30 rounded-2xl p-5 md:p-6 shadow-xl space-y-4 transition-colors">
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
             <div className="flex items-center gap-2">
-              <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
                 <FileSpreadsheet className="w-5 h-5" />
               </div>
               <div>
-                <h4 className="text-base font-bold text-white flex items-center gap-2">
+                <h4 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
                   Parliamentary Candidacy Nominations
                   <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-500 text-white animate-pulse">
                     OPEN NOW
                   </span>
                 </h4>
-                <p className="text-xs text-slate-400">
-                  Open positions: <span className="text-emerald-400 font-semibold">{openNominationPositions.join(', ')}</span>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Open positions: <span className="text-emerald-600 dark:text-emerald-400 font-semibold">{openNominationPositions.join(', ')}</span>
                 </p>
               </div>
             </div>
@@ -488,13 +488,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           <form onSubmit={handleStudentNominationSubmit} className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Select Open Position *
                 </label>
                 <select
                   value={selectedNomPosition}
                   onChange={(e) => setSelectedNomPosition(e.target.value)}
-                  className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-semibold focus:outline-none focus:border-emerald-500"
+                  className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white text-xs font-semibold focus:outline-none focus:border-emerald-500"
                 >
                   {openNominationPositions.map(pos => (
                     <option key={pos} value={pos}>{pos}</option>
@@ -503,20 +503,20 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Candidate Name & Bench
                 </label>
                 <input
                   type="text"
                   readOnly
                   value={`${student.full_name} (${student.party_name || 'Independent'} • ${student.bench || 'Delegate'})`}
-                  className="w-full p-2.5 rounded-xl bg-slate-950/60 border border-slate-800 text-slate-400 text-xs font-medium focus:outline-none"
+                  className="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 text-xs font-medium focus:outline-none"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                 Manifesto / Candidacy Statement *
               </label>
               <textarea
@@ -524,7 +524,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 value={nomManifesto}
                 onChange={(e) => setNomManifesto(e.target.value)}
                 placeholder="Share your goals, vision for the assembly, and proposed reforms..."
-                className="w-full p-3 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
+                className="w-full p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white text-xs placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
               />
             </div>
 
@@ -552,17 +552,17 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           </form>
         </div>
       ) : (
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 shadow-md flex items-center justify-between gap-3">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-md flex items-center justify-between gap-3 transition-colors">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-slate-800 text-slate-400 border border-slate-700/50">
+            <div className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700/50">
               <Lock className="w-4 h-4" />
             </div>
             <div>
-              <h5 className="text-xs font-bold text-slate-300">Nominations Currently Closed</h5>
+              <h5 className="text-xs font-bold text-slate-800 dark:text-slate-300">Nominations Currently Closed</h5>
               <p className="text-[11px] text-slate-500">The Assembly Coordinator will open nomination windows for Speaker and Leadership during proceedings.</p>
             </div>
           </div>
-          <span className="text-[10px] font-mono uppercase font-bold text-slate-500 bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800">
+          <span className="text-[10px] font-mono uppercase font-bold text-slate-500 bg-slate-100 dark:bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-800">
             Awaiting Open
           </span>
         </div>
@@ -570,12 +570,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
       {/* Filed Nominations Tracker */}
       {nominations.length > 0 && (
-        <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-3">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-            <h4 className="text-sm font-bold text-white flex items-center gap-2">
-              <UserCheck className="w-4 h-4 text-emerald-400" /> Active Candidate Nominations ({nominations.length})
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xl space-y-3 transition-colors">
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
+            <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <UserCheck className="w-4 h-4 text-emerald-500" /> Active Candidate Nominations ({nominations.length})
             </h4>
-            <span className="text-[10px] font-mono text-slate-400">Live Roster</span>
+            <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400">Live Roster</span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
@@ -586,12 +586,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   key={nom.id}
                   className={`p-3 rounded-xl border text-xs space-y-1.5 transition-all ${
                     isMe
-                      ? 'bg-emerald-950/30 border-emerald-500/40 text-white'
-                      : 'bg-slate-950/60 border-slate-800/80 text-slate-300'
+                      ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-500/40 text-slate-900 dark:text-white'
+                      : 'bg-slate-50 dark:bg-slate-950/60 border-slate-200 dark:border-slate-800/80 text-slate-700 dark:text-slate-300'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-1">
-                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
                       {nom.position}
                     </span>
                     {isMe && (
@@ -600,10 +600,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       </span>
                     )}
                   </div>
-                  <div className="font-bold text-white text-xs">{nom.candidate_name}</div>
-                  <p className="text-[11px] text-slate-400">{nom.party_name} • {nom.bench} Bench</p>
+                  <div className="font-bold text-slate-900 dark:text-white text-xs">{nom.candidate_name}</div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">{nom.party_name} • {nom.bench} Bench</p>
                   {nom.manifesto && (
-                    <p className="text-[10px] text-slate-400 italic line-clamp-2">"{nom.manifesto}"</p>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400 italic line-clamp-2">"{nom.manifesto}"</p>
                   )}
                 </div>
               );
@@ -613,12 +613,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       )}
 
       {/* Interactive Assembly Floor Request */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4 transition-colors">
         <div>
-          <h4 className="text-base font-bold text-white flex items-center gap-2">
-            <Hand className="w-5 h-5 text-amber-400" /> Request Assembly Floor Time
+          <h4 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+            <Hand className="w-5 h-5 text-amber-500" /> Request Assembly Floor Time
           </h4>
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-slate-500 dark:text-slate-400">
             Submit a Point of Order or speech request to the Assembly Speaker during live debates
           </p>
         </div>
@@ -645,13 +645,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       </div>
 
       {/* Live Session Agenda Timeline */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-          <h4 className="text-base font-bold text-white flex items-center gap-2">
-            <Clock className="w-5 h-5 text-emerald-400" /> Legislative Agenda & Timeline
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xl space-y-4 transition-colors">
+        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+          <h4 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+            <Clock className="w-5 h-5 text-emerald-500" /> Legislative Agenda & Timeline
           </h4>
           {currentAgendaItem?.is_current && (
-            <span className="inline-flex items-center gap-1 text-[10px] uppercase font-bold text-emerald-400 bg-emerald-500/20 px-2.5 py-0.5 rounded-full border border-emerald-500/40 animate-pulse">
+            <span className="inline-flex items-center gap-1 text-[10px] uppercase font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/20 px-2.5 py-0.5 rounded-full border border-emerald-500/40 animate-pulse">
               <Radio className="w-3 h-3" /> Live Now
             </span>
           )}
@@ -663,18 +663,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               key={item.id}
               className={`p-4 rounded-xl border transition-all ${
                 item.is_current
-                  ? 'bg-emerald-950/40 border-emerald-500/50 text-white'
-                  : 'bg-slate-950/60 border-slate-800 text-slate-300'
+                  ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-500/50 text-slate-900 dark:text-white'
+                  : 'bg-slate-50 dark:bg-slate-950/60 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300'
               }`}
             >
               <div className="flex justify-between items-start gap-2">
                 <div>
-                  <span className="text-xs font-mono font-bold text-amber-400">{item.day} • {item.time}</span>
-                  <h5 className="text-sm font-bold text-white mt-0.5">{item.title}</h5>
-                  <p className="text-xs text-slate-400 mt-1">{item.description}</p>
+                  <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">{item.day} • {item.time}</span>
+                  <h5 className="text-sm font-bold text-slate-900 dark:text-white mt-0.5">{item.title}</h5>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{item.description}</p>
                 </div>
                 {item.is_current && (
-                  <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded border border-emerald-500/30">
+                  <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded border border-emerald-500/30">
                     Current
                   </span>
                 )}
