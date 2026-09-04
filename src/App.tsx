@@ -105,25 +105,16 @@ function getInitialRouteInfo(initialSession: SavedAuthSession | null) {
 
   // Volunteer Join Link (/join or /yip/join)
   if (pathname.includes('/join') || pathname.includes('/yip/join')) {
-    if (initialSession?.role === 'volunteer' && initialSession.volunteerCode) {
-      return { role: 'volunteer' as UserRole, isAuthenticated: true };
-    }
     return { role: 'volunteer' as UserRole, isAuthenticated: false };
   }
 
   // Jury Link (/jury or /yip/jury)
   if (pathname.includes('/jury') || pathname.includes('/yip/jury')) {
-    if (initialSession?.role === 'jury' && initialSession.juryCode) {
-      return { role: 'jury' as UserRole, isAuthenticated: true };
-    }
     return { role: 'jury' as UserRole, isAuthenticated: false };
   }
 
   // Student Delegate Link (/me, /student, or /yip/me)
   if (pathname.includes('/me') || pathname.includes('/student') || pathname.includes('/yip/me')) {
-    if (initialSession?.role === 'student' && initialSession.studentCode) {
-      return { role: 'student' as UserRole, isAuthenticated: true };
-    }
     return { role: 'student' as UserRole, isAuthenticated: false };
   }
 
@@ -253,6 +244,9 @@ export function App() {
     try {
       localStorage.removeItem(SESSION_KEY);
       setUserSession(null);
+      setCurrentStudent(null);
+      setCurrentVolunteer(null);
+      setCurrentJury(null);
     } catch (e) {
       console.error('Failed to clear auth session:', e);
     }
@@ -978,10 +972,10 @@ export function App() {
             setScores(storageService.getScores(currentEvent?.id));
           }}
           onLogout={() => {
-            setIsAuthenticated(false);
-            setCurrentJury(null);
             clearSession();
-            if (typeof window !== 'undefined') window.history.pushState({}, '', '/');
+            setIsAuthenticated(false);
+            setRole('volunteer');
+            if (typeof window !== 'undefined') window.history.pushState({}, '', '/join');
             addToast('Signed Out', 'You have been signed out from Jury Portal', 'info');
           }}
           onShowToast={addToast}
@@ -1020,10 +1014,10 @@ export function App() {
           }}
           onToggleVolunteerArrival={(id) => storageService.toggleVolunteerArrival(id)}
           onLogout={() => {
-            setIsAuthenticated(false);
-            setCurrentVolunteer(null);
             clearSession();
-            if (typeof window !== 'undefined') window.history.pushState({}, '', '/');
+            setIsAuthenticated(false);
+            setRole('volunteer');
+            if (typeof window !== 'undefined') window.history.pushState({}, '', '/join');
             addToast('Signed Out', 'You have been signed out from Volunteer Operations Desk', 'info');
           }}
           onShowToast={addToast}
@@ -1090,10 +1084,10 @@ export function App() {
         }}
         onEventChange={handleEventChange}
         onLogout={() => {
-          setIsAuthenticated(false);
-          setCurrentStudent(null);
           clearSession();
-          if (typeof window !== 'undefined') window.history.pushState({}, '', '/');
+          setIsAuthenticated(false);
+          setRole('volunteer');
+          if (typeof window !== 'undefined') window.history.pushState({}, '', '/join');
           addToast('Signed Out', 'You have been signed out', 'info');
         }}
         onGoHome={() => {
