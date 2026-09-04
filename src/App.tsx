@@ -996,6 +996,11 @@ export function App() {
                   eventName={currentEvent.college_name}
                   onShowToast={addToast}
                   onSetCurrentAgendaItem={handleSetCurrentAgendaItem}
+                  onUpdatePartyBench={(partyId, bench) => {
+                    storageService.setPartyBench(partyId, bench, currentEvent.id);
+                    setParties(storageService.getParties(currentEvent.id));
+                    setLearners(storageService.getLearners(currentEvent.id));
+                  }}
                   onOpenLivePollModal={() => handleSelectTab('elections')}
                 />
               )}

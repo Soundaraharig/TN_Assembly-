@@ -242,13 +242,13 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
       {/* Header Metric Badges */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <h3 className="text-lg font-black text-slate-900 dark:text-white">
+          <h3 className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
             Participants ({learners.length})
           </h3>
-          <div className="flex items-center gap-2 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500"></span> Day 1: {day1CheckedCount}</span>
+          <div className="flex items-center gap-2 text-xs font-semibold" style={{ color: 'var(--accent)' }}>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--accent)' }}></span> Day 1: {day1CheckedCount}</span>
             <span>•</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500"></span> Day 2: {day2CheckedCount} of {learners.length}</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--accent)' }}></span> Day 2: {day2CheckedCount} of {learners.length}</span>
           </div>
         </div>
 
@@ -260,9 +260,10 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
               onCheckInAll(1, true);
               onShowToast('Day 1 Attendance Updated', 'Checked in all delegates for Day 1', 'success');
             }}
-            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="px-3 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
           >
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+            <CheckCircle2 className="w-3.5 h-3.5" style={{ color: 'var(--accent)' }} />
             <span>Check In All - Day 1</span>
           </button>
 
@@ -271,34 +272,43 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
               onCheckInAll(2, true);
               onShowToast('Day 2 Attendance Updated', 'Checked in all delegates for Day 2', 'success');
             }}
-            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="px-3 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
           >
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+            <CheckCircle2 className="w-3.5 h-3.5" style={{ color: 'var(--accent)' }} />
             <span>Check In All - Day 2</span>
           </button>
 
           <button
             onClick={onOpenImportCsv}
-            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="px-3 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
           >
-            <Upload className="w-3.5 h-3.5 text-slate-500" />
+            <Upload className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
             <span>Import CSV / Excel</span>
           </button>
 
           {/* Export Dropdown */}
           <div className="relative group">
-            <button className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer">
-              <Download className="w-3.5 h-3.5 text-slate-500" />
+            <button
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+            >
+              <Download className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
               <span>Download List & Attendance</span>
-              <ChevronDown className="w-3 h-3 text-slate-400" />
+              <ChevronDown className="w-3 h-3" style={{ color: 'var(--text-muted)' }} />
             </button>
-            <div className="absolute right-0 top-full mt-1.5 w-48 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl py-1.5 hidden group-hover:block z-30">
+            <div
+              className="absolute right-0 top-full mt-1.5 w-48 border rounded-xl shadow-xl py-1.5 hidden group-hover:block z-30"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+            >
               <button
                 onClick={() => {
                   exportFullParticipantDataToExcel(filteredLearners, eventName);
                   onShowToast('Excel Exported', `Exported ${filteredLearners.length} participant records`, 'success');
                 }}
-                className="w-full text-left px-3.5 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700"
+                className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
+                style={{ color: 'var(--text-primary)' }}
               >
                 Export to Excel (.xlsx)
               </button>
@@ -307,7 +317,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                   exportFullParticipantDataToCSV(filteredLearners, eventName);
                   onShowToast('CSV Exported', `Exported ${filteredLearners.length} participant records`, 'success');
                 }}
-                className="w-full text-left px-3.5 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700"
+                className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
+                style={{ color: 'var(--text-primary)' }}
               >
                 Export to CSV (.csv)
               </button>
@@ -323,17 +334,19 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
               generateDelegateBadgesPDF(filteredLearners, eventName);
               onShowToast('Badges Generated', 'Downloaded printable PDF delegate badges', 'success');
             }}
-            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="px-3 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
           >
-            <Printer className="w-3.5 h-3.5 text-slate-500" />
+            <Printer className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
             <span>Print Badges</span>
           </button>
 
           <button
             onClick={() => onShowToast('Access Codes Emailed', 'Sent access codes to enrolled student emails', 'info')}
-            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="px-3 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
           >
-            <Mail className="w-3.5 h-3.5 text-slate-500" />
+            <Mail className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
             <span>Email Codes</span>
           </button>
 
@@ -346,7 +359,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
               setIsMassDeleteModalOpen(true);
             }}
             disabled={learners.length === 0}
-            className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 text-xs font-bold border border-rose-200 dark:border-rose-800/80 flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-40"
+            className="px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-40"
+            style={{ backgroundColor: 'rgba(239, 68, 68, 0.08)', borderColor: 'rgba(239, 68, 68, 0.3)', color: '#ef4444' }}
             title="Mass delete or clear delegate roster"
           >
             <Trash2 className="w-3.5 h-3.5 text-rose-600" />
@@ -355,7 +369,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
 
           <button
             onClick={onOpenAddWalkIn}
-            className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-600/20 flex items-center gap-1.5 transition-all cursor-pointer"
+            className="px-3.5 py-1.5 rounded-xl text-white font-bold text-xs shadow-sm flex items-center gap-1.5 transition-all cursor-pointer hover:opacity-95"
+            style={{ backgroundColor: 'var(--accent)' }}
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Quick Add Walk-in</span>
@@ -365,68 +380,103 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
       </div>
 
       {/* Filter Pills & Dropdowns Toolbar */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-4 shadow-sm space-y-3">
+      <div
+        className="border rounded-2xl p-4 shadow-sm space-y-3"
+        style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+      >
         
         <div className="flex flex-wrap items-center justify-between gap-3">
           
           {/* Search by name */}
           <div className="relative flex-1 max-w-xs">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
             <input
               type="text"
               placeholder="Search by name or code..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-9 pr-3 py-1.5 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-emerald-600 focus:bg-white dark:focus:bg-slate-800"
+              className="w-full border rounded-xl pl-9 pr-3 py-1.5 text-xs focus:outline-none transition-colors"
+              style={{
+                backgroundColor: 'var(--bg-elevated)',
+                borderColor: 'var(--border)',
+                color: 'var(--text-primary)'
+              }}
             />
           </div>
 
           {/* Status Pills */}
-          <div className="flex items-center gap-1 text-xs">
+          <div className="flex items-center gap-1.5 text-xs">
             <button
               onClick={() => setStatusPill('ALL')}
-              className={`px-3 py-1 rounded-full font-bold transition-all cursor-pointer ${
-                statusPill === 'ALL' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
-              }`}
+              className="px-3 py-1 rounded-full font-bold transition-all cursor-pointer border"
+              style={{
+                backgroundColor: statusPill === 'ALL' ? 'var(--text-primary)' : 'var(--bg-elevated)',
+                color: statusPill === 'ALL' ? 'var(--bg-surface)' : 'var(--text-secondary)',
+                borderColor: statusPill === 'ALL' ? 'var(--text-primary)' : 'var(--border)'
+              }}
             >
               All ({learners.length})
             </button>
             <button
               onClick={() => setStatusPill('CHECKED_IN')}
-              className={`px-3 py-1 rounded-full font-bold transition-all cursor-pointer ${
-                statusPill === 'CHECKED_IN' ? 'bg-emerald-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
-              }`}
+              className="px-3 py-1 rounded-full font-bold transition-all cursor-pointer border"
+              style={{
+                backgroundColor: statusPill === 'CHECKED_IN' ? 'var(--accent)' : 'var(--bg-elevated)',
+                color: statusPill === 'CHECKED_IN' ? '#ffffff' : 'var(--text-secondary)',
+                borderColor: statusPill === 'CHECKED_IN' ? 'var(--accent)' : 'var(--border)'
+              }}
             >
               Checked in ({day1CheckedCount})
             </button>
             <button
               onClick={() => setStatusPill('NOT_CHECKED_IN')}
-              className={`px-3 py-1 rounded-full font-bold transition-all cursor-pointer ${
-                statusPill === 'NOT_CHECKED_IN' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
-              }`}
+              className="px-3 py-1 rounded-full font-bold transition-all cursor-pointer border"
+              style={{
+                backgroundColor: statusPill === 'NOT_CHECKED_IN' ? 'var(--text-primary)' : 'var(--bg-elevated)',
+                color: statusPill === 'NOT_CHECKED_IN' ? 'var(--bg-surface)' : 'var(--text-secondary)',
+                borderColor: statusPill === 'NOT_CHECKED_IN' ? 'var(--text-primary)' : 'var(--border)'
+              }}
             >
               Not checked in ({learners.length - day1CheckedCount})
             </button>
           </div>
 
           {/* Day selection */}
-          <div className="flex items-center gap-1 text-xs bg-slate-100 dark:bg-slate-800 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700">
-            <span className="text-slate-400 px-2 font-medium">for</span>
+          <div
+            className="flex items-center gap-1 text-xs p-0.5 rounded-xl border"
+            style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+          >
+            <span className="px-2 font-medium" style={{ color: 'var(--text-muted)' }}>for</span>
             <button
               onClick={() => setDayPill('Day 1')}
-              className={`px-2.5 py-1 rounded-lg font-bold cursor-pointer ${dayPill === 'Day 1' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm' : 'text-slate-600 dark:text-slate-300'}`}
+              className="px-2.5 py-1 rounded-lg font-bold cursor-pointer transition-colors"
+              style={{
+                backgroundColor: dayPill === 'Day 1' ? 'var(--bg-surface)' : 'transparent',
+                color: dayPill === 'Day 1' ? 'var(--text-primary)' : 'var(--text-secondary)',
+                boxShadow: dayPill === 'Day 1' ? 'var(--shadow-sm)' : 'none'
+              }}
             >
               Day 1
             </button>
             <button
               onClick={() => setDayPill('Day 2')}
-              className={`px-2.5 py-1 rounded-lg font-bold cursor-pointer ${dayPill === 'Day 2' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm' : 'text-slate-600 dark:text-slate-300'}`}
+              className="px-2.5 py-1 rounded-lg font-bold cursor-pointer transition-colors"
+              style={{
+                backgroundColor: dayPill === 'Day 2' ? 'var(--bg-surface)' : 'transparent',
+                color: dayPill === 'Day 2' ? 'var(--text-primary)' : 'var(--text-secondary)',
+                boxShadow: dayPill === 'Day 2' ? 'var(--shadow-sm)' : 'none'
+              }}
             >
               Day 2
             </button>
             <button
               onClick={() => setDayPill('Either')}
-              className={`px-2.5 py-1 rounded-lg font-bold cursor-pointer ${dayPill === 'Either' ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm' : 'text-slate-600 dark:text-slate-300'}`}
+              className="px-2.5 py-1 rounded-lg font-bold cursor-pointer transition-colors"
+              style={{
+                backgroundColor: dayPill === 'Either' ? 'var(--bg-surface)' : 'transparent',
+                color: dayPill === 'Either' ? 'var(--text-primary)' : 'var(--text-secondary)',
+                boxShadow: dayPill === 'Either' ? 'var(--shadow-sm)' : 'none'
+              }}
             >
               Either
             </button>
@@ -435,15 +485,23 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
         </div>
 
         {/* Dropdowns Row */}
-        <div className="flex flex-wrap items-center justify-between gap-2.5 border-t border-slate-100 dark:border-slate-800 pt-3 text-xs">
+        <div
+          className="flex flex-wrap items-center justify-between gap-2.5 border-t pt-3 text-xs"
+          style={{ borderColor: 'var(--border-soft)' }}
+        >
           
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-slate-400 font-medium">Filter:</span>
+            <span className="font-medium" style={{ color: 'var(--text-muted)' }}>Filter:</span>
             
             <select
               value={selectedParty}
               onChange={(e) => setSelectedParty(e.target.value)}
-              className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 text-slate-700 dark:text-slate-200 font-medium focus:outline-none"
+              className="border rounded-lg px-2.5 py-1 font-medium focus:outline-none"
+              style={{
+                backgroundColor: 'var(--bg-elevated)',
+                borderColor: 'var(--border)',
+                color: 'var(--text-primary)'
+              }}
             >
               <option value="ALL">All parties</option>
               {parties.map(p => (
@@ -454,7 +512,12 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
             <select
               value={selectedRole}
               onChange={(e) => setSelectedRole(e.target.value)}
-              className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 text-slate-700 dark:text-slate-200 font-medium focus:outline-none"
+              className="border rounded-lg px-2.5 py-1 font-medium focus:outline-none"
+              style={{
+                backgroundColor: 'var(--bg-elevated)',
+                borderColor: 'var(--border)',
+                color: 'var(--text-primary)'
+              }}
             >
               <option value="ALL">All roles</option>
               <option value="Chief Minister">Chief Minister</option>
@@ -468,7 +531,12 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
             <select
               value={selectedCommittee}
               onChange={(e) => setSelectedCommittee(e.target.value)}
-              className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 text-slate-700 dark:text-slate-200 font-medium focus:outline-none"
+              className="border rounded-lg px-2.5 py-1 font-medium focus:outline-none"
+              style={{
+                backgroundColor: 'var(--bg-elevated)',
+                borderColor: 'var(--border)',
+                color: 'var(--text-primary)'
+              }}
             >
               <option value="ALL">All committees</option>
               {committees.map(c => (
@@ -479,7 +547,12 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
             <select
               value={selectedBench}
               onChange={(e) => setSelectedBench(e.target.value)}
-              className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 text-slate-700 dark:text-slate-200 font-medium focus:outline-none"
+              className="border rounded-lg px-2.5 py-1 font-medium focus:outline-none"
+              style={{
+                backgroundColor: 'var(--bg-elevated)',
+                borderColor: 'var(--border)',
+                color: 'var(--text-primary)'
+              }}
             >
               <option value="ALL">All benches</option>
               <option value="Ruling">Ruling</option>
@@ -489,12 +562,13 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
           </div>
 
           <div className="flex items-center gap-3">
-            <span className="text-slate-400 font-medium">{filteredLearners.length} shown</span>
+            <span style={{ color: 'var(--text-muted)' }}>{filteredLearners.length} shown</span>
             <button
               onClick={onOpenAllocationModal}
-              className="px-3 py-1 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 font-semibold text-xs transition-colors flex items-center gap-1 cursor-pointer"
+              className="px-3 py-1 rounded-lg border font-semibold text-xs transition-colors flex items-center gap-1 cursor-pointer"
+              style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
             >
-              <SlidersHorizontal className="w-3 h-3 text-slate-500" />
+              <SlidersHorizontal className="w-3 h-3" style={{ color: 'var(--text-muted)' }} />
               <span>Set bench for shown rows</span>
             </button>
           </div>
@@ -688,17 +762,17 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                       </td>
 
                       {/* Serial Number */}
-                      <td className="py-3 px-3 text-center font-mono text-slate-400">
+                      <td className="py-3 px-3 text-center font-mono" style={{ color: 'var(--text-muted)' }}>
                         {idx + 1}
                       </td>
 
                       {/* Delegate Name & Department */}
                       <td className="py-3 px-4">
                         <div>
-                          <strong className="block font-bold text-slate-900 dark:text-white">
+                          <strong className="block font-bold text-sm" style={{ color: 'var(--text-primary)' }}>
                             {learner.full_name}
                           </strong>
-                          <span className="text-[11px] text-slate-400">
+                          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                             {learner.department || 'General'} • {learner.academic_year || '1st Year'}
                           </span>
                         </div>
@@ -706,7 +780,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
 
                       {/* Party */}
                       <td className="py-3 px-4">
-                        <span className="font-semibold text-slate-700 dark:text-slate-300">
+                        <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>
                           {learner.party_name || 'Independent'}
                         </span>
                       </td>
@@ -715,10 +789,10 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                       <td className="py-3 px-4">
                         <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
                           learner.bench === 'Ruling'
-                            ? 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300'
+                            ? 'bg-blue-50 text-blue-700 border-blue-300 dark:bg-blue-950/40 dark:text-blue-300'
                             : learner.bench === 'Opposition'
-                              ? 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300'
-                              : 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300'
+                              ? 'bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/40 dark:text-rose-300'
+                              : 'bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300'
                         }`}>
                           {learner.bench || 'Unallocated'}
                         </span>
@@ -726,25 +800,32 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
 
                       {/* Assembly Role */}
                       <td className="py-3 px-4">
-                        <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[11px] font-medium inline-block max-w-[160px] truncate">
-                          {learner.role || 'MLA'}
+                        <span
+                          className="px-2 py-0.5 rounded text-[11px] font-medium inline-block max-w-[170px] truncate border"
+                          style={{
+                            backgroundColor: 'var(--bg-elevated)',
+                            borderColor: 'var(--border)',
+                            color: 'var(--text-primary)'
+                          }}
+                        >
+                          {learner.role || 'Member of Legislative Assembly'}
                         </span>
                       </td>
 
                       {/* Constituency No. */}
-                      <td className="py-3 px-3 text-center font-mono font-bold text-slate-600 dark:text-slate-300">
+                      <td className="py-3 px-3 text-center font-mono font-bold" style={{ color: 'var(--text-primary)' }}>
                         {learner.constituency_number || '—'}
                       </td>
 
                       {/* Constituency Name */}
                       <td className="py-3 px-4">
-                        <span className="font-medium text-slate-800 dark:text-slate-200">
+                        <span className="font-medium" style={{ color: 'var(--text-primary)' }}>
                           {learner.constituency_name ? `${learner.constituency_number ? `${learner.constituency_number} - ` : ''}${learner.constituency_name}` : '—'}
                         </span>
                       </td>
 
                       {/* District */}
-                      <td className="py-3 px-4 text-slate-500">
+                      <td className="py-3 px-4" style={{ color: 'var(--text-secondary)' }}>
                         {learner.district || 'Tamil Nadu'}
                       </td>
 
@@ -753,7 +834,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                         <div className="flex items-center justify-end gap-1">
                           <button
                             onClick={() => setEditingLearner(learner)}
-                            className="p-1.5 text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                            className="p-1.5 rounded-lg transition-colors cursor-pointer hover:bg-emerald-50 hover:text-emerald-700 dark:hover:bg-slate-800"
+                            style={{ color: 'var(--text-muted)' }}
                             title="Edit Participant Details"
                           >
                             <Pencil className="w-4 h-4" />
@@ -764,8 +846,9 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                               setAuthError('');
                               setCoordAuthPass('');
                             }}
-                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors cursor-pointer"
-                            title="Delete Participant (Requires Lead Coordinator Authorization)"
+                            className="p-1.5 rounded-lg transition-colors cursor-pointer hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40"
+                            style={{ color: 'var(--text-muted)' }}
+                            title="Delete Participant"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>

@@ -618,6 +618,43 @@ class StorageService {
     this.sbUpsert('political_parties', party as unknown as Record<string, unknown>);
   }
 
+  public setPartyBench(partyId: string, bench: 'Ruling' | 'Opposition' | 'Independent', _eventId?: string) {
+    const parties = this.getParties().map(p => {
+      if (p.id === partyId) {
+        return { ...p, bench };
+      }
+      return p;
+    });
+    this.setItem(STORAGE_KEYS.PARTIES, parties);
+
+    const targetParty = parties.find(p => p.id === partyId);
+    if (targetParty) {
+      this.sbUpsert('political_parties', targetParty as unknown as Record<string, unknown>);
+
+      // Automatically update all learners belonging to this party to follow the manual bench switch
+      const allLearners = this.getLearners();
+      const updatedLearners = allLearners.map(l => {
+        if (l.party_id === partyId || l.party_name === targetParty.name) {
+          return { ...l, bench };
+        }
+        return l;
+      });
+      this.setItem(STORAGE_KEYS.LEARNERS, updatedLearners);
+
+      // Sync updated learners to Supabase
+      if (supabase) {
+        const learnersToUpdate = updatedLearners.filter(l => l.party_id === partyId || l.party_name === targetParty.name);
+        if (learnersToUpdate.length > 0) {
+          const sanitized = learnersToUpdate.map(item => this.sanitizeRecordForTable('learners', item as unknown as Record<string, unknown>));
+          supabase.from('learners').upsert(sanitized, { onConflict: 'id' }).then(({ error }) => {
+            if (error) console.warn('[Supabase] bulk bench update error:', error.message);
+          });
+        }
+      }
+    }
+    this.notify();
+  }
+
   public deleteParty(partyId: string) {
     this.setItem(STORAGE_KEYS.PARTIES, this.getParties().filter(p => p.id !== partyId));
     this.sbDelete('political_parties', partyId);
