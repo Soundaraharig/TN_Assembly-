@@ -83,9 +83,13 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
 
   const selectedLearner = learners.find(l => l.id === selectedLearnerId);
 
-  // Load existing score when learner changes
+  const [loadedLearnerId, setLoadedLearnerId] = useState<string>('');
+
+  // Load existing score ONLY when learner changes or initial load
   useEffect(() => {
     if (!selectedLearner) return;
+    if (loadedLearnerId === selectedLearner.id) return;
+
     const existing = scores.find(s => s.learner_id === selectedLearner.id && (!event || s.event_id === event.id));
     if (existing) {
       setResearchScore(existing.research_constituency ?? existing.policy_knowledge ?? 2);
@@ -107,9 +111,91 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       setIsLocked(false);
       setFeedback('');
     }
-  }, [selectedLearnerId, scores, event]);
+    setLoadedLearnerId(selectedLearner.id);
+  }, [selectedLearner, loadedLearnerId, scores, event]);
 
   const totalScore = researchScore + relevanceScore + commScore + conductScore + originalityScore + timeScore;
+
+  // Persist score record immediately to storage & Supabase
+  const persistScoreRecord = (overrides?: {
+    research?: number;
+    relevance?: number;
+    comm?: number;
+    conduct?: number;
+    originality?: number;
+    time?: number;
+    feedbackStr?: string;
+    lockedBool?: boolean;
+  }) => {
+    if (!selectedLearner) return;
+
+    const rScore = overrides?.research ?? researchScore;
+    const relScore = overrides?.relevance ?? relevanceScore;
+    const cScore = overrides?.comm ?? commScore;
+    const condScore = overrides?.conduct ?? conductScore;
+    const origScore = overrides?.originality ?? originalityScore;
+    const tScore = overrides?.time ?? timeScore;
+    const fb = overrides?.feedbackStr !== undefined ? overrides.feedbackStr : feedback;
+    const lk = overrides?.lockedBool !== undefined ? overrides.lockedBool : isLocked;
+
+    const currentTotal = rScore + relScore + cScore + condScore + origScore + tScore;
+
+    const existing = scores.find(s => s.learner_id === selectedLearner.id && (!event || s.event_id === event.id));
+    const record: ScoreRecord = {
+      id: existing?.id || `score_${selectedLearner.id}_${Date.now()}`,
+      event_id: event?.id || selectedLearner.event_id || '',
+      learner_id: selectedLearner.id,
+      learner_name: selectedLearner.full_name,
+      party_name: selectedLearner.party_name || 'Independent',
+      bench: selectedLearner.bench || 'Ruling',
+      
+      // 6 Rubric Breakdown (Exact 100 Total)
+      research_constituency: rScore,
+      relevance_agenda: relScore,
+      communication_delivery: cScore,
+      parliamentary_conduct: condScore,
+      originality_preparation: origScore,
+      time_management: tScore,
+
+      // Legacy fallback fields for backwards compatibility
+      oratory: cScore,
+      policy_knowledge: rScore,
+      rebuttal_debate: relScore,
+
+      total: currentTotal,
+      feedback: fb.trim(),
+      juror_name: jury?.name || 'Evaluator',
+      is_locked: lk,
+      updated_at: new Date().toISOString()
+    };
+
+    onSaveScore(record);
+    setIsSavedRecently(true);
+    setTimeout(() => setIsSavedRecently(false), 2000);
+  };
+
+  const handleSelectScore = (type: 'research' | 'relevance' | 'comm' | 'conduct' | 'originality' | 'time', val: number) => {
+    if (isLocked) return;
+    if (type === 'research') {
+      setResearchScore(val);
+      persistScoreRecord({ research: val });
+    } else if (type === 'relevance') {
+      setRelevanceScore(val);
+      persistScoreRecord({ relevance: val });
+    } else if (type === 'comm') {
+      setCommScore(val);
+      persistScoreRecord({ comm: val });
+    } else if (type === 'conduct') {
+      setConductScore(val);
+      persistScoreRecord({ conduct: val });
+    } else if (type === 'originality') {
+      setOriginalityScore(val);
+      persistScoreRecord({ originality: val });
+    } else if (type === 'time') {
+      setTimeScore(val);
+      persistScoreRecord({ time: val });
+    }
+  };
 
   // Jump To Participant Keypad Actions
   const handleJumpInputChange = (query: string) => {
@@ -156,41 +242,10 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
 
   const handleSaveEvaluation = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedLearner) return;
-
-    const existing = scores.find(s => s.learner_id === selectedLearner.id && (!event || s.event_id === event.id));
-    const record: ScoreRecord = {
-      id: existing?.id || `score_${selectedLearner.id}_${Date.now()}`,
-      event_id: event?.id || selectedLearner.event_id || '',
-      learner_id: selectedLearner.id,
-      learner_name: selectedLearner.full_name,
-      party_name: selectedLearner.party_name || 'Independent',
-      bench: selectedLearner.bench || 'Ruling',
-      
-      // 6 Rubric Breakdown (Exact 100 Total)
-      research_constituency: researchScore,
-      relevance_agenda: relevanceScore,
-      communication_delivery: commScore,
-      parliamentary_conduct: conductScore,
-      originality_preparation: originalityScore,
-      time_management: timeScore,
-
-      // Legacy fallback fields for backwards compatibility
-      oratory: commScore,
-      policy_knowledge: researchScore,
-      rebuttal_debate: relevanceScore,
-
-      total: totalScore,
-      feedback: feedback.trim(),
-      juror_name: jury?.name || 'Evaluator',
-      is_locked: isLocked,
-      updated_at: new Date().toISOString()
-    };
-
-    onSaveScore(record);
-    setIsSavedRecently(true);
-    setTimeout(() => setIsSavedRecently(false), 3000);
-    onShowToast('Evaluation Saved', `Recorded score of ${totalScore}/100 for ${selectedLearner.full_name}`, 'success');
+    persistScoreRecord();
+    if (selectedLearner) {
+      onShowToast('Evaluation Saved', `Recorded score of ${totalScore}/100 for ${selectedLearner.full_name}`, 'success');
+    }
   };
 
   const filteredLearners = useMemo(() => {
@@ -427,7 +482,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             key={val}
                             type="button"
                             disabled={isLocked}
-                            onClick={() => setResearchScore(val)}
+                            onClick={() => handleSelectScore('research', val)}
                             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                               researchScore === val
                                 ? 'bg-blue-600 text-white shadow-md scale-105'
@@ -465,7 +520,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             key={val}
                             type="button"
                             disabled={isLocked}
-                            onClick={() => setRelevanceScore(val)}
+                            onClick={() => handleSelectScore('relevance', val)}
                             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                               relevanceScore === val
                                 ? 'bg-blue-600 text-white shadow-md scale-105'
@@ -503,7 +558,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             key={val}
                             type="button"
                             disabled={isLocked}
-                            onClick={() => setCommScore(val)}
+                            onClick={() => handleSelectScore('comm', val)}
                             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                               commScore === val
                                 ? 'bg-blue-600 text-white shadow-md scale-105'
@@ -541,7 +596,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             key={val}
                             type="button"
                             disabled={isLocked}
-                            onClick={() => setConductScore(val)}
+                            onClick={() => handleSelectScore('conduct', val)}
                             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                               conductScore === val
                                 ? 'bg-blue-600 text-white shadow-md scale-105'
@@ -579,7 +634,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             key={val}
                             type="button"
                             disabled={isLocked}
-                            onClick={() => setOriginalityScore(val)}
+                            onClick={() => handleSelectScore('originality', val)}
                             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                               originalityScore === val
                                 ? 'bg-blue-600 text-white shadow-md scale-105'
@@ -617,7 +672,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             key={val}
                             type="button"
                             disabled={isLocked}
-                            onClick={() => setTimeScore(val)}
+                            onClick={() => handleSelectScore('time', val)}
                             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                               timeScore === val
                                 ? 'bg-blue-600 text-white shadow-md scale-105'
