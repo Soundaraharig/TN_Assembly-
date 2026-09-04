@@ -386,6 +386,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                 <thead className="border-b uppercase" style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
                   <tr>
                     <th className="py-2.5 px-3">Access Code</th>
+                    <th className="py-2.5 px-3">Seat / Const #</th>
                     <th className="py-2.5 px-3">Delegate Name</th>
                     <th className="py-2.5 px-3">Party & Bench</th>
                     <th className="py-2.5 px-3">Constituency / Role</th>
@@ -406,6 +407,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                         <tr key={learner.id} className="hover:opacity-90">
                           <td className="py-3 px-3 font-mono font-bold" style={{ color: 'var(--accent)' }}>
                             {learner.access_code}
+                            {learner.constituency_number !== undefined ? `#${learner.constituency_number}` : '—'}
                           </td>
                           <td className="py-3 px-3 font-bold" style={{ color: 'var(--text-primary)' }}>
                             {learner.full_name}

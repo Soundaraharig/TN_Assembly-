@@ -39,6 +39,7 @@ export const Header: React.FC<HeaderProps> = ({
   const displayName =
     role === 'student' && currentStudent
       ? `${currentStudent.full_name} • Code: ${currentStudent.access_code}`
+      ? `${currentStudent.full_name} (${currentStudent.party_name || 'MLA'})`
       : userSession?.name
       ? userSession.name
       : currentCoordinator?.name

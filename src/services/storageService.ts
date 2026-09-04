@@ -93,6 +93,8 @@ function uid(_prefix?: string): string {
 // ---------------------------------------------------------------------------
 class StorageService {
   private listeners: Listener[] = [];
+  private realtimeChannel: any = null;
+  private syncTimer: any = null;
 
   constructor() {
     this.initDefaults();
@@ -100,6 +102,7 @@ class StorageService {
       this.syncFromSupabase().catch(err =>
         console.warn('[Supabase] Initial sync failed, using localStorage cache:', err)
       );
+      this.setupRealtimeSync();
     }
   }
 
@@ -189,6 +192,9 @@ class StorageService {
         { data: parties },
         { data: committees },
         { data: agenda }
+        { data: agenda },
+        { data: juryMembers },
+        { data: volunteers }
       ] = await Promise.all([
         supabase.from('college_events').select('*').order('created_at', { ascending: false }),
         supabase.from('coordinators').select('*'),
@@ -196,10 +202,56 @@ class StorageService {
         supabase.from('political_parties').select('*'),
         supabase.from('committees').select('*'),
         supabase.from('session_agenda').select('*').order('time', { ascending: true })
+        supabase.from('session_agenda').select('*').order('time', { ascending: true }),
+        supabase.from('jury_members').select('*'),
+        supabase.from('volunteers').select('*')
       ]);
 
       if (events) {
+      if (events && events.length > 0) {
         this.setItem(STORAGE_KEYS.EVENTS, events);
+
+        // Unpack event_state (social_coverage) for real-time open nominations, elections, votes, etc.
+        const openNomMap: Record<string, string[]> = { ...this.getItem<Record<string, string[]>>(STORAGE_KEYS.OPEN_NOMINATIONS, {}) };
+        let allNoms: Nomination[] = [];
+        let allElecs: Election[] = [];
+        let allFVotes: LiveFlashVote[] = [];
+        let allProcs: BillProceeding[] = [];
+        let allQs: ParliamentQuestion[] = [];
+        let allScores: ScoreRecord[] = [];
+
+        events.forEach(ev => {
+          const sc = (ev.social_coverage || {}) as any;
+          if (Array.isArray(sc.open_nominations)) {
+            openNomMap[ev.id] = sc.open_nominations;
+          }
+          if (Array.isArray(sc.nominations) && sc.nominations.length > 0) {
+            allNoms = [...allNoms, ...sc.nominations];
+          }
+          if (Array.isArray(sc.elections) && sc.elections.length > 0) {
+            allElecs = [...allElecs, ...sc.elections];
+          }
+          if (Array.isArray(sc.flash_votes) && sc.flash_votes.length > 0) {
+            allFVotes = [...allFVotes, ...sc.flash_votes];
+          }
+          if (Array.isArray(sc.proceedings) && sc.proceedings.length > 0) {
+            allProcs = [...allProcs, ...sc.proceedings];
+          }
+          if (Array.isArray(sc.questions) && sc.questions.length > 0) {
+            allQs = [...allQs, ...sc.questions];
+          }
+          if (Array.isArray(sc.scores) && sc.scores.length > 0) {
+            allScores = [...allScores, ...sc.scores];
+          }
+        });
+
+        this.setItem(STORAGE_KEYS.OPEN_NOMINATIONS, openNomMap);
+        if (allNoms.length > 0) this.setItem(STORAGE_KEYS.NOMINATIONS, allNoms);
+        if (allElecs.length > 0) this.setItem(STORAGE_KEYS.ELECTIONS, allElecs);
+        if (allFVotes.length > 0) this.setItem(STORAGE_KEYS.FLASH_VOTES, allFVotes);
+        if (allProcs.length > 0) this.setItem(STORAGE_KEYS.PROCEEDINGS, allProcs);
+        if (allQs.length > 0) this.setItem(STORAGE_KEYS.QUESTIONS, allQs);
+        if (allScores.length > 0) this.setItem(STORAGE_KEYS.SCORES, allScores);
       }
 
       if (coordinators) {
@@ -219,8 +271,85 @@ class StorageService {
       if (agenda && agenda.length > 0) {
         this.setItem(STORAGE_KEYS.AGENDA, agenda);
       }
+      if (juryMembers && juryMembers.length > 0) {
+        this.setItem(STORAGE_KEYS.JURY, juryMembers);
+      }
+      if (volunteers && volunteers.length > 0) {
+        this.setItem(STORAGE_KEYS.VOLUNTEERS, volunteers);
+      }
+
+      this.notify();
     } catch (err) {
       console.warn('[Supabase] Sync error:', err);
+    }
+  }
+
+  public setupRealtimeSync() {
+    if (!supabase || this.realtimeChannel) return;
+    try {
+      this.realtimeChannel = supabase.channel('tn_assembly_live_sync')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'college_events' }, () => {
+          this.syncFromSupabase();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'learners' }, () => {
+          this.syncFromSupabase();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'political_parties' }, () => {
+          this.syncFromSupabase();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'committees' }, () => {
+          this.syncFromSupabase();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'session_agenda' }, () => {
+          this.syncFromSupabase();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'jury_members' }, () => {
+          this.syncFromSupabase();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'volunteers' }, () => {
+          this.syncFromSupabase();
+        })
+        .subscribe();
+
+      // Fast background periodic sync every 2.5 seconds for instant multi-device responsiveness
+      if (typeof window !== 'undefined' && !this.syncTimer) {
+        this.syncTimer = setInterval(() => {
+          if (!document.hidden) {
+            this.syncFromSupabase();
+          }
+        }, 2500);
+      }
+    } catch (e) {
+      console.warn('[Supabase] realtime setup error:', e);
+    }
+  }
+
+  public async syncEventStateToSupabase(eventId: string) {
+    if (!supabase || !eventId) return;
+    try {
+      const openNominationsMap = this.getItem<Record<string, string[]>>(STORAGE_KEYS.OPEN_NOMINATIONS, {});
+      const openNoms = openNominationsMap[eventId] || [];
+      const noms = this.getNominations(eventId);
+      const elecs = this.getElections(eventId);
+      const fvotes = this.getFlashVotes(eventId);
+      const procs = this.getProceedings(eventId);
+      const qs = this.getQuestions(eventId);
+      const scs = this.getScores(eventId);
+
+      const payload = {
+        open_nominations: openNoms,
+        nominations: noms,
+        elections: elecs,
+        flash_votes: fvotes,
+        proceedings: procs,
+        questions: qs,
+        scores: scs,
+        updated_at: new Date().toISOString()
+      };
+
+      await supabase.from('college_events').update({ social_coverage: payload }).eq('id', eventId);
+    } catch (e) {
+      console.warn('[Supabase] syncEventStateToSupabase error:', e);
     }
   }
 
@@ -1138,6 +1267,7 @@ class StorageService {
 
     map[eventId] = nextList;
     this.setItem(STORAGE_KEYS.OPEN_NOMINATIONS, map);
+    this.syncEventStateToSupabase(eventId);
     return isOpenNow;
   }
 
@@ -1147,6 +1277,7 @@ class StorageService {
     const nextList = open ? [...allPositions] : [];
     map[eventId] = nextList;
     this.setItem(STORAGE_KEYS.OPEN_NOMINATIONS, map);
+    this.syncEventStateToSupabase(eventId);
     return nextList;
   }
 
@@ -1155,6 +1286,7 @@ class StorageService {
     const map = this.getItem<Record<string, string[]>>(STORAGE_KEYS.OPEN_NOMINATIONS, {});
     map[eventId] = positions;
     this.setItem(STORAGE_KEYS.OPEN_NOMINATIONS, map);
+    this.syncEventStateToSupabase(eventId);
     return positions;
   }
 
@@ -1181,6 +1313,7 @@ class StorageService {
     };
     all.unshift(newNom);
     this.setItem(STORAGE_KEYS.NOMINATIONS, all);
+    if (newNom.event_id) this.syncEventStateToSupabase(newNom.event_id);
     return newNom;
   }
 
@@ -1189,8 +1322,10 @@ class StorageService {
   }
 
   public updateNominationStatus(id: string, status: 'Pending' | 'Approved' | 'Rejected') {
+    let targetEventId = '';
     const all = this.getNominationAll().map(n => {
       if (n.id === id) {
+        targetEventId = n.event_id;
         return { ...n, status };
       }
       return n;
@@ -1204,6 +1339,7 @@ class StorageService {
         this.syncApprovedNominationToElection(target);
       }
     }
+    if (targetEventId) this.syncEventStateToSupabase(targetEventId);
   }
 
   private syncApprovedNominationToElection(nom: Nomination) {
@@ -1262,8 +1398,10 @@ class StorageService {
   }
 
   public deleteNomination(id: string) {
+    const target = this.getNominationAll().find(n => n.id === id);
     const all = this.getNominationAll().filter(n => n.id !== id);
     this.setItem(STORAGE_KEYS.NOMINATIONS, all);
+    if (target?.event_id) this.syncEventStateToSupabase(target.event_id);
   }
 
   // ── ELECTIONS ─────────────────────────────────────────────────────────────
@@ -1290,6 +1428,7 @@ class StorageService {
     };
     all.unshift(newElec);
     this.setItem(STORAGE_KEYS.ELECTIONS, all);
+    if (newElec.event_id) this.syncEventStateToSupabase(newElec.event_id);
     return newElec;
   }
 
@@ -1304,6 +1443,7 @@ class StorageService {
   public updateElection(election: Election) {
     const all = this.getElectionAll().map(e => (e.id === election.id ? election : e));
     this.setItem(STORAGE_KEYS.ELECTIONS, all);
+    if (election.event_id) this.syncEventStateToSupabase(election.event_id);
   }
 
   public castVoteInElection(electionId: string, candidateId: string, delegateId?: string): boolean {
@@ -1332,12 +1472,15 @@ class StorageService {
     }
 
     this.setItem(STORAGE_KEYS.ELECTIONS, all);
+    if (election.event_id) this.syncEventStateToSupabase(election.event_id);
     return true;
   }
 
   public closeElection(electionId: string) {
+    let targetEventId = '';
     const all = this.getElectionAll().map(e => {
       if (e.id === electionId) {
+        targetEventId = e.event_id;
         const sorted = [...e.candidates].sort((a, b) => b.votes - a.votes);
         const win = sorted.length > 0 && sorted[0].votes > 0 ? sorted[0].name : undefined;
         return { ...e, status: 'Closed' as const, winner: win };
@@ -1345,11 +1488,14 @@ class StorageService {
       return e;
     });
     this.setItem(STORAGE_KEYS.ELECTIONS, all);
+    if (targetEventId) this.syncEventStateToSupabase(targetEventId);
   }
 
   public setElectionStatus(electionId: string, status: 'Upcoming' | 'Live' | 'Closed') {
+    let targetEventId = '';
     const all = this.getElectionAll().map(e => {
       if (e.id === electionId) {
+        targetEventId = e.event_id;
         let winner = e.winner;
         if (status === 'Closed') {
           const sorted = [...e.candidates].sort((a, b) => b.votes - a.votes);
@@ -1360,6 +1506,7 @@ class StorageService {
       return e;
     });
     this.setItem(STORAGE_KEYS.ELECTIONS, all);
+    if (targetEventId) this.syncEventStateToSupabase(targetEventId);
   }
 
   public addCandidateToElection(electionId: string, candidate: Partial<ElectionCandidate>): boolean {
@@ -1384,6 +1531,7 @@ class StorageService {
 
     election.candidates.push(newCandidate);
     this.setItem(STORAGE_KEYS.ELECTIONS, all);
+    if (election.event_id) this.syncEventStateToSupabase(election.event_id);
     return true;
   }
 
@@ -1396,12 +1544,15 @@ class StorageService {
     // Recalculate total votes
     election.total_votes = election.candidates.reduce((sum, c) => sum + (c.votes || 0), 0);
     this.setItem(STORAGE_KEYS.ELECTIONS, all);
+    if (election.event_id) this.syncEventStateToSupabase(election.event_id);
     return true;
   }
 
   public resetElection(electionId: string) {
+    let targetEventId = '';
     const all = this.getElectionAll().map(e => {
       if (e.id === electionId) {
+        targetEventId = e.event_id;
         return {
           ...e,
           status: 'Upcoming' as const,
@@ -1414,11 +1565,14 @@ class StorageService {
       return e;
     });
     this.setItem(STORAGE_KEYS.ELECTIONS, all);
+    if (targetEventId) this.syncEventStateToSupabase(targetEventId);
   }
 
   public deleteElection(electionId: string) {
+    const target = this.getElectionAll().find(e => e.id === electionId);
     const all = this.getElectionAll().filter(e => e.id !== electionId);
     this.setItem(STORAGE_KEYS.ELECTIONS, all);
+    if (target?.event_id) this.syncEventStateToSupabase(target.event_id);
   }
 
   // ── LIVE FLASH VOTES (Instant Yes/No Division Polls) ──────────────────────
@@ -1456,6 +1610,7 @@ class StorageService {
     };
     all.unshift(newVote);
     this.setItem(STORAGE_KEYS.FLASH_VOTES, all);
+    if (eventId) this.syncEventStateToSupabase(eventId);
     return newVote;
   }
 
@@ -1501,12 +1656,22 @@ class StorageService {
     });
 
     this.setItem(STORAGE_KEYS.FLASH_VOTES, all);
+    if (target.event_id) this.syncEventStateToSupabase(target.event_id);
     return true;
   }
 
   public closeFlashVote(voteId: string) {
     const all = this.getFlashVoteAll().map(v => (v.id === voteId ? { ...v, status: 'CLOSED' as const } : v));
+    let targetEventId = '';
+    const all = this.getFlashVoteAll().map(v => {
+      if (v.id === voteId) {
+        targetEventId = v.event_id;
+        return { ...v, status: 'CLOSED' as const };
+      }
+      return v;
+    });
     this.setItem(STORAGE_KEYS.FLASH_VOTES, all);
+    if (targetEventId) this.syncEventStateToSupabase(targetEventId);
   }
 
   // ── CHECKLIST ─────────────────────────────────────────────────────────────

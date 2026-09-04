@@ -326,6 +326,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             style={{ background: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--accent)' }}
                           >
                             {learner.access_code}
+                            {learner.constituency_number !== undefined ? `#${learner.constituency_number}` : learner.bench || 'MLA'}
                           </span>
                           {existingScore && (
                             <p className="text-[10px] font-black mt-1" style={{ color: 'var(--amber)' }}>

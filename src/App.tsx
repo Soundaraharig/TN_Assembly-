@@ -864,6 +864,11 @@ export function App() {
         }}
         onGoHome={() => {
           if (userSession?.role === 'coordinator') {
+          if (role === 'student') {
+            if (typeof window !== 'undefined') window.history.pushState({}, '', '/me');
+            return;
+          }
+          if (userSession?.role === 'coordinator' || role === 'coordinator') {
             setRole('coordinator');
             setActiveNavTab('participants');
             saveSession({ role: 'coordinator', activeNavTab: 'participants' });
@@ -1354,10 +1359,24 @@ export function App() {
                   committee={activeCommittee}
                   nominations={nominations}
                   openNominationPositions={openNominationPositions}
+                  elections={elections}
+                  flashVotes={flashVotes}
                   onFileNomination={(nom) => {
                     storageService.addNomination(nom);
                     if (currentEvent) {
                       setNominations(storageService.getNominations(currentEvent.id));
+                    }
+                  }}
+                  onCastVote={(elecId, candId, delId) => {
+                    storageService.castVoteInElection(elecId, candId, delId || currentStudent.id);
+                    if (currentEvent) {
+                      setElections(storageService.getElections(currentEvent.id));
+                    }
+                  }}
+                  onCastFlashVote={(vId, l, dec) => {
+                    storageService.castFlashVote(vId, l, dec);
+                    if (currentEvent) {
+                      setFlashVotes(storageService.getFlashVotes(currentEvent.id));
                     }
                   }}
                   onShowToast={addToast}

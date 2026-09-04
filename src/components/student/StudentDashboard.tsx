@@ -1,6 +1,36 @@
 import React, { useState, useEffect } from 'react';
 import type { Learner, CollegeEvent, AgendaItem, Party, Committee, Nomination, NominationPosition } from '../../types';
 import { Landmark, MapPin, BookOpen, Clock, Hand, CheckCircle2, Sparkles, Radio, FileSpreadsheet, Send, Lock, UserCheck } from 'lucide-react';
+import type {
+  Learner,
+  CollegeEvent,
+  AgendaItem,
+  Party,
+  Committee,
+  Nomination,
+  NominationPosition,
+  Election,
+  LiveFlashVote
+} from '../../types';
+import {
+  Landmark,
+  MapPin,
+  BookOpen,
+  Clock,
+  Hand,
+  CheckCircle2,
+  Sparkles,
+  Radio,
+  FileSpreadsheet,
+  Send,
+  Lock,
+  UserCheck,
+  Vote,
+  Zap,
+  Check,
+  Crown,
+  AlertCircle
+} from 'lucide-react';
 
 interface StudentDashboardProps {
   student: Learner;
@@ -10,7 +40,11 @@ interface StudentDashboardProps {
   committee: Committee | null;
   nominations?: Nomination[];
   openNominationPositions?: string[];
+  elections?: Election[];
+  flashVotes?: LiveFlashVote[];
   onFileNomination?: (nom: Partial<Nomination>) => void;
+  onCastVote?: (electionId: string, candidateId: string, delegateId?: string) => void;
+  onCastFlashVote?: (voteId: string, learner: Learner, decision: 'AYE' | 'NO' | 'ABSTAIN') => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -21,7 +55,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   committee,
   nominations = [],
   openNominationPositions = [],
+  elections = [],
+  flashVotes = [],
   onFileNomination,
+  onCastVote,
+  onCastFlashVote,
   onShowToast
 }) => {
   const [floorRequested, setFloorRequested] = useState(false);
@@ -44,6 +82,39 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   const isRuling = student.bench === 'Ruling';
   const currentAgendaItem = agenda.find(a => a.is_current) || agenda[0];
+
+  // Check electorate eligibility for a student
+  const isStudentEligibleForElection = (elec: Election): { eligible: boolean; reason?: string } => {
+    const title = (elec.title || '').toLowerCase();
+    const pos = (elec.position || '').toLowerCase();
+
+    // Party Leader election check
+    if (title.includes('party leader') && !title.includes('ruling') && !title.includes('opposition')) {
+      if (student.party_name && title.includes(student.party_name.toLowerCase())) {
+        return { eligible: true };
+      }
+      return { eligible: false, reason: 'Restricted to members of that specific political party.' };
+    }
+
+    if (pos.includes('opposition') || title.includes('opposition') || title.includes('lop')) {
+      if (student.bench !== 'Opposition') {
+        return { eligible: false, reason: 'Restricted to Opposition Bench MLAs only.' };
+      }
+      return { eligible: true };
+    }
+
+    if (pos.includes('ruling') || title.includes('ruling') || title.includes('chief minister') || title.includes('prime minister')) {
+      if (student.bench !== 'Ruling') {
+        return { eligible: false, reason: 'Restricted to Ruling Bench MLAs only.' };
+      }
+      return { eligible: true };
+    }
+
+    return { eligible: true };
+  };
+
+  const liveElections = elections.filter(e => e.status === 'Live');
+  const activeFlashVotes = flashVotes.filter(f => f.status === 'ACTIVE');
 
   const handleRequestFloor = () => {
     setFloorRequested(true);
@@ -84,6 +155,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     <div className="max-w-4xl mx-auto space-y-6">
       
       {/* Delegate Assembly Pass Card */}
+      {/* Delegate Assembly Pass Card (WITHOUT openly exposed access code) */}
       <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 border border-amber-500/30 p-6 md:p-8 shadow-2xl space-y-6">
         
         {/* Pass Header Banner */}
@@ -105,6 +177,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           <div className="bg-slate-950 px-4 py-2 rounded-2xl border border-slate-800 text-center">
             <span className="text-[10px] uppercase text-slate-400 font-bold block">Access Code</span>
             <code className="text-lg font-mono font-bold text-emerald-400 tracking-widest">{student.access_code}</code>
+          <div className="bg-slate-950 px-4 py-2 rounded-2xl border border-emerald-500/30 text-center flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-xs uppercase text-emerald-400 font-extrabold tracking-wider">
+              Verified MLA Delegate
+            </span>
           </div>
         </div>
 
@@ -158,6 +235,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   <MapPin className="w-3 h-3 text-amber-400" /> TN Assembly Constituency
                 </span>
                 <p className="text-xs font-bold text-white font-mono">
+                  {student.constituency_number !== undefined ? `#${student.constituency_number} ` : ''}
                   {student.constituency_name || 'Unassigned'}
                 </p>
               </div>
@@ -182,6 +260,214 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
 
       </div>
+
+      {/* ── LIVE ELECTIONS & BALLOT VOTING SECTION ── */}
+      {liveElections.length > 0 && onCastVote && (
+        <div className="bg-gradient-to-br from-amber-950/40 via-slate-900 to-slate-900 border border-amber-500/40 rounded-3xl p-5 md:p-6 shadow-2xl space-y-6">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center">
+                <Vote className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base md:text-lg font-bold text-white flex items-center gap-2">
+                  Official Assembly Ballots (Live Now)
+                  <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-amber-500 text-slate-950 animate-pulse">
+                    VOTING OPEN
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Cast your official vote for House Leadership and Party Leader positions
+                </p>
+              </div>
+            </div>
+            <span className="text-xs font-mono font-bold text-amber-400">
+              {liveElections.length} Active Ballot{liveElections.length > 1 ? 's' : ''}
+            </span>
+          </div>
+
+          <div className="space-y-6">
+            {liveElections.map((elec) => {
+              const eligibleCheck = isStudentEligibleForElection(elec);
+              const hasVoted = elec.voted_delegate_ids?.includes(student.id);
+
+              return (
+                <div
+                  key={elec.id}
+                  className="p-5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-4 shadow-inner"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Crown className="w-4 h-4 text-amber-400" />
+                        <h4 className="text-base font-bold text-white">{elec.title}</h4>
+                      </div>
+                      <p className="text-xs text-slate-400">
+                        Total Ballots Cast in House: <strong>{elec.total_votes || 0}</strong>
+                      </p>
+                    </div>
+
+                    <div>
+                      {hasVoted ? (
+                        <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center gap-1">
+                          <Check className="w-3.5 h-3.5 stroke-[3]" /> Ballot Cast
+                        </span>
+                      ) : eligibleCheck.eligible ? (
+                        <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40 animate-pulse">
+                          Your Vote Awaited
+                        </span>
+                      ) : (
+                        <span className="px-3 py-1 rounded-full text-xs font-semibold bg-slate-800 text-slate-400 border border-slate-700">
+                          Ineligible
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {!eligibleCheck.eligible && (
+                    <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-400 flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                      <span>{eligibleCheck.reason}</span>
+                    </div>
+                  )}
+
+                  {/* Candidate Ballot Options */}
+                  {(!elec.candidates || elec.candidates.length === 0) ? (
+                    <div className="p-4 text-center rounded-xl bg-slate-900 text-xs text-slate-500 italic">
+                      Candidates for this election are being finalized by the Presiding Officer.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {elec.candidates.map((cand) => (
+                        <div
+                          key={cand.id}
+                          className={`p-4 rounded-xl border space-y-3 transition-all ${
+                            hasVoted
+                              ? 'bg-slate-900/60 border-slate-800/80 opacity-80'
+                              : eligibleCheck.eligible
+                              ? 'bg-slate-900 border-slate-700 hover:border-amber-500/60'
+                              : 'bg-slate-900/40 border-slate-800 opacity-60'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <h5 className="text-sm font-bold text-white">{cand.name}</h5>
+                              <p className="text-xs text-slate-400">
+                                {cand.party} • <span className={cand.bench === 'Ruling' ? 'text-emerald-400' : 'text-rose-400'}>{cand.bench} Bench</span>
+                              </p>
+                            </div>
+                            <span className="text-xs font-mono font-bold text-slate-400">
+                              {cand.votes || 0} votes
+                            </span>
+                          </div>
+
+                          {eligibleCheck.eligible && !hasVoted && (
+                            <button
+                              onClick={() => {
+                                onCastVote(elec.id, cand.id, student.id);
+                                onShowToast('Vote Recorded', `You voted for ${cand.name} in ${elec.title}`, 'success');
+                              }}
+                              className="w-full py-2 rounded-xl text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 shadow-md flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+                            >
+                              <Vote className="w-4 h-4" /> Vote for {cand.name}
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── LIVE FLOOR DIVISIONS / FLASH VOTES ── */}
+      {activeFlashVotes.length > 0 && onCastFlashVote && (
+        <div className="bg-gradient-to-br from-teal-950/40 via-slate-900 to-slate-900 border border-teal-500/40 rounded-3xl p-5 md:p-6 shadow-2xl space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-teal-500/20 text-teal-400 border border-teal-500/30 flex items-center justify-center">
+                <Zap className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Live Floor Division & Motion</h3>
+                <p className="text-xs text-slate-400">Cast your division vote: AYE / NO / ABSTAIN</p>
+              </div>
+            </div>
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/20 text-teal-400 border border-teal-500/40 animate-pulse">
+              Active Division
+            </span>
+          </div>
+
+          <div className="space-y-4">
+            {activeFlashVotes.map(fv => {
+              const myVote = fv.votes?.find(v => v.learner_id === student.id)?.vote;
+
+              return (
+                <div key={fv.id} className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-amber-400 tracking-wider">
+                        {fv.motion_type || 'Floor Motion'}
+                      </span>
+                      <h4 className="text-base font-bold text-white">{fv.question}</h4>
+                    </div>
+                    {myVote && (
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                        Voted: {myVote}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 pt-2">
+                    <button
+                      onClick={() => {
+                        onCastFlashVote(fv.id, student, 'AYE');
+                        onShowToast('Division Vote Cast', 'Recorded vote: AYE', 'success');
+                      }}
+                      className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                        myVote === 'AYE'
+                          ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg'
+                          : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                      }`}
+                    >
+                      AYE ({fv.ayes_count || 0})
+                    </button>
+                    <button
+                      onClick={() => {
+                        onCastFlashVote(fv.id, student, 'NO');
+                        onShowToast('Division Vote Cast', 'Recorded vote: NO', 'info');
+                      }}
+                      className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                        myVote === 'NO'
+                          ? 'bg-rose-500 text-white border-rose-400 shadow-lg'
+                          : 'bg-rose-500/10 text-rose-400 border-rose-500/30 hover:bg-rose-500/20'
+                      }`}
+                    >
+                      NO ({fv.noes_count || 0})
+                    </button>
+                    <button
+                      onClick={() => {
+                        onCastFlashVote(fv.id, student, 'ABSTAIN');
+                        onShowToast('Division Vote Cast', 'Recorded vote: ABSTAIN', 'info');
+                      }}
+                      className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                        myVote === 'ABSTAIN'
+                          ? 'bg-slate-600 text-white border-slate-500 shadow-lg'
+                          : 'bg-slate-500/10 text-slate-400 border-slate-500/30 hover:bg-slate-500/20'
+                      }`}
+                    >
+                      ABSTAIN ({fv.abstain_count || 0})
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Self-Nomination Filing Section */}
       {openNominationPositions.length > 0 && onFileNomination ? (

@@ -757,6 +757,7 @@ export const NominationsTab: React.FC<NominationsTabProps> = ({
                   {learners.map(l => (
                     <option key={l.id} value={l.id}>
                       {l.full_name} ({l.party_name || 'Independent'} • {l.bench || 'No bench'} • Code: {l.access_code})
+                      {l.full_name} ({l.party_name || 'Independent'} • {l.bench || 'Delegate'}{l.constituency_number !== undefined ? ` • #${l.constituency_number}` : ''})
                     </option>
                   ))}
                 </select>
