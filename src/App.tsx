@@ -1086,8 +1086,8 @@ export function App() {
         onLogout={() => {
           clearSession();
           setIsAuthenticated(false);
-          setRole('volunteer');
-          if (typeof window !== 'undefined') window.history.pushState({}, '', '/join');
+          setRole('coordinator');
+          if (typeof window !== 'undefined') window.history.pushState({}, '', '/');
           addToast('Signed Out', 'You have been signed out', 'info');
         }}
         onGoHome={() => {
