@@ -139,15 +139,16 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
 
   // Selected desk key: 'type:::id:::name' or 'ALL' or 'NONE'
   const [selectedDeskKey, setSelectedDeskKey] = useState<string>(() => {
-    if (uniqueDesks.length > 0 && uniqueDesks.length < 6) {
-      const first = uniqueDesks[0];
-      return first.key;
+    if (uniqueDesks.length > 1) {
+      return 'ALL';
     }
-    return uniqueDesks.length > 0 ? 'ALL' : 'NONE';
+    return uniqueDesks.length === 1 ? uniqueDesks[0].key : 'NONE';
   });
 
   useEffect(() => {
-    if (uniqueDesks.length > 0 && (!selectedDeskKey || selectedDeskKey === 'NONE')) {
+    if (uniqueDesks.length > 1 && (!selectedDeskKey || selectedDeskKey === 'NONE')) {
+      setSelectedDeskKey('ALL');
+    } else if (uniqueDesks.length === 1 && (!selectedDeskKey || selectedDeskKey === 'NONE')) {
       setSelectedDeskKey(uniqueDesks[0].key);
     }
   }, [uniqueDesks]);
