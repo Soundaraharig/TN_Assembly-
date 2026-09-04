@@ -223,7 +223,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
     return { constitutionalElections: constitutional, partyLeaderElections: partyLeaders, customElections: custom };
   }, [elections]);
 
-  const handleEnsurePartyLeaderElection = (party: Party) => {
+  const handleEnsurePartyLeaderElection = (party: Party, silent = false): boolean => {
     const exists = elections.some(e =>
       e.title.toLowerCase().includes(party.name.toLowerCase()) &&
       (e.title.toLowerCase().includes('leader') || e.position?.toLowerCase().includes('leader'))
@@ -239,7 +239,24 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
         total_votes: 0,
         voted_delegate_ids: []
       });
-      onShowToast('Party Election Created', `Created election for ${party.name} Leader`, 'success');
+      if (!silent) {
+        onShowToast('Party Election Created', `Created election for ${party.name} Leader`, 'success');
+      }
+      return true;
+    }
+    return false;
+  };
+
+  const handleGenerateAllPartyLeaderElections = () => {
+    let createdCount = 0;
+    parties.forEach(p => {
+      const created = handleEnsurePartyLeaderElection(p, true);
+      if (created) createdCount++;
+    });
+    if (createdCount > 0) {
+      onShowToast('Party Elections Created', `Generated leader elections for ${createdCount} party ${createdCount === 1 ? '' : 'leaders'}`, 'success');
+    } else {
+      onShowToast('Party Elections Exist', 'Leader elections already exist for all parties', 'info');
     }
   };
 
@@ -324,58 +341,58 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
     return (
       <div
         key={elec.id}
-        className="rounded-2xl border transition-all duration-200 overflow-hidden"
+        className="rounded-xl border transition-all duration-200 overflow-hidden shadow-xs hover:border-slate-400 dark:hover:border-slate-500"
         style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}
       >
-        {/* Accordion Row Header (Image 2 style) */}
+        {/* Accordion Row Header (Compact & sleek UI) */}
         <div
           onClick={() => toggleAccordion(elec.id)}
-          className="p-4 md:p-5 flex items-center justify-between gap-4 cursor-pointer hover:bg-slate-500/5 transition-colors select-none"
+          className="py-2.5 px-3.5 sm:px-4 flex items-center justify-between gap-3 cursor-pointer hover:bg-slate-500/5 transition-colors select-none"
         >
-          <div className="flex items-center gap-3.5 flex-1 min-w-0">
+          <div className="flex items-center gap-3 flex-1 min-w-0">
             {/* Chevron toggle */}
-            <div className="text-slate-400">
-              {isExpanded ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+            <div className="text-slate-400 shrink-0">
+              {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
             </div>
 
             {/* Status Circle Indicator */}
             {isClosed ? (
-              <div className="w-7 h-7 rounded-full bg-emerald-500/20 text-emerald-500 border border-emerald-500/40 flex items-center justify-center flex-shrink-0">
-                <Check className="w-4 h-4 stroke-[3]" />
+              <div className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-500 border border-emerald-500/40 flex items-center justify-center shrink-0">
+                <Check className="w-3.5 h-3.5 stroke-[3]" />
               </div>
             ) : isLive ? (
-              <div className="w-7 h-7 rounded-full bg-amber-500/20 text-amber-500 border border-amber-500/40 flex items-center justify-center flex-shrink-0 animate-pulse">
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+              <div className="w-6 h-6 rounded-full bg-amber-500/20 text-amber-500 border border-amber-500/40 flex items-center justify-center shrink-0 animate-pulse">
+                <span className="w-2 h-2 rounded-full bg-amber-500" />
               </div>
             ) : (
-              <div className="w-7 h-7 rounded-full bg-slate-500/10 text-slate-400 border border-slate-500/20 flex items-center justify-center text-xs font-bold flex-shrink-0">
+              <div className="w-6 h-6 rounded-full bg-slate-500/10 text-slate-400 border border-slate-500/20 flex items-center justify-center text-xs font-semibold shrink-0">
                 {index + 1}
               </div>
             )}
 
             {/* Election Icon + Title */}
-            <div className="flex items-center gap-2.5 min-w-0">
-              <span className="text-amber-500">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-amber-500 shrink-0">
                 <Crown className="w-4 h-4" />
               </span>
-              <span className="font-serif font-bold text-base md:text-lg tracking-tight truncate" style={{ color: 'var(--text-primary)' }}>
+              <span className="font-semibold text-sm sm:text-base tracking-tight truncate" style={{ color: 'var(--text-primary)' }}>
                 {elec.title}
               </span>
             </div>
           </div>
 
-          {/* Right Status Badge (Done / Not started / Live) */}
-          <div className="flex items-center gap-3 flex-shrink-0">
+          {/* Right Status Badge */}
+          <div className="flex items-center gap-2 shrink-0">
             {isClosed ? (
-              <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/15 text-emerald-500 border border-emerald-500/30">
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/15 text-emerald-500 border border-emerald-500/30">
                 Done
               </span>
             ) : isLive ? (
-              <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-500/15 text-amber-500 border border-amber-500/30 animate-pulse">
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/15 text-amber-500 border border-amber-500/30 animate-pulse">
                 Live Voting
               </span>
             ) : (
-              <span className="px-3 py-1 rounded-full text-xs font-semibold bg-slate-500/10 text-slate-400 border border-slate-500/20">
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-slate-500/10 text-slate-400 border border-slate-500/20">
                 Not started
               </span>
             )}
@@ -384,18 +401,18 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
         {/* Accordion Content when Expanded */}
         {isExpanded && (
-          <div className="p-5 md:p-6 border-t space-y-6" style={{ borderColor: 'var(--border-soft)', backgroundColor: 'var(--bg-elevated)' }}>
+          <div className="p-3.5 sm:p-4 border-t space-y-4" style={{ borderColor: 'var(--border-soft)', backgroundColor: 'var(--bg-elevated)' }}>
             {/* Action Bar / Electorate Rule & Status Controls */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 rounded-xl border" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}>
-              <div className="space-y-1">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-lg border" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}>
+              <div className="space-y-0.5">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Electorate:</span>
-                  <span className="px-2 py-0.5 rounded text-xs font-extrabold bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Electorate:</span>
+                  <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-500/10 text-amber-500 border border-amber-500/20">
                     {rule.label}
                   </span>
-                  <span className="text-xs text-slate-400">• Total Votes: <strong>{elec.total_votes || 0}</strong></span>
+                  <span className="text-[11px] text-slate-400">• Total Votes: <strong>{elec.total_votes || 0}</strong></span>
                 </div>
-                <p className="text-xs text-slate-400">
+                <p className="text-[11px] text-slate-400">
                   {rule.type === 'OPPOSITION' && 'Only Opposition Bench delegates are permitted to vote.'}
                   {rule.type === 'RULING' && 'Only Ruling Bench delegates are permitted to vote.'}
                   {rule.type === 'PARTY' && `Only members of ${rule.partyName || 'the party'} are permitted to vote.`}
@@ -408,25 +425,25 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                 {isUpcoming && (
                   <button
                     onClick={() => onSetElectionStatus && onSetElectionStatus(elec.id, 'Live')}
-                    className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-amber-600 hover:bg-amber-500 shadow-md flex items-center gap-1.5 cursor-pointer transition-all"
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-amber-600 hover:bg-amber-500 shadow-sm flex items-center gap-1.5 cursor-pointer transition-all"
                   >
-                    <Play className="w-3.5 h-3.5" /> Open Ballot & Start Live Voting
+                    <Play className="w-3.5 h-3.5" /> Start Live Voting
                   </button>
                 )}
 
                 {isLive && (
                   <button
                     onClick={() => onCloseElection(elec.id)}
-                    className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 shadow-md flex items-center gap-1.5 cursor-pointer transition-all"
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 shadow-sm flex items-center gap-1.5 cursor-pointer transition-all"
                   >
-                    <Trophy className="w-3.5 h-3.5" /> Close Ballot & Announce Winner
+                    <Trophy className="w-3.5 h-3.5" /> Close & Announce Winner
                   </button>
                 )}
 
                 {isClosed && (
                   <button
                     onClick={() => onResetElection && onResetElection(elec.id)}
-                    className="px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-600 flex items-center gap-1 cursor-pointer transition-all"
+                    className="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-600 flex items-center gap-1 cursor-pointer transition-all"
                   >
                     <RotateCcw className="w-3.5 h-3.5" /> Reset Ballot
                   </button>
@@ -436,19 +453,19 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
             {/* Winner Banner if Closed */}
             {isClosed && (
-              <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center gap-4">
-                <div className="w-12 h-12 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-black">
-                  <Trophy className="w-6 h-6" />
+              <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center font-black">
+                  <Trophy className="w-5 h-5" />
                 </div>
                 <div>
-                  <span className="text-[10px] uppercase font-black tracking-widest text-amber-500 block">
+                  <span className="text-[10px] uppercase font-bold tracking-widest text-amber-500 block">
                     Elected Winner
                   </span>
-                  <h4 className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
+                  <h4 className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>
                     {elec.winner || (leader ? leader.name : 'No winner declared')}
                   </h4>
                   {leader && (
-                    <p className="text-xs text-slate-400">
+                    <p className="text-[11px] text-slate-400">
                       Won with {leader.votes} votes ({elec.total_votes > 0 ? Math.round((leader.votes / elec.total_votes) * 100) : 0}%) • {leader.party}
                     </p>
                   )}
@@ -457,9 +474,9 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
             )}
 
             {/* Nominated Candidates Roster */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between border-b pb-2" style={{ borderColor: 'var(--border-soft)' }}>
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between border-b pb-1.5" style={{ borderColor: 'var(--border-soft)' }}>
+                <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
                   Ballot Candidates ({elec.candidates?.length || 0})
                 </span>
                 {!isClosed && (
@@ -469,19 +486,19 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                       setCandidateSearchQuery('');
                       setNominationSourceTab('NOMINATIONS');
                     }}
-                    className="text-xs font-bold text-amber-500 hover:text-amber-400 flex items-center gap-1.5 cursor-pointer transition-colors"
+                    className="text-xs font-semibold text-amber-500 hover:text-amber-400 flex items-center gap-1 cursor-pointer transition-colors"
                   >
-                    <UserPlus className="w-4 h-4" /> + Nominate Candidate
+                    <UserPlus className="w-3.5 h-3.5" /> + Nominate Candidate
                   </button>
                 )}
               </div>
 
               {(!elec.candidates || elec.candidates.length === 0) ? (
-                <div className="p-6 rounded-xl border border-dashed text-center text-xs italic" style={{ borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}>
+                <div className="p-4 rounded-lg border border-dashed text-center text-xs italic" style={{ borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}>
                   No candidates nominated yet. Click <strong>"+ Nominate Candidate"</strong> to select from student nominations or the delegate directory.
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {elec.candidates.map((cand) => {
                     const pct = elec.total_votes > 0 ? Math.round(((cand.votes || 0) / elec.total_votes) * 100) : 0;
                     const isWinner = isClosed && (elec.winner === cand.name || leader?.id === cand.id);
@@ -489,7 +506,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                     return (
                       <div
                         key={cand.id}
-                        className={`p-4 rounded-xl border space-y-2.5 transition-all ${
+                        className={`p-3 rounded-lg border space-y-2 transition-all ${
                           isWinner
                             ? 'bg-amber-500/10 border-amber-500/40'
                             : 'border-slate-800'
@@ -499,22 +516,22 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                         <div className="flex items-center justify-between gap-3">
                           <div>
                             <div className="flex items-center gap-2">
-                              <span className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{cand.name}</span>
-                              {isWinner && <Trophy className="w-4 h-4 text-amber-500" />}
+                              <span className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>{cand.name}</span>
+                              {isWinner && <Trophy className="w-3.5 h-3.5 text-amber-500" />}
                             </div>
-                            <span className="text-xs text-slate-400">
+                            <span className="text-[11px] text-slate-400">
                               {cand.party} • <span className={cand.bench === 'Ruling' ? 'text-emerald-400' : 'text-rose-400'}>{cand.bench} Bench</span>
                             </span>
                           </div>
 
                           <div className="text-right">
-                            <div className="text-sm font-mono font-black" style={{ color: 'var(--text-primary)' }}>
-                              {cand.votes || 0} <span className="text-xs font-normal text-slate-400">({pct}%)</span>
+                            <div className="text-xs font-mono font-bold" style={{ color: 'var(--text-primary)' }}>
+                              {cand.votes || 0} <span className="text-[10px] font-normal text-slate-400">({pct}%)</span>
                             </div>
                             {!isClosed && !isLive && onRemoveCandidate && (
                               <button
                                 onClick={() => onRemoveCandidate(elec.id, cand.id)}
-                                className="text-[11px] text-rose-400 hover:text-rose-300 cursor-pointer"
+                                className="text-[10px] text-rose-400 hover:text-rose-300 cursor-pointer"
                               >
                                 Remove
                               </button>
@@ -523,7 +540,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                         </div>
 
                         {/* Progress bar */}
-                        <div className="w-full h-2.5 rounded-full bg-slate-800 overflow-hidden">
+                        <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
                           <div
                             className={`h-full transition-all duration-500 ${
                               cand.bench === 'Ruling' ? 'bg-emerald-500' : 'bg-rose-500'
@@ -540,9 +557,9 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
             {/* LIVE FLOOR VOTING CONSOLE (when Live) */}
             {isLive && (
-              <div className="p-4 md:p-5 rounded-2xl border space-y-4" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}>
-                <div className="flex items-center justify-between border-b pb-2.5" style={{ borderColor: 'var(--border-soft)' }}>
-                  <div className="flex items-center gap-2">
+              <div className="p-3.5 rounded-xl border space-y-3" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}>
+                <div className="flex items-center justify-between border-b pb-2" style={{ borderColor: 'var(--border-soft)' }}>
+                  <div className="flex items-center gap-1.5">
                     <Zap className="w-4 h-4 text-amber-500" />
                     <h5 className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-primary)' }}>
                       Cast Floor Ballot
@@ -554,14 +571,14 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                 </div>
 
                 {/* Delegate Selector */}
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
                     Select Voting Delegate:
                   </label>
                   <select
                     value={selectedVoterId}
                     onChange={(e) => setSelectedVoterPerElection(prev => ({ ...prev, [elec.id]: e.target.value }))}
-                    className="w-full p-2.5 rounded-xl border text-xs font-semibold focus:outline-none"
+                    className="w-full p-2 rounded-lg border text-xs font-medium focus:outline-none"
                     style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
                   >
                     {learners.map(l => (
@@ -574,20 +591,20 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
                 {/* Voter eligibility notice */}
                 {!voterCheck.eligible && (
-                  <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                     <span>{voterCheck.reason}</span>
                   </div>
                 )}
 
                 {/* Candidate Voting Buttons */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
                   {elec.candidates?.map((cand) => (
                     <button
                       key={cand.id}
                       disabled={!voterCheck.eligible || hasVoted}
                       onClick={() => onCastVote(elec.id, cand.id, currentVoter?.id)}
-                      className={`p-3 rounded-xl border text-left flex items-center justify-between gap-2 transition-all ${
+                      className={`p-2.5 rounded-lg border text-left flex items-center justify-between gap-2 transition-all ${
                         voterCheck.eligible && !hasVoted
                           ? 'bg-amber-500/10 border-amber-500/40 hover:bg-amber-500/20 text-white cursor-pointer'
                           : 'opacity-50 cursor-not-allowed border-slate-800'
@@ -597,7 +614,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                         <div className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>Vote for {cand.name}</div>
                         <div className="text-[10px] text-slate-400">{cand.party}</div>
                       </div>
-                      <Vote className="w-4 h-4 text-amber-500" />
+                      <Vote className="w-3.5 h-3.5 text-amber-500" />
                     </button>
                   ))}
                 </div>
@@ -610,40 +627,40 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   };
 
   return (
-    <div className="space-y-8 animate-fadeIn">
+    <div className="space-y-6 animate-fadeIn">
       {/* HEADER SECTION */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-6" style={{ borderColor: 'var(--border-soft)' }}>
-        <div className="space-y-1">
-          <h2 className="text-2xl md:text-3xl font-serif font-black tracking-tight" style={{ color: 'var(--text-primary)' }}>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b pb-4" style={{ borderColor: 'var(--border-soft)' }}>
+        <div className="space-y-0.5">
+          <h2 className="text-xl md:text-2xl font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
             Elections & House Ballots
           </h2>
-          <p className="text-xs md:text-sm text-slate-400">
+          <p className="text-xs text-slate-400">
             Official legislative ballots, Speaker elections, Party Leadership votes, and live House divisions.
           </p>
         </div>
 
         {/* Sub-tabs */}
-        <div className="flex items-center gap-2 p-1 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)' }}>
+        <div className="flex items-center gap-1.5 p-1 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)' }}>
           <button
             onClick={() => setActiveTabSection('ELECTIONS')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
               activeTabSection === 'ELECTIONS'
-                ? 'bg-amber-500 text-slate-950 shadow-md font-black'
+                ? 'bg-amber-500 text-slate-950 shadow-sm font-bold'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            <Crown className="w-4 h-4" />
+            <Crown className="w-3.5 h-3.5" />
             Leadership Ballots ({elections.length})
           </button>
           <button
             onClick={() => setActiveTabSection('FLASH_VOTES')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
               activeTabSection === 'FLASH_VOTES'
-                ? 'bg-amber-500 text-slate-950 shadow-md font-black'
+                ? 'bg-amber-500 text-slate-950 shadow-sm font-bold'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            <Zap className="w-4 h-4" />
+            <Zap className="w-3.5 h-3.5" />
             Floor Divisions ({flashVotes.length})
           </button>
         </div>
@@ -651,13 +668,13 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
       {/* ELECTIONS TAB CONTENT */}
       {activeTabSection === 'ELECTIONS' && (
-        <div className="space-y-10">
+        <div className="space-y-6">
           {/* DIVISION 1: HOUSE LEADERSHIP & CONSTITUTIONAL ELECTIONS */}
-          <div className="space-y-4">
+          <div className="space-y-3">
             <div className="flex items-center justify-between border-b pb-2" style={{ borderColor: 'var(--border-soft)' }}>
-              <div className="flex items-center gap-2.5">
-                <Landmark className="w-5 h-5 text-amber-500" />
-                <h3 className="text-base md:text-lg font-serif font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
+              <div className="flex items-center gap-2">
+                <Landmark className="w-4 h-4 text-amber-500" />
+                <h3 className="text-sm sm:text-base font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
                   House Leadership & Key Constitutional Elections
                 </h3>
               </div>
@@ -666,30 +683,30 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
               </span>
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-2">
               {constitutionalElections.map((elec, idx) => renderElectionRow(elec, idx))}
             </div>
           </div>
 
           {/* DIVISION 2: POLITICAL PARTY LEADER ELECTIONS */}
-          <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-2" style={{ borderColor: 'var(--border-soft)' }}>
-              <div className="flex items-center gap-2.5">
-                <Layers className="w-5 h-5 text-amber-500" />
-                <h3 className="text-base md:text-lg font-serif font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
+          <div className="space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-2" style={{ borderColor: 'var(--border-soft)' }}>
+              <div className="flex items-center gap-2">
+                <Layers className="w-4 h-4 text-amber-500" />
+                <h3 className="text-sm sm:text-base font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
                   Political Party Leader Elections
                 </h3>
               </div>
 
               {/* Party creation helper buttons */}
               {parties.length > 0 && (
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[11px] text-slate-400 mr-1">Add Party Ballot:</span>
+                <div className="flex items-center gap-1 flex-wrap">
+                  <span className="text-xs text-slate-400 mr-1 font-medium">Add Party Ballot:</span>
                   {parties.map(p => (
                     <button
                       key={p.id}
                       onClick={() => handleEnsurePartyLeaderElection(p)}
-                      className="px-2.5 py-1 rounded-lg text-[11px] font-bold border hover:border-amber-500 hover:text-amber-400 cursor-pointer transition-colors"
+                      className="px-2 py-0.5 rounded-md text-xs font-medium border hover:border-amber-500 hover:text-amber-400 cursor-pointer transition-colors"
                       style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)', color: 'var(--text-primary)' }}
                     >
                       + {p.name}
@@ -700,21 +717,21 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
             </div>
 
             {partyLeaderElections.length === 0 ? (
-              <div className="p-8 rounded-2xl border border-dashed text-center space-y-3" style={{ borderColor: 'var(--border-soft)' }}>
+              <div className="p-6 rounded-xl border border-dashed text-center space-y-2.5" style={{ borderColor: 'var(--border-soft)' }}>
                 <p className="text-xs text-slate-400">
                   No party leader elections initialized yet. Click on any party above or register parties in the Configuration tab.
                 </p>
                 {parties.length > 0 && (
                   <button
-                    onClick={() => parties.forEach(p => handleEnsurePartyLeaderElection(p))}
-                    className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-amber-600 hover:bg-amber-500 cursor-pointer shadow"
+                    onClick={handleGenerateAllPartyLeaderElections}
+                    className="px-3.5 py-1.5 rounded-lg text-xs font-bold text-white bg-amber-600 hover:bg-amber-500 cursor-pointer shadow-sm"
                   >
                     Generate Leader Ballots for All Parties
                   </button>
                 )}
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {partyLeaderElections.map((elec, idx) => renderElectionRow(elec, idx))}
               </div>
             )}
@@ -722,17 +739,17 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
           {/* CUSTOM ELECTIONS (if any) */}
           {customElections.length > 0 && (
-            <div className="space-y-4">
+            <div className="space-y-3">
               <div className="flex items-center justify-between border-b pb-2" style={{ borderColor: 'var(--border-soft)' }}>
-                <div className="flex items-center gap-2.5">
-                  <Vote className="w-5 h-5 text-amber-500" />
-                  <h3 className="text-base md:text-lg font-serif font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
+                <div className="flex items-center gap-2">
+                  <Vote className="w-4 h-4 text-amber-500" />
+                  <h3 className="text-sm sm:text-base font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
                     Special & Custom Ballots
                   </h3>
                 </div>
                 <span className="text-xs text-slate-400 font-mono">{customElections.length} Ballots</span>
               </div>
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {customElections.map((elec, idx) => renderElectionRow(elec, idx))}
               </div>
             </div>

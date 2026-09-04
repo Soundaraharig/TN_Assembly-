@@ -182,8 +182,14 @@ export function App() {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const addToast = (title: string, message?: string, type: 'success' | 'error' | 'info' = 'info') => {
-    const id = `t_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    setToasts(prev => [...prev, { id, title, message, type }]);
+    setToasts(prev => {
+      const last = prev[prev.length - 1];
+      if (last && last.title === title && last.message === message) {
+        return prev;
+      }
+      const id = `t_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      return [...prev, { id, title, message, type }];
+    });
   };
 
   const removeToast = (id: string) => {
