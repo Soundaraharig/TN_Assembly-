@@ -1077,16 +1077,34 @@ class StorageService {
 
   public getJury(eventId?: string): JuryMember[] {
     const all = this.getItem<JuryMember[]>(STORAGE_KEYS.JURY, INITIAL_JURY);
-    if (eventId) return all.filter(j => j.event_id === eventId);
-    return all;
+    let updated = false;
+    const sanitized = all.map((j, idx) => {
+      if (!j.access_code || j.access_code.trim() === '') {
+        updated = true;
+        const codeNum = String(idx + 1).padStart(2, '0');
+        return {
+          ...j,
+          access_code: `JURY-${codeNum}`
+        };
+      }
+      return j;
+    });
+
+    if (updated) {
+      this.setItem(STORAGE_KEYS.JURY, sanitized);
+    }
+    if (eventId) return sanitized.filter(j => j.event_id === eventId);
+    return sanitized;
   }
 
   public addJuryMember(member: Partial<JuryMember>): JuryMember {
     const all = this.getJury();
+    const codeNum = String(all.length + 1).padStart(2, '0');
+    const defaultCode = `JURY-${codeNum}`;
     const newMember: JuryMember = {
       id: member.id || uid('jury'),
       event_id: member.event_id || '',
-      access_code: member.access_code || Math.random().toString(36).substring(2, 8).toUpperCase(),
+      access_code: member.access_code || defaultCode,
       name: member.name || 'Jury Member',
       email: member.email || '',
       phone: member.phone || '',

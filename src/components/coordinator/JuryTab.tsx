@@ -166,48 +166,51 @@ export const JuryTab: React.FC<JuryTabProps> = ({
                   </td>
                 </tr>
               ) : (
-                jury.map((j) => (
-                  <tr key={j.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
-                    
-                    {/* Name */}
-                    <td className="py-3.5 px-5 font-extrabold text-slate-900 dark:text-white">
-                      {j.name}
-                    </td>
+                jury.map((j, idx) => {
+                  const displayCode = j.access_code && j.access_code.trim() ? j.access_code : `JURY-${String(idx + 1).padStart(2, '0')}`;
 
-                    {/* Email */}
-                    <td className="py-3.5 px-5 text-slate-500 dark:text-slate-400 font-medium">
-                      {j.email || '—'}
-                    </td>
+                  return (
+                    <tr key={j.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                      
+                      {/* Name */}
+                      <td className="py-3.5 px-5 font-extrabold text-slate-900 dark:text-white">
+                        {j.name}
+                      </td>
 
-                    {/* Access Code */}
-                    <td className="py-3.5 px-5">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono font-bold text-slate-700 dark:text-slate-300 tracking-wider">
-                          {j.access_code}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleCopyCode(j.access_code)}
-                          className="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 p-0.5"
-                          title="Copy access code"
-                        >
-                          {copiedCode === j.access_code ? (
-                            <Check className="w-3.5 h-3.5 text-emerald-500" />
-                          ) : (
-                            <Copy className="w-3.5 h-3.5" />
-                          )}
-                        </button>
-                        <a
-                          href={juryAccessUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-slate-400 hover:text-amber-500 p-0.5"
-                          title="Open Jury Login"
-                        >
-                          <Link2 className="w-3.5 h-3.5" />
-                        </a>
-                      </div>
-                    </td>
+                      {/* Email */}
+                      <td className="py-3.5 px-5 text-slate-500 dark:text-slate-400 font-medium">
+                        {j.email || '—'}
+                      </td>
+
+                      {/* Access Code */}
+                      <td className="py-3.5 px-5">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-slate-700 dark:text-slate-300 tracking-wider">
+                            {displayCode}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyCode(displayCode)}
+                            className="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 p-0.5"
+                            title="Copy access code"
+                          >
+                            {copiedCode === displayCode ? (
+                              <Check className="w-3.5 h-3.5 text-emerald-500" />
+                            ) : (
+                              <Copy className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                          <a
+                            href={effectiveJuryUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-slate-400 hover:text-amber-500 p-0.5"
+                            title="Open Jury Login"
+                          >
+                            <Link2 className="w-3.5 h-3.5" />
+                          </a>
+                        </div>
+                      </td>
 
                     {/* Status */}
                     <td className="py-3.5 px-5">
@@ -230,8 +233,9 @@ export const JuryTab: React.FC<JuryTabProps> = ({
                       )}
                     </td>
 
-                  </tr>
-                ))
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
