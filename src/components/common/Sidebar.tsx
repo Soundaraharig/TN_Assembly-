@@ -23,6 +23,7 @@ import {
   
   MessageCircle,
   BarChart,
+  Monitor,
   X
 } from 'lucide-react';
 
@@ -39,6 +40,7 @@ export type ActiveNavTab =
   | 'jury'
   | 'volunteers'
   | 'control'
+  | 'projector'
   | 'elections'
   | 'proceedings'
   | 'awards'
@@ -87,6 +89,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const eventDayItems = [
     { id: 'control', label: 'Control', icon: Sliders },
+    { id: 'projector', label: 'Projector', icon: Monitor },
     { id: 'elections', label: 'Elections', icon: Vote },
     { id: 'proceedings', label: 'Proceedings', icon: FileText },
     { id: 'scoregrid', label: 'Score Grid', icon: Grid }

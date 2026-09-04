@@ -18,7 +18,8 @@ import {
   Megaphone,
   Smartphone,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Monitor
 } from 'lucide-react';
 
 interface ControlTabProps {
@@ -34,6 +35,7 @@ interface ControlTabProps {
   onSetCurrentAgendaItem?: (eventId: string, itemId: string) => void;
   onUpdatePartyBench?: (partyId: string, bench: 'Ruling' | 'Opposition' | 'Independent') => void;
   onOpenLivePollModal?: () => void;
+  onOpenProjectorView?: () => void;
 }
 
 export const ControlTab: React.FC<ControlTabProps> = ({
@@ -47,7 +49,8 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   eventName: _eventName = 'TN Youth Assembly',
   onShowToast,
   onSetCurrentAgendaItem,
-  onUpdatePartyBench
+  onUpdatePartyBench,
+  onOpenProjectorView
 }) => {
   // ── Agenda Navigation State ──────────────────────────────────────────────
   const [activeDayTab, setActiveDayTab] = useState<'Pre-Event' | 'Day 1' | 'Day 2'>('Day 1');
@@ -257,6 +260,24 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
   return (
     <div className="space-y-6 animate-fade-in pb-12">
+
+      {/* Top Quick Status & Projector View Bar (Matching 4th Image) */}
+      <div className="flex items-center justify-between bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl px-5 py-3 shadow-sm">
+        <div className="flex items-center gap-3">
+          <span className="px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-700/50 flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            {activeDayTab}
+          </span>
+          <button
+            type="button"
+            onClick={onOpenProjectorView || (() => window.open('/?projector=true', '_blank'))}
+            className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 flex items-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <Monitor className="w-4 h-4 text-blue-500" />
+            <span>Open Projector View</span>
+          </button>
+        </div>
+      </div>
       
       {/* 2-Column Responsive Layout matching User Reference Images 2 & 3 */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

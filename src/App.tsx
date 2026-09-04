@@ -42,6 +42,7 @@ import { AgendaTab } from './components/coordinator/AgendaTab';
 import { NominationsTab } from './components/coordinator/NominationsTab';
 import { ElectionsTab } from './components/coordinator/ElectionsTab';
 import { ControlTab } from './components/coordinator/ControlTab';
+import { ProjectorTab } from './components/coordinator/ProjectorTab';
 import { ProceedingsTab } from './components/coordinator/ProceedingsTab';
 import { ScoreGridTab } from './components/coordinator/ScoreGridTab';
 import { AwardsTab } from './components/coordinator/AwardsTab';
@@ -1171,6 +1172,8 @@ export function App() {
                   volunteers={volunteers}
                   eventId={currentEvent.id}
                   userRole={userSession?.role || role}
+                  parties={parties}
+                  committees={committees}
                   onAddVolunteer={handleAddVolunteer}
                   onToggleArrival={(id) => {
                     storageService.toggleVolunteerArrival(id);
@@ -1202,6 +1205,19 @@ export function App() {
                     setLearners(storageService.getLearners(currentEvent.id));
                   }}
                   onOpenLivePollModal={() => handleSelectTab('elections')}
+                  onOpenProjectorView={() => handleSelectTab('projector')}
+                />
+              )}
+
+              {/* 25. PROJECTOR TAB */}
+              {activeNavTab === 'projector' && (
+                <ProjectorTab
+                  currentEvent={currentEvent}
+                  agenda={agenda}
+                  elections={elections}
+                  flashVotes={flashVotes}
+                  learners={learners}
+                  onShowToast={addToast}
                 />
               )}
 
