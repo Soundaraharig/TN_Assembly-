@@ -869,24 +869,27 @@ export function App() {
               return { id: juryObj.id, full_name: juryObj.name, access_code: juryCodeVal } as Learner;
             }
 
-            // 3. Check Volunteer Access Code - normalized matching
-            // Normalize both the input code and stored code for comparison
-            const normalizedInput = cleanCode.replace(/-/g, '').toUpperCase();
-            const storedCode = (v.access_code || '').toUpperCase().replace(/-/g, '');
-            const phoneSuffix = v.phone ? v.phone.replace(/\D/g, '').slice(-4) : '';
-            
-            // Multiple matching strategies
-            const codeMatches = 
-              storedCode === normalizedInput ||                    // Exact match
-              storedCode === `VOL${normalizedInput}` ||           // VOL prefix
-              normalizedInput === `VOL${storedCode}` ||           // Reverse VOL prefix  
-              (phoneSuffix && phoneSuffix === normalizedInput);   // Phone suffix only
-            
-            const codeFormatMatch = 
-              storedCode.startsWith('VOL') &&                     // Stored has VOL prefix
-              normalizedInput.replace('VOL', '').length > 0;      // Input has content after VOL
-            
-            return codeMatches || codeFormatMatch || (phoneSuffix && phoneSuffix === normalizedInput);
+            // 3. Check Volunteer Access Code - enhanced matching
+            // Find volunteer with normalized code matching
+            const foundVol = storageService.getVolunteers().find(v => {
+              // Normalize both the input code and stored code for comparison
+              const code = (v.access_code || '').toUpperCase().replace(/-/g, '');
+              const normCode = cleanCode.replace(/-/g, '').toUpperCase();
+              const phoneSuffix = v.phone ? v.phone.replace(/\D/g, '').slice(-4) : '';
+              
+              // Multiple matching strategies
+              const codeMatches =
+                code === normCode ||                                    // Exact match
+                code === `VOL${normCode}` ||                           // VOL prefix
+                normCode === `VOL${code}` ||                           // Reverse VOL prefix
+                (phoneSuffix && phoneSuffix === normCode);             // Phone suffix only
+              
+              const codeFormatMatch =
+                code.startsWith('VOL') &&                              // Stored has VOL prefix
+                normCode.replace('VOL', '').length > 0;                // Input has content after VOL
+              
+              return codeMatches || codeFormatMatch || (phoneSuffix && phoneSuffix === normCode);
+            });
             if (foundVol || normCode.includes('VOL') || normCode.startsWith('V0')) {
               const volCodeVal = (foundVol?.access_code || cleanCode).replace('VOL-', 'VOL');
               const volObj: Volunteer = foundVol || { id: 'vol', name: 'Assembly Volunteer', access_code: volCodeVal, event_id: currentEvent?.id || '', station: 'Main Floor' };
