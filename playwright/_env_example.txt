@@ -1,0 +1,9 @@
+# Playwright Test Environment Variables
+# For playwright_yuva_desk_check.cjs
+
+# Coordinator login credentials (override via CLI or set these env vars)
+COORD_EMAIL=coordinator@test.local
+COORD_PASS=testpass123
+
+# Optional: VOL4898 access code (usually set implicitly in the test)
+# VOL4898_VOLUNTEER_ACCESS=VOL4898

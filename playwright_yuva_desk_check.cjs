@@ -34,13 +34,16 @@ if (!fs.existsSync(SCREENSHOTS)) fs.mkdirSync(SCREENSHOTS, { recursive: true });
       console.log('✅ Clicked Coordinator Login tab');
     }
 
-    // Fill credentials
+    // Fill credentials from environment variables (override via CLI: COORD_EMAIL=xxx COORD_PASS=yyy)
+    const COORD_EMAIL = process.env.COORD_EMAIL || 'coordinator@test.local';
+    const COORD_PASS = process.env.COORD_PASS || 'testpass123';
+
     const emailInput = page.locator('input[type="email"], input[placeholder*="email" i], input[placeholder*="user" i]').first();
     const passInput = page.locator('input[type="password"]').first();
 
-    await emailInput.fill('soundaraharigece2025@jkkn.ac.in');
-    await passInput.fill('coord123');
-    console.log('✅ Filled coordinator credentials');
+    await emailInput.fill(COORD_EMAIL);
+    await passInput.fill(COORD_PASS);
+    console.log(`✅ Filled coordinator credentials (email: ${COORD_EMAIL})`);
 
     const submitBtn = page.locator('button[type="submit"], button:has-text("Login")').first();
     await submitBtn.click();
