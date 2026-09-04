@@ -11,10 +11,12 @@ import {
   UserPlus,
   CheckSquare,
   Sun,
-  Moon
+  Moon,
+  Lock
 } from 'lucide-react';
 import type { Volunteer, Learner, CollegeEvent, ChecklistItem } from '../../types';
 import { useTheme } from '../../lib/theme';
+import { storageService } from '../../services/storageService';
 
 interface VolunteerDashboardProps {
   volunteer?: Volunteer | null;
@@ -70,6 +72,10 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
 
   const handleWalkInSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (storageService.getRegistrationsFrozen(event?.id)) {
+      onShowToast('Registrations Frozen', 'Walk-in registrations are currently frozen by Assembly Coordinator', 'error');
+      return;
+    }
     if (!walkInName.trim()) return;
 
     const accessCode = Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -454,6 +460,14 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
         {/* Tab 2: Walk-In Registration */}
         {activeTab === 'walkin' && (
           <div className="max-w-xl mx-auto rounded-2xl p-6 border space-y-5" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+            
+            {storageService.getRegistrationsFrozen(event?.id) && (
+              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs font-bold flex items-center gap-2">
+                <Lock className="w-4 h-4 text-amber-500 shrink-0" />
+                <span>Walk-in registrations are currently frozen by Assembly Coordinator.</span>
+              </div>
+            )}
+
             <div className="flex items-center gap-3">
               <div className="p-2.5 rounded-xl border" style={{ background: 'var(--accent-soft)', color: 'var(--accent)', borderColor: 'var(--accent)' }}>
                 <UserPlus className="w-5 h-5" />

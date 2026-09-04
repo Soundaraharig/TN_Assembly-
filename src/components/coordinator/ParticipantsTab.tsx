@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import type { Learner, Party, Committee, UserRole } from '../../types';
-import { getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
+import { storageService, getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
 import { canDelete } from '../../utils/permissions';
 import { exportFullParticipantDataToExcel, exportFullParticipantDataToCSV } from '../../utils/csvHelper';
 import { generateDelegateBadgesPDF } from '../../utils/pdfExport';
@@ -18,7 +18,8 @@ import {
   Trash2,
   Pencil,
   AlertTriangle,
-  X
+  X,
+  Lock
 } from 'lucide-react';
 
 interface ParticipantsTabProps {
@@ -252,6 +253,11 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
           <h3 className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
             Participants ({learners.length})
           </h3>
+          {storageService.getRegistrationsFrozen() && (
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-amber-500/10 text-amber-600 border border-amber-500/30 flex items-center gap-1">
+              <Lock className="w-3 h-3 text-amber-500" /> Registrations Frozen
+            </span>
+          )}
           <div className="flex items-center gap-2 text-xs font-semibold" style={{ color: 'var(--accent)' }}>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--accent)' }}></span> Day 1: {day1CheckedCount}</span>
             <span>•</span>
@@ -287,8 +293,14 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
           </button>
 
           <button
-            onClick={onOpenImportCsv}
-            className="px-3 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+            onClick={() => {
+              if (storageService.getRegistrationsFrozen()) {
+                onShowToast('Registrations Frozen', 'Registrations are currently frozen by Assembly Coordinator', 'error');
+                return;
+              }
+              onOpenImportCsv();
+            }}
+            className="px-3 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs disabled:opacity-50"
             style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
           >
             <Upload className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
@@ -377,8 +389,14 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
           )}
 
           <button
-            onClick={onOpenAddWalkIn}
-            className="px-3.5 py-1.5 rounded-xl text-white font-bold text-xs shadow-sm flex items-center gap-1.5 transition-all cursor-pointer hover:opacity-95"
+            onClick={() => {
+              if (storageService.getRegistrationsFrozen()) {
+                onShowToast('Registrations Frozen', 'Registrations are currently frozen by Assembly Coordinator', 'error');
+                return;
+              }
+              onOpenAddWalkIn();
+            }}
+            className="px-3.5 py-1.5 rounded-xl text-white font-bold text-xs shadow-sm flex items-center gap-1.5 transition-all cursor-pointer hover:opacity-95 disabled:opacity-50"
             style={{ backgroundColor: 'var(--accent)' }}
           >
             <Plus className="w-3.5 h-3.5" />

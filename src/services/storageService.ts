@@ -1987,7 +1987,7 @@ class StorageService {
   setAllocationLock(locked: boolean, eventId?: string): void {
     const key = `${STORAGE_KEYS.ALLOCATION_LOCK}_${eventId || 'default'}`;
     this.setItem(key, locked);
-    this.notifyListeners();
+    this.notify();
   }
 
   getRegistrationsFrozen(eventId?: string): boolean {
@@ -1998,7 +1998,7 @@ class StorageService {
   setRegistrationsFrozen(frozen: boolean, eventId?: string): void {
     const key = `${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${eventId || 'default'}`;
     this.setItem(key, frozen);
-    this.notifyListeners();
+    this.notify();
   }
 
   getScoresLocked(eventId?: string): boolean {
@@ -2009,7 +2009,7 @@ class StorageService {
   setScoresLocked(locked: boolean, eventId?: string): void {
     const key = `${STORAGE_KEYS.SCORES_LOCKED}_${eventId || 'default'}`;
     this.setItem(key, locked);
-    this.notifyListeners();
+    this.notify();
   }
 }
 

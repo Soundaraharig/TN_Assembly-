@@ -106,6 +106,10 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
   }, [learners, searchTerm, selectedBench, selectedParty, selectedCommittee, selectedYear]);
 
   const handleRunAutoAllocation = () => {
+    if (isAllocationLocked) {
+      onShowToast('Allocation Locked', 'Unlock allocation in Control Tab to run auto-allocation', 'error');
+      return;
+    }
     if (totalLearners === 0) {
       onShowToast('No Learners Found', 'Please add or import delegates before running allocation', 'error');
       return;
@@ -120,11 +124,15 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
 
   const handleExportCSV = () => {
     exportFullParticipantDataToCSV(learners, 'TN_Assembly_Allocation_Roster.csv');
-    onShowToast('Roster Exported', 'Downloaded complete allocation CSV with constituency mappings', 'success');
+    onShowToast('Roster Exported', 'Downloaded complete allocation CSV with constituency mappings', 'info');
   };
 
   const handleSaveManualEdit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isAllocationLocked) {
+      onShowToast('Allocation Locked', 'Allocation lock is active. Cannot modify delegate assignment.', 'error');
+      return;
+    }
     if (!quickEditLearner) return;
     onUpdateLearner(quickEditLearner);
     setQuickEditLearner(null);
@@ -134,6 +142,16 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
   return (
     <div className="space-y-6 animate-fade-in">
       
+      {isAllocationLocked && (
+        <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs font-bold flex items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-center gap-2">
+            <Lock className="w-4 h-4 text-amber-500 shrink-0" />
+            <span>Allocation Lock Active — Seat, party, and committee changes are disabled across the assembly.</span>
+          </div>
+          <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-800 dark:text-amber-200">CONTROL LOCK ON</span>
+        </div>
+      )}
+
       {/* Top Banner & Action Bar */}
       <div
         className="rounded-2xl p-5 md:p-6 border shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4"
@@ -156,10 +174,17 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
 
         <div className="flex flex-wrap items-center gap-2.5">
           <button
-            onClick={() => setIsConfirmResetOpen(true)}
-            className="px-3.5 py-2 rounded-xl text-xs font-bold border transition-colors flex items-center gap-1.5 cursor-pointer hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200"
+            onClick={() => {
+              if (isAllocationLocked) {
+                onShowToast('Allocation Locked', 'Unlock allocation in Control Tab to reset allocations', 'error');
+                return;
+              }
+              setIsConfirmResetOpen(true);
+            }}
+            disabled={isAllocationLocked}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold border transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200"
             style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
-            title="Reset and clear all allocated seats"
+            title={isAllocationLocked ? 'Allocation is locked' : 'Reset and clear all allocated seats'}
           >
             <RotateCcw className="w-3.5 h-3.5" />
             <span>Reset</span>
@@ -176,12 +201,12 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
 
           <button
             onClick={handleRunAutoAllocation}
-            disabled={learners.length === 0}
-            className="px-5 py-2 rounded-xl font-black text-xs text-white shadow-md flex items-center gap-2 transition-transform hover:scale-102"
+            disabled={learners.length === 0 || isAllocationLocked}
+            className="px-5 py-2 rounded-xl font-black text-xs text-white shadow-md flex items-center gap-2 transition-transform hover:scale-102 disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ 
               backgroundColor: 'var(--amber)',
-              opacity: learners.length === 0 ? 0.5 : 1,
-              cursor: learners.length === 0 ? 'not-allowed' : 'pointer'
+              opacity: (learners.length === 0 || isAllocationLocked) ? 0.5 : 1,
+              cursor: (learners.length === 0 || isAllocationLocked) ? 'not-allowed' : 'pointer'
             }}
           >
             <Zap className="w-4 h-4 fill-white" />
