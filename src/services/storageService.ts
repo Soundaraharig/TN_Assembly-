@@ -1288,9 +1288,12 @@ class StorageService {
   public getOpenNominationPositions(eventId?: string): string[] {
     const map = this.getItem<Record<string, string[]>>(STORAGE_KEYS.OPEN_NOMINATIONS, {});
     const validRoles = ['Speaker', 'Chief Minister', 'Leader of Opposition', 'Party Leader'];
-    if (eventId && map[eventId] && map[eventId].length > 0) {
-      const filtered = map[eventId].filter(p => validRoles.includes(p));
-      return filtered.length > 0 ? filtered : validRoles;
+    if (eventId) {
+      if (eventId in map) {
+        const list = map[eventId] || [];
+        return list.filter(p => validRoles.includes(p));
+      }
+      return validRoles;
     }
     return validRoles;
   }
@@ -1298,7 +1301,8 @@ class StorageService {
   public toggleNominationPositionStatus(eventId: string, position: string): boolean {
     if (!eventId || !position) return false;
     const map = this.getItem<Record<string, string[]>>(STORAGE_KEYS.OPEN_NOMINATIONS, {});
-    const currentList = map[eventId] || [];
+    const validRoles = ['Speaker', 'Chief Minister', 'Leader of Opposition', 'Party Leader'];
+    const currentList = eventId in map ? map[eventId] : validRoles;
     
     let isOpenNow = false;
     let nextList: string[];
@@ -1319,7 +1323,9 @@ class StorageService {
   public setAllNominationPositionsStatus(eventId: string, open: boolean, allPositions: string[] = []): string[] {
     if (!eventId) return [];
     const map = this.getItem<Record<string, string[]>>(STORAGE_KEYS.OPEN_NOMINATIONS, {});
-    const nextList = open ? [...allPositions] : [];
+    const validRoles = ['Speaker', 'Chief Minister', 'Leader of Opposition', 'Party Leader'];
+    const rolesToUse = allPositions.length > 0 ? allPositions : validRoles;
+    const nextList = open ? [...rolesToUse] : [];
     map[eventId] = nextList;
     this.setItem(STORAGE_KEYS.OPEN_NOMINATIONS, map);
     this.syncEventStateToSupabase(eventId);

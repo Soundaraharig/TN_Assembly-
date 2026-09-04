@@ -560,6 +560,13 @@ export function App() {
     }
   };
 
+  const handleSetAllOpenNominationPositions = (open: boolean, positions: string[]) => {
+    if (currentEvent) {
+      storageService.setAllNominationPositionsStatus(currentEvent.id, open, positions);
+      setOpenNominationPositions(storageService.getOpenNominationPositions(currentEvent.id));
+    }
+  };
+
   const handleAssignCabinetRole = (learnerId: string, portfolioRole: string) => {
     if (currentEvent) {
       storageService.assignCabinetRole(currentEvent.id, learnerId, portfolioRole);
@@ -1206,6 +1213,7 @@ export function App() {
                   userRole={userSession?.role || role}
                   openPositions={openNominationPositions}
                   onToggleOpenPosition={handleToggleOpenNominationPosition}
+                  onSetAllOpenPositions={handleSetAllOpenNominationPositions}
                   onAddNomination={(nom) => {
                     storageService.addNomination(nom);
                     setNominations(storageService.getNominations(currentEvent.id));
