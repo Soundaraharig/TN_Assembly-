@@ -325,7 +325,6 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border"
                             style={{ background: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--accent)' }}
                           >
-                            {learner.access_code}
                             {learner.constituency_number !== undefined ? `#${learner.constituency_number}` : learner.bench || 'MLA'}
                           </span>
                           {existingScore && (

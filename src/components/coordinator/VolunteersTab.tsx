@@ -99,21 +99,7 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
         if (saved) return JSON.parse(saved);
       }
     } catch {}
-    return [
-      { id: 'ya_1', volunteerId: 'v1', volunteerName: 'Deeksha', volunteerPhone: '9600679949', targetType: 'party', targetId: 'p2', targetName: 'NEW INDIAN RENAISSANCE' },
-      { id: 'ya_2', volunteerId: 'v2', volunteerName: 'Gandhavelu', volunteerPhone: '94448 41239', targetType: 'party', targetId: 'p2', targetName: 'NEW INDIAN RENAISSANCE' },
-      { id: 'ya_3', volunteerId: 'v3', volunteerName: 'Deepika.V', volunteerPhone: '9080370992', targetType: 'party', targetId: 'p5', targetName: 'THE NAVODAYA PARTY' },
-      { id: 'ya_4', volunteerId: 'v4', volunteerName: 'Gopika.D', volunteerPhone: '8122967836', targetType: 'party', targetId: 'p5', targetName: 'THE NAVODAYA PARTY' },
-      { id: 'ya_5', volunteerId: 'v5', volunteerName: 'Mellbi', volunteerPhone: '8807564032', targetType: 'party', targetId: 'p1', targetName: 'RASHTRA NIRMAN PARTY' },
-      { id: 'ya_6', volunteerId: 'v6', volunteerName: 'Manju R', volunteerPhone: '8778239050', targetType: 'party', targetId: 'p1', targetName: 'RASHTRA NIRMAN PARTY' },
-      { id: 'ya_7', volunteerId: 'v7', volunteerName: 'Subiksha', volunteerPhone: '9025019197', targetType: 'party', targetId: 'p3', targetName: 'RASHTRA JANASWARA SANGHAM' },
-      { id: 'ya_8', volunteerId: 'v8', volunteerName: 'Brindha N', volunteerPhone: '9025183153', targetType: 'party', targetId: 'p4', targetName: 'REVIA AAROH PARTY' },
-      { id: 'ya_9', volunteerId: 'v9', volunteerName: 'Sharnitha', volunteerPhone: '9894782418', targetType: 'party', targetId: 'p4', targetName: 'REVIA AAROH PARTY' },
-      { id: 'ya_10', volunteerId: 'v10', volunteerName: 'Poovarasan', volunteerPhone: '7418714199', targetType: 'committee', targetId: 'c_edu', targetName: 'Ministry of Education' },
-      { id: 'ya_11', volunteerId: 'v11', volunteerName: 'Soundarahari', volunteerPhone: '7603814898', targetType: 'committee', targetId: 'c_edu', targetName: 'Ministry of Education' },
-      { id: 'ya_12', volunteerId: 'v12', volunteerName: 'Rohan', volunteerPhone: '8489729978', targetType: 'committee', targetId: 'c_it', targetName: 'Ministry of Electronics & Information Technology' },
-      { id: 'ya_13', volunteerId: 'v13', volunteerName: 'Roshna', volunteerPhone: '9965994574', targetType: 'committee', targetId: 'c_it', targetName: 'Ministry of Electronics & Information Technology' }
-    ];
+    return [];
   });
 
   useEffect(() => {
@@ -330,14 +316,6 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
                   {volunteers.map(v => (
                     <option key={v.id} value={v.id}>{v.name} ({v.phone || 'YUVA'})</option>
                   ))}
-                  {volunteers.length === 0 && (
-                    <>
-                      <option value="v1">Deeksha (9600679949)</option>
-                      <option value="v2">Gandhavelu (94448 41239)</option>
-                      <option value="v10">Poovarasan (7418714199)</option>
-                      <option value="v11">Soundarahari (7603814898)</option>
-                    </>
-                  )}
                 </select>
               </div>
 

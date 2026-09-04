@@ -19,12 +19,11 @@ import {
   X,
   Check,
   Flame,
-  AlertCircle,
-  Copy
+  AlertCircle
 } from 'lucide-react';
 import type { Volunteer, Learner, CollegeEvent, ChecklistItem, Party, Committee, Election, LiveFlashVote } from '../../types';
 import { useTheme } from '../../lib/theme';
-import { storageService } from '../../services/storageService';
+import { storageService, getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
 
 export interface YuvaAssignment {
   id: string;
@@ -36,21 +35,7 @@ export interface YuvaAssignment {
   targetName: string;
 }
 
-const DEFAULT_YUVA_ASSIGNMENTS: YuvaAssignment[] = [
-  { id: 'ya_1', volunteerId: 'v1', volunteerName: 'Deeksha', volunteerPhone: '9600679949', targetType: 'party', targetId: 'p2', targetName: 'NEW INDIAN RENAISSANCE' },
-  { id: 'ya_2', volunteerId: 'v2', volunteerName: 'Gandhavelu', volunteerPhone: '94448 41239', targetType: 'party', targetId: 'p2', targetName: 'NEW INDIAN RENAISSANCE' },
-  { id: 'ya_3', volunteerId: 'v3', volunteerName: 'Deepika.V', volunteerPhone: '9080370992', targetType: 'party', targetId: 'p5', targetName: 'THE NAVODAYA PARTY' },
-  { id: 'ya_4', volunteerId: 'v4', volunteerName: 'Gopika.D', volunteerPhone: '8122967836', targetType: 'party', targetId: 'p5', targetName: 'THE NAVODAYA PARTY' },
-  { id: 'ya_5', volunteerId: 'v5', volunteerName: 'Mellbi', volunteerPhone: '8807564032', targetType: 'party', targetId: 'p1', targetName: 'RASHTRA NIRMAN PARTY' },
-  { id: 'ya_6', volunteerId: 'v6', volunteerName: 'Manju R', volunteerPhone: '8778239050', targetType: 'party', targetId: 'p1', targetName: 'RASHTRA NIRMAN PARTY' },
-  { id: 'ya_7', volunteerId: 'v7', volunteerName: 'Subiksha', volunteerPhone: '9025019197', targetType: 'party', targetId: 'p3', targetName: 'RASHTRA JANASWARA SANGHAM' },
-  { id: 'ya_8', volunteerId: 'v8', volunteerName: 'Brindha N', volunteerPhone: '9025183153', targetType: 'party', targetId: 'p4', targetName: 'REVIA AAROH PARTY' },
-  { id: 'ya_9', volunteerId: 'v9', volunteerName: 'Sharnitha', volunteerPhone: '9894782418', targetType: 'party', targetId: 'p4', targetName: 'REVIA AAROH PARTY' },
-  { id: 'ya_10', volunteerId: 'v10', volunteerName: 'Poovarasan', volunteerPhone: '7418714199', targetType: 'committee', targetId: 'c_edu', targetName: 'Ministry of Education' },
-  { id: 'ya_11', volunteerId: 'v11', volunteerName: 'Soundarahari', volunteerPhone: '7603814898', targetType: 'committee', targetId: 'c_edu', targetName: 'Ministry of Education' },
-  { id: 'ya_12', volunteerId: 'v12', volunteerName: 'Rohan', volunteerPhone: '8489729978', targetType: 'committee', targetId: 'c_it', targetName: 'Ministry of Electronics & Information Technology' },
-  { id: 'ya_13', volunteerId: 'v13', volunteerName: 'Roshna', volunteerPhone: '9965994574', targetType: 'committee', targetId: 'c_it', targetName: 'Ministry of Electronics & Information Technology' }
-];
+const DEFAULT_YUVA_ASSIGNMENTS: YuvaAssignment[] = [];
 
 interface VolunteerDashboardProps {
   volunteer?: Volunteer | null;
@@ -120,32 +105,50 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   // Find assignments for logged in volunteer
   const userAssignments = useMemo(() => {
     if (!volunteer) return yuvaAssignments;
-    const match = yuvaAssignments.filter(a =>
-      (volunteer.id && a.volunteerId === volunteer.id) ||
-      (volunteer.phone && a.volunteerPhone && volunteer.phone.includes(a.volunteerPhone)) ||
-      (volunteer.name && a.volunteerName && volunteer.name.toLowerCase().includes(a.volunteerName.toLowerCase()))
-    );
+    const vName = (volunteer.name || '').toLowerCase();
+    const vPhone = (volunteer.phone || '').replace(/\D/g, '');
+    const vStation = (volunteer.station || '').toLowerCase();
+    const vRole = (volunteer.role || '').toLowerCase();
+
+    const match = yuvaAssignments.filter(a => {
+      const aName = a.volunteerName.toLowerCase();
+      const aPhone = a.volunteerPhone.replace(/\D/g, '');
+      const aTarget = a.targetName.toLowerCase();
+
+      if (volunteer.id && a.volunteerId === volunteer.id) return true;
+      if (vPhone && aPhone && (vPhone.endsWith(aPhone) || aPhone.endsWith(vPhone))) return true;
+      if (vName && aName && (vName.includes(aName) || aName.includes(vName))) return true;
+      if (vStation && (vStation.includes(aTarget) || aTarget.includes(vStation))) return true;
+      if (vRole && (vRole.includes(aTarget) || aTarget.includes(vRole))) return true;
+
+      return false;
+    });
+
     return match.length > 0 ? match : yuvaAssignments;
   }, [yuvaAssignments, volunteer]);
 
+  // Unique Desk Options without duplicates
+  const uniqueDesks = useMemo(() => {
+    const map = new Map<string, { key: string; targetType: 'party' | 'committee'; targetId: string; targetName: string }>();
+    userAssignments.forEach(a => {
+      const key = `${a.targetType}:::${a.targetId}:::${a.targetName}`;
+      if (!map.has(key)) {
+        map.set(key, { key, targetType: a.targetType, targetId: a.targetId, targetName: a.targetName });
+      }
+    });
+    return Array.from(map.values());
+  }, [userAssignments]);
+
   // Selected desk key: 'type:::id:::name' or 'ALL'
   const [selectedDeskKey, setSelectedDeskKey] = useState<string>(() => {
-    if (userAssignments.length > 0) {
-      const first = userAssignments[0];
-      return `${first.targetType}:::${first.targetId}:::${first.targetName}`;
+    if (uniqueDesks.length > 0 && uniqueDesks.length < 6) {
+      const first = uniqueDesks[0];
+      return first.key;
     }
     return 'ALL';
   });
 
-  // Copy Access Code State & Helper
-  const [copiedCode, setCopiedCode] = useState<string | null>(null);
-
-  const handleCopyCode = (code: string) => {
-    navigator.clipboard.writeText(code);
-    setCopiedCode(code);
-    onShowToast('Access Code Copied', `Copied ${code} to clipboard`, 'info');
-    setTimeout(() => setCopiedCode(null), 2000);
-  };
+  const [checkinScope, setCheckinScope] = useState<'ASSIGNED' | 'ALL'>('ASSIGNED');
 
   // Proxy Voting Modal State
   const [proxyModalLearner, setProxyModalLearner] = useState<Learner | null>(null);
@@ -189,7 +192,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
       onAddWalkIn(newLearner);
     }
 
-    onShowToast('Walk-in Registered', `Registered ${walkInName} (Code: ${accessCode})`, 'success');
+    onShowToast('Walk-in Registered', `Registered ${walkInName}`, 'success');
     setWalkInName('');
     setWalkInEmail('');
     setWalkInPhone('');
@@ -197,62 +200,65 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     setActiveTab('checkin');
   };
 
-  // Filter learners for General Terminal
-  const filteredLearners = useMemo(() => {
-    return learners.filter(l => {
-      const matchesSearch =
-        l.full_name.toLowerCase().includes(search.toLowerCase()) ||
-        l.access_code.toLowerCase().includes(search.toLowerCase()) ||
-        (l.party_name && l.party_name.toLowerCase().includes(search.toLowerCase())) ||
-        (l.constituency_name && l.constituency_name.toLowerCase().includes(search.toLowerCase()));
+  const activeParties = useMemo(() => {
+    return _parties.length > 0 ? _parties : storageService.getParties(eventId);
+  }, [_parties, eventId]);
 
-      const isPresent = selectedDay === 1 ? l.day1_checked_in : l.day2_checked_in;
-      const matchesStatus =
-        statusFilter === 'ALL' ||
-        (statusFilter === 'PRESENT' && isPresent) ||
-        (statusFilter === 'ABSENT' && !isPresent);
+  const activeCommittees = useMemo(() => {
+    return _committees.length > 0 ? _committees : storageService.getCommittees(eventId);
+  }, [_committees, eventId]);
 
-      return matchesSearch && matchesStatus;
-    });
-  }, [learners, search, selectedDay, statusFilter]);
-
-  // Filter learners for YUVA Desk
+  // Filter learners for YUVA Desk & Assigned Scope
   const assignedDeskLearners = useMemo(() => {
     if (!selectedDeskKey || selectedDeskKey === 'ALL') {
       if (userAssignments.length > 0 && userAssignments.length < yuvaAssignments.length) {
-        return learners.filter(l =>
-          userAssignments.some(a =>
+        return learners.filter(l => {
+          const pName = getResolvedPartyName(l, activeParties);
+          const cName = getResolvedCommitteeName(l, activeCommittees);
+          return userAssignments.some(a =>
             a.targetType === 'party'
-              ? (l.party_id === a.targetId || (l.party_name && a.targetName.toLowerCase().includes(l.party_name.toLowerCase())))
-              : (l.committee_id === a.targetId || (l.committee_name && a.targetName.toLowerCase().includes(l.committee_name.toLowerCase())))
-          )
-        );
+              ? (l.party_id === a.targetId || (pName && (pName.toLowerCase().includes(a.targetName.toLowerCase()) || a.targetName.toLowerCase().includes(pName.toLowerCase()))))
+              : (l.committee_id === a.targetId || (cName && (cName.toLowerCase().includes(a.targetName.toLowerCase()) || a.targetName.toLowerCase().includes(cName.toLowerCase()))))
+          );
+        });
       }
       return learners;
     }
 
     const [tType, tId, tName] = selectedDeskKey.split(':::');
     return learners.filter(l => {
+      const pName = getResolvedPartyName(l, activeParties);
+      const cName = getResolvedCommitteeName(l, activeCommittees);
+
       if (tType === 'party') {
-        return l.party_id === tId || (l.party_name && tName && (
-          l.party_name.toLowerCase().includes(tName.toLowerCase()) ||
-          tName.toLowerCase().includes(l.party_name.toLowerCase())
-        ));
+        return (
+          l.party_id === tId ||
+          (pName && tName && (
+            pName.toLowerCase().includes(tName.toLowerCase()) ||
+            tName.toLowerCase().includes(pName.toLowerCase())
+          ))
+        );
       } else {
-        return l.committee_id === tId || (l.committee_name && tName && (
-          l.committee_name.toLowerCase().includes(tName.toLowerCase()) ||
-          tName.toLowerCase().includes(l.committee_name.toLowerCase())
-        ));
+        return (
+          l.committee_id === tId ||
+          (cName && tName && (
+            cName.toLowerCase().includes(tName.toLowerCase()) ||
+            tName.toLowerCase().includes(cName.toLowerCase())
+          ))
+        );
       }
     });
-  }, [learners, selectedDeskKey, userAssignments, yuvaAssignments]);
+  }, [learners, selectedDeskKey, userAssignments, yuvaAssignments, activeParties, activeCommittees]);
 
-  const filteredYuvaMembers = useMemo(() => {
-    return assignedDeskLearners.filter(l => {
+  // Filter learners for General Check-in Terminal
+  const filteredLearners = useMemo(() => {
+    const baseList = checkinScope === 'ASSIGNED' ? assignedDeskLearners : learners;
+    return baseList.filter(l => {
+      const pName = getResolvedPartyName(l, activeParties);
       const matchesSearch =
         l.full_name.toLowerCase().includes(search.toLowerCase()) ||
         l.access_code.toLowerCase().includes(search.toLowerCase()) ||
-        (l.party_name && l.party_name.toLowerCase().includes(search.toLowerCase())) ||
+        (pName && pName.toLowerCase().includes(search.toLowerCase())) ||
         (l.constituency_name && l.constituency_name.toLowerCase().includes(search.toLowerCase()));
 
       const isPresent = selectedDay === 1 ? l.day1_checked_in : l.day2_checked_in;
@@ -263,7 +269,26 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
 
       return matchesSearch && matchesStatus;
     });
-  }, [assignedDeskLearners, search, selectedDay, statusFilter]);
+  }, [learners, assignedDeskLearners, checkinScope, search, selectedDay, statusFilter, activeParties]);
+
+  const filteredYuvaMembers = useMemo(() => {
+    return assignedDeskLearners.filter(l => {
+      const pName = getResolvedPartyName(l, activeParties);
+      const matchesSearch =
+        l.full_name.toLowerCase().includes(search.toLowerCase()) ||
+        l.access_code.toLowerCase().includes(search.toLowerCase()) ||
+        (pName && pName.toLowerCase().includes(search.toLowerCase())) ||
+        (l.constituency_name && l.constituency_name.toLowerCase().includes(search.toLowerCase()));
+
+      const isPresent = selectedDay === 1 ? l.day1_checked_in : l.day2_checked_in;
+      const matchesStatus =
+        statusFilter === 'ALL' ||
+        (statusFilter === 'PRESENT' && isPresent) ||
+        (statusFilter === 'ABSENT' && !isPresent);
+
+      return matchesSearch && matchesStatus;
+    });
+  }, [assignedDeskLearners, search, selectedDay, statusFilter, activeParties]);
 
   const day1Present = learners.filter(l => l.day1_checked_in).length;
   const day2Present = learners.filter(l => l.day2_checked_in).length;
@@ -589,10 +614,12 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                     onChange={(e) => setSelectedDeskKey(e.target.value)}
                     className="input-theme text-xs font-bold py-2 px-3 rounded-xl border w-full sm:w-72"
                   >
-                    <option value="ALL">All Assigned Desks ({userAssignments.length})</option>
-                    {userAssignments.map((a) => (
-                      <option key={a.id} value={`${a.targetType}:::${a.targetId}:::${a.targetName}`}>
-                        {a.targetType === 'party' ? '🚩 Party Desk:' : '🏛️ Committee:'} {a.targetName}
+                    {uniqueDesks.length > 1 && (
+                      <option value="ALL">All Assigned Desks ({uniqueDesks.length})</option>
+                    )}
+                    {uniqueDesks.map((d) => (
+                      <option key={d.key} value={d.key}>
+                        {d.targetType === 'party' ? '🚩 Party Desk:' : '🏛️ Committee:'} {d.targetName}
                       </option>
                     ))}
                   </select>
@@ -661,7 +688,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                 <table className="w-full text-left text-xs">
                   <thead className="border-b uppercase" style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
                     <tr>
-                      <th className="py-2.5 px-3">Access Code</th>
+                      <th className="py-2.5 px-3">#</th>
                       <th className="py-2.5 px-3">Delegate Name</th>
                       <th className="py-2.5 px-3">Party & Bench</th>
                       <th className="py-2.5 px-3">Role / Constituency</th>
@@ -681,20 +708,8 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                         const isPresent = selectedDay === 1 ? learner.day1_checked_in : learner.day2_checked_in;
                         return (
                           <tr key={learner.id} className="hover:opacity-90">
-                            <td className="py-3 px-3 font-mono font-bold">
-                              <button
-                                type="button"
-                                onClick={() => handleCopyCode(learner.access_code)}
-                                className="px-2.5 py-1 rounded-lg border border-amber-200 dark:border-amber-800/50 bg-amber-50/60 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 font-mono font-bold text-xs inline-flex items-center gap-1.5 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors cursor-pointer"
-                                title="Click to copy access code"
-                              >
-                                <span>{learner.access_code}</span>
-                                {copiedCode === learner.access_code ? (
-                                  <Check className="w-3 h-3 text-emerald-600" />
-                                ) : (
-                                  <Copy className="w-3 h-3 text-amber-600/70" />
-                                )}
-                              </button>
+                            <td className="py-3 px-3 font-mono font-bold" style={{ color: 'var(--amber)' }}>
+                              {learner.constituency_number !== undefined ? `#${learner.constituency_number}` : '-'}
                             </td>
                             <td className="py-3 px-3 font-bold" style={{ color: 'var(--text-primary)' }}>
                               {learner.full_name}
@@ -759,15 +774,42 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
         {activeTab === 'checkin' && (
           <div className="rounded-2xl p-6 border space-y-4" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-              <div className="relative w-full sm:w-80">
-                <Search className="w-3.5 h-3.5 absolute left-3 top-3" style={{ color: 'var(--text-muted)' }} />
-                <input
-                  type="text"
-                  placeholder="Scan badge or search name, code, party..."
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  className="input-theme pl-8 py-2 text-xs w-full"
-                />
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <div className="relative flex-1 sm:w-72">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-3" style={{ color: 'var(--text-muted)' }} />
+                  <input
+                    type="text"
+                    placeholder="Scan badge or search name, code, party..."
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    className="input-theme pl-8 py-2 text-xs w-full"
+                  />
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setCheckinScope('ASSIGNED')}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-xl border transition cursor-pointer ${
+                      checkinScope === 'ASSIGNED'
+                        ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
+                        : 'bg-slate-500/5 text-slate-500 border-slate-500/20 hover:border-slate-400'
+                    }`}
+                  >
+                    My Desk ({assignedDeskLearners.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCheckinScope('ALL')}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-xl border transition cursor-pointer ${
+                      checkinScope === 'ALL'
+                        ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
+                        : 'bg-slate-500/5 text-slate-500 border-slate-500/20 hover:border-slate-400'
+                    }`}
+                  >
+                    All Benches ({learners.length})
+                  </button>
+                </div>
               </div>
 
               <div className="flex items-center gap-1">
@@ -795,7 +837,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
               <table className="w-full text-left text-xs">
                 <thead className="border-b uppercase" style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
                   <tr>
-                    <th className="py-2.5 px-3">Access Code</th>
+                    <th className="py-2.5 px-3">#</th>
                     <th className="py-2.5 px-3">Delegate Name</th>
                     <th className="py-2.5 px-3">Party & Bench</th>
                     <th className="py-2.5 px-3">Constituency / Role</th>
@@ -814,21 +856,8 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                       const isPresent = selectedDay === 1 ? learner.day1_checked_in : learner.day2_checked_in;
                       return (
                         <tr key={learner.id} className="hover:opacity-90">
-                          <td className="py-3 px-3 font-mono font-bold">
-                            <button
-                              type="button"
-                              onClick={() => handleCopyCode(learner.access_code)}
-                              className="px-2.5 py-1 rounded-lg border border-amber-200 dark:border-amber-800/50 bg-amber-50/60 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 font-mono font-bold text-xs inline-flex items-center gap-1.5 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors cursor-pointer"
-                              title="Click to copy access code"
-                            >
-                              <span>{learner.access_code}</span>
-                              {copiedCode === learner.access_code ? (
-                                <Check className="w-3 h-3 text-emerald-600" />
-                              ) : (
-                                <Copy className="w-3 h-3 text-amber-600/70" />
-                              )}
-                            </button>
-                            {learner.constituency_number !== undefined ? ` #${learner.constituency_number}` : ''}
+                          <td className="py-3 px-3 font-mono font-bold" style={{ color: 'var(--amber)' }}>
+                            {learner.constituency_number !== undefined ? `#${learner.constituency_number}` : '-'}
                           </td>
                           <td className="py-3 px-3 font-bold" style={{ color: 'var(--text-primary)' }}>
                             {learner.full_name}
@@ -1041,7 +1070,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                     Proxy Voting: {proxyModalLearner.full_name}
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Code: <strong className="font-mono text-amber-600 dark:text-amber-400">{proxyModalLearner.access_code}</strong> · {proxyModalLearner.party_name || 'Independent'} ({proxyModalLearner.bench || 'Ruling'})
+                    {proxyModalLearner.constituency_number !== undefined ? `#${proxyModalLearner.constituency_number} · ` : ''}{proxyModalLearner.party_name || 'Independent'} ({proxyModalLearner.bench || 'Ruling'})
                   </p>
                 </div>
               </div>
