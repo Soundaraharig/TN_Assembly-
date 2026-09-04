@@ -32,7 +32,7 @@ const ToastItem: React.FC<{ toast: ToastMessage; onDismiss: (id: string) => void
   useEffect(() => {
     const timer = setTimeout(() => {
       onDismiss(toast.id);
-    }, 3200);
+    }, 2000);
     return () => clearTimeout(timer);
   }, [toast.id, onDismiss]);
 

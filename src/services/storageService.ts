@@ -66,7 +66,10 @@ const STORAGE_KEYS = {
   CHAT: 'tn_assembly_chat_v6',
   FEEDBACK: 'tn_assembly_feedback_v6',
   TEAM: 'tn_assembly_team_v6',
-  OPEN_NOMINATIONS: 'tn_assembly_open_nominations_v6'
+  OPEN_NOMINATIONS: 'tn_assembly_open_nominations_v6',
+  ALLOCATION_LOCK: 'tn_assembly_allocation_lock_v6',
+  REGISTRATIONS_FROZEN: 'tn_assembly_registrations_frozen_v6',
+  SCORES_LOCKED: 'tn_assembly_scores_locked_v6'
 };
 
 type Listener = () => void;
@@ -1973,6 +1976,40 @@ class StorageService {
     const updatedMap = new Map(updatedLearners.map(l => [l.id, l]));
     const allLearners = this.getLearners().map(l => updatedMap.get(l.id) || l);
     this.setItem(STORAGE_KEYS.LEARNERS, allLearners);
+  }
+
+  // ── Security Locks (Allocation Lock, Registrations Frozen, Scores Locked) ──
+  getAllocationLock(eventId?: string): boolean {
+    const key = `${STORAGE_KEYS.ALLOCATION_LOCK}_${eventId || 'default'}`;
+    return !!this.getItem<boolean>(key, false);
+  }
+
+  setAllocationLock(locked: boolean, eventId?: string): void {
+    const key = `${STORAGE_KEYS.ALLOCATION_LOCK}_${eventId || 'default'}`;
+    this.setItem(key, locked);
+    this.notifyListeners();
+  }
+
+  getRegistrationsFrozen(eventId?: string): boolean {
+    const key = `${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${eventId || 'default'}`;
+    return !!this.getItem<boolean>(key, false);
+  }
+
+  setRegistrationsFrozen(frozen: boolean, eventId?: string): void {
+    const key = `${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${eventId || 'default'}`;
+    this.setItem(key, frozen);
+    this.notifyListeners();
+  }
+
+  getScoresLocked(eventId?: string): boolean {
+    const key = `${STORAGE_KEYS.SCORES_LOCKED}_${eventId || 'default'}`;
+    return !!this.getItem<boolean>(key, false);
+  }
+
+  setScoresLocked(locked: boolean, eventId?: string): void {
+    const key = `${STORAGE_KEYS.SCORES_LOCKED}_${eventId || 'default'}`;
+    this.setItem(key, locked);
+    this.notifyListeners();
   }
 }
 

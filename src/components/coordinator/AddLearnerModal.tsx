@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import type { AcademicYear, Learner } from '../../types';
 import { generateAccessCode } from '../../utils/accessCodeGenerator';
-import { X, UserPlus, Sparkles } from 'lucide-react';
+import { storageService } from '../../services/storageService';
+import { X, UserPlus, Sparkles, Lock } from 'lucide-react';
 
 interface AddLearnerModalProps {
   isOpen: boolean;
@@ -26,8 +27,11 @@ export const AddLearnerModal: React.FC<AddLearnerModalProps> = ({
 
   if (!isOpen) return null;
 
+  const isFrozen = storageService.getRegistrationsFrozen(eventId);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isFrozen) return;
     if (!fullName.trim()) return;
 
     const accessCode = generateAccessCode(existingCodes);
@@ -49,6 +53,13 @@ export const AddLearnerModal: React.FC<AddLearnerModalProps> = ({
     <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl animate-slide-up">
         
+        {isFrozen && (
+          <div className="mb-4 p-3 rounded-xl bg-amber-950/60 border border-amber-500/40 text-amber-300 text-xs font-bold flex items-center gap-2">
+            <Lock className="w-4 h-4 shrink-0 text-amber-400" />
+            <span>Registrations are currently frozen by Assembly Coordinator.</span>
+          </div>
+        )}
+
         <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
           <div className="flex items-center gap-2 text-emerald-400">
             <UserPlus className="w-5 h-5" />
@@ -138,7 +149,8 @@ export const AddLearnerModal: React.FC<AddLearnerModalProps> = ({
             </button>
             <button
               type="submit"
-              className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 shadow-md flex items-center gap-1"
+              disabled={isFrozen}
+              className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed shadow-md flex items-center gap-1"
             >
               <Sparkles className="w-3.5 h-3.5" /> Save Walk-in Participant
             </button>

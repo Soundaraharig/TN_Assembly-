@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import type { Learner, Party, Committee, AcademicYear, BenchType } from '../../types';
-import { getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
+import { storageService, getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
 import { exportFullParticipantDataToCSV } from '../../utils/csvHelper';
 import {
   RotateCcw,
@@ -12,7 +12,8 @@ import {
   AlertCircle,
   Users,
   Shield,
-  Table as TableIcon
+  Table as TableIcon,
+  Lock
 } from 'lucide-react';
 
 interface AllocationTabProps {
@@ -41,6 +42,8 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
   const [selectedCommittee, setSelectedCommittee] = useState<string>('ALL');
   const [selectedYear, setSelectedYear] = useState<string>('ALL');
   const [isConfirmResetOpen, setIsConfirmResetOpen] = useState(false);
+
+  const isAllocationLocked = storageService.getAllocationLock();
 
   // Delegate currently being manually edited
   const [quickEditLearner, setQuickEditLearner] = useState<Learner | null>(null);

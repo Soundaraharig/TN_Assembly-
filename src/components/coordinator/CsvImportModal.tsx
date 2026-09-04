@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import type { Learner } from '../../types';
 import { parseCSVFile } from '../../utils/csvHelper';
-import { X, Upload, Download, FileText, CheckCircle2, AlertCircle } from 'lucide-react';
+import { storageService } from '../../services/storageService';
+import { X, Upload, Download, FileText, CheckCircle2, AlertCircle, Lock } from 'lucide-react';
 
 interface CsvImportModalProps {
   isOpen: boolean;
@@ -27,7 +28,13 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
 
   if (!isOpen) return null;
 
+  const isFrozen = storageService.getRegistrationsFrozen(eventId);
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isFrozen) {
+      onShowToast('Registrations Frozen', 'Cannot upload CSV while registrations are frozen', 'error');
+      return;
+    }
     if (e.target.files && e.target.files[0]) {
       const selectedFile = e.target.files[0];
       setFile(selectedFile);
@@ -55,6 +62,10 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
   };
 
   const handleConfirmImport = () => {
+    if (isFrozen) {
+      onShowToast('Registrations Frozen', 'Registrations are frozen by Assembly Coordinator', 'error');
+      return;
+    }
     if (previewLearners.length === 0) return;
     onImportSuccess(previewLearners);
     onShowToast('Import Successful', `Successfully imported ${previewLearners.length} student delegates with auto-generated 6-char access codes`, 'success');
@@ -65,6 +76,13 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
     <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-xl w-full p-6 shadow-2xl animate-slide-up max-h-[90vh] flex flex-col">
         
+        {isFrozen && (
+          <div className="mb-4 p-3 rounded-xl bg-amber-950/60 border border-amber-500/40 text-amber-300 text-xs font-bold flex items-center gap-2">
+            <Lock className="w-4 h-4 shrink-0 text-amber-400" />
+            <span>CSV Imports are disabled because Registrations are frozen by Assembly Coordinator.</span>
+          </div>
+        )}
+
         <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4 shrink-0">
           <div className="flex items-center gap-2 text-emerald-400">
             <Upload className="w-5 h-5" />

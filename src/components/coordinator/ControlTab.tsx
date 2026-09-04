@@ -22,6 +22,8 @@ import {
   Monitor
 } from 'lucide-react';
 
+import { storageService } from '../../services/storageService';
+
 interface ControlTabProps {
   learners: Learner[];
   parties?: Party[];
@@ -202,9 +204,15 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   const [isBroadcasting, setIsBroadcasting] = useState(false);
 
   // ── Locks & Controls ──────────────────────────────────────────────────────
-  const [allocationLock, setAllocationLock] = useState(false);
-  const [registrationsFrozen, setRegistrationsFrozen] = useState(false);
-  const [scoresLocked, setScoresLocked] = useState(false);
+  const [allocationLock, setAllocationLock] = useState(() => storageService.getAllocationLock(currentEvent?.id));
+  const [registrationsFrozen, setRegistrationsFrozen] = useState(() => storageService.getRegistrationsFrozen(currentEvent?.id));
+  const [scoresLocked, setScoresLocked] = useState(() => storageService.getScoresLocked(currentEvent?.id));
+
+  useEffect(() => {
+    setAllocationLock(storageService.getAllocationLock(currentEvent?.id));
+    setRegistrationsFrozen(storageService.getRegistrationsFrozen(currentEvent?.id));
+    setScoresLocked(storageService.getScoresLocked(currentEvent?.id));
+  }, [currentEvent?.id]);
 
 
 
@@ -817,8 +825,10 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                     type="checkbox"
                     checked={allocationLock}
                     onChange={(e) => {
-                      setAllocationLock(e.target.checked);
-                      onShowToast(e.target.checked ? 'Allocation Locked' : 'Allocation Unlocked', '', 'info');
+                      const val = e.target.checked;
+                      setAllocationLock(val);
+                      storageService.setAllocationLock(val, currentEvent?.id);
+                      onShowToast(val ? '🔒 Allocation Locked' : '🔓 Allocation Unlocked', val ? 'Role & party allocations locked' : 'Allocations unlocked', 'info');
                     }}
                     className="sr-only peer"
                   />
@@ -837,8 +847,10 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                     type="checkbox"
                     checked={registrationsFrozen}
                     onChange={(e) => {
-                      setRegistrationsFrozen(e.target.checked);
-                      onShowToast(e.target.checked ? 'Registrations Frozen' : 'Registrations Open', '', 'info');
+                      const val = e.target.checked;
+                      setRegistrationsFrozen(val);
+                      storageService.setRegistrationsFrozen(val, currentEvent?.id);
+                      onShowToast(val ? '❄️ Registrations Frozen' : '🔓 Registrations Open', val ? 'Walk-in & CSV additions blocked' : 'Registrations open', 'info');
                     }}
                     className="sr-only peer"
                   />
@@ -857,8 +869,10 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                     type="checkbox"
                     checked={scoresLocked}
                     onChange={(e) => {
-                      setScoresLocked(e.target.checked);
-                      onShowToast(e.target.checked ? 'Scores Locked' : 'Scores Unlocked', '', 'info');
+                      const val = e.target.checked;
+                      setScoresLocked(val);
+                      storageService.setScoresLocked(val, currentEvent?.id);
+                      onShowToast(val ? '🔒 Scores Locked' : '🔓 Scores Unlocked', val ? 'Jury evaluation scoring locked' : 'Scoring open', 'info');
                     }}
                     className="sr-only peer"
                   />
