@@ -40,7 +40,7 @@ export const NominationsTab: React.FC<NominationsTabProps> = ({
   parties = [],
   eventId,
   userRole,
-  openPositions = ['Speaker', 'Ruling Party Leader', 'Opposition Party Leader'],
+  openPositions = [],
   onToggleOpenPosition,
   onAddNomination,
   onDeleteNomination,

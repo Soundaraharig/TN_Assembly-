@@ -1125,16 +1125,15 @@ class StorageService {
   // ── NOMINATIONS ───────────────────────────────────────────────────────────
 
   public getOpenNominationPositions(eventId?: string): string[] {
-    const defaultOpen = ['Speaker', 'Ruling Party Leader', 'Opposition Party Leader'];
     const map = this.getItem<Record<string, string[]>>(STORAGE_KEYS.OPEN_NOMINATIONS, {});
     if (eventId && map[eventId]) return map[eventId];
-    return defaultOpen;
+    return [];
   }
 
   public toggleNominationPositionStatus(eventId: string, position: string): boolean {
     if (!eventId || !position) return false;
     const map = this.getItem<Record<string, string[]>>(STORAGE_KEYS.OPEN_NOMINATIONS, {});
-    const currentList = map[eventId] || ['Speaker', 'Ruling Party Leader', 'Opposition Party Leader'];
+    const currentList = map[eventId] || [];
     
     let isOpenNow = false;
     let nextList: string[];
@@ -1148,7 +1147,6 @@ class StorageService {
 
     map[eventId] = nextList;
     this.setItem(STORAGE_KEYS.OPEN_NOMINATIONS, map);
-    this.notify();
     return isOpenNow;
   }
 

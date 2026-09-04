@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { Learner, CollegeEvent, AgendaItem, Party, Committee, Nomination, NominationPosition } from '../../types';
-import { Landmark, MapPin, BookOpen, Clock, Hand, CheckCircle2, Sparkles, Radio, FileSpreadsheet, Send } from 'lucide-react';
+import { Landmark, MapPin, BookOpen, Clock, Hand, CheckCircle2, Sparkles, Radio, FileSpreadsheet, Send, Lock, UserCheck } from 'lucide-react';
 
 interface StudentDashboardProps {
   student: Learner;
@@ -8,6 +8,7 @@ interface StudentDashboardProps {
   agenda: AgendaItem[];
   party: Party | null;
   committee: Committee | null;
+  nominations?: Nomination[];
   openNominationPositions?: string[];
   onFileNomination?: (nom: Partial<Nomination>) => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
@@ -18,6 +19,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   event,
   agenda,
   committee,
+  nominations = [],
   openNominationPositions = [],
   onFileNomination,
   onShowToast
@@ -30,6 +32,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   );
   const [nomManifesto, setNomManifesto] = useState('');
   const [nomSubmitted, setNomSubmitted] = useState(false);
+
+  // Synchronize selected position whenever open positions list updates
+  useEffect(() => {
+    if (openNominationPositions && openNominationPositions.length > 0) {
+      if (!openNominationPositions.includes(selectedNomPosition)) {
+        setSelectedNomPosition(openNominationPositions[0]);
+      }
+    }
+  }, [openNominationPositions, selectedNomPosition]);
 
   const isRuling = student.bench === 'Ruling';
   const currentAgendaItem = agenda.find(a => a.is_current) || agenda[0];
@@ -172,8 +183,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
       </div>
 
-      {/* Self-Nomination Filing Section (When Nominations are Open) */}
-      {openNominationPositions.length > 0 && onFileNomination && (
+      {/* Self-Nomination Filing Section */}
+      {openNominationPositions.length > 0 && onFileNomination ? (
         <div className="bg-gradient-to-br from-emerald-950/40 via-slate-900 to-slate-900 border border-emerald-500/30 rounded-2xl p-5 md:p-6 shadow-xl space-y-4">
           <div className="flex items-center justify-between border-b border-slate-800 pb-3">
             <div className="flex items-center gap-2">
@@ -188,7 +199,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   </span>
                 </h4>
                 <p className="text-xs text-slate-400">
-                  File your candidacy nomination for parliamentary leadership positions directly
+                  Open positions: <span className="text-emerald-400 font-semibold">{openNominationPositions.join(', ')}</span>
                 </p>
               </div>
             </div>
@@ -259,6 +270,65 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               </button>
             </div>
           </form>
+        </div>
+      ) : (
+        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 shadow-md flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-xl bg-slate-800 text-slate-400 border border-slate-700/50">
+              <Lock className="w-4 h-4" />
+            </div>
+            <div>
+              <h5 className="text-xs font-bold text-slate-300">Nominations Currently Closed</h5>
+              <p className="text-[11px] text-slate-500">The Assembly Coordinator will open nomination windows for Speaker and Leadership during proceedings.</p>
+            </div>
+          </div>
+          <span className="text-[10px] font-mono uppercase font-bold text-slate-500 bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800">
+            Awaiting Open
+          </span>
+        </div>
+      )}
+
+      {/* Filed Nominations Tracker */}
+      {nominations.length > 0 && (
+        <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+            <h4 className="text-sm font-bold text-white flex items-center gap-2">
+              <UserCheck className="w-4 h-4 text-emerald-400" /> Active Candidate Nominations ({nominations.length})
+            </h4>
+            <span className="text-[10px] font-mono text-slate-400">Live Roster</span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+            {nominations.map(nom => {
+              const isMe = nom.candidate_learner_id === student.id;
+              return (
+                <div
+                  key={nom.id}
+                  className={`p-3 rounded-xl border text-xs space-y-1.5 transition-all ${
+                    isMe
+                      ? 'bg-emerald-950/30 border-emerald-500/40 text-white'
+                      : 'bg-slate-950/60 border-slate-800/80 text-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                      {nom.position}
+                    </span>
+                    {isMe && (
+                      <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-emerald-500 text-white">
+                        Your Nomination
+                      </span>
+                    )}
+                  </div>
+                  <div className="font-bold text-white text-xs">{nom.candidate_name}</div>
+                  <p className="text-[11px] text-slate-400">{nom.party_name} • {nom.bench} Bench</p>
+                  {nom.manifesto && (
+                    <p className="text-[10px] text-slate-400 italic line-clamp-2">"{nom.manifesto}"</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

@@ -594,7 +594,11 @@ export function App() {
               setIsAuthenticated(true);
               setRole('student');
               const targetEv = events.find(e => e.id === foundLearner.event_id);
-              if (targetEv) setCurrentEvent(targetEv);
+              if (targetEv) {
+                setCurrentEvent(targetEv);
+                setOpenNominationPositions(storageService.getOpenNominationPositions(targetEv.id));
+                setNominations(storageService.getNominations(targetEv.id));
+              }
               saveSession({
                 role: 'student',
                 studentCode: foundLearner.access_code,
@@ -1248,6 +1252,7 @@ export function App() {
                   agenda={agenda}
                   party={activeParty}
                   committee={activeCommittee}
+                  nominations={nominations}
                   openNominationPositions={openNominationPositions}
                   onFileNomination={(nom) => {
                     storageService.addNomination(nom);
