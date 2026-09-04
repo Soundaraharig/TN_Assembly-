@@ -602,9 +602,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   </div>
                   <div className="font-bold text-slate-900 dark:text-white text-xs">{nom.candidate_name}</div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">{nom.party_name} • {nom.bench} Bench</p>
-                  {nom.manifesto && (
-                    <p className="text-[10px] text-slate-500 dark:text-slate-400 italic line-clamp-2">"{nom.manifesto}"</p>
-                  )}
                 </div>
               );
             })}

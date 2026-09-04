@@ -756,7 +756,11 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
 
                           {/* Access code box */}
                           {(() => {
-                            const codeVal = v.access_code || v.phone || v.id || 'VOL-101';
+                            const isPhoneLike = !v.access_code || v.access_code === v.phone || /^\d{10}$/.test(v.access_code.replace(/\s+/g, ''));
+                            const codeVal = isPhoneLike
+                              ? `VOL-${v.phone ? v.phone.replace(/\D/g, '').slice(-4) : (v.id || '101')}`
+                              : v.access_code;
+
                             return (
                               <div className="pt-1">
                                 <button

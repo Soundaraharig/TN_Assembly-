@@ -19,7 +19,8 @@ import {
   X,
   Check,
   Flame,
-  AlertCircle
+  AlertCircle,
+  Copy
 } from 'lucide-react';
 import type { Volunteer, Learner, CollegeEvent, ChecklistItem, Party, Committee, Election, LiveFlashVote } from '../../types';
 import { useTheme } from '../../lib/theme';
@@ -135,6 +136,16 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     }
     return 'ALL';
   });
+
+  // Copy Access Code State & Helper
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
+
+  const handleCopyCode = (code: string) => {
+    navigator.clipboard.writeText(code);
+    setCopiedCode(code);
+    onShowToast('Access Code Copied', `Copied ${code} to clipboard`, 'info');
+    setTimeout(() => setCopiedCode(null), 2000);
+  };
 
   // Proxy Voting Modal State
   const [proxyModalLearner, setProxyModalLearner] = useState<Learner | null>(null);
@@ -670,8 +681,20 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                         const isPresent = selectedDay === 1 ? learner.day1_checked_in : learner.day2_checked_in;
                         return (
                           <tr key={learner.id} className="hover:opacity-90">
-                            <td className="py-3 px-3 font-mono font-bold" style={{ color: 'var(--accent)' }}>
-                              {learner.access_code}
+                            <td className="py-3 px-3 font-mono font-bold">
+                              <button
+                                type="button"
+                                onClick={() => handleCopyCode(learner.access_code)}
+                                className="px-2.5 py-1 rounded-lg border border-amber-200 dark:border-amber-800/50 bg-amber-50/60 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 font-mono font-bold text-xs inline-flex items-center gap-1.5 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors cursor-pointer"
+                                title="Click to copy access code"
+                              >
+                                <span>{learner.access_code}</span>
+                                {copiedCode === learner.access_code ? (
+                                  <Check className="w-3 h-3 text-emerald-600" />
+                                ) : (
+                                  <Copy className="w-3 h-3 text-amber-600/70" />
+                                )}
+                              </button>
                             </td>
                             <td className="py-3 px-3 font-bold" style={{ color: 'var(--text-primary)' }}>
                               {learner.full_name}
@@ -791,8 +814,20 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                       const isPresent = selectedDay === 1 ? learner.day1_checked_in : learner.day2_checked_in;
                       return (
                         <tr key={learner.id} className="hover:opacity-90">
-                          <td className="py-3 px-3 font-mono font-bold" style={{ color: 'var(--accent)' }}>
-                            {learner.access_code}
+                          <td className="py-3 px-3 font-mono font-bold">
+                            <button
+                              type="button"
+                              onClick={() => handleCopyCode(learner.access_code)}
+                              className="px-2.5 py-1 rounded-lg border border-amber-200 dark:border-amber-800/50 bg-amber-50/60 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 font-mono font-bold text-xs inline-flex items-center gap-1.5 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors cursor-pointer"
+                              title="Click to copy access code"
+                            >
+                              <span>{learner.access_code}</span>
+                              {copiedCode === learner.access_code ? (
+                                <Check className="w-3 h-3 text-emerald-600" />
+                              ) : (
+                                <Copy className="w-3 h-3 text-amber-600/70" />
+                              )}
+                            </button>
                             {learner.constituency_number !== undefined ? ` #${learner.constituency_number}` : ''}
                           </td>
                           <td className="py-3 px-3 font-bold" style={{ color: 'var(--text-primary)' }}>

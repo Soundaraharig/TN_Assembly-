@@ -1113,16 +1113,35 @@ class StorageService {
 
   public getVolunteers(eventId?: string): Volunteer[] {
     const all = this.getItem<Volunteer[]>(STORAGE_KEYS.VOLUNTEERS, INITIAL_VOLUNTEERS);
-    if (eventId) return all.filter(v => v.event_id === eventId);
-    return all;
+    let updated = false;
+    const sanitized = all.map((v, idx) => {
+      const isPhoneCode = !v.access_code || v.access_code === v.phone || /^\d{10}$/.test(v.access_code.replace(/\s+/g, ''));
+      if (isPhoneCode) {
+        updated = true;
+        const numPart = (v.phone ? v.phone.replace(/\D/g, '').slice(-4) : (101 + idx).toString());
+        return {
+          ...v,
+          access_code: `VOL-${numPart}`
+        };
+      }
+      return v;
+    });
+
+    if (updated) {
+      this.setItem(STORAGE_KEYS.VOLUNTEERS, sanitized);
+    }
+    if (eventId) return sanitized.filter(v => v.event_id === eventId);
+    return sanitized;
   }
 
   public addVolunteer(volunteer: Partial<Volunteer>): Volunteer {
     const all = this.getVolunteers();
+    const codeNum = volunteer.phone ? volunteer.phone.replace(/\D/g, '').slice(-4) : Math.floor(100 + Math.random() * 900).toString();
+    const defaultCode = `VOL-${codeNum}`;
     const newVol: Volunteer = {
       id: volunteer.id || uid('vol'),
       event_id: volunteer.event_id || '',
-      access_code: volunteer.access_code || Math.random().toString(36).substring(2, 8).toUpperCase(),
+      access_code: volunteer.access_code || defaultCode,
       name: volunteer.name || '',
       email: volunteer.email || '',
       phone: volunteer.phone || '',
@@ -1156,20 +1175,24 @@ class StorageService {
 
   public bulkImportVolunteers(volunteersList: Partial<Volunteer>[], eventId: string) {
     const existing = this.getVolunteers();
-    const newItems: Volunteer[] = volunteersList.map(v => ({
-      id: v.id || uid('vol'),
-      event_id: eventId,
-      access_code: v.access_code || Math.random().toString(36).substring(2, 8).toUpperCase(),
-      name: v.name || 'Volunteer',
-      email: v.email || '',
-      phone: v.phone || '',
-      station: v.station || 'Floating',
-      shift: v.shift || 'Both days',
-      is_yuva: v.is_yuva !== undefined ? v.is_yuva : true,
-      has_arrived: v.has_arrived || false,
-      role: v.role || 'YUVA Volunteer',
-      created_at: new Date().toISOString()
-    }));
+    const newItems: Volunteer[] = volunteersList.map((v, idx) => {
+      const codeNum = v.phone ? v.phone.replace(/\D/g, '').slice(-4) : (101 + idx).toString();
+      const defaultCode = `VOL-${codeNum}`;
+      return {
+        id: v.id || uid('vol'),
+        event_id: eventId,
+        access_code: v.access_code || defaultCode,
+        name: v.name || 'Volunteer',
+        email: v.email || '',
+        phone: v.phone || '',
+        station: v.station || 'Floating',
+        shift: v.shift || 'Both days',
+        is_yuva: v.is_yuva !== undefined ? v.is_yuva : true,
+        has_arrived: v.has_arrived || false,
+        role: v.role || 'YUVA Volunteer',
+        created_at: new Date().toISOString()
+      };
+    });
     this.setItem(STORAGE_KEYS.VOLUNTEERS, [...existing, ...newItems]);
     if (supabase && newItems.length > 0) {
       const sanitizedBatch = newItems.map(item => this.sanitizeRecordForTable('volunteers', item as unknown as Record<string, unknown>));
@@ -1896,6 +1919,10 @@ class StorageService {
   // ── AUTO-ALLOCATION & RESET ───────────────────────────────────────────────
 
   public executeAllocationForEvent(eventId: string, rulingRatio = 0.55) {
+    if (this.getAllocationLock(eventId)) {
+      throw new Error('Allocation is currently locked by Assembly Coordinator.');
+    }
+
     const eventLearners = this.getLearners(eventId);
     const eventParties = this.getParties(eventId);
     const eventCommittees = this.getCommittees(eventId);
@@ -1923,6 +1950,10 @@ class StorageService {
   }
 
   public resetAllocationsForEvent(eventId: string) {
+    if (this.getAllocationLock(eventId)) {
+      throw new Error('Allocation is currently locked by Assembly Coordinator.');
+    }
+
     const all = this.getLearners().map(l => {
       if (l.event_id === eventId) {
         return {
@@ -1980,35 +2011,119 @@ class StorageService {
 
   // ── Security Locks (Allocation Lock, Registrations Frozen, Scores Locked) ──
   getAllocationLock(eventId?: string): boolean {
-    const key = `${STORAGE_KEYS.ALLOCATION_LOCK}_${eventId || 'default'}`;
-    return !!this.getItem<boolean>(key, false);
+    if (eventId && this.getItem<boolean>(`${STORAGE_KEYS.ALLOCATION_LOCK}_${eventId}`, false)) {
+      return true;
+    }
+    if (this.getItem<boolean>(`${STORAGE_KEYS.ALLOCATION_LOCK}_default`, false)) return true;
+    if (this.getItem<boolean>(STORAGE_KEYS.ALLOCATION_LOCK, false)) return true;
+
+    try {
+      if (typeof window !== 'undefined') {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith(STORAGE_KEYS.ALLOCATION_LOCK)) {
+            const parsed = JSON.parse(localStorage.getItem(k) || 'false');
+            if (parsed === true) return true;
+          }
+        }
+      }
+    } catch {}
+    return false;
   }
 
   setAllocationLock(locked: boolean, eventId?: string): void {
     const key = `${STORAGE_KEYS.ALLOCATION_LOCK}_${eventId || 'default'}`;
     this.setItem(key, locked);
+    this.setItem(`${STORAGE_KEYS.ALLOCATION_LOCK}_default`, locked);
+    this.setItem(STORAGE_KEYS.ALLOCATION_LOCK, locked);
+    if (!locked && typeof window !== 'undefined') {
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith(STORAGE_KEYS.ALLOCATION_LOCK)) {
+            this.setItem(k, false);
+          }
+        }
+      } catch {}
+    }
     this.notify();
   }
 
   getRegistrationsFrozen(eventId?: string): boolean {
-    const key = `${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${eventId || 'default'}`;
-    return !!this.getItem<boolean>(key, false);
+    if (eventId && this.getItem<boolean>(`${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${eventId}`, false)) {
+      return true;
+    }
+    if (this.getItem<boolean>(`${STORAGE_KEYS.REGISTRATIONS_FROZEN}_default`, false)) return true;
+    if (this.getItem<boolean>(STORAGE_KEYS.REGISTRATIONS_FROZEN, false)) return true;
+
+    try {
+      if (typeof window !== 'undefined') {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith(STORAGE_KEYS.REGISTRATIONS_FROZEN)) {
+            const parsed = JSON.parse(localStorage.getItem(k) || 'false');
+            if (parsed === true) return true;
+          }
+        }
+      }
+    } catch {}
+    return false;
   }
 
   setRegistrationsFrozen(frozen: boolean, eventId?: string): void {
     const key = `${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${eventId || 'default'}`;
     this.setItem(key, frozen);
+    this.setItem(`${STORAGE_KEYS.REGISTRATIONS_FROZEN}_default`, frozen);
+    this.setItem(STORAGE_KEYS.REGISTRATIONS_FROZEN, frozen);
+    if (!frozen && typeof window !== 'undefined') {
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith(STORAGE_KEYS.REGISTRATIONS_FROZEN)) {
+            this.setItem(k, false);
+          }
+        }
+      } catch {}
+    }
     this.notify();
   }
 
   getScoresLocked(eventId?: string): boolean {
-    const key = `${STORAGE_KEYS.SCORES_LOCKED}_${eventId || 'default'}`;
-    return !!this.getItem<boolean>(key, false);
+    if (eventId && this.getItem<boolean>(`${STORAGE_KEYS.SCORES_LOCKED}_${eventId}`, false)) {
+      return true;
+    }
+    if (this.getItem<boolean>(`${STORAGE_KEYS.SCORES_LOCKED}_default`, false)) return true;
+    if (this.getItem<boolean>(STORAGE_KEYS.SCORES_LOCKED, false)) return true;
+
+    try {
+      if (typeof window !== 'undefined') {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith(STORAGE_KEYS.SCORES_LOCKED)) {
+            const parsed = JSON.parse(localStorage.getItem(k) || 'false');
+            if (parsed === true) return true;
+          }
+        }
+      }
+    } catch {}
+    return false;
   }
 
   setScoresLocked(locked: boolean, eventId?: string): void {
     const key = `${STORAGE_KEYS.SCORES_LOCKED}_${eventId || 'default'}`;
     this.setItem(key, locked);
+    this.setItem(`${STORAGE_KEYS.SCORES_LOCKED}_default`, locked);
+    this.setItem(STORAGE_KEYS.SCORES_LOCKED, locked);
+    if (!locked && typeof window !== 'undefined') {
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith(STORAGE_KEYS.SCORES_LOCKED)) {
+            this.setItem(k, false);
+          }
+        }
+      } catch {}
+    }
     this.notify();
   }
 }

@@ -701,13 +701,29 @@ export function App() {
   // Auto Allocation Execution
   const handleExecuteAllocation = (rulingRatio: number) => {
     if (currentEvent) {
-      storageService.executeAllocationForEvent(currentEvent.id, rulingRatio);
+      if (storageService.getAllocationLock(currentEvent.id)) {
+        addToast('Allocation Locked', 'Allocation lock is active. Unlock in Control Panel to run allocation.', 'error');
+        return;
+      }
+      try {
+        storageService.executeAllocationForEvent(currentEvent.id, rulingRatio);
+      } catch (err: any) {
+        addToast('Allocation Locked', err?.message || 'Cannot execute allocation while lock is enabled.', 'error');
+      }
     }
   };
 
   const handleResetAllocation = () => {
     if (currentEvent) {
-      storageService.resetAllocationsForEvent(currentEvent.id);
+      if (storageService.getAllocationLock(currentEvent.id)) {
+        addToast('Allocation Locked', 'Allocation lock is active. Unlock in Control Panel to reset allocation.', 'error');
+        return;
+      }
+      try {
+        storageService.resetAllocationsForEvent(currentEvent.id);
+      } catch (err: any) {
+        addToast('Allocation Locked', err?.message || 'Cannot reset allocation while lock is enabled.', 'error');
+      }
     }
   };
 
@@ -1165,6 +1181,7 @@ export function App() {
                   parties={parties}
                   committees={committees}
                   eventName={currentEvent.college_name}
+                  eventId={currentEvent.id}
                   userRole={userSession?.role || role}
                   onToggleCheckIn={handleToggleCheckIn}
                   onCheckInAll={handleCheckInAll}
@@ -1266,6 +1283,7 @@ export function App() {
                   learners={learners}
                   parties={parties}
                   committees={committees}
+                  eventId={currentEvent.id}
                   onExecuteAllocation={handleExecuteAllocation}
                   onResetAllocation={handleResetAllocation}
                   onUpdateLearner={handleUpdateLearner}
@@ -1581,9 +1599,9 @@ export function App() {
             learners={learners}
             parties={parties}
             committees={committees}
+            eventId={currentEvent.id}
             onExecuteAllocation={(ratio) => {
               handleExecuteAllocation(ratio);
-              addToast('Auto-Allocation Complete', 'Mapped TN constituencies, parties, cabinet roles & committees', 'success');
             }}
           />
         </>

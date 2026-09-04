@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Landmark, LogIn, KeyRound, ArrowRight, ShieldCheck, UserCheck, Sun, Moon } from 'lucide-react';
+import { Landmark, LogIn, KeyRound, ArrowRight, Sun, Moon } from 'lucide-react';
 import type { UserSession, Learner } from '../../types';
 import type { Theme } from '../../lib/theme';
 
@@ -243,25 +243,7 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
                   </button>
                 </form>
 
-                {/* Quick Fill */}
-                <div className="flex items-center justify-center gap-2 pt-3">
-                  <button
-                    type="button"
-                    onClick={() => { setEmail('admin@tnassembly.in'); setPassword('admin123'); setCoordError(''); }}
-                    className="text-[11px] font-semibold px-2.5 py-1 rounded-lg border flex items-center gap-1 transition-colors"
-                    style={{ background: 'var(--amber-soft)', color: 'var(--amber)', borderColor: 'var(--amber)' }}
-                  >
-                    <ShieldCheck className="w-3 h-3" /> Super Admin
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setEmail('hari@hari.com'); setPassword('hari1234'); setCoordError(''); }}
-                    className="text-[11px] font-semibold px-2.5 py-1 rounded-lg border flex items-center gap-1 transition-colors"
-                    style={{ background: 'var(--accent-soft)', color: 'var(--accent)', borderColor: 'var(--accent)' }}
-                  >
-                    <UserCheck className="w-3 h-3" /> Coordinator
-                  </button>
-                </div>
+                {/* Form submit */}
               </div>
 
               {/* ── Divider ──────────────────────────────────────────── */}

@@ -20,6 +20,7 @@ interface AllocationTabProps {
   learners: Learner[];
   parties: Party[];
   committees: Committee[];
+  eventId?: string;
   onExecuteAllocation: (rulingRatio: number) => void;
   onResetAllocation: () => void;
   onUpdateLearner: (learner: Learner) => void;
@@ -30,6 +31,7 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
   learners,
   parties,
   committees,
+  eventId,
   onExecuteAllocation,
   onResetAllocation,
   onUpdateLearner,
@@ -43,7 +45,7 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
   const [selectedYear, setSelectedYear] = useState<string>('ALL');
   const [isConfirmResetOpen, setIsConfirmResetOpen] = useState(false);
 
-  const isAllocationLocked = storageService.getAllocationLock();
+  const isAllocationLocked = storageService.getAllocationLock(eventId);
 
   // Delegate currently being manually edited
   const [quickEditLearner, setQuickEditLearner] = useState<Learner | null>(null);

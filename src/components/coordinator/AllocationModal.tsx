@@ -9,6 +9,7 @@ interface AllocationModalProps {
   learners: Learner[];
   parties: Party[];
   committees: Committee[];
+  eventId?: string;
   onExecuteAllocation: (rulingRatio: number) => void;
 }
 
@@ -18,11 +19,12 @@ export const AllocationModal: React.FC<AllocationModalProps> = ({
   learners,
   parties,
   committees,
+  eventId,
   onExecuteAllocation
 }) => {
   if (!isOpen) return null;
 
-  const isLocked = storageService.getAllocationLock();
+  const isLocked = storageService.getAllocationLock(eventId);
 
   const totalLearners = learners.length;
 
