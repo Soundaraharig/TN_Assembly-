@@ -35,6 +35,8 @@ export interface CollegeEvent {
   treasury_whatsapp_link?: string;
   opposition_whatsapp_link?: string;
   cabinet_ministries?: string[];
+  chief_guests?: any;
+  social_coverage?: Record<string, any>;
   created_at: string;
 }
 

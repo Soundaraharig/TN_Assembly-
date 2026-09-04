@@ -135,3 +135,52 @@ CREATE INDEX idx_jury_event_id ON jury_members(event_id);
 CREATE INDEX idx_volunteers_event_id ON volunteers(event_id);
 CREATE INDEX idx_events_coordinator_email ON college_events(assigned_coordinator_email);
 
+-- ====================================================================
+-- ROW-LEVEL SECURITY (RLS) POLICIES & PERMISSIONS
+-- Ensure anonymous and authenticated users have SELECT and ALL access
+-- ====================================================================
+
+-- Enable RLS on all operational tables
+ALTER TABLE college_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE coordinators ENABLE ROW LEVEL SECURITY;
+ALTER TABLE political_parties ENABLE ROW LEVEL SECURITY;
+ALTER TABLE committees ENABLE ROW LEVEL SECURITY;
+ALTER TABLE learners ENABLE ROW LEVEL SECURITY;
+ALTER TABLE session_agenda ENABLE ROW LEVEL SECURITY;
+ALTER TABLE jury_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE volunteers ENABLE ROW LEVEL SECURITY;
+
+-- Drop existing policies if any to prevent conflicts
+DROP POLICY IF EXISTS "Allow read access to all users" ON college_events;
+DROP POLICY IF EXISTS "Allow read access to all users" ON coordinators;
+DROP POLICY IF EXISTS "Allow read access to all users" ON political_parties;
+DROP POLICY IF EXISTS "Allow read access to all users" ON committees;
+DROP POLICY IF EXISTS "Allow read access to all users" ON learners;
+DROP POLICY IF EXISTS "Allow read access to all users" ON session_agenda;
+DROP POLICY IF EXISTS "Allow read access to all users" ON jury_members;
+DROP POLICY IF EXISTS "Allow read access to all users" ON volunteers;
+
+-- Universal Read Policies for anon and authenticated roles
+CREATE POLICY "Allow read access to all users" ON public.college_events FOR SELECT TO anon, authenticated USING (true);
+CREATE POLICY "Allow read access to all users" ON public.coordinators FOR SELECT TO anon, authenticated USING (true);
+CREATE POLICY "Allow read access to all users" ON public.political_parties FOR SELECT TO anon, authenticated USING (true);
+CREATE POLICY "Allow read access to all users" ON public.committees FOR SELECT TO anon, authenticated USING (true);
+CREATE POLICY "Allow read access to all users" ON public.learners FOR SELECT TO anon, authenticated USING (true);
+CREATE POLICY "Allow read access to all users" ON public.session_agenda FOR SELECT TO anon, authenticated USING (true);
+CREATE POLICY "Allow read access to all users" ON public.jury_members FOR SELECT TO anon, authenticated USING (true);
+CREATE POLICY "Allow read access to all users" ON public.volunteers FOR SELECT TO anon, authenticated USING (true);
+
+-- Universal Write/ALL Policies for operational tables
+DROP POLICY IF EXISTS "Allow all operational access" ON learners;
+DROP POLICY IF EXISTS "Allow all operational access" ON volunteers;
+DROP POLICY IF EXISTS "Allow all operational access" ON college_events;
+
+CREATE POLICY "Allow all operational access" ON public.learners FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all operational access" ON public.volunteers FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all operational access" ON public.college_events FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+-- Grant privileges to anon and authenticated roles
+GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, postgres, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, postgres, service_role;
+
+

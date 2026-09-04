@@ -198,14 +198,14 @@ class StorageService {
     if (!supabase) return;
     try {
       const [
-        { data: events },
-        { data: coordinators },
-        { data: learners },
-        { data: parties },
-        { data: committees },
-        { data: agenda },
-        { data: juryMembers },
-        { data: volunteers }
+        { data: events, error: eventsErr },
+        { data: coordinators, error: coordErr },
+        { data: learners, error: learnersErr },
+        { data: parties, error: partiesErr },
+        { data: committees, error: commErr },
+        { data: agenda, error: agendaErr },
+        { data: juryMembers, error: juryErr },
+        { data: volunteers, error: volErr }
       ] = await Promise.all([
         supabase.from('college_events').select('*').order('created_at', { ascending: false }),
         supabase.from('coordinators').select('*'),
@@ -217,10 +217,19 @@ class StorageService {
         supabase.from('volunteers').select('*')
       ]);
 
+      if (eventsErr) console.error("Supabase Error [college_events]:", eventsErr);
+      if (coordErr) console.error("Supabase Error [coordinators]:", coordErr);
+      if (learnersErr) console.error("Supabase Error [learners]:", learnersErr);
+      if (partiesErr) console.error("Supabase Error [political_parties]:", partiesErr);
+      if (commErr) console.error("Supabase Error [committees]:", commErr);
+      if (agendaErr) console.error("Supabase Error [session_agenda]:", agendaErr);
+      if (juryErr) console.error("Supabase Error [jury_members]:", juryErr);
+      if (volErr) console.error("Supabase Error [volunteers]:", volErr);
+
       if (events && events.length > 0) {
         this.setItem(STORAGE_KEYS.EVENTS, events);
 
-        // Unpack event_state (social_coverage) for real-time open nominations, elections, votes, etc.
+        // Unpack event_state (social_coverage) for real-time open nominations, elections, votes, YUVA assignments, etc.
         const openNomMap: Record<string, string[]> = { ...this.getItem<Record<string, string[]>>(STORAGE_KEYS.OPEN_NOMINATIONS, {}) };
         let allNoms: Nomination[] = [];
         let allElecs: Election[] = [];
@@ -251,6 +260,12 @@ class StorageService {
           }
           if (Array.isArray(sc.scores) && sc.scores.length > 0) {
             allScores = [...allScores, ...sc.scores];
+          }
+          if (Array.isArray(sc.yuva_assignments) && sc.yuva_assignments.length > 0) {
+            const key = `${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${ev.id}`;
+            this.setItem(key, sc.yuva_assignments);
+            this.setItem(`${STORAGE_KEYS.YUVA_ASSIGNMENTS}_default`, sc.yuva_assignments);
+            this.setItem(STORAGE_KEYS.YUVA_ASSIGNMENTS, sc.yuva_assignments);
           }
         });
 
@@ -287,11 +302,11 @@ class StorageService {
         }
       }
 
-      if (coordinators) {
+      if (coordinators && coordinators.length > 0) {
         this.setItem(STORAGE_KEYS.COORDINATORS, coordinators);
       }
 
-      if (learners) {
+      if (learners && learners.length > 0) {
         this.setItem(STORAGE_KEYS.LEARNERS, learners);
       }
 
@@ -313,7 +328,7 @@ class StorageService {
 
       this.notify();
     } catch (err) {
-      console.warn('[Supabase] Sync error:', err);
+      console.error('Supabase Error [syncFromSupabase]:', err);
     }
   }
 
@@ -440,18 +455,19 @@ class StorageService {
     try {
       const sanitized = this.sanitizeRecordForTable(table, record);
       const { error } = await supabase.from(table).upsert(sanitized, { onConflict: 'id' });
-      if (error) console.warn(`[Supabase] upsert to ${table} error:`, error.message);
+      if (error) console.error(`Supabase Error [upsert to ${table}]:`, error);
     } catch (e) {
-      console.warn(`[Supabase] upsert to ${table} failed:`, e);
+      console.error(`Supabase Error [upsert to ${table} failed]:`, e);
     }
   }
 
   private async sbDelete(table: string, id: string) {
     if (!supabase) return;
     try {
-      await supabase.from(table).delete().eq('id', id);
+      const { error } = await supabase.from(table).delete().eq('id', id);
+      if (error) console.error(`Supabase Error [delete from ${table}]:`, error);
     } catch (e) {
-      console.warn(`[Supabase] delete from ${table} failed:`, e);
+      console.error(`Supabase Error [delete from ${table} failed]:`, e);
     }
   }
 
@@ -2252,7 +2268,33 @@ class StorageService {
         }
       } catch {}
     }
+
+    // Persist to Supabase college_events social_coverage JSONB field
+    if (supabase) {
+      const targetId = eventId || 'ev_tn_assembly_2026';
+      const events = this.getEvents();
+      const ev = events.find(e => e.id === targetId) || events[0];
+      if (ev) {
+        const sc = (ev.social_coverage || {}) as any;
+        const updatedEv = {
+          ...ev,
+          social_coverage: {
+            ...sc,
+            yuva_assignments: assignments
+          }
+        };
+        this.updateEvent(updatedEv);
+      }
+    }
+
     this.notify();
+  }
+
+  /**
+   * Explicit cache-busting and re-sync from Supabase.
+   */
+  public async forceRefresh(): Promise<void> {
+    await this.syncFromSupabase();
   }
 }
 

@@ -305,6 +305,38 @@ export function App() {
 
       const coord = coords.find(c => c.event_id === activeEv!.id) || coords[0] || null;
       setCurrentCoordinator(coord);
+
+      // Sync active user objects (volunteer, student, jury) with DB records to prevent stale session IDs
+      try {
+        const saved = localStorage.getItem(SESSION_KEY);
+        if (saved) {
+          const sess = JSON.parse(saved);
+          if (sess.role === 'volunteer' && sess.volunteerCode) {
+            const cleanCode = sess.volunteerCode.trim().toUpperCase();
+            const allVols = storageService.getVolunteers(activeEv.id);
+            const matched = allVols.find(v => v.access_code?.toUpperCase() === cleanCode);
+            if (matched) {
+              setCurrentVolunteer(matched);
+            }
+          } else if (sess.role === 'student' && sess.studentCode) {
+            const cleanCode = sess.studentCode.trim().toUpperCase();
+            const allL = storageService.getLearners(activeEv.id);
+            const matched = allL.find(l => l.access_code?.toUpperCase() === cleanCode);
+            if (matched) {
+              setCurrentStudent(matched);
+            }
+          } else if (sess.role === 'jury' && sess.juryCode) {
+            const cleanCode = sess.juryCode.trim().toUpperCase();
+            const allJ = storageService.getJury(activeEv.id);
+            const matched = allJ.find(j => j.access_code?.toUpperCase() === cleanCode);
+            if (matched) {
+              setCurrentJury(matched);
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Session sync error:', e);
+      }
     }
   };
 
