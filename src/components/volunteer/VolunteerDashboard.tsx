@@ -729,21 +729,18 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                               <button
                                 onClick={() => onToggleCheckIn(learner.id, selectedDay)}
                                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 mx-auto cursor-pointer ${
-                                  isPresent ? 'shadow-sm' : 'hover:scale-102'
+                                  isPresent
+                                    ? 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700'
+                                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700'
                                 }`}
-                                style={{
-                                  backgroundColor: isPresent ? 'var(--emerald)' : 'var(--bg-elevated)',
-                                  color: isPresent ? '#fff' : 'var(--text-muted)',
-                                  border: isPresent ? 'none' : '1px solid var(--border)'
-                                }}
                               >
                                 {isPresent ? (
                                   <>
-                                    <CheckCircle className="w-3.5 h-3.5" /> PRESENT
+                                    <CheckCircle className="w-3.5 h-3.5 text-white" /> PRESENT
                                   </>
                                 ) : (
                                   <>
-                                    <XCircle className="w-3.5 h-3.5" /> ABSENT
+                                    <XCircle className="w-3.5 h-3.5 text-slate-400" /> ABSENT
                                   </>
                                 )}
                               </button>
@@ -872,21 +869,18 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                             <button
                               onClick={() => onToggleCheckIn(learner.id, selectedDay)}
                               className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 mx-auto cursor-pointer ${
-                                isPresent ? 'shadow-sm' : 'hover:scale-102'
+                                isPresent
+                                  ? 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700'
+                                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700'
                               }`}
-                              style={{
-                                backgroundColor: isPresent ? 'var(--emerald)' : 'var(--bg-elevated)',
-                                color: isPresent ? '#fff' : 'var(--text-muted)',
-                                border: isPresent ? 'none' : '1px solid var(--border)'
-                              }}
                             >
                               {isPresent ? (
                                 <>
-                                  <CheckCircle className="w-3.5 h-3.5" /> PRESENT
+                                  <CheckCircle className="w-3.5 h-3.5 text-white" /> PRESENT
                                 </>
                               ) : (
                                 <>
-                                  <XCircle className="w-3.5 h-3.5" /> ABSENT
+                                  <XCircle className="w-3.5 h-3.5 text-slate-400" /> ABSENT
                                 </>
                               )}
                             </button>

@@ -645,11 +645,17 @@ export function App() {
 
   const handleToggleCheckIn = (id: string, day: 1 | 2) => {
     storageService.toggleCheckIn(id, day);
+    if (currentEvent) {
+      setLearners(storageService.getLearners(currentEvent.id));
+    } else {
+      setLearners(storageService.getLearners());
+    }
   };
 
   const handleCheckInAll = (day: 1 | 2, state: boolean) => {
     if (currentEvent) {
       storageService.checkInAll(currentEvent.id, day, state);
+      setLearners(storageService.getLearners(currentEvent.id));
       addToast('Check-in Updated', `Day ${day} check-in updated for all delegates`, 'success');
     }
   };
