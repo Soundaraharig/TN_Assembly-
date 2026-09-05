@@ -226,14 +226,39 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
     return elections.filter(e => e.status === 'Closed' || e.winner !== undefined);
   }, [elections]);
 
+  const getPartyLeaderElectionParty = (election: Election | null): Party | null => {
+    if (!election) return null;
+    if (election.party_id) {
+      const match = parties.find(p => p.id === election.party_id);
+      if (match) return match;
+    }
+    const title = (election.title || '').toLowerCase();
+    const pos = (election.position || '').toLowerCase();
+    if ((pos === 'party leader' || title.includes('party leader')) && !title.includes('ruling') && !title.includes('opposition')) {
+      const match = parties.find(p => title.includes(p.name.toLowerCase()) || p.name.toLowerCase().includes(title.replace('leader election', '').trim()));
+      if (match) return match;
+    }
+    return null;
+  };
+
+  const activeElectionForNominate = useMemo(() => {
+    return elections.find(e => e.id === activeNominateElectionId) || null;
+  }, [elections, activeNominateElectionId]);
+
+  const activePartyLeaderParty = useMemo(() => {
+    return getPartyLeaderElectionParty(activeElectionForNominate);
+  }, [activeElectionForNominate, parties]);
+
   const handleEnsurePartyLeaderElection = (party: Party, silent = false): boolean => {
     const exists = elections.some(e =>
-      e.title.toLowerCase().includes(party.name.toLowerCase()) &&
-      (e.title.toLowerCase().includes('leader') || e.position?.toLowerCase().includes('leader'))
+      (e.party_id === party.id) ||
+      (e.title.toLowerCase().includes(party.name.toLowerCase()) &&
+       (e.title.toLowerCase().includes('leader') || e.position?.toLowerCase().includes('leader')))
     );
     if (!exists) {
       onCreateElection({
         event_id: eventId,
+        party_id: party.id,
         title: `${party.name} Leader Election`,
         position: 'Party Leader',
         type: 'LEADERSHIP',
@@ -263,14 +288,22 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
     }
   };
 
-  const activeElectionForNominate = useMemo(() => {
-    return elections.find(e => e.id === activeNominateElectionId) || null;
-  }, [elections, activeNominateElectionId]);
-
   const relevantStudentNominations = useMemo(() => {
     if (!activeElectionForNominate) return [];
     const targetPos = (activeElectionForNominate.position || activeElectionForNominate.title).toLowerCase();
     return nominations.filter(n => {
+      if (activePartyLeaderParty) {
+        const matchLearner = learners.find(l => l.id === n.candidate_learner_id || l.full_name?.toLowerCase() === n.candidate_name?.toLowerCase());
+        const nomineePartyId = matchLearner?.party_id;
+        const nomineePartyName = matchLearner?.party_name || n.party_name;
+
+        const isPartyMatch = nomineePartyId
+          ? nomineePartyId === activePartyLeaderParty.id
+          : nomineePartyName?.toLowerCase() === activePartyLeaderParty.name.toLowerCase();
+
+        if (!isPartyMatch) return false;
+      }
+
       const nPos = n.position.toLowerCase();
       if (targetPos.includes('speaker') && !targetPos.includes('deputy') && nPos.includes('speaker') && !nPos.includes('deputy')) return true;
       if (targetPos.includes('deputy') && nPos.includes('deputy')) return true;
@@ -280,19 +313,23 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
       if (nPos === targetPos) return true;
       return false;
     });
-  }, [nominations, activeElectionForNominate]);
+  }, [nominations, activeElectionForNominate, activePartyLeaderParty, learners]);
 
   const filteredCandidatePool = useMemo(() => {
     if (!activeElectionForNominate) return [];
-    const rule = getElectorateRule(activeElectionForNominate);
     let pool = learners;
 
-    if (rule.type === 'PARTY' && rule.partyId) {
-      pool = pool.filter(l => l.party_id === rule.partyId || l.party_name?.toLowerCase() === rule.partyName?.toLowerCase());
-    } else if (rule.type === 'OPPOSITION') {
-      pool = pool.filter(l => l.bench === 'Opposition');
-    } else if (rule.type === 'RULING') {
-      pool = pool.filter(l => l.bench === 'Ruling');
+    if (activePartyLeaderParty) {
+      pool = pool.filter(l => l.party_id === activePartyLeaderParty.id || l.party_name?.toLowerCase() === activePartyLeaderParty.name.toLowerCase());
+    } else {
+      const rule = getElectorateRule(activeElectionForNominate);
+      if (rule.type === 'PARTY' && rule.partyId) {
+        pool = pool.filter(l => l.party_id === rule.partyId || l.party_name?.toLowerCase() === rule.partyName?.toLowerCase());
+      } else if (rule.type === 'OPPOSITION') {
+        pool = pool.filter(l => l.bench === 'Opposition');
+      } else if (rule.type === 'RULING') {
+        pool = pool.filter(l => l.bench === 'Ruling');
+      }
     }
 
     if (candidateSearchQuery.trim()) {
@@ -306,12 +343,25 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
     }
 
     return pool;
-  }, [learners, activeElectionForNominate, candidateSearchQuery]);
+  }, [learners, activeElectionForNominate, activePartyLeaderParty, candidateSearchQuery]);
 
   const handleAddCandidateToElection = (learner: Learner) => {
     if (!activeElectionForNominate || !onAddCandidate) return;
 
-    const alreadyIn = activeElectionForNominate.candidates?.some(c => c.name.toLowerCase() === learner.full_name.toLowerCase());
+    if (activePartyLeaderParty) {
+      const isMatch = learner.party_id
+        ? learner.party_id === activePartyLeaderParty.id
+        : learner.party_name?.toLowerCase() === activePartyLeaderParty.name.toLowerCase();
+
+      if (!isMatch) {
+        onShowToast('Ineligible Candidate', `${learner.full_name} is not a member of ${activePartyLeaderParty.name}. Candidate must be a member of the party holding this election.`, 'error');
+        return;
+      }
+    }
+
+    const alreadyIn = activeElectionForNominate.candidates?.some(
+      c => (c.learner_id && c.learner_id === learner.id) || c.name.toLowerCase() === learner.full_name.toLowerCase()
+    );
     if (alreadyIn) {
       onShowToast('Candidate Exists', `${learner.full_name} is already nominated for this election.`, 'error');
       return;
@@ -319,8 +369,9 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
     onAddCandidate(activeElectionForNominate.id, {
       name: learner.full_name,
-      party: learner.party_name || 'Independent',
-      bench: learner.bench || 'Opposition',
+      learner_id: learner.id,
+      party: learner.party_name || activePartyLeaderParty?.name || 'Independent',
+      bench: learner.bench || activePartyLeaderParty?.bench || 'Ruling',
       votes: 0
     });
 
@@ -1168,6 +1219,16 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                 <X className="w-5 h-5" />
               </button>
             </div>
+
+            {/* Party Candidate Restriction Notice */}
+            {activePartyLeaderParty && (
+              <div className="px-5 py-2.5 bg-amber-500/10 border-b border-amber-500/30 flex items-center gap-2 text-xs text-amber-300 font-medium">
+                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>
+                  <strong>Party Candidate Restriction:</strong> Only registered members of <strong>{activePartyLeaderParty.name}</strong> can be nominated for this election.
+                </span>
+              </div>
+            )}
 
             {/* Source Tab Switcher */}
             <div className="px-5 pt-4 pb-2 border-b flex items-center gap-2" style={{ borderColor: 'var(--border-soft)' }}>
