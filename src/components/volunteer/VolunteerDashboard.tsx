@@ -426,11 +426,69 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   const currentPresent = selectedDay === 1 ? day1Present : day2Present;
   const attendanceRate = learners.length > 0 ? Math.round((currentPresent / learners.length) * 100) : 0;
 
-  // Live Elections & Live Flash Votes
+  const getPartyLeaderElectionParty = (election: Election): Party | null => {
+    const list = activeParties.length > 0 ? activeParties : storageService.getParties(eventId);
+    if (election.party_id) {
+      const match = list.find(p => p.id === election.party_id);
+      if (match) return match;
+    }
+    const title = (election.title || '').toLowerCase();
+    const pos = (election.position || '').toLowerCase();
+    if ((pos === 'party leader' || title.includes('party leader')) && !title.includes('ruling') && !title.includes('opposition')) {
+      const match = list.find(p => title.includes(p.name.toLowerCase()) || p.name.toLowerCase().includes(title.replace('leader election', '').trim()));
+      if (match) return match;
+    }
+    return null;
+  };
+
+  // Live Elections filtered for the volunteer's assigned desk/party
   const activeElectionsList = useMemo(() => {
     const list = elections.length > 0 ? elections : storageService.getElections(eventId);
-    return list.filter(e => e.status === 'Live');
-  }, [elections, eventId]);
+    const liveList = list.filter(e => e.status === 'Live');
+
+    const deskPartyIds = new Set<string>();
+    const deskPartyNames = new Set<string>();
+
+    assignedDeskLearners.forEach(l => {
+      if (l.party_id) deskPartyIds.add(l.party_id);
+      if (l.party_name) deskPartyNames.add(l.party_name.toLowerCase());
+    });
+
+    uniqueDesks.forEach(d => {
+      if (d.targetType === 'party') {
+        if (d.targetId) deskPartyIds.add(d.targetId);
+        if (d.targetName) deskPartyNames.add(d.targetName.toLowerCase());
+      }
+    });
+
+    if (deskPartyIds.size > 0 || deskPartyNames.size > 0) {
+      return liveList.filter(elec => {
+        const partyLeaderParty = getPartyLeaderElectionParty(elec);
+        if (!partyLeaderParty) return true; // House-wide election -> show to all
+
+        return deskPartyIds.has(partyLeaderParty.id) || deskPartyNames.has(partyLeaderParty.name.toLowerCase());
+      });
+    }
+
+    return liveList;
+  }, [elections, eventId, assignedDeskLearners, uniqueDesks, activeParties]);
+
+  // Live Elections filtered specifically for the delegate opened in Proxy Voting Modal
+  const proxyModalElectionsList = useMemo(() => {
+    if (!proxyModalLearner) return [];
+    const list = elections.length > 0 ? elections : storageService.getElections(eventId);
+    const liveList = list.filter(e => e.status === 'Live');
+
+    return liveList.filter(elec => {
+      const partyLeaderParty = getPartyLeaderElectionParty(elec);
+      if (!partyLeaderParty) return true; // House-wide election -> available to all delegates
+
+      if (proxyModalLearner.party_id) {
+        return proxyModalLearner.party_id === partyLeaderParty.id;
+      }
+      return proxyModalLearner.party_name?.toLowerCase() === partyLeaderParty.name.toLowerCase();
+    });
+  }, [elections, eventId, proxyModalLearner, activeParties]);
 
   const activeFlashVotesList = useMemo(() => {
     const list = flashVotes.length > 0 ? flashVotes : storageService.getFlashVotes(eventId);
@@ -858,7 +916,10 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {activeElectionsList.map(elec => {
-                    const totalEligible = learners.length > 0 ? learners.length : 1;
+                    const partyLeaderParty = getPartyLeaderElectionParty(elec);
+                    const totalEligible = partyLeaderParty
+                      ? (learners.filter(l => l.party_id === partyLeaderParty.id || l.party_name?.toLowerCase() === partyLeaderParty.name.toLowerCase()).length || 1)
+                      : (learners.length > 0 ? learners.length : 1);
                     const voted = elec.voted_delegate_ids?.length || elec.candidates.reduce((sum, c) => sum + (c.votes || 0), 0);
                     const remaining = Math.max(0, totalEligible - voted);
                     const pct = totalEligible > 0 ? Math.round((voted / totalEligible) * 100) : 0;
@@ -1381,37 +1442,17 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
             {/* Section 1: Live Elections */}
             <div className="space-y-3">
               <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                <Crown className="w-4 h-4 text-amber-500" /> Active Live Elections ({activeElectionsList.length})
+                <Crown className="w-4 h-4 text-amber-500" /> Active Live Elections ({proxyModalElectionsList.length})
               </h4>
 
-              {activeElectionsList.length === 0 ? (
+              {proxyModalElectionsList.length === 0 ? (
                 <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 text-center text-xs text-slate-500">
-                  No live elections currently open for voting.
+                  No live elections open for {proxyModalLearner.full_name} ({proxyModalLearner.party_name || 'Delegate'}).
                 </div>
               ) : (
-                activeElectionsList.map(elec => {
+                proxyModalElectionsList.map(elec => {
                   const hasVoted = elec.voted_delegate_ids?.includes(proxyModalLearner.id);
                   const selectedCandId = selectedCandidateForElection[elec.id];
-
-                  const partiesList = activeParties.length > 0 ? activeParties : storageService.getParties(eventId);
-                  const partyLeaderParty = (() => {
-                    if (elec.party_id) {
-                      const match = partiesList.find(p => p.id === elec.party_id);
-                      if (match) return match;
-                    }
-                    const title = (elec.title || '').toLowerCase();
-                    const pos = (elec.position || '').toLowerCase();
-                    if ((pos === 'party leader' || title.includes('party leader')) && !title.includes('ruling') && !title.includes('opposition')) {
-                      const match = partiesList.find(p => title.includes(p.name.toLowerCase()) || p.name.toLowerCase().includes(title.replace('leader election', '').trim()));
-                      if (match) return match;
-                    }
-                    return null;
-                  })();
-
-                  const isVoterEligible = partyLeaderParty ? (() => {
-                    if (proxyModalLearner.party_id) return proxyModalLearner.party_id === partyLeaderParty.id;
-                    return proxyModalLearner.party_name?.toLowerCase() === partyLeaderParty.name.toLowerCase();
-                  })() : true;
 
                   return (
                     <div
@@ -1423,18 +1464,14 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                           <h5 className="font-extrabold text-sm text-slate-900 dark:text-white">{elec.title}</h5>
                           <p className="text-[11px] text-slate-500">{elec.position}</p>
                         </div>
-                        {hasVoted ? (
+                        {hasVoted && (
                           <span className="px-2 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
                             <Check className="w-3 h-3" /> Voted
                           </span>
-                        ) : !isVoterEligible ? (
-                          <span className="px-2 py-1 rounded-lg bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 text-[10px] font-bold border border-rose-200 dark:border-rose-800 flex items-center gap-1">
-                            <AlertCircle className="w-3 h-3" /> Restricted to {partyLeaderParty?.name} Members Only
-                          </span>
-                        ) : null}
+                        )}
                       </div>
 
-                      {!hasVoted && isVoterEligible && (
+                      {!hasVoted && (
                         <div className="space-y-2 pt-1">
                           <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">Select Candidate:</p>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
