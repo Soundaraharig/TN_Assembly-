@@ -69,7 +69,7 @@ const SearchableDelegateSelect: React.FC<{
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const filtered = learners.filter(l => {
+  const filtered = (learners || []).filter(l => {
     if (!query) return true;
     const q = query.toLowerCase();
     const nameMatch = l.full_name?.toLowerCase().includes(q);
@@ -79,7 +79,7 @@ const SearchableDelegateSelect: React.FC<{
     return nameMatch || constNoMatch || constNameMatch || codeMatch;
   });
 
-  const selectedLearner = learners.find(l => l.id === currentLearnerId);
+  const selectedLearner = (learners || []).find(l => l.id === currentLearnerId);
 
   return (
     <div ref={containerRef} className="relative w-full">
@@ -177,7 +177,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
   const [viewMode, setViewMode] = useState<'roster' | 'config'>('roster');
 
   useEffect(() => {
-    if (savedMinistries && savedMinistries.length > 0) {
+    if (Array.isArray(savedMinistries)) {
       setSelectedMinistries(savedMinistries);
     } else {
       setSelectedMinistries([
@@ -272,8 +272,8 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
   };
 
   // Build active ministry portfolios based on selected Ministries
-  const cabinetPortfolios = (selectedMinistries || []).map(m => {
-    const shortName = m.replace(/^Ministry of\s+/, '');
+  const cabinetPortfolios = (selectedMinistries || []).filter(Boolean).map(m => {
+    const shortName = typeof m === 'string' ? m.replace(/^Ministry of\s+/, '') : String(m);
     return {
       ministry: m,
       rulingRole: `Minister for ${shortName}`,
@@ -338,7 +338,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                 { role: 'Chief Minister (Leader of the House)', title: 'Chief Minister', bench: 'Ruling Bench' },
                 { role: 'Leader of the Opposition', title: 'Leader of Opposition', bench: 'Opposition Bench' }
               ].map(item => {
-                const holder = learners.find(l => l.role === item.role);
+                const holder = (learners || []).find(l => l.role === item.role);
                 return (
                   <div
                     key={item.role}
@@ -384,8 +384,8 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {cabinetPortfolios.map(port => {
-                const rulingHolder = learners.find(l => l.role === port.rulingRole);
-                const shadowHolder = learners.find(l => l.role === port.shadowRole);
+                const rulingHolder = (learners || []).find(l => l.role === port.rulingRole);
+                const shadowHolder = (learners || []).find(l => l.role === port.shadowRole);
 
                 return (
                   <div

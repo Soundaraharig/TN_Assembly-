@@ -274,8 +274,6 @@ class StorageService {
         console.error("Supabase Error [college_events]:", eventsErr);
         hasQueryError = true;
       } else if (events !== null) {
-        this.setItem(STORAGE_KEYS.EVENTS, events);
-
         // Unpack event_state (social_coverage)
         const openNomMap: Record<string, string[]> = {};
         let allNoms: Nomination[] = [];
@@ -309,7 +307,7 @@ class StorageService {
             allScores = [...allScores, ...sc.scores];
           }
           
-          if (Array.isArray(sc.cabinet_ministries) && (!ev.cabinet_ministries || ev.cabinet_ministries.length === 0)) {
+          if (Array.isArray(sc.cabinet_ministries)) {
             ev.cabinet_ministries = sc.cabinet_ministries;
           }
           if (Array.isArray(sc.yuva_assignments)) {
@@ -319,6 +317,7 @@ class StorageService {
           }
         });
 
+        this.setItem(STORAGE_KEYS.EVENTS, events);
         this.setItem(STORAGE_KEYS.OPEN_NOMINATIONS, openNomMap);
         this.setItem(STORAGE_KEYS.NOMINATIONS, allNoms);
         this.setItem(STORAGE_KEYS.ELECTIONS, allElecs);
@@ -541,6 +540,10 @@ class StorageService {
         day2_checked_in: !!raw.day2_checked_in,
         created_at: raw.created_at || new Date().toISOString()
       };
+    }
+    if (table === 'college_events') {
+      const { cabinet_ministries, ...clean } = raw;
+      return clean;
     }
     return raw;
   }
