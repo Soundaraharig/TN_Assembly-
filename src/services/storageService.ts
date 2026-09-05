@@ -112,6 +112,10 @@ class StorageService {
   private realtimeChannel: any = null;
   private syncTimer: any = null;
   private notifyTimer: ReturnType<typeof setTimeout> | null = null;
+  private isHydrated: boolean = false;
+  private isSyncing: boolean = false;
+  private syncError: string | null = null;
+  private syncVersion: number = 0;
 
   constructor() {
     this.initDefaults();
@@ -120,6 +124,33 @@ class StorageService {
         console.warn('[Supabase] Initial sync failed, using localStorage cache:', err)
       );
       this.setupRealtimeSync();
+    } else {
+      this.isHydrated = true;
+    }
+  }
+
+  public getSyncStatus() {
+    return {
+      isHydrated: this.isHydrated,
+      isSyncing: this.isSyncing,
+      syncError: this.syncError
+    };
+  }
+
+  public clearUserCache() {
+    try {
+      if (typeof window !== 'undefined') {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && (k.includes('auth_session') || k.includes('user_session'))) {
+            keysToRemove.push(k);
+          }
+        }
+        keysToRemove.forEach(k => localStorage.removeItem(k));
+      }
+    } catch (e) {
+      console.warn('Error clearing user cache:', e);
     }
   }
 
@@ -133,9 +164,6 @@ class StorageService {
   }
 
   private notify() {
-    // Debounce: batch rapid successive setItem calls into a single notification.
-    // This prevents cascading re-renders when multiple keys are written together
-    // (e.g., security lock functions writing to 5+ keys).
     if (this.notifyTimer) clearTimeout(this.notifyTimer);
     this.notifyTimer = setTimeout(() => {
       this.notifyTimer = null;
@@ -207,7 +235,14 @@ class StorageService {
   // ── Supabase sync ────────────────────────────────────────────────────────
 
   public async syncFromSupabase(): Promise<void> {
-    if (!supabase) return;
+    if (!supabase) {
+      this.isHydrated = true;
+      return;
+    }
+
+    const currentVersion = ++this.syncVersion;
+    this.isSyncing = true;
+
     try {
       const [
         { data: events, error: eventsErr },
@@ -229,20 +264,20 @@ class StorageService {
         supabase.from('volunteers').select('*')
       ]);
 
-      if (eventsErr) console.error("Supabase Error [college_events]:", eventsErr);
-      if (coordErr) console.error("Supabase Error [coordinators]:", coordErr);
-      if (learnersErr) console.error("Supabase Error [learners]:", learnersErr);
-      if (partiesErr) console.error("Supabase Error [political_parties]:", partiesErr);
-      if (commErr) console.error("Supabase Error [committees]:", commErr);
-      if (agendaErr) console.error("Supabase Error [session_agenda]:", agendaErr);
-      if (juryErr) console.error("Supabase Error [jury_members]:", juryErr);
-      if (volErr) console.error("Supabase Error [volunteers]:", volErr);
+      if (currentVersion !== this.syncVersion) {
+        return; // Superseded by newer fetch request
+      }
 
-      if (events && events.length > 0) {
+      let hasQueryError = false;
+
+      if (eventsErr) {
+        console.error("Supabase Error [college_events]:", eventsErr);
+        hasQueryError = true;
+      } else if (events !== null) {
         this.setItem(STORAGE_KEYS.EVENTS, events);
 
-        // Unpack event_state (social_coverage) for real-time open nominations, elections, votes, YUVA assignments, etc.
-        const openNomMap: Record<string, string[]> = { ...this.getItem<Record<string, string[]>>(STORAGE_KEYS.OPEN_NOMINATIONS, {}) };
+        // Unpack event_state (social_coverage)
+        const openNomMap: Record<string, string[]> = {};
         let allNoms: Nomination[] = [];
         let allElecs: Election[] = [];
         let allFVotes: LiveFlashVote[] = [];
@@ -255,40 +290,38 @@ class StorageService {
           if (Array.isArray(sc.open_nominations)) {
             openNomMap[ev.id] = sc.open_nominations;
           }
-          if (Array.isArray(sc.nominations) && sc.nominations.length > 0) {
+          if (Array.isArray(sc.nominations)) {
             allNoms = [...allNoms, ...sc.nominations];
           }
-          if (Array.isArray(sc.elections) && sc.elections.length > 0) {
+          if (Array.isArray(sc.elections)) {
             allElecs = [...allElecs, ...sc.elections];
           }
-          if (Array.isArray(sc.flash_votes) && sc.flash_votes.length > 0) {
+          if (Array.isArray(sc.flash_votes)) {
             allFVotes = [...allFVotes, ...sc.flash_votes];
           }
-          if (Array.isArray(sc.proceedings) && sc.proceedings.length > 0) {
+          if (Array.isArray(sc.proceedings)) {
             allProcs = [...allProcs, ...sc.proceedings];
           }
-          if (Array.isArray(sc.questions) && sc.questions.length > 0) {
+          if (Array.isArray(sc.questions)) {
             allQs = [...allQs, ...sc.questions];
           }
-          if (Array.isArray(sc.scores) && sc.scores.length > 0) {
+          if (Array.isArray(sc.scores)) {
             allScores = [...allScores, ...sc.scores];
           }
-          if (Array.isArray(sc.yuva_assignments) && sc.yuva_assignments.length > 0) {
-            const key = `${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${ev.id}`;
-            this.setItem(key, sc.yuva_assignments);
-            this.setItem(`${STORAGE_KEYS.YUVA_ASSIGNMENTS}_default`, sc.yuva_assignments);
-            this.setItem(STORAGE_KEYS.YUVA_ASSIGNMENTS, sc.yuva_assignments);
-          }
+          
+          const scYuva = Array.isArray(sc.yuva_assignments) ? sc.yuva_assignments : [];
+          const key = `${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${ev.id}`;
+          this.setItem(key, scYuva);
         });
 
         this.setItem(STORAGE_KEYS.OPEN_NOMINATIONS, openNomMap);
-        if (allNoms.length > 0) this.setItem(STORAGE_KEYS.NOMINATIONS, allNoms);
-        if (allElecs.length > 0) this.setItem(STORAGE_KEYS.ELECTIONS, allElecs);
-        if (allFVotes.length > 0) this.setItem(STORAGE_KEYS.FLASH_VOTES, allFVotes);
-        if (allProcs.length > 0) this.setItem(STORAGE_KEYS.PROCEEDINGS, allProcs);
-        if (allQs.length > 0) this.setItem(STORAGE_KEYS.QUESTIONS, allQs);
+        this.setItem(STORAGE_KEYS.NOMINATIONS, allNoms);
+        this.setItem(STORAGE_KEYS.ELECTIONS, allElecs);
+        this.setItem(STORAGE_KEYS.FLASH_VOTES, allFVotes);
+        this.setItem(STORAGE_KEYS.PROCEEDINGS, allProcs);
+        this.setItem(STORAGE_KEYS.QUESTIONS, allQs);
 
-        // Smart merge local and remote scores by learner_id & timestamp so local scores are never overwritten by stale remote sync
+        // Smart merge local and remote scores by learner_id & timestamp
         const localScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
         const scoreMap = new Map<string, ScoreRecord>();
         localScores.forEach(s => {
@@ -308,39 +341,70 @@ class StorageService {
             }
           }
         });
-        const mergedScores = Array.from(scoreMap.values());
-        if (mergedScores.length > 0) {
-          this.setItem(STORAGE_KEYS.SCORES, mergedScores);
-        }
+        this.setItem(STORAGE_KEYS.SCORES, Array.from(scoreMap.values()));
       }
 
-      if (coordinators && coordinators.length > 0) {
+      if (coordErr) {
+        console.error("Supabase Error [coordinators]:", coordErr);
+        hasQueryError = true;
+      } else if (coordinators !== null) {
         this.setItem(STORAGE_KEYS.COORDINATORS, coordinators);
       }
 
-      if (learners && learners.length > 0) {
+      if (learnersErr) {
+        console.error("Supabase Error [learners]:", learnersErr);
+        hasQueryError = true;
+      } else if (learners !== null) {
         this.setItem(STORAGE_KEYS.LEARNERS, sortLearnersStably(learners));
       }
 
-      if (parties && parties.length > 0) {
+      if (partiesErr) {
+        console.error("Supabase Error [political_parties]:", partiesErr);
+        hasQueryError = true;
+      } else if (parties !== null) {
         this.setItem(STORAGE_KEYS.PARTIES, parties);
       }
-      if (committees && committees.length > 0) {
+
+      if (commErr) {
+        console.error("Supabase Error [committees]:", commErr);
+        hasQueryError = true;
+      } else if (committees !== null) {
         this.setItem(STORAGE_KEYS.COMMITTEES, committees);
       }
-      if (agenda && agenda.length > 0) {
+
+      if (agendaErr) {
+        console.error("Supabase Error [session_agenda]:", agendaErr);
+        hasQueryError = true;
+      } else if (agenda !== null) {
         this.setItem(STORAGE_KEYS.AGENDA, agenda);
       }
-      if (juryMembers && juryMembers.length > 0) {
+
+      if (juryErr) {
+        console.error("Supabase Error [jury_members]:", juryErr);
+        hasQueryError = true;
+      } else if (juryMembers !== null) {
         this.setItem(STORAGE_KEYS.JURY, juryMembers);
       }
-      if (volunteers && volunteers.length > 0) {
+
+      if (volErr) {
+        console.error("Supabase Error [volunteers]:", volErr);
+        hasQueryError = true;
+      } else if (volunteers !== null) {
         this.setItem(STORAGE_KEYS.VOLUNTEERS, volunteers);
       }
 
+      this.isSyncing = false;
+      this.isHydrated = true;
+      this.syncError = hasQueryError ? 'Partial query warning' : null;
       this.notify();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Supabase Error [syncFromSupabase]:', err);
+      if (currentVersion === this.syncVersion) {
+        this.isSyncing = false;
+        this.isHydrated = true;
+        this.syncError = err?.message || 'Sync error';
+        this.notify();
+      }
     }
   }
 
@@ -599,9 +663,7 @@ class StorageService {
     const all = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, INITIAL_LEARNERS);
     const sortedAll = sortLearnersStably(all);
     if (eventId) {
-      const filtered = sortedAll.filter(l => l.event_id === eventId || !l.event_id);
-      if (filtered.length > 0) return filtered;
-      return sortedAll;
+      return sortedAll.filter(l => l.event_id === eventId || !l.event_id);
     }
     return sortedAll;
   }
@@ -2240,53 +2302,27 @@ class StorageService {
 
   // ── YUVA Desk Assignments ───────────────────────────────────────────────
   getYuvaAssignments(eventId?: string): any[] {
-    const key = `${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${eventId || 'default'}`;
+    const targetEventId = eventId || 'ev_tn_assembly_2026';
+    const key = `${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${targetEventId}`;
     const primary = this.getItem<any[] | null>(key, null);
-    if (primary && Array.isArray(primary) && primary.length > 0) return primary;
-
-    const def = this.getItem<any[] | null>(`${STORAGE_KEYS.YUVA_ASSIGNMENTS}_default`, null);
-    if (def && Array.isArray(def) && def.length > 0) return def;
+    if (primary && Array.isArray(primary)) return primary;
 
     const global = this.getItem<any[] | null>(STORAGE_KEYS.YUVA_ASSIGNMENTS, null);
-    if (global && Array.isArray(global) && global.length > 0) return global;
-
-    try {
-      if (typeof window !== 'undefined') {
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (k && k.includes('yuva_assignments')) {
-            const val = JSON.parse(localStorage.getItem(k) || '[]');
-            if (Array.isArray(val) && val.length > 0) return val;
-          }
-        }
-      }
-    } catch {}
+    if (global && Array.isArray(global)) return global;
 
     return [];
   }
 
   setYuvaAssignments(assignments: any[], eventId?: string): void {
-    const key = `${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${eventId || 'default'}`;
+    const targetEventId = eventId || 'ev_tn_assembly_2026';
+    const key = `${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${targetEventId}`;
     this.setItem(key, assignments);
-    this.setItem(`${STORAGE_KEYS.YUVA_ASSIGNMENTS}_default`, assignments);
     this.setItem(STORAGE_KEYS.YUVA_ASSIGNMENTS, assignments);
-
-    if (typeof window !== 'undefined') {
-      try {
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (k && k.includes('yuva_assignments')) {
-            this.setItem(k, assignments);
-          }
-        }
-      } catch {}
-    }
 
     // Persist to Supabase college_events social_coverage JSONB field
     if (supabase) {
-      const targetId = eventId || 'ev_tn_assembly_2026';
       const events = this.getEvents();
-      const ev = events.find(e => e.id === targetId) || events[0];
+      const ev = events.find(e => e.id === targetEventId) || events[0];
       if (ev) {
         const sc = (ev.social_coverage || {}) as any;
         const updatedEv = {

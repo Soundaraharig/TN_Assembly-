@@ -243,10 +243,12 @@ export function App() {
   const clearSession = () => {
     try {
       localStorage.removeItem(SESSION_KEY);
+      storageService.clearUserCache();
       setUserSession(null);
       setCurrentStudent(null);
       setCurrentVolunteer(null);
       setCurrentJury(null);
+      storageService.forceRefresh();
     } catch (e) {
       console.error('Failed to clear auth session:', e);
     }
@@ -307,22 +309,22 @@ export function App() {
           const sess = JSON.parse(saved);
           if (sess.role === 'volunteer' && sess.volunteerCode) {
             const cleanCode = sess.volunteerCode.trim().toUpperCase();
-            const allVols = storageService.getVolunteers(activeEv.id);
-            const matched = allVols.find(v => v.access_code?.toUpperCase() === cleanCode);
+            const allVols = storageService.getVolunteers();
+            const matched = allVols.find(v => (v.access_code || '').trim().toUpperCase() === cleanCode || (v.phone && cleanCode.length >= 4 && v.phone.replace(/\D/g, '').endsWith(cleanCode.replace(/\D/g, ''))));
             if (matched) {
               setCurrentVolunteer(matched);
             }
           } else if (sess.role === 'student' && sess.studentCode) {
             const cleanCode = sess.studentCode.trim().toUpperCase();
-            const allL = storageService.getLearners(activeEv.id);
-            const matched = allL.find(l => l.access_code?.toUpperCase() === cleanCode);
+            const allL = storageService.getLearners();
+            const matched = allL.find(l => (l.access_code || '').trim().toUpperCase() === cleanCode);
             if (matched) {
               setCurrentStudent(matched);
             }
           } else if (sess.role === 'jury' && sess.juryCode) {
             const cleanCode = sess.juryCode.trim().toUpperCase();
-            const allJ = storageService.getJury(activeEv.id);
-            const matched = allJ.find(j => j.access_code?.toUpperCase() === cleanCode);
+            const allJ = storageService.getJury();
+            const matched = allJ.find(j => (j.access_code || '').trim().toUpperCase() === cleanCode);
             if (matched) {
               setCurrentJury(matched);
             }
