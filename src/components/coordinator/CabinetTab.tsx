@@ -220,6 +220,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
   const [viewMode, setViewMode] = useState<'roster' | 'config'>('roster');
 
   const isInitializedRef = useRef(false);
+  const isDirtyRef = useRef(false);
   const prevSavedMinistriesRef = useRef<string[] | undefined>(savedMinistries);
   const prevEventIdRef = useRef<string | undefined>(eventId);
 
@@ -227,14 +228,17 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
   const activeCount = selectedMinistryIds.length;
 
   useEffect(() => {
-    // If event changed, reset initialization flag
+    // If event changed, reset initialization and dirty flags
     if (eventId !== prevEventIdRef.current) {
       prevEventIdRef.current = eventId;
       isInitializedRef.current = false;
+      isDirtyRef.current = false;
     }
 
-    // Sync from savedMinistries on initial load OR when event changes OR when savedMinistries is updated externally after save
-    if (!isInitializedRef.current || prevSavedMinistriesRef.current !== savedMinistries) {
+    const savedChanged = JSON.stringify(prevSavedMinistriesRef.current) !== JSON.stringify(savedMinistries);
+
+    // Only sync from props if component is uninitialized, OR if user hasn't made unsaved edits and savedMinistries content actually changed
+    if (!isInitializedRef.current || (!isDirtyRef.current && savedChanged)) {
       prevSavedMinistriesRef.current = savedMinistries;
       if (Array.isArray(savedMinistries) && savedMinistries.length > 0) {
         const newSelectedIds: string[] = [];
@@ -286,6 +290,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
       onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
       return;
     }
+    isDirtyRef.current = true;
     setSelectedMinistryIds(prev =>
       prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
     );
@@ -296,6 +301,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
       onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
       return;
     }
+    isDirtyRef.current = true;
     setSelectedMinistryIds(allMinistries.map(m => m.id));
   };
 
@@ -304,6 +310,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
       onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
       return;
     }
+    isDirtyRef.current = true;
     setSelectedMinistryIds([]);
   };
 
@@ -312,6 +319,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
       onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
       return;
     }
+    isDirtyRef.current = true;
     setSelectedMinistryIds(DEFAULT_SELECTED_IDS);
     onShowToast('Reset Complete', 'Restored default cabinet ministries', 'info');
   };
@@ -327,6 +335,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
 
     const exists = allMinistries.some(m => m.name.toLowerCase() === trimmed.toLowerCase());
     if (!exists) {
+      isDirtyRef.current = true;
       const newItem: MinistryItem = {
         id: `custom_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
         name: trimmed,
@@ -346,6 +355,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
       onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
       return;
     }
+    isDirtyRef.current = true;
     setCustomMinistries(prev => prev.filter(item => item.id !== id));
     setSelectedMinistryIds(prev => prev.filter(item => item !== id));
   };
@@ -361,6 +371,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
 
     prevSavedMinistriesRef.current = selectedMinistryNames;
     isInitializedRef.current = true;
+    isDirtyRef.current = false;
     if (onSaveCabinet) {
       onSaveCabinet(selectedMinistryNames);
     }
@@ -592,7 +603,10 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
             <div className="flex items-center gap-3 text-xs font-semibold text-slate-500">
               <button
                 type="button"
-                onClick={handleSelectAll}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleSelectAll();
+                }}
                 className="text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
               >
                 Select all {allMinistries.length}
@@ -600,7 +614,10 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
               <span>·</span>
               <button
                 type="button"
-                onClick={handleClearAll}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleClearAll();
+                }}
                 className="text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
               >
                 Clear
@@ -610,7 +627,10 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={handleSave}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleSave();
+                }}
                 className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-sm flex items-center gap-1.5 cursor-pointer"
               >
                 <Save className="w-3.5 h-3.5" />
@@ -619,7 +639,10 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
 
               <button
                 type="button"
-                onClick={handleResetToDefault}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleResetToDefault();
+                }}
                 className="px-3.5 py-2 rounded-xl text-xs font-bold border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 flex items-center gap-1.5 cursor-pointer"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
@@ -635,7 +658,10 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
               return (
                 <div
                   key={item.id}
-                  onClick={() => toggleSelection(item.id)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleSelection(item.id);
+                  }}
                   className={`w-full p-3 rounded-2xl border transition-all cursor-pointer flex items-center gap-3 ${
                     isSelected
                       ? 'bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-400/80 dark:border-emerald-700/80 shadow-xs'
@@ -676,7 +702,10 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                     }`}
                   >
                     <div
-                      onClick={() => toggleSelection(item.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleSelection(item.id);
+                      }}
                       className="flex items-center gap-3 cursor-pointer flex-1"
                     >
                       <div className={`p-0.5 rounded ${isSelected ? 'text-emerald-600' : 'text-slate-400'}`}>
