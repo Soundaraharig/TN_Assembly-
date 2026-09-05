@@ -446,6 +446,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           learners={props.learners}
           eventId={activeEvent.id}
           savedMinistries={activeEvent.cabinet_ministries}
+          isLocked={activeEvent.is_locked}
           onSaveCabinet={(ministries) => {
             storageService.saveCabinetMinistries(activeEvent.id, ministries);
             props.setCurrentEvent(prev => prev ? { ...prev, cabinet_ministries: ministries } : prev);

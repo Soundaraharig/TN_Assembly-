@@ -12,13 +12,15 @@ import {
   Users,
   Search,
   ChevronDown,
-  UserCheck
+  UserCheck,
+  Lock
 } from 'lucide-react';
 
 interface CabinetTabProps {
   learners: Learner[];
   eventId?: string;
   savedMinistries?: string[];
+  isLocked?: boolean;
   onSaveCabinet?: (ministries: string[]) => void;
   onAssignCabinetRole?: (learnerId: string, portfolioRole: string) => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
@@ -54,15 +56,17 @@ export const DEFAULT_MINISTRY_ITEMS: MinistryItem[] = [
   { id: 'min_tourism', name: 'Ministry of Tourism & Culture' }
 ];
 
-export const DEFAULT_MINISTRIES = DEFAULT_MINISTRY_ITEMS.map(m => m.name);
+export const DEFAULT_MINISTRIES = DEFAULT_MINISTRY_ITEMS.map((m: MinistryItem) => m.name);
 
 // Helper Searchable Dropdown for assigning delegates to portfolio roles
 const SearchableDelegateSelect: React.FC<{
   learners: Learner[];
   currentLearnerId?: string;
+  disabled?: boolean;
   onSelect: (learnerId: string) => void;
+  onShowToast?: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
   placeholder?: string;
-}> = ({ learners, currentLearnerId, onSelect, placeholder = 'Search by name or constituency no...' }) => {
+}> = ({ learners, currentLearnerId, disabled = false, onSelect, onShowToast, placeholder = 'Search by name or constituency no...' }) => {
   const [query, setQuery] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -92,19 +96,30 @@ const SearchableDelegateSelect: React.FC<{
   return (
     <div ref={containerRef} className="relative w-full">
       <div
-        onClick={() => setIsOpen(!isOpen)}
-        className="p-2.5 rounded-xl border text-xs font-semibold flex items-center justify-between cursor-pointer hover:border-amber-500 transition-colors shadow-xs"
-        style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+        onClick={() => {
+          if (disabled) {
+            onShowToast?.('Roster Locked', 'Unlock event in Overview tab to edit assignments', 'info');
+            return;
+          }
+          setIsOpen(!isOpen);
+        }}
+        className={`p-2.5 rounded-xl border text-xs font-semibold flex items-center justify-between transition-colors shadow-xs ${
+          disabled
+            ? 'opacity-60 cursor-not-allowed bg-slate-100 dark:bg-slate-800/40 border-slate-300 dark:border-slate-700'
+            : 'cursor-pointer hover:border-amber-500'
+        }`}
+        style={{ backgroundColor: disabled ? undefined : 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
       >
-        <span className="truncate">
+        <span className="truncate flex items-center gap-1.5">
+          {disabled && <Lock className="w-3.5 h-3.5 text-rose-500 shrink-0" />}
           {selectedLearner
             ? `${selectedLearner.full_name} (${selectedLearner.constituency_number ? `Const #${selectedLearner.constituency_number} - ` : ''}${selectedLearner.constituency_name || 'MLA'})`
-            : '-- Select / Assign Minister --'}
+            : (disabled ? '-- Portfolio Locked --' : '-- Select / Assign Minister --')}
         </span>
         <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </div>
 
-      {isOpen && (
+      {!disabled && isOpen && (
         <div
           className="absolute z-40 left-0 right-0 mt-1 rounded-xl border shadow-2xl p-2 space-y-2 max-h-64 overflow-y-auto"
           style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
@@ -172,6 +187,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
   learners,
   eventId,
   savedMinistries,
+  isLocked = false,
   onSaveCabinet,
   onAssignCabinetRole,
   onShowToast
@@ -225,6 +241,10 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
   }, [savedMinistries, eventId]);
 
   const toggleMinistry = (ministry: string) => {
+    if (isLocked) {
+      onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
+      return;
+    }
     setSelectedMinistries(prev =>
       prev.includes(ministry)
         ? prev.filter(m => m !== ministry)
@@ -233,15 +253,27 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
   };
 
   const handleSelectAll = () => {
+    if (isLocked) {
+      onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
+      return;
+    }
     const all = Array.from(new Set([...DEFAULT_MINISTRIES, ...customMinistries]));
     setSelectedMinistries(all);
   };
 
   const handleClearAll = () => {
+    if (isLocked) {
+      onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
+      return;
+    }
     setSelectedMinistries([]);
   };
 
   const handleResetToDefault = () => {
+    if (isLocked) {
+      onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
+      return;
+    }
     setSelectedMinistries([
       "Ministry of Education",
       "Ministry of Women & Child Development",
@@ -261,6 +293,10 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
 
   const handleAddCustom = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLocked) {
+      onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
+      return;
+    }
     const trimmed = newMinistryInput.trim();
     if (!trimmed) return;
 
@@ -275,11 +311,19 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
   };
 
   const handleRemoveCustom = (m: string) => {
+    if (isLocked) {
+      onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
+      return;
+    }
     setCustomMinistries(prev => prev.filter(item => item !== m));
     setSelectedMinistries(prev => prev.filter(item => item !== m));
   };
 
   const handleSave = () => {
+    if (isLocked) {
+      onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
+      return;
+    }
     prevSavedMinistriesRef.current = selectedMinistries;
     isInitializedRef.current = true;
     if (onSaveCabinet) {
@@ -289,6 +333,10 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
   };
 
   const handleAssignRole = (learnerId: string, portfolioRole: string) => {
+    if (isLocked) {
+      onShowToast('Roster Locked', 'Unlock event in Overview tab to assign cabinet ministers', 'info');
+      return;
+    }
     if (onAssignCabinetRole) {
       onAssignCabinetRole(learnerId, portfolioRole);
       const learner = (learners || []).find(l => l.id === learnerId);
@@ -313,6 +361,21 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
   return (
     <div className="space-y-6 animate-fade-in">
       
+      {/* Lock Notice Banner */}
+      {isLocked && (
+        <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs font-bold flex items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-2.5">
+            <Lock className="w-5 h-5 text-rose-500 shrink-0" />
+            <div>
+              <p className="font-extrabold text-sm">Cabinet Roster & Assignments Locked</p>
+              <p className="text-[11px] text-rose-500/80 font-normal mt-0.5">
+                Event is currently locked for live parliament session. Unlock in Event Overview tab to configure active ministries or reassign delegates.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Top Header Card */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1 max-w-3xl">
@@ -391,7 +454,9 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                     <SearchableDelegateSelect
                       learners={learners}
                       currentLearnerId={holder?.id}
+                      disabled={isLocked}
                       onSelect={(learnerId) => handleAssignRole(learnerId, item.role)}
+                      onShowToast={onShowToast}
                       placeholder={`Search name or const no for ${item.title}...`}
                     />
                   </div>
@@ -443,7 +508,9 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                         <SearchableDelegateSelect
                           learners={learners}
                           currentLearnerId={rulingHolder?.id}
+                          disabled={isLocked}
                           onSelect={(learnerId) => handleAssignRole(learnerId, port.rulingRole)}
+                          onShowToast={onShowToast}
                           placeholder="Search minister name or const no..."
                         />
                       </div>
@@ -463,7 +530,9 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                         <SearchableDelegateSelect
                           learners={learners}
                           currentLearnerId={shadowHolder?.id}
+                          disabled={isLocked}
                           onSelect={(learnerId) => handleAssignRole(learnerId, port.shadowRole)}
+                          onShowToast={onShowToast}
                           placeholder="Search shadow minister name or const no..."
                         />
                       </div>
