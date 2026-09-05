@@ -153,7 +153,7 @@ export const ProjectorTab: React.FC<ProjectorTabProps> = ({
                 {currentEvent ? currentEvent.college_name : 'Erode Demo Account'}
               </h4>
               <p className="text-xs font-medium text-slate-400">
-                {currentEvent ? `${currentEvent.chapter} | Tamil Nadu Youth Legislative Assembly` : 'Erode | Young Indians Parliament'}
+                {currentEvent ? `${currentEvent.chapter} | Tamil Nadu Youth Legislative Assembly` : 'Erode | Tamil Nadu Youth Legislative Assembly'}
               </p>
             </div>
 
@@ -225,7 +225,7 @@ export const ProjectorTab: React.FC<ProjectorTabProps> = ({
           <div className="flex items-center justify-between pt-4 border-t border-slate-800/80">
             <div className="text-xs text-slate-500 font-mono flex items-center gap-2">
               <Clock className="w-3.5 h-3.5 text-amber-500" />
-              <span>Young Indians Youth Assembly Protocol</span>
+              <span>Tamil Nadu Youth Assembly Protocol</span>
             </div>
 
             <div className="flex items-center gap-3">

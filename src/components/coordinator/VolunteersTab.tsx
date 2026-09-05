@@ -292,7 +292,7 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
               <span>YUVA Desks</span>
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Assign YUVA volunteers to the parties and committees they handle for SRTN Regional YIP round. Students later see their YUVA contact based on this.
+              Assign YUVA volunteers to the parties and committees they handle for the TN Youth Assembly round. Students later see their YUVA contact based on this.
             </p>
           </div>
 
@@ -473,7 +473,7 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
                 <span>Volunteer Roster</span>
               </h2>
               <p className="text-xs text-slate-500 mt-1">
-                SRTN Regional YIP round · Handbook p.10 · Min 10 YUVA volunteers required
+                TN Youth Assembly round · Protocol Guidelines · Min 10 volunteers required
               </p>
             </div>
 

@@ -63,7 +63,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     { id: 'ag_1', event_id: currentEvent?.id || '', day: 'Day 1', time: '09:00 AM', title: 'Delegates Seated', description: '10 min', speaker_role: 'Secretariat', is_current: false },
     { id: 'ag_2', event_id: currentEvent?.id || '', day: 'Day 1', time: '09:10 AM', title: 'National Anthem', description: '5 min', speaker_role: 'All Members', is_current: false },
     { id: 'ag_3', event_id: currentEvent?.id || '', day: 'Day 1', time: '09:15 AM', title: 'Welcome Address', description: '5 min', speaker_role: 'Chapter Chair', is_current: false },
-    { id: 'ag_4', event_id: currentEvent?.id || '', day: 'Day 1', time: '09:20 AM', title: 'About Young Indians', description: '5 min', speaker_role: 'National Representative', is_current: false },
+    { id: 'ag_4', event_id: currentEvent?.id || '', day: 'Day 1', time: '09:20 AM', title: 'Assembly Orientation', description: '5 min', speaker_role: 'Secretariat', is_current: false },
     { id: 'ag_5', event_id: currentEvent?.id || '', day: 'Day 1', time: '09:25 AM', title: 'Chief Guest Address', description: '20 min', speaker_role: 'Hon. Chief Guest', is_current: false },
     { id: 'ag_6', event_id: currentEvent?.id || '', day: 'Day 1', time: '09:45 AM', title: 'Event Overview & Instructions', description: '5 min', speaker_role: 'Floor Coordinator', is_current: false },
     { id: 'ag_7', event_id: currentEvent?.id || '', day: 'Day 1', time: '09:50 AM', title: 'Government & Opposition Formation', description: '10 min', speaker_role: 'Assembly Floor', is_current: false },

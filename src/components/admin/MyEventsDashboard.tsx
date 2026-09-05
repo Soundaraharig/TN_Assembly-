@@ -92,7 +92,7 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
             {isSuperAdmin ? 'All Assembly Events' : 'My Assigned Events'}
           </h2>
           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            {isSuperAdmin ? 'Manage your Young Indians Parliament & TN Assembly events' : 'Select your assigned event to manage session details'}
+            {isSuperAdmin ? 'Manage your TN Youth Assembly events' : 'Select your assigned event to manage session details'}
           </p>
         </div>
 

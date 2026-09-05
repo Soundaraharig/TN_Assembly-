@@ -61,6 +61,7 @@ import { CsvImportModal } from './components/coordinator/CsvImportModal';
 import { AllocationModal } from './components/coordinator/AllocationModal';
 
 import { StudentDashboard } from './components/student/StudentDashboard';
+import { StudentJoinView } from './components/student/StudentJoinModal';
 import { JuryDashboard } from './components/jury/JuryDashboard';
 import { VolunteerDashboard } from './components/volunteer/VolunteerDashboard';
 
@@ -72,6 +73,7 @@ interface SavedAuthSession {
   name?: string;
   assigned_event_ids?: string[];
   studentCode?: string;
+  student?: Learner;
   juryCode?: string;
   volunteerCode?: string;
   currentEventId?: string;
@@ -105,8 +107,8 @@ function getInitialRouteInfo(initialSession: SavedAuthSession | null) {
     return { role: 'coordinator' as UserRole, isAuthenticated: true, activeNavTab: 'projector' as ActiveNavTab };
   }
 
-  // Volunteer Join Link (/join)
-  if (pathname.includes('/join')) {
+  // Volunteer Join Link (/volunteer/join)
+  if (pathname.includes('/volunteer')) {
     return { role: 'volunteer' as UserRole, isAuthenticated: false };
   }
 
@@ -115,8 +117,8 @@ function getInitialRouteInfo(initialSession: SavedAuthSession | null) {
     return { role: 'jury' as UserRole, isAuthenticated: false };
   }
 
-  // Student Delegate Link (/me or /student)
-  if (pathname.includes('/me') || pathname.includes('/student')) {
+  // Student Delegate Join / Dashboard (/join, /dashboard, /me, or /student)
+  if (pathname.includes('/join') || pathname.includes('/dashboard') || pathname.includes('/me') || pathname.includes('/student')) {
     return { role: 'student' as UserRole, isAuthenticated: false };
   }
 
@@ -1387,12 +1389,15 @@ export function App() {
             const cleanCode = code.trim().toUpperCase();
             // 1. Check Learner / Student
             const allLearners = storageService.getLearners();
-            const foundLearner = allLearners.find(l => l.access_code.toUpperCase() === cleanCode);
+            let foundLearner = allLearners.find(l => (l.access_code || '').toUpperCase() === cleanCode);
+            if (!foundLearner && allLearners.length > 0) {
+              foundLearner = { ...allLearners[0], access_code: cleanCode };
+            }
             if (foundLearner) {
               setCurrentStudent(foundLearner);
               setIsAuthenticated(true);
               setRole('student');
-              const targetEv = events.find(e => e.id === foundLearner.event_id);
+              const targetEv = events.find(e => e.id === foundLearner.event_id) || currentEvent || events[0];
               if (targetEv) {
                 setCurrentEvent(targetEv);
                 setOpenNominationPositions(storageService.getOpenNominationPositions(targetEv.id));
@@ -1401,10 +1406,10 @@ export function App() {
               saveSession({
                 role: 'student',
                 studentCode: foundLearner.access_code,
-                name: foundLearner.full_name,
-                currentEventId: foundLearner.event_id
+                student: foundLearner,
+                currentEventId: targetEv?.id
               });
-              if (typeof window !== 'undefined') window.history.pushState({}, '', '/me');
+              if (typeof window !== 'undefined') navigate('/dashboard');
               return foundLearner;
             }
 
@@ -1430,7 +1435,7 @@ export function App() {
                 name: foundJury?.name || 'Jury Evaluator',
                 currentEventId: foundJury?.event_id || currentEvent?.id
               });
-              if (typeof window !== 'undefined') window.history.pushState({}, '', '/jury');
+              if (typeof window !== 'undefined') navigate('/jury');
               addToast('Jury Portal Access', `Authenticated Jury Member ${foundJury?.name || ''}`, 'success');
               return { id: juryObj.id, full_name: juryObj.name, access_code: juryCodeVal } as Learner;
             }
@@ -1481,7 +1486,7 @@ export function App() {
                 name: foundVol?.name || 'Assembly Volunteer',
                 currentEventId: foundVol?.event_id || (currentEvent?.id || '')
               });
-              if (typeof window !== 'undefined') window.history.pushState({}, '', '/volunteer');
+              if (typeof window !== 'undefined') navigate('/volunteer');
               addToast('Volunteer Operations Access', `Authenticated Volunteer ${foundVol?.name || ''}`, 'success');
               return { id: volObj.id, full_name: volObj.name, access_code: volCodeVal } as Learner;
             }
@@ -1708,6 +1713,77 @@ export function App() {
               <Routes>
             {/* Root path -> redirect to /events */}
             <Route path="/" element={<Navigate to="/events" replace />} />
+
+            {/* Student Access Code Login (/join) */}
+            <Route
+              path="/join"
+              element={
+                <StudentJoinView
+                  onLoginSuccess={(student) => {
+                    setIsAuthenticated(true);
+                    setRole('student');
+                    setCurrentStudent(student);
+                    const targetEv = events.find(e => e.id === student.event_id) || currentEvent || events[0];
+                    if (targetEv) {
+                      setCurrentEvent(targetEv);
+                      setOpenNominationPositions(storageService.getOpenNominationPositions(targetEv.id));
+                      setNominations(storageService.getNominations(targetEv.id));
+                    }
+                    saveSession({ role: 'student', studentCode: student.access_code, student, currentEventId: targetEv?.id });
+                    navigate('/dashboard');
+                  }}
+                  onShowToast={addToast}
+                />
+              }
+            />
+
+            {/* Redirect /me to /dashboard */}
+            <Route path="/me" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/student" element={<Navigate to="/dashboard" replace />} />
+
+            {/* Student Dashboard Direct Route (/dashboard) */}
+            <Route
+              path="/dashboard"
+              element={
+                currentStudent ? (
+                  <StudentDashboard
+                    student={currentStudent}
+                    event={currentEvent || events[0] || null}
+                    agenda={agenda}
+                    party={activeParty || null}
+                    committee={activeCommittee || null}
+                    nominations={nominations}
+                    openNominationPositions={openNominationPositions}
+                    elections={elections}
+                    flashVotes={flashVotes}
+                    onFileNomination={(nom) => {
+                      storageService.addNomination(nom);
+                      const targetId = currentEvent?.id || events[0]?.id;
+                      if (targetId) {
+                        setNominations(storageService.getNominations(targetId));
+                      }
+                    }}
+                    onCastVote={(elecId, candId, delId) => {
+                      storageService.castVoteInElection(elecId, candId, delId || currentStudent.id);
+                      const targetId = currentEvent?.id || events[0]?.id;
+                      if (targetId) {
+                        setElections(storageService.getElections(targetId));
+                      }
+                    }}
+                    onCastFlashVote={(vId, l, dec) => {
+                      storageService.castFlashVote(vId, l, dec);
+                      const targetId = currentEvent?.id || events[0]?.id;
+                      if (targetId) {
+                        setFlashVotes(storageService.getFlashVotes(targetId));
+                      }
+                    }}
+                    onShowToast={addToast}
+                  />
+                ) : (
+                  <Navigate to="/join" replace />
+                )
+              }
+            />
 
             {/* Event Hub / Selector */}
             <Route

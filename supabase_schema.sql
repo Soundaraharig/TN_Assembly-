@@ -18,6 +18,20 @@ CREATE TABLE college_events (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 2b. Participant Access Code & Profile Table
+CREATE TABLE IF NOT EXISTS event_participants (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_slug TEXT NOT NULL,
+  access_code VARCHAR(10) UNIQUE NOT NULL,
+  student_name TEXT NOT NULL,
+  party TEXT CHECK (party IN ('Ruling', 'Opposition')),
+  constituency TEXT,
+  committee TEXT,
+  committee_group_link TEXT,
+  party_group_link TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- 3. Coordinators Table
 CREATE TABLE coordinators (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

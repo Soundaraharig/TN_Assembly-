@@ -10,7 +10,9 @@ import type {
   Election,
   LiveFlashVote,
   EventDeadline,
-  ProceedingsQuestion
+  ProceedingsQuestion,
+  ProceedingsMotion,
+  BenchType
 } from '../../types';
 import { storageService } from '../../services/storageService';
 import {
@@ -55,6 +57,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   student,
   event,
   agenda,
+  party,
   committee,
   nominations = [],
   openNominationPositions = [],
@@ -88,6 +91,38 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [questionMinistry, setQuestionMinistry] = useState<string>('Ministry of Education');
   const [questionType, setQuestionType] = useState<ProceedingsQuestion['question_type']>('Standard');
   const [questionText, setQuestionText] = useState<string>('');
+
+  // Floor Motion State
+  const [isMotionModalOpen, setIsMotionModalOpen] = useState(false);
+  const [motionTitle, setMotionTitle] = useState('');
+  const [motionCommitteeRoom, setMotionCommitteeRoom] = useState('General Assembly Chamber');
+  const [motionContent, setMotionContent] = useState('');
+
+  const handleMotionSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!motionTitle.trim() || !motionContent.trim()) return;
+
+    const studentBench: BenchType = student.bench || 'Ruling';
+
+    const newMotion: ProceedingsMotion = {
+      id: `motion-${Date.now()}`,
+      event_id: eventSlug,
+      event_slug: eventSlug,
+      title: motionTitle.trim(),
+      proposed_by: student.full_name,
+      bench: studentBench,
+      committee_room: motionCommitteeRoom,
+      content: motionContent.trim(),
+      status: 'Submitted',
+      created_at: new Date().toISOString()
+    };
+
+    storageService.addProceedingsMotion(newMotion);
+    setMotionTitle('');
+    setMotionContent('');
+    setIsMotionModalOpen(false);
+    onShowToast('Motion Raised', 'Your floor motion has been submitted to the Assembly Chair.', 'success');
+  };
 
   useEffect(() => {
     if (eventSlug) {
@@ -314,10 +349,66 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               )}
             </div>
 
+            {/* Coordination Group Links */}
+            {(student.party_group_link || party?.whatsapp_group_link || student.committee_group_link) && (
+              <div className="flex flex-wrap items-center gap-2 pt-2">
+                {(student.party_group_link || party?.whatsapp_group_link) && (
+                  <a
+                    href={student.party_group_link || party?.whatsapp_group_link}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3 py-1.5 rounded-xl text-[11px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 transition-all flex items-center gap-1.5"
+                  >
+                    <span>💬 Party Group Chat</span>
+                  </a>
+                )}
+                {student.committee_group_link && (
+                  <a
+                    href={student.committee_group_link}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3 py-1.5 rounded-xl text-[11px] font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/30 hover:bg-blue-500/20 transition-all flex items-center gap-1.5"
+                  >
+                    <span>📂 Committee Group Workspace</span>
+                  </a>
+                )}
+              </div>
+            )}
+
           </div>
 
         </div>
 
+      </div>
+
+      {/* ── OVERVIEW & NARRATIVE CARD ("Your Day in the House") ── */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-xl space-y-4 transition-colors">
+        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+            <h3 className="text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+              <Clock className="w-5 h-5 text-amber-500" /> Overview: Your Day in the House
+            </h3>
+          </div>
+          <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400">
+            {event?.dates || 'Day 1 Session'}
+          </span>
+        </div>
+
+        <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-300">
+          Hon'ble Member <strong className="text-slate-900 dark:text-white font-bold">{student.full_name}</strong> representing constituency <strong className="text-amber-500">{student.constituency_name || 'TN State General'}</strong> on the <strong className={isRuling ? 'text-emerald-500' : 'text-rose-500'}>{student.bench || 'Ruling'} Bench</strong>. You are scheduled to participate in Question Hour, floor motions, committee room discussions ({student.committee_name || 'Standing Committee'}), and electronic division voting.
+        </p>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+          <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs">
+            <span className="text-[10px] font-bold text-slate-400 uppercase">Assembly Venue</span>
+            <p className="font-bold text-slate-900 dark:text-white">{event?.location || 'Main Assembly Chamber'}</p>
+          </div>
+          <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs">
+            <span className="text-[10px] font-bold text-slate-400 uppercase">Current Stage</span>
+            <p className="font-bold text-amber-500">{event?.event_stage || 'State Assembly Round'}</p>
+          </div>
+        </div>
       </div>
 
       {/* ── LIVE ELECTIONS & BALLOT VOTING SECTION ── */}
@@ -705,6 +796,98 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           )}
         </button>
       </div>
+
+      {/* Floor Business - Raise a Motion Card & Modal */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4 transition-colors">
+        <div>
+          <span className="text-[10px] font-bold text-amber-500 uppercase tracking-wider">Floor Business</span>
+          <h4 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+            <Radio className="w-5 h-5 text-amber-500" /> Raise a Parliamentary Motion
+          </h4>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Submit an official motion or resolution to the Chair for inclusion in the House proceedings
+          </p>
+        </div>
+
+        <button
+          onClick={() => setIsMotionModalOpen(true)}
+          className="px-5 py-2.5 rounded-xl font-bold text-xs bg-amber-500 hover:bg-amber-600 text-white shadow-lg flex items-center gap-2 cursor-pointer transition-all whitespace-nowrap"
+        >
+          <Radio className="w-4 h-4" /> Raise a Motion
+        </button>
+      </div>
+
+      {/* Raise a Motion Modal */}
+      {isMotionModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-2xl max-w-lg w-full space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <h3 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
+                <Radio className="w-5 h-5 text-amber-500" /> Raise a Parliamentary Motion
+              </h3>
+              <button
+                onClick={() => setIsMotionModalOpen(false)}
+                className="text-slate-400 hover:text-slate-200 text-xl font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleMotionSubmit} className="space-y-4 text-xs">
+              <div>
+                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Motion Title *</label>
+                <input
+                  type="text"
+                  required
+                  value={motionTitle}
+                  onChange={(e) => setMotionTitle(e.target.value)}
+                  placeholder="e.g. Motion on Youth Skill Empowerment in Rural TN"
+                  className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white font-semibold focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Committee Room / Chamber</label>
+                <input
+                  type="text"
+                  value={motionCommitteeRoom}
+                  onChange={(e) => setMotionCommitteeRoom(e.target.value)}
+                  placeholder="General Assembly Chamber"
+                  className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white font-semibold focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Motion Details & Objectives *</label>
+                <textarea
+                  rows={4}
+                  required
+                  value={motionContent}
+                  onChange={(e) => setMotionContent(e.target.value)}
+                  placeholder="State the primary resolution, arguments, and policy changes proposed by this motion..."
+                  className="w-full p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsMotionModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-slate-500 font-bold hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-lg flex items-center gap-1.5"
+                >
+                  <Send className="w-4 h-4" /> Submit Motion to Chair
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Live Session Agenda Timeline */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xl space-y-4 transition-colors">
