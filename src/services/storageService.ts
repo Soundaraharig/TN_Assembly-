@@ -2132,6 +2132,17 @@ class StorageService {
     }
   }
 
+  public resetScores(eventId?: string) {
+    if (eventId) {
+      const all = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, INITIAL_SCORES);
+      const remaining = all.filter(s => s.event_id && s.event_id !== eventId);
+      this.setItem(STORAGE_KEYS.SCORES, remaining);
+      this.syncEventStateToSupabase(eventId);
+    } else {
+      this.setItem(STORAGE_KEYS.SCORES, []);
+    }
+  }
+
   // ── CHAT ──────────────────────────────────────────────────────────────────
 
   public getChatMessages(eventId?: string): ChatMessage[] {
@@ -2510,9 +2521,20 @@ class StorageService {
   }
 
   // ── PROCEEDINGS QUESTIONS ───────────────────────────────────────────
-  public getProceedingsQuestions(eventSlug: string): ProceedingsQuestion[] {
+  public getProceedingsQuestions(eventKey: string): ProceedingsQuestion[] {
     const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
-    return list.filter(q => q.event_slug === eventSlug || q.event_id === eventSlug);
+    const cleanKey = (eventKey || '').toLowerCase().trim();
+    if (!cleanKey) return list;
+    return list.filter(q => {
+      const qSlug = (q.event_slug || '').toLowerCase().trim();
+      const qId = (q.event_id || '').toLowerCase().trim();
+      if (!qSlug && !qId) return true;
+      return (
+        qSlug === cleanKey ||
+        qId === cleanKey ||
+        (cleanKey.length > 5 && (qSlug.includes(cleanKey) || cleanKey.includes(qSlug) || qId.includes(cleanKey) || cleanKey.includes(qId)))
+      );
+    });
   }
 
   public addProceedingsQuestion(question: Partial<ProceedingsQuestion>): ProceedingsQuestion {
@@ -2565,9 +2587,20 @@ class StorageService {
   }
 
   // ── PROCEEDINGS MOTIONS ─────────────────────────────────────────────
-  public getProceedingsMotions(eventSlug: string): ProceedingsMotion[] {
+  public getProceedingsMotions(eventKey: string): ProceedingsMotion[] {
     const list: ProceedingsMotion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_MOTIONS, []);
-    return list.filter(m => m.event_slug === eventSlug || m.event_id === eventSlug);
+    const cleanKey = (eventKey || '').toLowerCase().trim();
+    if (!cleanKey) return list;
+    return list.filter(m => {
+      const mSlug = (m.event_slug || '').toLowerCase().trim();
+      const mId = (m.event_id || '').toLowerCase().trim();
+      if (!mSlug && !mId) return true;
+      return (
+        mSlug === cleanKey ||
+        mId === cleanKey ||
+        (cleanKey.length > 5 && (mSlug.includes(cleanKey) || cleanKey.includes(mSlug) || mId.includes(cleanKey) || cleanKey.includes(mSlug)))
+      );
+    });
   }
 
   public addProceedingsMotion(motion: Partial<ProceedingsMotion>): ProceedingsMotion {

@@ -254,8 +254,19 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
       return (orderMap[aKey] || 99) - (orderMap[bKey] || 99);
     });
 
+    partyLeaders.sort((a, b) => {
+      const pIndexA = parties.findIndex(p => (p.id && p.id === a.party_id) || a.title.toLowerCase().includes(p.name.toLowerCase()));
+      const pIndexB = parties.findIndex(p => (p.id && p.id === b.party_id) || b.title.toLowerCase().includes(p.name.toLowerCase()));
+
+      if (pIndexA !== -1 && pIndexB !== -1 && pIndexA !== pIndexB) {
+        return pIndexA - pIndexB;
+      }
+
+      return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
+    });
+
     return { constitutionalElections: constitutional, partyLeaderElections: partyLeaders, customElections: custom };
-  }, [elections]);
+  }, [elections, parties]);
 
   const closedElections = useMemo(() => {
     return elections.filter(e => e.status === 'Closed' || e.winner !== undefined);

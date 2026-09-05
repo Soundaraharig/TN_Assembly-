@@ -10,11 +10,10 @@ import type {
   Election,
   LiveFlashVote,
   EventDeadline,
-  ProceedingsQuestion,
-  ProceedingsMotion,
-  BenchType
+  ProceedingsQuestion
 } from '../../types';
 import { storageService } from '../../services/storageService';
+import { getEventSlug } from '../../utils/slug';
 import {
   Landmark,
   MapPin,
@@ -78,10 +77,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [nomSubmitted, setNomSubmitted] = useState(false);
 
   // Parliamentary Question Hour State
-  const eventSlug = event?.slug || 'jkkncet-tn-assembly-2026';
+  const eventSlug = event ? getEventSlug(event) : 'jkkncet-tn-assembly-2026';
+  const targetEventId = event?.id || eventSlug;
   const [deadline, setDeadline] = useState<EventDeadline>({
     id: `deadline-${eventSlug}`,
-    event_id: eventSlug,
+    event_id: targetEventId,
     event_slug: eventSlug,
     questions_open_at: undefined,
     questions_deadline_at: undefined,
@@ -92,45 +92,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [questionType, setQuestionType] = useState<ProceedingsQuestion['question_type']>('Standard');
   const [questionText, setQuestionText] = useState<string>('');
 
-  // Floor Motion State
-  const [isMotionModalOpen, setIsMotionModalOpen] = useState(false);
-  const [motionTitle, setMotionTitle] = useState('');
-  const [motionCommitteeRoom, setMotionCommitteeRoom] = useState('General Assembly Chamber');
-  const [motionContent, setMotionContent] = useState('');
 
-  const handleMotionSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!motionTitle.trim() || !motionContent.trim()) return;
-
-    const studentBench: BenchType = student.bench || 'Ruling';
-
-    const newMotion: ProceedingsMotion = {
-      id: `motion-${Date.now()}`,
-      event_id: eventSlug,
-      event_slug: eventSlug,
-      title: motionTitle.trim(),
-      proposed_by: student.full_name,
-      bench: studentBench,
-      committee_room: motionCommitteeRoom,
-      content: motionContent.trim(),
-      status: 'Submitted',
-      created_at: new Date().toISOString()
-    };
-
-    storageService.addProceedingsMotion(newMotion);
-    setMotionTitle('');
-    setMotionContent('');
-    setIsMotionModalOpen(false);
-    onShowToast('Motion Raised', 'Your floor motion has been submitted to the Assembly Chair.', 'success');
-  };
 
   useEffect(() => {
-    if (eventSlug) {
-      setDeadline(storageService.getEventDeadline(eventSlug));
-      const allQ = storageService.getProceedingsQuestions(eventSlug);
-      setStudentQuestions(allQ.filter(q => q.student_id === student.id || q.student_name === student.full_name));
+    if (eventSlug || targetEventId) {
+      setDeadline(storageService.getEventDeadline(eventSlug) || storageService.getEventDeadline(targetEventId));
+      const allQ = [...storageService.getProceedingsQuestions(eventSlug), ...storageService.getProceedingsQuestions(targetEventId)];
+      const uniqueQ = Array.from(new Map(allQ.map(q => [q.id, q])).values());
+      setStudentQuestions(uniqueQ.filter(q => q.student_id === student.id || q.student_name === student.full_name));
     }
-  }, [eventSlug, student.id, student.full_name]);
+  }, [eventSlug, targetEventId, student.id, student.full_name]);
 
   const isQuestionWindowOpen = useMemo(() => {
     if (!deadline.questions_deadline_at) return true;
@@ -149,7 +120,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
     const newQ: ProceedingsQuestion = {
       id: `q-${Date.now()}`,
-      event_id: eventSlug,
+      event_id: targetEventId,
       event_slug: eventSlug,
       student_id: student.id,
       student_name: student.full_name,
@@ -797,97 +768,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </button>
       </div>
 
-      {/* Floor Business - Raise a Motion Card & Modal */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4 transition-colors">
-        <div>
-          <span className="text-[10px] font-bold text-amber-500 uppercase tracking-wider">Floor Business</span>
-          <h4 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-            <Radio className="w-5 h-5 text-amber-500" /> Raise a Parliamentary Motion
-          </h4>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Submit an official motion or resolution to the Chair for inclusion in the House proceedings
-          </p>
-        </div>
 
-        <button
-          onClick={() => setIsMotionModalOpen(true)}
-          className="px-5 py-2.5 rounded-xl font-bold text-xs bg-amber-500 hover:bg-amber-600 text-white shadow-lg flex items-center gap-2 cursor-pointer transition-all whitespace-nowrap"
-        >
-          <Radio className="w-4 h-4" /> Raise a Motion
-        </button>
-      </div>
-
-      {/* Raise a Motion Modal */}
-      {isMotionModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-2xl max-w-lg w-full space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
-              <h3 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
-                <Radio className="w-5 h-5 text-amber-500" /> Raise a Parliamentary Motion
-              </h3>
-              <button
-                onClick={() => setIsMotionModalOpen(false)}
-                className="text-slate-400 hover:text-slate-200 text-xl font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleMotionSubmit} className="space-y-4 text-xs">
-              <div>
-                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Motion Title *</label>
-                <input
-                  type="text"
-                  required
-                  value={motionTitle}
-                  onChange={(e) => setMotionTitle(e.target.value)}
-                  placeholder="e.g. Motion on Youth Skill Empowerment in Rural TN"
-                  className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white font-semibold focus:outline-none focus:border-amber-500"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Committee Room / Chamber</label>
-                <input
-                  type="text"
-                  value={motionCommitteeRoom}
-                  onChange={(e) => setMotionCommitteeRoom(e.target.value)}
-                  placeholder="General Assembly Chamber"
-                  className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white font-semibold focus:outline-none focus:border-amber-500"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Motion Details & Objectives *</label>
-                <textarea
-                  rows={4}
-                  required
-                  value={motionContent}
-                  onChange={(e) => setMotionContent(e.target.value)}
-                  placeholder="State the primary resolution, arguments, and policy changes proposed by this motion..."
-                  className="w-full p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white focus:outline-none focus:border-amber-500"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsMotionModalOpen(false)}
-                  className="px-4 py-2 rounded-xl text-slate-500 font-bold hover:bg-slate-100 dark:hover:bg-slate-800"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 rounded-xl font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-lg flex items-center gap-1.5"
-                >
-                  <Send className="w-4 h-4" /> Submit Motion to Chair
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
       {/* Live Session Agenda Timeline */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xl space-y-4 transition-colors">

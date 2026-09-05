@@ -197,6 +197,7 @@ interface EventTabRouteHandlerProps {
   setElections: (elecs: Election[]) => void;
   setFlashVotes: (votes: LiveFlashVote[]) => void;
   setNominations: (noms: Nomination[]) => void;
+  setScores: (scores: ScoreRecord[]) => void;
   setIsAddWalkInOpen: (open: boolean) => void;
   setIsImportCsvOpen: (open: boolean) => void;
   setIsAllocationModalOpen: (open: boolean) => void;
@@ -608,7 +609,14 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           scores={props.scores}
           learners={props.learners}
           eventId={activeEvent.id}
-          onSaveScore={(sc) => storageService.saveScoreRecord(sc)}
+          onSaveScore={(sc) => {
+            storageService.saveScoreRecord(sc);
+            props.setScores(storageService.getScores(activeEvent.id));
+          }}
+          onResetScores={() => {
+            storageService.resetScores(activeEvent.id);
+            props.setScores(storageService.getScores(activeEvent.id));
+          }}
           onShowToast={props.addToast}
         />
       )}
@@ -1879,6 +1887,7 @@ export function App() {
                   setElections={setElections}
                   setFlashVotes={setFlashVotes}
                   setNominations={setNominations}
+                  setScores={setScores}
                   setIsAddWalkInOpen={setIsAddWalkInOpen}
                   setIsImportCsvOpen={setIsImportCsvOpen}
                   setIsAllocationModalOpen={setIsAllocationModalOpen}

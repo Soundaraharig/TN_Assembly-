@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import type { ScoreRecord, Learner } from '../../types';
 import {
   Grid,
-  Plus
+  Plus,
+  RotateCcw
 } from 'lucide-react';
 
 interface ScoreGridTabProps {
@@ -10,6 +11,7 @@ interface ScoreGridTabProps {
   learners: Learner[];
   eventId: string;
   onSaveScore: (score: ScoreRecord) => void;
+  onResetScores?: () => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -18,6 +20,7 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   learners,
   eventId,
   onSaveScore,
+  onResetScores,
   onShowToast
 }) => {
   const [isGradeModalOpen, setIsGradeModalOpen] = useState(false);
@@ -31,6 +34,15 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
 
   // Sorted Leaderboard
   const leaderboard = [...scores].sort((a, b) => b.total - a.total);
+
+  const handleResetScores = () => {
+    if (window.confirm('⚠️ Are you sure you want to RESET ALL jury evaluation scores? All recorded delegate marks and leaderboard rankings will be permanently cleared.')) {
+      if (onResetScores) {
+        onResetScores();
+      }
+      onShowToast('Jury Scores Reset', 'All delegate score records have been reset successfully.', 'info');
+    }
+  };
 
   const handleScoreSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -89,14 +101,27 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
           </p>
         </div>
 
-        <button
-          onClick={() => setIsGradeModalOpen(true)}
-          className="px-4 py-2.5 rounded-xl font-bold text-xs text-white shadow-md flex items-center gap-2 cursor-pointer transition-transform hover:scale-102 shrink-0"
-          style={{ backgroundColor: 'var(--amber)' }}
-        >
-          <Plus className="w-4 h-4" />
-          <span>+ Grade Delegate Score</span>
-        </button>
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          {scores.length > 0 && (
+            <button
+              onClick={handleResetScores}
+              className="px-3.5 py-2.5 rounded-xl font-bold text-xs text-rose-400 hover:text-rose-300 border border-rose-500/30 hover:border-rose-500/50 bg-rose-500/10 flex items-center gap-1.5 cursor-pointer transition-all"
+              title="Reset All Jury Scores"
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span>Reset Scores</span>
+            </button>
+          )}
+
+          <button
+            onClick={() => setIsGradeModalOpen(true)}
+            className="px-4 py-2.5 rounded-xl font-bold text-xs text-white shadow-md flex items-center gap-2 cursor-pointer transition-transform hover:scale-102"
+            style={{ backgroundColor: 'var(--amber)' }}
+          >
+            <Plus className="w-4 h-4" />
+            <span>+ Grade Delegate Score</span>
+          </button>
+        </div>
       </div>
 
       {/* Top 3 Podium Highlights */}
@@ -176,6 +201,15 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
           <h4 className="text-xs font-black uppercase tracking-wider" style={{ color: 'var(--text-primary)' }}>
             Complete Jury Score Ledger ({scores.length} Records)
           </h4>
+          {scores.length > 0 && (
+            <button
+              onClick={handleResetScores}
+              className="px-2.5 py-1 rounded-lg text-xs font-semibold text-rose-400 hover:text-rose-300 border border-rose-500/30 hover:border-rose-500/50 bg-rose-500/10 flex items-center gap-1.5 cursor-pointer transition-colors"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset Ledger</span>
+            </button>
+          )}
         </div>
 
         <div className="overflow-x-auto">
