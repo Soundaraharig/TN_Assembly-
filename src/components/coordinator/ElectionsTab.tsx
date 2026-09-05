@@ -18,7 +18,10 @@ import {
   Check,
   Search,
   X,
-  AlertCircle
+  AlertCircle,
+  Lock,
+  BarChart3,
+  History
 } from 'lucide-react';
 
 interface ElectionsTabProps {
@@ -93,7 +96,8 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   onCloseFlashVote,
   onShowToast
 }) => {
-  const [activeTabSection, setActiveTabSection] = useState<'ELECTIONS' | 'FLASH_VOTES'>('ELECTIONS');
+  const [activeTabSection, setActiveTabSection] = useState<'ELECTIONS' | 'FLASH_VOTES' | 'HISTORY'>('ELECTIONS');
+  const [selectedHistoryElection, setSelectedHistoryElection] = useState<Election | null>(null);
   
   const [expandedElectionIds, setExpandedElectionIds] = useState<Set<string>>(new Set());
   const [selectedVoterPerElection, setSelectedVoterPerElection] = useState<Record<string, string>>({});
@@ -218,6 +222,10 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
     return { constitutionalElections: constitutional, partyLeaderElections: partyLeaders, customElections: custom };
   }, [elections]);
 
+  const closedElections = useMemo(() => {
+    return elections.filter(e => e.status === 'Closed' || e.winner !== undefined);
+  }, [elections]);
+
   const handleEnsurePartyLeaderElection = (party: Party, silent = false): boolean => {
     const exists = elections.some(e =>
       e.title.toLowerCase().includes(party.name.toLowerCase()) &&
@@ -327,6 +335,19 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
     const sortedCandidates = [...(elec.candidates || [])].sort((a, b) => (b.votes || 0) - (a.votes || 0));
     const leader = sortedCandidates.length > 0 && sortedCandidates[0].votes > 0 ? sortedCandidates[0] : null;
     const rule = getElectorateRule(elec);
+
+    const totalEligible = (() => {
+      if (rule.type === 'PARTY') {
+        return learners.filter(l => l.party_id === rule.partyId || l.party_name?.toLowerCase() === rule.partyName?.toLowerCase()).length;
+      }
+      if (rule.type === 'RULING') return learners.filter(l => l.bench === 'Ruling').length;
+      if (rule.type === 'OPPOSITION') return learners.filter(l => l.bench === 'Opposition').length;
+      return learners.length;
+    })();
+
+    const liveVotedCount = elec.voted_delegate_ids?.length || 0;
+    const liveTurnoutPct = totalEligible > 0 ? Math.round((liveVotedCount / totalEligible) * 100) : 0;
+    const liveRemainingCount = Math.max(0, totalEligible - liveVotedCount);
 
     const selectedVoterId = selectedVoterPerElection[elec.id] || (learners[0]?.id || '');
     const currentVoter = learners.find(l => l.id === selectedVoterId) || learners[0] || null;
@@ -446,6 +467,34 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
               </div>
             </div>
 
+            {/* Live Voter Progress Bar */}
+            {isLive && (
+              <div className="p-3.5 rounded-xl border space-y-2 bg-amber-500/10 border-amber-500/30">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <Zap className="w-3.5 h-3.5 animate-pulse text-amber-500" /> Live Voter Progress
+                  </span>
+                  <span className="font-mono font-bold text-white">
+                    {liveVotedCount} / {totalEligible} voted ({liveTurnoutPct}%)
+                  </span>
+                </div>
+                <div className="w-full h-2.5 rounded-full bg-slate-800 overflow-hidden border border-slate-700/50">
+                  <div
+                    className="h-full bg-gradient-to-r from-amber-500 to-emerald-500 transition-all duration-500"
+                    style={{ width: `${liveTurnoutPct}%` }}
+                  />
+                </div>
+                <div className="flex items-center justify-between text-[11px] font-medium text-slate-300">
+                  <span className="flex items-center gap-1 text-emerald-400 font-semibold">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400" /> {liveVotedCount} Voted
+                  </span>
+                  <span className="flex items-center gap-1 text-amber-400 font-semibold">
+                    <span className="w-2 h-2 rounded-full bg-amber-400" /> {liveRemainingCount} Remaining
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* Winner Banner if Closed */}
             {isClosed && (
               <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center gap-3">
@@ -474,7 +523,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                 <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
                   Ballot Candidates ({elec.candidates?.length || 0})
                 </span>
-                {!isClosed && (
+                {!isClosed && !isLive ? (
                   <button
                     onClick={() => {
                       setActiveNominateElectionId(elec.id);
@@ -485,6 +534,14 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                   >
                     <UserPlus className="w-3.5 h-3.5" /> + Nominate Candidate
                   </button>
+                ) : isLive ? (
+                  <span className="text-[11px] font-semibold text-amber-400 flex items-center gap-1 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                    <Lock className="w-3 h-3" /> Nominations Locked (Voting is live)
+                  </span>
+                ) : (
+                  <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1 bg-slate-500/10 px-2 py-0.5 rounded border border-slate-500/20">
+                    <Lock className="w-3 h-3" /> Nominations Closed
+                  </span>
                 )}
               </div>
 
@@ -658,6 +715,17 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
             <Zap className="w-3.5 h-3.5" />
             Floor Divisions ({flashVotes.length})
           </button>
+          <button
+            onClick={() => setActiveTabSection('HISTORY')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+              activeTabSection === 'HISTORY'
+                ? 'bg-amber-500 text-slate-950 shadow-sm font-bold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <History className="w-3.5 h-3.5" />
+            Election Results & History ({closedElections.length})
+          </button>
         </div>
       </div>
 
@@ -820,6 +888,259 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ELECTION HISTORY & RESULTS TAB CONTENT */}
+      {activeTabSection === 'HISTORY' && (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3" style={{ borderColor: 'var(--border-soft)' }}>
+            <div>
+              <h3 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
+                Election Results & Historical Ballots
+              </h3>
+              <p className="text-xs text-slate-400">
+                Archive of completed legislative elections, declared winners, vote counts, and turnout metrics.
+              </p>
+            </div>
+            <span className="text-xs font-mono text-slate-300 bg-slate-800 px-3 py-1 rounded-full border border-slate-700 shrink-0">
+              {closedElections.length} Completed {closedElections.length === 1 ? 'Election' : 'Elections'}
+            </span>
+          </div>
+
+          {closedElections.length === 0 ? (
+            <div className="p-12 text-center rounded-2xl border border-dashed space-y-2" style={{ borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}>
+              <History className="w-8 h-8 text-slate-500 mx-auto" />
+              <p className="text-sm font-semibold text-slate-300">No Election History Available Yet</p>
+              <p className="text-xs text-slate-400 max-w-md mx-auto">
+                Completed and closed elections will automatically appear here with complete vote breakdowns, declared winners, and turnout statistics.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {closedElections.map((elec) => {
+                const sortedCandidates = [...(elec.candidates || [])].sort((a, b) => (b.votes || 0) - (a.votes || 0));
+                const leader = sortedCandidates[0] || null;
+                const winnerName = elec.winner || (leader ? leader.name : 'Declared Winner');
+                const rule = getElectorateRule(elec);
+
+                let totalEligible = learners.length;
+                if (rule.type === 'RULING') totalEligible = learners.filter(l => l.bench === 'Ruling').length;
+                else if (rule.type === 'OPPOSITION') totalEligible = learners.filter(l => l.bench === 'Opposition').length;
+                else if (rule.type === 'PARTY' && rule.partyId) totalEligible = learners.filter(l => l.party_id === rule.partyId || l.party_name?.toLowerCase() === rule.partyName?.toLowerCase()).length;
+
+                const totalVotes = elec.total_votes || 0;
+                const turnoutPct = totalEligible > 0 ? Math.round((totalVotes / totalEligible) * 100) : 0;
+                const completedAtText = elec.completed_at ? new Date(elec.completed_at).toLocaleString() : 'Concluded';
+
+                return (
+                  <div
+                    key={elec.id}
+                    className="p-5 rounded-2xl border space-y-4 shadow-xs hover:border-amber-500/40 transition-all flex flex-col justify-between"
+                    style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <span className="text-[10px] uppercase font-bold text-amber-500 tracking-wider block">
+                            {elec.position || 'Ballot Position'}
+                          </span>
+                          <h4 className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>
+                            {elec.title}
+                          </h4>
+                        </div>
+                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1 shrink-0">
+                          <Check className="w-3 h-3" /> Closed
+                        </span>
+                      </div>
+
+                      {/* Winner Card */}
+                      <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center font-black shrink-0">
+                          <Trophy className="w-5 h-5" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <span className="text-[10px] uppercase font-bold tracking-widest text-amber-500 block">
+                            Elected Winner
+                          </span>
+                          <h5 className="text-sm font-bold text-white truncate">
+                            {winnerName}
+                          </h5>
+                          {leader && (
+                            <p className="text-[11px] text-slate-300 truncate">
+                              {leader.party} • {leader.votes} votes ({totalVotes > 0 ? Math.round((leader.votes / totalVotes) * 100) : 0}%)
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Stats Summary */}
+                      <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                        <div className="p-2 rounded-lg bg-slate-800/60 border border-slate-700/60">
+                          <div className="text-slate-400 text-[10px] uppercase font-bold">Total Votes</div>
+                          <div className="font-bold text-white font-mono mt-0.5">{totalVotes}</div>
+                        </div>
+                        <div className="p-2 rounded-lg bg-slate-800/60 border border-slate-700/60">
+                          <div className="text-slate-400 text-[10px] uppercase font-bold">Eligible</div>
+                          <div className="font-bold text-white font-mono mt-0.5">{totalEligible}</div>
+                        </div>
+                        <div className="p-2 rounded-lg bg-slate-800/60 border border-slate-700/60">
+                          <div className="text-slate-400 text-[10px] uppercase font-bold">Turnout</div>
+                          <div className="font-bold text-emerald-400 font-mono mt-0.5">{turnoutPct}%</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-3 border-t flex items-center justify-between gap-2" style={{ borderColor: 'var(--border-soft)' }}>
+                      <span className="text-[11px] text-slate-400 truncate">
+                        {completedAtText}
+                      </span>
+                      <button
+                        onClick={() => setSelectedHistoryElection(elec)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 flex items-center gap-1.5 cursor-pointer transition-all shrink-0"
+                      >
+                        <BarChart3 className="w-3.5 h-3.5" /> View Results
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ELECTION HISTORY DETAILED RESULTS MODAL */}
+      {selectedHistoryElection && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div
+            className="w-full max-w-xl rounded-2xl border shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-scaleIn"
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}
+          >
+            {/* Modal Header */}
+            <div className="p-5 border-b flex items-center justify-between" style={{ borderColor: 'var(--border-soft)' }}>
+              <div>
+                <span className="text-[10px] font-extrabold uppercase text-amber-500 tracking-wider block">
+                  Official Ballot Result Breakdown
+                </span>
+                <h3 className="text-lg font-bold text-white">
+                  {selectedHistoryElection.title}
+                </h3>
+              </div>
+              <button
+                onClick={() => setSelectedHistoryElection(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              {(() => {
+                const sorted = [...(selectedHistoryElection.candidates || [])].sort((a, b) => (b.votes || 0) - (a.votes || 0));
+                const top = sorted[0];
+                const totalV = selectedHistoryElection.total_votes || 0;
+                const rule = getElectorateRule(selectedHistoryElection);
+
+                let totalEligible = learners.length;
+                if (rule.type === 'RULING') totalEligible = learners.filter(l => l.bench === 'Ruling').length;
+                else if (rule.type === 'OPPOSITION') totalEligible = learners.filter(l => l.bench === 'Opposition').length;
+                else if (rule.type === 'PARTY' && rule.partyId) totalEligible = learners.filter(l => l.party_id === rule.partyId || l.party_name?.toLowerCase() === rule.partyName?.toLowerCase()).length;
+
+                const turnout = totalEligible > 0 ? Math.round((totalV / totalEligible) * 100) : 0;
+
+                return (
+                  <>
+                    <div className="p-4 rounded-xl bg-amber-500/15 border border-amber-500/40 text-center space-y-1">
+                      <Trophy className="w-7 h-7 text-amber-500 mx-auto" />
+                      <span className="text-[10px] font-black uppercase text-amber-400 tracking-widest block">
+                        Declared Winner
+                      </span>
+                      <h4 className="text-xl font-extrabold text-white">
+                        {selectedHistoryElection.winner || (top ? top.name : 'No winner')}
+                      </h4>
+                      {top && (
+                        <p className="text-xs text-amber-200/90 font-medium">
+                          {top.party} • {top.votes} Votes ({totalV > 0 ? Math.round((top.votes / totalV) * 100) : 0}%)
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Stats Grid */}
+                    <div className="grid grid-cols-3 gap-3 text-center">
+                      <div className="p-3 rounded-xl bg-slate-800/80 border border-slate-700/80">
+                        <div className="text-[10px] uppercase font-bold text-slate-400">Total Votes</div>
+                        <div className="text-base font-black text-white font-mono">{totalV}</div>
+                      </div>
+                      <div className="p-3 rounded-xl bg-slate-800/80 border border-slate-700/80">
+                        <div className="text-[10px] uppercase font-bold text-slate-400">Eligible Voters</div>
+                        <div className="text-base font-black text-white font-mono">{totalEligible}</div>
+                      </div>
+                      <div className="p-3 rounded-xl bg-slate-800/80 border border-slate-700/80">
+                        <div className="text-[10px] uppercase font-bold text-slate-400">Turnout %</div>
+                        <div className="text-base font-black text-emerald-400 font-mono">{turnout}%</div>
+                      </div>
+                    </div>
+
+                    {/* Candidate Vote Breakdown */}
+                    <div className="space-y-3 pt-2">
+                      <h5 className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b pb-1.5 border-slate-800">
+                        Candidate Ballots & Share
+                      </h5>
+                      {sorted.length === 0 ? (
+                        <p className="text-xs text-slate-400 italic">No candidates recorded.</p>
+                      ) : (
+                        sorted.map((c, i) => {
+                          const cPct = totalV > 0 ? Math.round(((c.votes || 0) / totalV) * 100) : 0;
+                          const isWinner = (selectedHistoryElection.winner === c.name) || (i === 0 && (c.votes || 0) > 0);
+
+                          return (
+                            <div
+                              key={c.id}
+                              className={`p-3.5 rounded-xl border space-y-2 ${
+                                isWinner ? 'bg-amber-500/10 border-amber-500/40' : 'bg-slate-900/60 border-slate-800'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between text-xs">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-white">{c.name}</span>
+                                  {isWinner && <Trophy className="w-3.5 h-3.5 text-amber-500" />}
+                                </div>
+                                <span className="font-mono font-bold text-white">
+                                  {c.votes || 0} votes ({cPct}%)
+                                </span>
+                              </div>
+                              <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                                <div
+                                  className={`h-full ${isWinner ? 'bg-amber-500' : c.bench === 'Ruling' ? 'bg-emerald-500' : 'bg-rose-500'}`}
+                                  style={{ width: `${cPct}%` }}
+                                />
+                              </div>
+                              <div className="text-[10px] text-slate-400 flex justify-between">
+                                <span>{c.party} ({c.bench || 'Delegate'})</span>
+                                <span>Rank #{i + 1}</span>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t flex justify-end border-slate-800">
+              <button
+                onClick={() => setSelectedHistoryElection(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-white cursor-pointer"
+              >
+                Close Results
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

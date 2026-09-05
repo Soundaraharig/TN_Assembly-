@@ -813,6 +813,45 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
               </div>
             </div>
 
+            {/* Live Elections Voting Progress Section */}
+            {activeElectionsList.length > 0 && (
+              <div className="rounded-2xl p-4 border space-y-3" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
+                    <h3 className="text-xs font-extrabold uppercase tracking-wider text-amber-500">Live Election Voting Progress</h3>
+                  </div>
+                  <span className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>
+                    {activeElectionsList.length} Active {activeElectionsList.length === 1 ? 'Ballot' : 'Ballots'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {activeElectionsList.map(elec => {
+                    const totalEligible = learners.length > 0 ? learners.length : 1;
+                    const voted = elec.voted_delegate_ids?.length || elec.candidates.reduce((sum, c) => sum + (c.votes || 0), 0);
+                    const remaining = Math.max(0, totalEligible - voted);
+                    const pct = totalEligible > 0 ? Math.round((voted / totalEligible) * 100) : 0;
+
+                    return (
+                      <div key={elec.id} className="p-3.5 rounded-xl border space-y-2" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
+                        <div className="flex items-center justify-between text-xs font-bold">
+                          <span style={{ color: 'var(--text-primary)' }}>{elec.title}</span>
+                          <span className="text-amber-500 font-mono">{voted} / {totalEligible} voted ({pct}%)</span>
+                        </div>
+                        <div className="w-full bg-slate-200 dark:bg-slate-800 h-2 rounded-full overflow-hidden border border-slate-300 dark:border-slate-700">
+                          <div className="bg-gradient-to-r from-amber-500 to-emerald-500 h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, pct)}%` }} />
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                          <span className="text-emerald-600 dark:text-emerald-400 font-bold">{voted} Voted</span>
+                          <span>{remaining} Remaining</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Filter & Search Bar */}
             <div className="rounded-2xl p-5 border space-y-4" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
               <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -931,13 +970,30 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
 
                             {/* Proxy Vote Action */}
                             <td className="py-3 px-3 text-center">
-                              <button
-                                onClick={() => setProxyModalLearner(learner)}
-                                className="px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 mx-auto bg-amber-500 text-white shadow-sm hover:bg-amber-600 hover:scale-102 cursor-pointer"
-                              >
-                                <Vote className="w-3.5 h-3.5" />
-                                <span>Cast Proxy Vote</span>
-                              </button>
+                              {(() => {
+                                const hasVotedLive = activeElectionsList.length > 0 && activeElectionsList.every(e => e.voted_delegate_ids?.includes(learner.id));
+                                if (hasVotedLive) {
+                                  return (
+                                    <button
+                                      disabled
+                                      className="px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 mx-auto bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 cursor-not-allowed opacity-90"
+                                      title="Vote already submitted for this delegate"
+                                    >
+                                      <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+                                      <span>Vote Cast</span>
+                                    </button>
+                                  );
+                                }
+                                return (
+                                  <button
+                                    onClick={() => setProxyModalLearner(learner)}
+                                    className="px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 mx-auto bg-amber-500 text-white shadow-sm hover:bg-amber-600 hover:scale-102 cursor-pointer"
+                                  >
+                                    <Vote className="w-3.5 h-3.5" />
+                                    <span>Cast Proxy Vote</span>
+                                  </button>
+                                );
+                              })()}
                             </td>
                           </tr>
                         );

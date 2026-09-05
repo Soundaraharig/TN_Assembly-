@@ -180,6 +180,7 @@ export interface Election {
   total_votes: number;
   winner?: string;
   voted_delegate_ids?: string[];
+  completed_at?: string;
   created_at: string;
 }
 

@@ -1691,7 +1691,12 @@ class StorageService {
         targetEventId = e.event_id;
         const sorted = [...e.candidates].sort((a, b) => b.votes - a.votes);
         const win = sorted.length > 0 && sorted[0].votes > 0 ? sorted[0].name : undefined;
-        return { ...e, status: 'Closed' as const, winner: win };
+        return {
+          ...e,
+          status: 'Closed' as const,
+          winner: win,
+          completed_at: e.completed_at || new Date().toISOString()
+        };
       }
       return e;
     });
@@ -1705,11 +1710,13 @@ class StorageService {
       if (e.id === electionId) {
         targetEventId = e.event_id;
         let winner = e.winner;
+        let completedAt = e.completed_at;
         if (status === 'Closed') {
           const sorted = [...e.candidates].sort((a, b) => b.votes - a.votes);
           winner = sorted.length > 0 && sorted[0].votes > 0 ? sorted[0].name : undefined;
+          if (!completedAt) completedAt = new Date().toISOString();
         }
-        return { ...e, status, winner };
+        return { ...e, status, winner, completed_at: completedAt };
       }
       return e;
     });
@@ -1721,6 +1728,12 @@ class StorageService {
     const all = this.getElectionAll();
     const election = all.find(e => e.id === electionId);
     if (!election) return false;
+
+    // Enforce Backend Nomination Locking while Live or Closed
+    if (election.status === 'Live' || election.status === 'Closed') {
+      console.warn('[StorageService] Rejected candidate addition: Nominations are locked while voting is live or closed.');
+      return false;
+    }
 
     // Check if already in ballot
     const existing = election.candidates.find(
@@ -1747,6 +1760,12 @@ class StorageService {
     const all = this.getElectionAll();
     const election = all.find(e => e.id === electionId);
     if (!election) return false;
+
+    // Enforce Backend Nomination Locking while Live or Closed
+    if (election.status === 'Live' || election.status === 'Closed') {
+      console.warn('[StorageService] Rejected candidate removal: Nominations are locked while voting is live or closed.');
+      return false;
+    }
 
     election.candidates = election.candidates.filter(c => c.id !== candidateId && c.learner_id !== candidateId);
     // Recalculate total votes
