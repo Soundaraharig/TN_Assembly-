@@ -60,8 +60,6 @@ export const DEFAULT_MINISTRY_ITEMS: MinistryItem[] = [
 export const DEFAULT_MINISTRIES = DEFAULT_MINISTRY_ITEMS.map((m: MinistryItem) => m.name);
 
 export const DEFAULT_CUSTOM_ITEMS: MinistryItem[] = [
-  { id: 'custom_electronics_it', name: 'Ministry of Electronics & IT', isCustom: true },
-  { id: 'custom_tourism_culture', name: 'Ministry of Tourism & Culture', isCustom: true },
   { id: 'custom_environment', name: 'Ministry of Environment', isCustom: true }
 ];
 
@@ -75,10 +73,33 @@ export const DEFAULT_SELECTED_IDS: string[] = [
   'min_home',
   'min_defence',
   'min_agri',
-  'custom_electronics_it',
-  'custom_tourism_culture',
+  'min_it',
+  'min_tourism',
   'custom_environment'
 ];
+
+const getStoredCustomMinistries = (eId?: string): MinistryItem[] => {
+  if (!eId || typeof window === 'undefined') return DEFAULT_CUSTOM_ITEMS;
+  try {
+    const raw = localStorage.getItem(`tn_assembly_custom_ministries_${eId}`);
+    if (raw !== null) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {
+    // fallback
+  }
+  return DEFAULT_CUSTOM_ITEMS;
+};
+
+const saveStoredCustomMinistries = (eId: string | undefined, customs: MinistryItem[]) => {
+  if (!eId || typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(`tn_assembly_custom_ministries_${eId}`, JSON.stringify(customs));
+  } catch {
+    // ignore
+  }
+};
 
 // Helper Searchable Dropdown for assigning delegates to portfolio roles
 const SearchableDelegateSelect: React.FC<{
@@ -215,7 +236,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
   onShowToast
 }) => {
   const [selectedMinistryIds, setSelectedMinistryIds] = useState<string[]>(DEFAULT_SELECTED_IDS);
-  const [customMinistries, setCustomMinistries] = useState<MinistryItem[]>(DEFAULT_CUSTOM_ITEMS);
+  const [customMinistries, setCustomMinistries] = useState<MinistryItem[]>(() => getStoredCustomMinistries(eventId));
   const [newMinistryInput, setNewMinistryInput] = useState('');
   const [viewMode, setViewMode] = useState<'roster' | 'config'>('roster');
 
@@ -228,11 +249,12 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
   const activeCount = selectedMinistryIds.length;
 
   useEffect(() => {
-    // If event changed, reset initialization and dirty flags
+    // If event changed, reset initialization and dirty flags and reload event-specific custom ministries
     if (eventId !== prevEventIdRef.current) {
       prevEventIdRef.current = eventId;
       isInitializedRef.current = false;
       isDirtyRef.current = false;
+      setCustomMinistries(getStoredCustomMinistries(eventId));
     }
 
     const savedChanged = JSON.stringify(prevSavedMinistriesRef.current) !== JSON.stringify(savedMinistries);
@@ -242,7 +264,8 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
       prevSavedMinistriesRef.current = savedMinistries;
       if (Array.isArray(savedMinistries) && savedMinistries.length > 0) {
         const newSelectedIds: string[] = [];
-        const newCustoms: MinistryItem[] = [...customMinistries];
+        const currentCustoms = getStoredCustomMinistries(eventId);
+        const newCustoms: MinistryItem[] = [...currentCustoms];
 
         savedMinistries.forEach((savedItemStr) => {
           // Find matching standard item by ID or Name
@@ -274,6 +297,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
         });
 
         setCustomMinistries(newCustoms);
+        saveStoredCustomMinistries(eventId, newCustoms);
         setSelectedMinistryIds(newSelectedIds);
         isInitializedRef.current = true;
       } else if (!isInitializedRef.current) {
@@ -320,6 +344,8 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
       return;
     }
     isDirtyRef.current = true;
+    setCustomMinistries(DEFAULT_CUSTOM_ITEMS);
+    saveStoredCustomMinistries(eventId, DEFAULT_CUSTOM_ITEMS);
     setSelectedMinistryIds(DEFAULT_SELECTED_IDS);
     onShowToast('Reset Complete', 'Restored default cabinet ministries', 'info');
   };
@@ -341,8 +367,10 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
         name: trimmed,
         isCustom: true
       };
-      setCustomMinistries(prev => [...prev, newItem]);
+      const updatedCustoms = [...customMinistries, newItem];
+      setCustomMinistries(updatedCustoms);
       setSelectedMinistryIds(prev => [...prev, newItem.id]);
+      saveStoredCustomMinistries(eventId, updatedCustoms);
       setNewMinistryInput('');
       onShowToast('Ministry Added', `Added ${trimmed} to custom list`, 'success');
     } else {
@@ -356,8 +384,12 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
       return;
     }
     isDirtyRef.current = true;
-    setCustomMinistries(prev => prev.filter(item => item.id !== id));
+    const itemToRemove = customMinistries.find(item => item.id === id);
+    const updatedCustoms = customMinistries.filter(item => item.id !== id);
+    setCustomMinistries(updatedCustoms);
     setSelectedMinistryIds(prev => prev.filter(item => item !== id));
+    saveStoredCustomMinistries(eventId, updatedCustoms);
+    onShowToast('Ministry Deleted', `Removed ${itemToRemove?.name || 'custom ministry'} from list`, 'info');
   };
 
   const handleSave = () => {
@@ -369,6 +401,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
       .map(id => allMinistries.find(m => m.id === id)?.name)
       .filter((name): name is string => Boolean(name));
 
+    saveStoredCustomMinistries(eventId, customMinistries);
     prevSavedMinistriesRef.current = selectedMinistryNames;
     isInitializedRef.current = true;
     isDirtyRef.current = false;
