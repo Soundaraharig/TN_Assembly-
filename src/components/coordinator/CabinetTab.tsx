@@ -24,29 +24,37 @@ interface CabinetTabProps {
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
 
-export const DEFAULT_MINISTRIES = [
-  "Ministry of Education",
-  "Ministry of Women & Child Development",
-  "Ministry of Youth Affairs & Sports",
-  "Ministry of Health & Family Welfare",
-  "Ministry of Social Justice & Empowerment",
-  "Ministry of Road Transport & Highways",
-  "Ministry of Rural Development",
-  "Ministry of Science & Technology",
-  "Ministry of MSME",
-  "Ministry of Environment, Forest, & Climate Change",
-  "Ministry of Skill Development & Entrepreneurship",
-  "Ministry of Electronics & Information Technology",
-  "Ministry of Jal Shakti",
-  "Ministry of Housing & Urban Affairs",
-  "Ministry of Finance",
-  "Ministry of Home Affairs",
-  "Ministry of Defence",
-  "Ministry of Agriculture",
-  "Ministry of Power",
-  "Ministry of Railways",
-  "Ministry of Parliamentary Affairs"
+export interface MinistryItem {
+  id: string;
+  name: string;
+}
+
+export const DEFAULT_MINISTRY_ITEMS: MinistryItem[] = [
+  { id: 'min_edu', name: 'Ministry of Education' },
+  { id: 'min_wcd', name: 'Ministry of Women & Child Development' },
+  { id: 'min_sports', name: 'Ministry of Youth Affairs & Sports' },
+  { id: 'min_health', name: 'Ministry of Health & Family Welfare' },
+  { id: 'min_social', name: 'Ministry of Social Justice & Empowerment' },
+  { id: 'min_transport', name: 'Ministry of Road Transport & Highways' },
+  { id: 'min_rural', name: 'Ministry of Rural Development' },
+  { id: 'min_science', name: 'Ministry of Science & Technology' },
+  { id: 'min_msme', name: 'Ministry of MSME' },
+  { id: 'min_env', name: 'Ministry of Environment, Forest, & Climate Change' },
+  { id: 'min_skill', name: 'Ministry of Skill Development & Entrepreneurship' },
+  { id: 'min_it', name: 'Ministry of Electronics & IT' },
+  { id: 'min_jal', name: 'Ministry of Jal Shakti' },
+  { id: 'min_urban', name: 'Ministry of Housing & Urban Affairs' },
+  { id: 'min_finance', name: 'Ministry of Finance' },
+  { id: 'min_home', name: 'Ministry of Home Affairs' },
+  { id: 'min_defence', name: 'Ministry of Defence' },
+  { id: 'min_agri', name: 'Ministry of Agriculture' },
+  { id: 'min_power', name: 'Ministry of Power' },
+  { id: 'min_railways', name: 'Ministry of Railways' },
+  { id: 'min_parliament', name: 'Ministry of Parliamentary Affairs' },
+  { id: 'min_tourism', name: 'Ministry of Tourism & Culture' }
 ];
+
+export const DEFAULT_MINISTRIES = DEFAULT_MINISTRY_ITEMS.map(m => m.name);
 
 // Helper Searchable Dropdown for assigning delegates to portfolio roles
 const SearchableDelegateSelect: React.FC<{
@@ -514,12 +522,13 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
 
           {/* Standard Catalogue List */}
           <div className="space-y-2.5">
-            {DEFAULT_MINISTRIES.map((ministry) => {
-              const isSelected = selectedMinistries.includes(ministry);
+            {DEFAULT_MINISTRY_ITEMS.map((item) => {
+              const ministryId = item.name;
+              const isSelected = selectedMinistries.includes(ministryId);
               return (
                 <div
-                  key={ministry}
-                  onClick={() => toggleMinistry(ministry)}
+                  key={item.id}
+                  onClick={() => toggleMinistry(ministryId)}
                   className={`w-full p-3 rounded-2xl border transition-all cursor-pointer flex items-center gap-3 ${
                     isSelected
                       ? 'bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-400/80 dark:border-emerald-700/80 shadow-xs'
@@ -534,7 +543,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                     )}
                   </div>
                   <span className={`text-xs font-bold ${isSelected ? 'text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-400'}`}>
-                    {ministry}
+                    {item.name}
                   </span>
                 </div>
               );
