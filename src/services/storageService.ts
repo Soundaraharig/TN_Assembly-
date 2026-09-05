@@ -309,9 +309,11 @@ class StorageService {
             allScores = [...allScores, ...sc.scores];
           }
           
-          const scYuva = Array.isArray(sc.yuva_assignments) ? sc.yuva_assignments : [];
-          const key = `${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${ev.id}`;
-          this.setItem(key, scYuva);
+          if (Array.isArray(sc.yuva_assignments)) {
+            const key = `${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${ev.id}`;
+            this.setItem(key, sc.yuva_assignments);
+            this.setItem(STORAGE_KEYS.YUVA_ASSIGNMENTS, sc.yuva_assignments);
+          }
         });
 
         this.setItem(STORAGE_KEYS.OPEN_NOMINATIONS, openNomMap);
@@ -459,8 +461,14 @@ class StorageService {
       const procs = this.getProceedings(eventId);
       const qs = this.getQuestions(eventId);
       const scs = this.getScores(eventId);
+      const yuvaAssignments = this.getYuvaAssignments(eventId);
+
+      const events = this.getEvents();
+      const currentEv = events.find(e => e.id === eventId);
+      const existingSC = (currentEv?.social_coverage || {}) as Record<string, any>;
 
       const payload = {
+        ...existingSC,
         open_nominations: openNoms,
         nominations: noms,
         elections: elecs,
@@ -468,8 +476,15 @@ class StorageService {
         proceedings: procs,
         questions: qs,
         scores: scs,
+        yuva_assignments: yuvaAssignments,
         updated_at: new Date().toISOString()
       };
+
+      if (currentEv) {
+        currentEv.social_coverage = payload;
+        const allEvents = events.map(e => e.id === eventId ? currentEv : e);
+        this.setItem(STORAGE_KEYS.EVENTS, allEvents);
+      }
 
       await supabase.from('college_events').update({ social_coverage: payload }).eq('id', eventId);
     } catch (e) {
