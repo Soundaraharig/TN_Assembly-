@@ -256,6 +256,8 @@ export interface EventDeadline {
   id: string;
   event_id: string;
   event_slug: string;
+  is_open?: boolean;
+  status?: 'OPEN' | 'CLOSED';
   questions_open_at?: string;
   questions_deadline_at?: string;
   updated_at: string;

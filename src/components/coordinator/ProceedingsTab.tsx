@@ -17,7 +17,9 @@ import {
   Trash2,
   Users,
   Building2,
-  RefreshCw
+  RefreshCw,
+  Lock,
+  Unlock
 } from 'lucide-react';
 
 interface ProceedingsTabProps {
@@ -89,24 +91,14 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   };
 
   // Deadline Handlers
-  const handleUpdateOpenAt = (val: string) => {
-    const updated = storageService.updateEventDeadline(targetSlug, val, deadline.questions_deadline_at);
+  const handleToggleQuestionStatus = (isOpen: boolean) => {
+    const updated = storageService.updateEventDeadlineStatus(targetSlug, isOpen);
     setDeadline(updated);
-    onShowToast('Schedule Updated', 'Question opening time saved', 'info');
-  };
-
-  const handleUpdateDeadlineAt = (val: string) => {
-    const updated = storageService.updateEventDeadline(targetSlug, deadline.questions_open_at, val);
-    setDeadline(updated);
-    onShowToast('Schedule Updated', 'Question deadline timestamp saved', 'info');
-  };
-
-  const handleExtendDeadline = (hours: number) => {
-    const baseMs = deadline.questions_deadline_at ? new Date(deadline.questions_deadline_at).getTime() : Date.now();
-    const newDeadlineIso = new Date(baseMs + hours * 3600 * 1000).toISOString();
-    const updated = storageService.updateEventDeadline(targetSlug, deadline.questions_open_at, newDeadlineIso);
-    setDeadline(updated);
-    onShowToast('Deadline Extended', `Added +${hours}h to Question Hour deadline`, 'success');
+    onShowToast(
+      isOpen ? 'Question Submissions Opened' : 'Question Submissions Closed',
+      isOpen ? 'Student delegates can now submit questions for Question Hour.' : 'Question submission window is now locked for students.',
+      isOpen ? 'success' : 'info'
+    );
   };
 
   // Question Actions
@@ -278,65 +270,63 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
               </span>
             </div>
 
-            {/* Datetime Controls & Extensions */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-              
-              {/* Question Submissions Open */}
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
-                  Question Submissions Open
-                </label>
-                <input
-                  type="datetime-local"
-                  value={deadline.questions_open_at ? deadline.questions_open_at.slice(0, 16) : ''}
-                  onChange={(e) => handleUpdateOpenAt(new Date(e.target.value).toISOString())}
-                  className="w-full p-2.5 rounded-xl border text-xs font-mono font-semibold bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-amber-500"
-                />
-              </div>
-
-              {/* Question Submission Deadline */}
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
-                  Question Submission Deadline
-                </label>
-                <input
-                  type="datetime-local"
-                  value={deadline.questions_deadline_at ? deadline.questions_deadline_at.slice(0, 16) : ''}
-                  onChange={(e) => handleUpdateDeadlineAt(new Date(e.target.value).toISOString())}
-                  className="w-full p-2.5 rounded-xl border text-xs font-mono font-semibold bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-amber-500"
-                />
-              </div>
-
-              {/* Quick Extension Buttons */}
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
-                  Quick Extend Deadline
-                </label>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleExtendDeadline(6)}
-                    className="flex-1 py-2 px-2.5 rounded-xl text-xs font-extrabold bg-amber-500/10 hover:bg-amber-500 hover:text-white text-amber-600 dark:text-amber-400 border border-amber-500/30 transition-colors cursor-pointer"
-                  >
-                    +6 hours
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleExtendDeadline(24)}
-                    className="flex-1 py-2 px-2.5 rounded-xl text-xs font-extrabold bg-amber-500/10 hover:bg-amber-500 hover:text-white text-amber-600 dark:text-amber-400 border border-amber-500/30 transition-colors cursor-pointer"
-                  >
-                    +1 day
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleExtendDeadline(72)}
-                    className="flex-1 py-2 px-2.5 rounded-xl text-xs font-extrabold bg-amber-500/10 hover:bg-amber-500 hover:text-white text-amber-600 dark:text-amber-400 border border-amber-500/30 transition-colors cursor-pointer"
-                  >
-                    +3 days
-                  </button>
+            {/* Open / Close Submission Toggle Controls */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className={`p-2.5 rounded-xl border ${
+                  deadline.is_open !== false
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
+                    : 'bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400'
+                }`}>
+                  {deadline.is_open !== false ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Submission Window:</span>
+                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-black border ${
+                      deadline.is_open !== false
+                        ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30 dark:text-emerald-400'
+                        : 'bg-rose-500/10 text-rose-600 border-rose-500/30 dark:text-rose-400'
+                    }`}>
+                      {deadline.is_open !== false ? '🟢 OPEN FOR QUESTIONS' : '🔴 CLOSED'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    {deadline.is_open !== false
+                      ? 'Student delegates can submit questions for Question Hour via their Student Portal.'
+                      : 'Question submission window is locked. Students cannot submit new questions.'}
+                  </p>
                 </div>
               </div>
 
+              {/* Action Buttons: Open & Close */}
+              <div className="flex items-center gap-3 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => handleToggleQuestionStatus(true)}
+                  className={`flex-1 sm:flex-initial px-5 py-2.5 rounded-xl text-xs font-extrabold flex items-center justify-center gap-2 transition-all cursor-pointer border ${
+                    deadline.is_open !== false
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-md ring-2 ring-emerald-500/30'
+                      : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500 hover:text-white'
+                  }`}
+                >
+                  <Unlock className="w-4 h-4" />
+                  <span>Open for Question</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleToggleQuestionStatus(false)}
+                  className={`flex-1 sm:flex-initial px-5 py-2.5 rounded-xl text-xs font-extrabold flex items-center justify-center gap-2 transition-all cursor-pointer border ${
+                    deadline.is_open === false
+                      ? 'bg-rose-600 text-white border-rose-600 shadow-md ring-2 ring-rose-500/30'
+                      : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30 hover:bg-rose-500 hover:text-white'
+                  }`}
+                >
+                  <Lock className="w-4 h-4" />
+                  <span>Close Option</span>
+                </button>
+              </div>
             </div>
 
             {/* Real-time Submissions Progress Bar */}

@@ -2482,7 +2482,13 @@ class StorageService {
   public getEventDeadline(eventSlug: string): EventDeadline {
     const list: EventDeadline[] = this.getItem(STORAGE_KEYS.DEADLINES, []);
     const found = list.find(d => d.event_slug === eventSlug || d.event_id === eventSlug);
-    if (found) return found;
+    if (found) {
+      if (found.is_open === undefined) {
+        found.is_open = true;
+        found.status = 'OPEN';
+      }
+      return found;
+    }
 
     const defaultOpen = new Date().toISOString();
     const defaultDeadline = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
@@ -2490,6 +2496,8 @@ class StorageService {
       id: genUuid(),
       event_id: eventSlug,
       event_slug: eventSlug,
+      is_open: true,
+      status: 'OPEN',
       questions_open_at: defaultOpen,
       questions_deadline_at: defaultDeadline,
       updated_at: new Date().toISOString()
@@ -2497,13 +2505,38 @@ class StorageService {
     return created;
   }
 
-  public updateEventDeadline(eventSlug: string, openAt?: string, deadlineAt?: string): EventDeadline {
+  public updateEventDeadlineStatus(eventSlug: string, isOpen: boolean): EventDeadline {
     const list: EventDeadline[] = this.getItem(STORAGE_KEYS.DEADLINES, []);
     const idx = list.findIndex(d => d.event_slug === eventSlug || d.event_id === eventSlug);
     const existing = idx >= 0 ? list[idx] : this.getEventDeadline(eventSlug);
 
     const updated: EventDeadline = {
       ...existing,
+      is_open: isOpen,
+      status: isOpen ? 'OPEN' : 'CLOSED',
+      updated_at: new Date().toISOString()
+    };
+
+    if (idx >= 0) {
+      list[idx] = updated;
+    } else {
+      list.push(updated);
+    }
+    this.setItem(STORAGE_KEYS.DEADLINES, list);
+    this.sbUpsert('event_deadlines', updated as unknown as Record<string, unknown>);
+    this.notify();
+    return updated;
+  }
+
+  public updateEventDeadline(eventSlug: string, openAt?: string, deadlineAt?: string, isOpen?: boolean): EventDeadline {
+    const list: EventDeadline[] = this.getItem(STORAGE_KEYS.DEADLINES, []);
+    const idx = list.findIndex(d => d.event_slug === eventSlug || d.event_id === eventSlug);
+    const existing = idx >= 0 ? list[idx] : this.getEventDeadline(eventSlug);
+
+    const updated: EventDeadline = {
+      ...existing,
+      is_open: isOpen !== undefined ? isOpen : (existing.is_open !== undefined ? existing.is_open : true),
+      status: (isOpen !== undefined ? isOpen : (existing.is_open !== undefined ? existing.is_open : true)) ? 'OPEN' : 'CLOSED',
       questions_open_at: openAt !== undefined ? openAt : existing.questions_open_at,
       questions_deadline_at: deadlineAt !== undefined ? deadlineAt : existing.questions_deadline_at,
       updated_at: new Date().toISOString()

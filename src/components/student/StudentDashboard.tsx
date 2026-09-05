@@ -95,18 +95,27 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
 
   useEffect(() => {
-    if (eventSlug || targetEventId) {
-      setDeadline(storageService.getEventDeadline(eventSlug) || storageService.getEventDeadline(targetEventId));
-      const allQ = [...storageService.getProceedingsQuestions(eventSlug), ...storageService.getProceedingsQuestions(targetEventId)];
-      const uniqueQ = Array.from(new Map(allQ.map(q => [q.id, q])).values());
-      setStudentQuestions(uniqueQ.filter(q => q.student_id === student.id || q.student_name === student.full_name));
-    }
+    const refreshQuestionsAndDeadline = () => {
+      if (eventSlug || targetEventId) {
+        setDeadline(storageService.getEventDeadline(eventSlug) || storageService.getEventDeadline(targetEventId));
+        const allQ = [...storageService.getProceedingsQuestions(eventSlug), ...storageService.getProceedingsQuestions(targetEventId)];
+        const uniqueQ = Array.from(new Map(allQ.map(q => [q.id, q])).values());
+        setStudentQuestions(uniqueQ.filter(q => q.student_id === student.id || q.student_name === student.full_name));
+      }
+    };
+    refreshQuestionsAndDeadline();
+    const unsub = storageService.subscribe(() => {
+      refreshQuestionsAndDeadline();
+    });
+    return () => unsub();
   }, [eventSlug, targetEventId, student.id, student.full_name]);
 
   const isQuestionWindowOpen = useMemo(() => {
+    if (deadline.is_open !== undefined) return deadline.is_open;
+    if (deadline.status !== undefined) return deadline.status === 'OPEN';
     if (!deadline.questions_deadline_at) return true;
     return new Date().getTime() <= new Date(deadline.questions_deadline_at).getTime();
-  }, [deadline.questions_deadline_at]);
+  }, [deadline.is_open, deadline.status, deadline.questions_deadline_at]);
 
   const handleQuestionSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -822,13 +831,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           </div>
 
           {/* Deadline Status Banner */}
-          <div className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-2 ${
+          <div className={`px-3 py-1.5 rounded-xl border text-xs font-black flex items-center gap-2 ${
             isQuestionWindowOpen
-              ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-500/30'
-              : 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-500/30'
+              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+              : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30'
           }`}>
             {isQuestionWindowOpen ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
-            <span>{isQuestionWindowOpen ? 'Open for Submissions' : 'Submission Window Closed'}</span>
+            <span>{isQuestionWindowOpen ? '🟢 Open for Submissions' : '🔴 Submission Window Closed'}</span>
           </div>
         </div>
 
@@ -838,9 +847,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <div>
               <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Target Ministry</label>
               <select
+                disabled={!isQuestionWindowOpen}
                 value={questionMinistry}
                 onChange={(e) => setQuestionMinistry(e.target.value)}
-                className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white font-semibold focus:outline-none focus:border-amber-500"
+                className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white font-semibold focus:outline-none focus:border-amber-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <option value="Ministry of Education">Ministry of Education</option>
                 <option value="Ministry of Women & Child Development">Ministry of Women & Child Development</option>
@@ -857,9 +867,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <div>
               <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Question Type</label>
               <select
+                disabled={!isQuestionWindowOpen}
                 value={questionType}
                 onChange={(e) => setQuestionType(e.target.value as any)}
-                className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white font-semibold focus:outline-none focus:border-amber-500"
+                className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white font-semibold focus:outline-none focus:border-amber-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <option value="Standard">Standard Question</option>
                 <option value="Starred">Starred (Oral Answer)</option>
@@ -885,22 +896,23 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <textarea
               rows={3}
               required
+              disabled={!isQuestionWindowOpen}
               value={questionText}
               onChange={(e) => setQuestionText(e.target.value)}
-              placeholder="State your question clearly for the Minister during Question Hour..."
-              className="w-full p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white text-xs focus:outline-none focus:border-amber-500"
+              placeholder={isQuestionWindowOpen ? "State your question clearly for the Minister during Question Hour..." : "Question submission window is currently closed by the Speaker / Admin."}
+              className="w-full p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white text-xs focus:outline-none focus:border-amber-500 disabled:opacity-50 disabled:cursor-not-allowed"
             />
           </div>
 
           <div className="flex items-center justify-between pt-1">
-            <span className="text-[11px] text-slate-400">
-              Deadline: <strong className="font-mono text-amber-500">{deadline.questions_deadline_at ? new Date(deadline.questions_deadline_at).toLocaleString() : 'Not set'}</strong>
+            <span className="text-[11px] font-bold text-slate-400">
+              Status: <strong className={isQuestionWindowOpen ? "text-emerald-500 font-extrabold" : "text-rose-500 font-extrabold"}>{isQuestionWindowOpen ? 'Open for Submissions' : 'Submission Window Closed'}</strong>
             </span>
 
             <button
               type="submit"
               disabled={!isQuestionWindowOpen || !questionText.trim()}
-              className="px-5 py-2.5 rounded-xl font-bold text-xs bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white shadow-lg flex items-center gap-2 cursor-pointer transition-all"
+              className="px-5 py-2.5 rounded-xl font-bold text-xs bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white shadow-lg flex items-center gap-2 cursor-pointer transition-all"
             >
               <Send className="w-4 h-4" />
               <span>Submit Question</span>
