@@ -21,7 +21,8 @@ import {
   AlertCircle,
   Lock,
   BarChart3,
-  History
+  History,
+  Trash2
 } from 'lucide-react';
 
 interface ElectionsTabProps {
@@ -42,6 +43,7 @@ interface ElectionsTabProps {
   onCreateFlashVote: (eventId: string, question: string, audience: FlashVoteAudience, motionType: LiveFlashVote['motion_type']) => void;
   onCastFlashVote?: (voteId: string, learner: Learner, decision: 'AYE' | 'NO' | 'ABSTAIN') => void;
   onCloseFlashVote: (voteId: string) => void;
+  onDeleteFlashVote?: (voteId: string) => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -65,6 +67,16 @@ const CONSTITUTIONAL_POSTS = [
     electorateLabel: 'Ruling Bench Only',
     description: 'Ruling Bench delegates only',
     icon: Trophy
+  },
+  {
+    key: 'deputy_speaker',
+    title: 'Deputy Speaker Election',
+    position: 'Deputy Speaker',
+    type: 'DEPUTY_SPEAKER' as const,
+    electorate: 'ALL' as const,
+    electorateLabel: 'Whole House (All Delegates)',
+    description: 'Whole House (Ruling, Opposition & Independent delegates)',
+    icon: Crown
   },
   {
     key: 'lop',
@@ -91,9 +103,11 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   onAddCandidate,
   onRemoveCandidate,
   onResetElection,
+  onDeleteElection,
   onCreateElection,
   onCreateFlashVote,
   onCloseFlashVote,
+  onDeleteFlashVote,
   onShowToast
 }) => {
   const [activeTabSection, setActiveTabSection] = useState<'ELECTIONS' | 'FLASH_VOTES' | 'HISTORY'>('ELECTIONS');
@@ -512,6 +526,21 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                     <RotateCcw className="w-3.5 h-3.5" /> Reset Ballot
                   </button>
                 )}
+
+                {onDeleteElection && (
+                  <button
+                    onClick={() => {
+                      if (window.confirm(`Are you sure you want to delete the "${elec.title}" ballot?`)) {
+                        onDeleteElection(elec.id);
+                        onShowToast('Ballot Deleted', `Deleted "${elec.title}" successfully.`, 'info');
+                      }
+                    }}
+                    className="px-2.5 py-1 rounded-lg text-xs font-semibold text-rose-400 hover:text-rose-300 border border-rose-500/30 hover:border-rose-500/50 bg-rose-500/10 flex items-center gap-1 cursor-pointer transition-all"
+                    title="Delete Election Ballot"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Delete
+                  </button>
+                )}
               </div>
             </div>
 
@@ -924,14 +953,29 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                     </div>
                   </div>
 
-                  {fv.status === 'ACTIVE' && (
+                  <div className="flex items-center gap-2 pt-2 border-t" style={{ borderColor: 'var(--border-soft)' }}>
+                    {fv.status === 'ACTIVE' && (
+                      <button
+                        onClick={() => onCloseFlashVote(fv.id)}
+                        className="flex-1 py-2 rounded-xl text-xs font-bold text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 cursor-pointer transition-colors"
+                      >
+                        Close Floor Division
+                      </button>
+                    )}
                     <button
-                      onClick={() => onCloseFlashVote(fv.id)}
-                      className="w-full py-2 rounded-xl text-xs font-bold text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 cursor-pointer"
+                      onClick={() => {
+                        if (window.confirm(`Are you sure you want to delete the "${fv.question}" vote?`)) {
+                          onDeleteFlashVote?.(fv.id);
+                          onShowToast('Floor Division Deleted', `Deleted "${fv.question}" vote successfully.`, 'info');
+                        }
+                      }}
+                      className={`py-2 px-3 rounded-xl text-xs font-bold text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${fv.status !== 'ACTIVE' ? 'w-full' : ''}`}
+                      title="Delete Floor Division"
                     >
-                      Close Floor Division
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete Vote</span>
                     </button>
-                  )}
+                  </div>
                 </div>
               ))}
             </div>

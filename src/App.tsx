@@ -554,6 +554,10 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
             storageService.closeFlashVote(vId);
             props.setFlashVotes(storageService.getFlashVotes(activeEvent.id));
           }}
+          onDeleteFlashVote={(vId) => {
+            storageService.deleteFlashVote(vId);
+            props.setFlashVotes(storageService.getFlashVotes(activeEvent.id));
+          }}
           onShowToast={props.addToast}
         />
       )}

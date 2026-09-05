@@ -1954,6 +1954,14 @@ class StorageService {
     if (targetEventId) this.syncEventStateToSupabase(targetEventId);
   }
 
+  public deleteFlashVote(voteId: string) {
+    const target = this.getFlashVoteAll().find(f => f.id === voteId);
+    const all = this.getFlashVoteAll().filter(f => f.id !== voteId);
+    this.setItem(STORAGE_KEYS.FLASH_VOTES, all);
+    if (target?.event_id) this.syncEventStateToSupabase(target.event_id);
+  }
+
+
   // ── CHECKLIST ─────────────────────────────────────────────────────────────
 
   public getChecklist(eventId?: string): ChecklistItem[] {
