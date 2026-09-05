@@ -122,7 +122,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   const [pollQuestion, setPollQuestion] = useState('');
   const [pollMotionType, setPollMotionType] = useState<LiveFlashVote['motion_type']>('Division');
 
-  // Auto-create standard constitutional election rows if missing
+  // Auto-create standard constitutional election rows & party leader elections if missing
   useEffect(() => {
     if (eventId) {
       CONSTITUTIONAL_POSTS.forEach(post => {
@@ -143,8 +143,32 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
           });
         }
       });
+
+      // Auto-create Party Leader Elections for all assigned parties
+      if (parties && parties.length > 0) {
+        parties.forEach(p => {
+          const exists = elections.some(e =>
+            (e.party_id === p.id) ||
+            (e.title.toLowerCase().includes(p.name.toLowerCase()) &&
+             (e.title.toLowerCase().includes('leader') || e.position?.toLowerCase().includes('leader')))
+          );
+          if (!exists) {
+            onCreateElection({
+              event_id: eventId,
+              party_id: p.id,
+              title: `${p.name} Leader Election`,
+              position: 'Party Leader',
+              type: 'LEADERSHIP',
+              status: 'Upcoming',
+              candidates: [],
+              total_votes: 0,
+              voted_delegate_ids: []
+            });
+          }
+        });
+      }
     }
-  }, [elections, eventId]);
+  }, [elections, eventId, parties]);
 
   const toggleAccordion = (id: string) => {
     setExpandedElectionIds(prev => {
@@ -260,44 +284,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
     return getPartyLeaderElectionParty(activeElectionForNominate);
   }, [activeElectionForNominate, parties]);
 
-  const handleEnsurePartyLeaderElection = (party: Party, silent = false): boolean => {
-    const exists = elections.some(e =>
-      (e.party_id === party.id) ||
-      (e.title.toLowerCase().includes(party.name.toLowerCase()) &&
-       (e.title.toLowerCase().includes('leader') || e.position?.toLowerCase().includes('leader')))
-    );
-    if (!exists) {
-      onCreateElection({
-        event_id: eventId,
-        party_id: party.id,
-        title: `${party.name} Leader Election`,
-        position: 'Party Leader',
-        type: 'LEADERSHIP',
-        status: 'Upcoming',
-        candidates: [],
-        total_votes: 0,
-        voted_delegate_ids: []
-      });
-      if (!silent) {
-        onShowToast('Party Election Created', `Created election for ${party.name} Leader`, 'success');
-      }
-      return true;
-    }
-    return false;
-  };
 
-  const handleGenerateAllPartyLeaderElections = () => {
-    let createdCount = 0;
-    parties.forEach(p => {
-      const created = handleEnsurePartyLeaderElection(p, true);
-      if (created) createdCount++;
-    });
-    if (createdCount > 0) {
-      onShowToast('Party Elections Created', `Generated leader elections for ${createdCount} party ${createdCount === 1 ? '' : 'leaders'}`, 'success');
-    } else {
-      onShowToast('Party Elections Exist', 'Leader elections already exist for all parties', 'info');
-    }
-  };
 
   const relevantStudentNominations = useMemo(() => {
     if (!activeElectionForNominate) return [];
@@ -527,7 +514,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                   </button>
                 )}
 
-                {onDeleteElection && (
+                {onDeleteElection && elec.type !== 'LEADERSHIP' && elec.type !== 'SPEAKER' && elec.type !== 'DEPUTY_SPEAKER' && (
                   <button
                     onClick={() => {
                       if (window.confirm(`Are you sure you want to delete the "${elec.title}" ballot?`)) {
@@ -830,45 +817,23 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
           {/* DIVISION 2: POLITICAL PARTY LEADER ELECTIONS */}
           <div className="space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-2" style={{ borderColor: 'var(--border-soft)' }}>
+            <div className="flex items-center justify-between border-b pb-2" style={{ borderColor: 'var(--border-soft)' }}>
               <div className="flex items-center gap-2">
                 <Layers className="w-4 h-4 text-amber-500" />
                 <h3 className="text-sm sm:text-base font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
                   Political Party Leader Elections
                 </h3>
               </div>
-
-              {/* Party creation helper buttons */}
-              {parties.length > 0 && (
-                <div className="flex items-center gap-1 flex-wrap">
-                  <span className="text-xs text-slate-400 mr-1 font-medium">Add Party Ballot:</span>
-                  {parties.map(p => (
-                    <button
-                      key={p.id}
-                      onClick={() => handleEnsurePartyLeaderElection(p)}
-                      className="px-2 py-0.5 rounded-md text-xs font-medium border hover:border-amber-500 hover:text-amber-400 cursor-pointer transition-colors"
-                      style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)', color: 'var(--text-primary)' }}
-                    >
-                      + {p.name}
-                    </button>
-                  ))}
-                </div>
-              )}
+              <span className="text-xs text-slate-400 font-mono">
+                {partyLeaderElections.length} Ballots
+              </span>
             </div>
 
             {partyLeaderElections.length === 0 ? (
               <div className="p-6 rounded-xl border border-dashed text-center space-y-2.5" style={{ borderColor: 'var(--border-soft)' }}>
                 <p className="text-xs text-slate-400">
-                  No party leader elections initialized yet. Click on any party above or register parties in the Configuration tab.
+                  Party leader ballots will automatically be generated once political parties are assigned in the event configuration.
                 </p>
-                {parties.length > 0 && (
-                  <button
-                    onClick={handleGenerateAllPartyLeaderElections}
-                    className="px-3.5 py-1.5 rounded-lg text-xs font-bold text-white bg-amber-600 hover:bg-amber-500 cursor-pointer shadow-sm"
-                  >
-                    Generate Leader Ballots for All Parties
-                  </button>
-                )}
               </div>
             ) : (
               <div className="space-y-2">
