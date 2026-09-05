@@ -287,10 +287,16 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
       {activeTabFromPath === 'overview' && (
         <EventOverviewTab
           event={activeEvent}
-          participantCount={props.learners.length}
+          participantCount={props.learners.filter(l => l.event_id === activeEvent.id || !l.event_id).length}
+          electionsCount={props.elections.filter(e => e.event_id === activeEvent.id || !e.event_id).length || activeEvent.elections_count || 3}
           onUpdateEvent={(upd) => {
             storageService.updateEvent(upd);
             props.setCurrentEvent(upd);
+            props.setEvents?.(storageService.getEvents());
+          }}
+          onNavigateTab={(tab) => {
+            const slug = getEventSlug(activeEvent);
+            props.navigate(`/events/${slug}/${tab}`);
           }}
           onShowToast={props.addToast}
         />

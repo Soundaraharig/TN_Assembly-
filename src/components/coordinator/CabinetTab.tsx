@@ -162,6 +162,7 @@ const SearchableDelegateSelect: React.FC<{
 
 export const CabinetTab: React.FC<CabinetTabProps> = ({
   learners,
+  eventId,
   savedMinistries,
   onSaveCabinet,
   onAssignCabinetRole,
@@ -176,26 +177,44 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
   const [newMinistryInput, setNewMinistryInput] = useState('');
   const [viewMode, setViewMode] = useState<'roster' | 'config'>('roster');
 
+  const isInitializedRef = useRef(false);
+  const prevSavedMinistriesRef = useRef<string[] | undefined>(savedMinistries);
+  const prevEventIdRef = useRef<string | undefined>(eventId);
+
   useEffect(() => {
-    if (Array.isArray(savedMinistries)) {
-      setSelectedMinistries(savedMinistries);
-    } else {
-      setSelectedMinistries([
-        "Ministry of Education",
-        "Ministry of Women & Child Development",
-        "Ministry of Youth Affairs & Sports",
-        "Ministry of Health & Family Welfare",
-        "Ministry of Skill Development & Entrepreneurship",
-        "Ministry of Finance",
-        "Ministry of Home Affairs",
-        "Ministry of Defence",
-        "Ministry of Agriculture",
-        "Ministry of Electronics & IT",
-        "Ministry of Tourism & Culture",
-        "Ministry of Environment"
-      ]);
+    // If event changed, reset initialization flag
+    if (eventId !== prevEventIdRef.current) {
+      prevEventIdRef.current = eventId;
+      isInitializedRef.current = false;
     }
-  }, [savedMinistries]);
+
+    // Sync from savedMinistries on initial load OR when event changes OR when savedMinistries is updated externally after save
+    if (!isInitializedRef.current || prevSavedMinistriesRef.current !== savedMinistries) {
+      prevSavedMinistriesRef.current = savedMinistries;
+      if (Array.isArray(savedMinistries) && savedMinistries.length > 0) {
+        setSelectedMinistries(savedMinistries);
+        isInitializedRef.current = true;
+      } else if (!isInitializedRef.current) {
+        setSelectedMinistries([
+          "Ministry of Education",
+          "Ministry of Women & Child Development",
+          "Ministry of Youth Affairs & Sports",
+          "Ministry of Health & Family Welfare",
+          "Ministry of Skill Development & Entrepreneurship",
+          "Ministry of Finance",
+          "Ministry of Home Affairs",
+          "Ministry of Defence",
+          "Ministry of Agriculture",
+          "Ministry of Electronics & IT",
+          "Ministry of Tourism & Culture",
+          "Ministry of Environment"
+        ]);
+        if (Array.isArray(savedMinistries)) {
+          isInitializedRef.current = true;
+        }
+      }
+    }
+  }, [savedMinistries, eventId]);
 
   const toggleMinistry = (ministry: string) => {
     setSelectedMinistries(prev =>
@@ -253,6 +272,8 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
   };
 
   const handleSave = () => {
+    prevSavedMinistriesRef.current = selectedMinistries;
+    isInitializedRef.current = true;
     if (onSaveCabinet) {
       onSaveCabinet(selectedMinistries);
     }

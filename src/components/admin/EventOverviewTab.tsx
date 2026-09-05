@@ -5,17 +5,22 @@ import { Calendar, MapPin, Users, Vote, Lock, Play, CheckCircle2, Zap, Shield, S
 interface EventOverviewTabProps {
   event: CollegeEvent;
   participantCount?: number;
+  electionsCount?: number;
   onUpdateEvent: (updated: CollegeEvent) => void;
+  onNavigateTab?: (tab: string) => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
 
 export const EventOverviewTab: React.FC<EventOverviewTabProps> = ({
   event,
   participantCount,
+  electionsCount,
   onUpdateEvent,
+  onNavigateTab,
   onShowToast
 }) => {
-  const handleToggleLock = () => {
+  const handleToggleLock = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
     const updated = { ...event, is_locked: !event.is_locked };
     onUpdateEvent(updated);
     onShowToast(
@@ -85,8 +90,10 @@ export const EventOverviewTab: React.FC<EventOverviewTabProps> = ({
       {/* Summary Stat Cards Row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         
+        {/* Card 1: Registered Delegates */}
         <div
-          className="rounded-2xl p-5 border shadow-sm flex items-center justify-between transition-transform hover:-translate-y-0.5"
+          onClick={() => onNavigateTab?.('participants')}
+          className="rounded-2xl p-5 border shadow-sm flex items-center justify-between transition-all hover:-translate-y-0.5 hover:border-amber-500/50 cursor-pointer group"
           style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
         >
           <div>
@@ -96,49 +103,54 @@ export const EventOverviewTab: React.FC<EventOverviewTabProps> = ({
             <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
               Registered Delegates
             </p>
-            <span className="text-[10px] mt-1 inline-block font-semibold" style={{ color: 'var(--accent)' }}>
-              Official TN Constituency Mappings
+            <span className="text-[10px] mt-1 inline-block font-semibold group-hover:underline" style={{ color: 'var(--accent)' }}>
+              Official TN Constituency Mappings →
             </span>
           </div>
-          <div className="p-3.5 rounded-2xl" style={{ backgroundColor: 'var(--amber-soft)', color: 'var(--amber)' }}>
+          <div className="p-3.5 rounded-2xl transition-transform group-hover:scale-105" style={{ backgroundColor: 'var(--amber-soft)', color: 'var(--amber)' }}>
             <Users className="w-6 h-6" />
           </div>
         </div>
 
+        {/* Card 2: Leadership Elections */}
         <div
-          className="rounded-2xl p-5 border shadow-sm flex items-center justify-between transition-transform hover:-translate-y-0.5"
+          onClick={() => onNavigateTab?.('elections')}
+          className="rounded-2xl p-5 border shadow-sm flex items-center justify-between transition-all hover:-translate-y-0.5 hover:border-amber-500/50 cursor-pointer group"
           style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
         >
           <div>
             <p className="text-2xl sm:text-3xl font-black" style={{ color: 'var(--text-primary)' }}>
-              {event.elections_count || 3}
+              {electionsCount !== undefined ? electionsCount : (event.elections_count || 3)}
             </p>
             <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
               Leadership Elections
             </p>
-            <span className="text-[10px] mt-1 inline-block font-semibold" style={{ color: 'var(--accent)' }}>
-              Speaker, CM & Opposition Leader
+            <span className="text-[10px] mt-1 inline-block font-semibold group-hover:underline" style={{ color: 'var(--accent)' }}>
+              Speaker, CM & Opposition Leader →
             </span>
           </div>
-          <div className="p-3.5 rounded-2xl" style={{ backgroundColor: 'var(--accent-soft)', color: 'var(--accent)' }}>
+          <div className="p-3.5 rounded-2xl transition-transform group-hover:scale-105" style={{ backgroundColor: 'var(--accent-soft)', color: 'var(--accent)' }}>
             <Vote className="w-6 h-6" />
           </div>
         </div>
 
+        {/* Card 3: Allocations & Cabinet Roster */}
         <div
-          className="rounded-2xl p-5 border shadow-sm flex items-center justify-between transition-transform hover:-translate-y-0.5"
+          onClick={() => onNavigateTab?.('cabinet')}
+          className="rounded-2xl p-5 border shadow-sm flex items-center justify-between transition-all hover:-translate-y-0.5 hover:border-amber-500/50 cursor-pointer group"
           style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
         >
           <div>
-            <p className="text-2xl sm:text-3xl font-black" style={{ color: 'var(--text-primary)' }}>
+            <p className="text-2xl sm:text-3xl font-black" style={{ color: event.is_locked ? '#f43f5e' : '#10b981' }}>
               {event.is_locked ? 'Locked' : 'Unlocked'}
             </p>
             <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
               Allocations & Cabinet Roster
             </p>
             <button
+              type="button"
               onClick={handleToggleLock}
-              className="text-[10px] mt-1 font-bold underline cursor-pointer hover:opacity-80"
+              className="text-[10px] mt-1 font-bold underline cursor-pointer hover:opacity-80 block"
               style={{ color: 'var(--amber)' }}
             >
               {event.is_locked ? 'Click to Unlock for Edits' : 'Click to Lock Roster'}
@@ -146,8 +158,12 @@ export const EventOverviewTab: React.FC<EventOverviewTabProps> = ({
           </div>
           <div
             onClick={handleToggleLock}
-            className="p-3.5 rounded-2xl cursor-pointer hover:opacity-80"
-            style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-primary)' }}
+            title={event.is_locked ? 'Click to unlock event edits' : 'Click to lock roster'}
+            className={`p-3.5 rounded-2xl cursor-pointer transition-transform group-hover:scale-105 flex items-center justify-center ${
+              event.is_locked
+                ? 'bg-rose-500/10 text-rose-500 border border-rose-500/30'
+                : 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/30'
+            }`}
           >
             <Lock className="w-6 h-6" />
           </div>
