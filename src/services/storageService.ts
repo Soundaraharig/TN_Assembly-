@@ -2481,19 +2481,16 @@ class StorageService {
   // ── DEADLINES CONFIGURATION ─────────────────────────────────────────
   public getEventDeadline(eventSlug: string): EventDeadline {
     const list: EventDeadline[] = this.getItem(STORAGE_KEYS.DEADLINES, []);
-    const cleanKey = (eventSlug || '').toLowerCase().trim();
     
-    // Fuzzy match event slug or ID
-    const found = list.find(d => {
-      const s = (d.event_slug || '').toLowerCase().trim();
-      const id = (d.event_id || '').toLowerCase().trim();
-      if (!cleanKey || !s || s === cleanKey || id === cleanKey) return true;
-      if (cleanKey.length >= 3 && (s.includes(cleanKey) || cleanKey.includes(s) || id.includes(cleanKey) || cleanKey.includes(id))) return true;
-      if (cleanKey.startsWith('jkkncet') && (s.startsWith('jkkncet') || id.startsWith('jkkncet'))) return true;
-      return false;
-    });
+    if (list.length > 0) {
+      // Find matching item or return primary deadline entry
+      const cleanKey = (eventSlug || '').toLowerCase().trim();
+      const found = list.find(d => {
+        const s = (d.event_slug || '').toLowerCase().trim();
+        const id = (d.event_id || '').toLowerCase().trim();
+        return s === cleanKey || id === cleanKey || (cleanKey.length >= 3 && (s.includes(cleanKey) || cleanKey.includes(s)));
+      }) || list[0];
 
-    if (found) {
       if (found.is_open === undefined) {
         found.is_open = true;
         found.status = 'OPEN';
@@ -2505,64 +2502,64 @@ class StorageService {
     const defaultDeadline = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     const created: EventDeadline = {
       id: genUuid(),
-      event_id: eventSlug,
-      event_slug: eventSlug,
+      event_id: eventSlug || 'jkkncet-tn-assembly-2026',
+      event_slug: eventSlug || 'jkkncet-tn-assembly-2026',
       is_open: true,
       status: 'OPEN',
       questions_open_at: defaultOpen,
       questions_deadline_at: defaultDeadline,
       updated_at: new Date().toISOString()
     };
+    this.setItem(STORAGE_KEYS.DEADLINES, [created]);
     return created;
   }
 
   public updateEventDeadlineStatus(eventSlug: string, isOpen: boolean): EventDeadline {
     const list: EventDeadline[] = this.getItem(STORAGE_KEYS.DEADLINES, []);
-    const cleanKey = (eventSlug || '').toLowerCase().trim();
+    const now = new Date().toISOString();
     
-    const idx = list.findIndex(d => {
-      const s = (d.event_slug || '').toLowerCase().trim();
-      const id = (d.event_id || '').toLowerCase().trim();
-      if (!cleanKey || s === cleanKey || id === cleanKey) return true;
-      if (cleanKey.length >= 3 && (s.includes(cleanKey) || cleanKey.includes(s) || id.includes(cleanKey) || cleanKey.includes(id))) return true;
-      if (cleanKey.startsWith('jkkncet') && (s.startsWith('jkkncet') || id.startsWith('jkkncet'))) return true;
-      return false;
-    });
+    const updatedStatus: 'OPEN' | 'CLOSED' = isOpen ? 'OPEN' : 'CLOSED';
 
-    const existing = idx >= 0 ? list[idx] : this.getEventDeadline(eventSlug);
-
-    const updated: EventDeadline = {
-      ...existing,
-      is_open: isOpen,
-      status: isOpen ? 'OPEN' : 'CLOSED',
-      updated_at: new Date().toISOString()
-    };
-
-    if (idx >= 0) {
-      list[idx] = updated;
+    let target: EventDeadline;
+    if (list.length > 0) {
+      target = {
+        ...list[0],
+        event_slug: eventSlug || list[0].event_slug,
+        is_open: isOpen,
+        status: updatedStatus,
+        updated_at: now
+      };
     } else {
-      list.push(updated);
+      target = {
+        id: genUuid(),
+        event_id: eventSlug || 'jkkncet-tn-assembly-2026',
+        event_slug: eventSlug || 'jkkncet-tn-assembly-2026',
+        is_open: isOpen,
+        status: updatedStatus,
+        questions_open_at: now,
+        questions_deadline_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        updated_at: now
+      };
     }
 
-    // Also sync all existing deadline records for matching event keys
-    list.forEach((item, i) => {
-      const s = (item.event_slug || '').toLowerCase().trim();
-      const id = (item.event_id || '').toLowerCase().trim();
-      if (s === cleanKey || id === cleanKey || (cleanKey.length >= 3 && (s.includes(cleanKey) || cleanKey.includes(s)))) {
-        list[i] = { ...item, is_open: isOpen, status: isOpen ? 'OPEN' : 'CLOSED', updated_at: updated.updated_at };
-      }
-    });
+    // Unconditionally update ALL deadline records in storage to this status
+    const updatedList = list.length > 0 
+      ? list.map(item => ({ ...item, is_open: isOpen, status: updatedStatus, updated_at: now }))
+      : [target];
 
-    this.setItem(STORAGE_KEYS.DEADLINES, list);
-    this.sbUpsert('event_deadlines', updated as unknown as Record<string, unknown>);
+    if (!updatedList.some(item => item.event_slug === eventSlug || item.event_id === eventSlug)) {
+      updatedList.push(target);
+    }
+
+    this.setItem(STORAGE_KEYS.DEADLINES, updatedList);
+    this.sbUpsert('event_deadlines', target as unknown as Record<string, unknown>);
     this.notify();
-    return updated;
+    return target;
   }
 
   public updateEventDeadline(eventSlug: string, openAt?: string, deadlineAt?: string, isOpen?: boolean): EventDeadline {
     const list: EventDeadline[] = this.getItem(STORAGE_KEYS.DEADLINES, []);
-    const idx = list.findIndex(d => d.event_slug === eventSlug || d.event_id === eventSlug);
-    const existing = idx >= 0 ? list[idx] : this.getEventDeadline(eventSlug);
+    const existing = list.length > 0 ? list[0] : this.getEventDeadline(eventSlug);
 
     const updated: EventDeadline = {
       ...existing,
@@ -2573,34 +2570,17 @@ class StorageService {
       updated_at: new Date().toISOString()
     };
 
-    if (idx >= 0) {
-      list[idx] = updated;
-    } else {
-      list.push(updated);
-    }
-    this.setItem(STORAGE_KEYS.DEADLINES, list);
+    this.setItem(STORAGE_KEYS.DEADLINES, [updated]);
     this.sbUpsert('event_deadlines', updated as unknown as Record<string, unknown>);
     this.notify();
     return updated;
   }
 
   // ── PROCEEDINGS QUESTIONS ───────────────────────────────────────────
-  public getProceedingsQuestions(eventKey?: string): ProceedingsQuestion[] {
+  public getProceedingsQuestions(_eventKey?: string): ProceedingsQuestion[] {
     const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
-    const cleanKey = (eventKey || '').toLowerCase().trim();
-    if (!cleanKey) return list;
-    return list.filter(q => {
-      const qSlug = (q.event_slug || '').toLowerCase().trim();
-      const qId = (q.event_id || '').toLowerCase().trim();
-      if (!qSlug && !qId) return true;
-      return (
-        qSlug === cleanKey ||
-        qId === cleanKey ||
-        (cleanKey.length >= 3 && (qSlug.includes(cleanKey) || cleanKey.includes(qSlug) || qId.includes(cleanKey) || cleanKey.includes(qId))) ||
-        (cleanKey.startsWith('jkkncet') && (qSlug.startsWith('jkkncet') || qId.startsWith('jkkncet'))) ||
-        (cleanKey.startsWith('tn-assembly') && (qSlug.startsWith('tn-assembly') || qId.startsWith('tn-assembly')))
-      );
-    });
+    // Always return all submitted questions so admin and student portals are 100% in sync
+    return list;
   }
 
   public addProceedingsQuestion(question: Partial<ProceedingsQuestion>): ProceedingsQuestion {
