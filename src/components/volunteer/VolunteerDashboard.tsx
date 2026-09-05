@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   ShieldCheck,
   UserCheck,
@@ -118,16 +118,71 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   // YUVA Assignments State (Persisted via StorageService)
   const eventId = event?.id || volunteer?.event_id || 'ev_tn_assembly_2026';
 
+  const fetchVersionRef = useRef(0);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+
   const [yuvaAssignments, setYuvaAssignments] = useState<YuvaAssignment[]>(() =>
     storageService.getYuvaAssignments(eventId)
   );
 
   useEffect(() => {
-    setYuvaAssignments(storageService.getYuvaAssignments(eventId));
+    let isMounted = true;
+    const currentVersion = ++fetchVersionRef.current;
+
+    // Load initial assignments from storage immediately
+    const initial = storageService.getYuvaAssignments(eventId);
+    setYuvaAssignments(initial);
+    if (initial.length > 0) {
+      setIsInitialLoading(false);
+    }
+
+    const performSync = async () => {
+      try {
+        await storageService.forceRefresh();
+        if (isMounted && currentVersion === fetchVersionRef.current) {
+          const updated = storageService.getYuvaAssignments(eventId);
+          setYuvaAssignments(updated);
+          setIsInitialLoading(false);
+        }
+      } catch (err) {
+        console.error('Failed to sync volunteer desk data:', err);
+        if (isMounted && currentVersion === fetchVersionRef.current) {
+          setIsInitialLoading(false);
+        }
+      }
+    };
+
+    // Perform initial background sync to fetch latest from DB
+    performSync();
+
+    // Subscribe to local storage service pub/sub updates
     const unsubscribe = storageService.subscribe(() => {
-      setYuvaAssignments(storageService.getYuvaAssignments(eventId));
+      if (isMounted) {
+        setYuvaAssignments(storageService.getYuvaAssignments(eventId));
+        setIsInitialLoading(false);
+      }
     });
-    return unsubscribe;
+
+    // Auto-refresh polling every 8 seconds for background synchronization across tabs/devices
+    const pollInterval = setInterval(() => {
+      if (!document.hidden && isMounted) {
+        performSync();
+      }
+    }, 8000);
+
+    // Fallback timer: ensure loading state turns off within 3s even if network is slow or empty
+    const safetyTimeout = setTimeout(() => {
+      if (isMounted) {
+        setIsInitialLoading(false);
+      }
+    }, 3000);
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+      clearInterval(pollInterval);
+      clearTimeout(safetyTimeout);
+    };
   }, [eventId]);
 
   // Find assignments for logged in volunteer
@@ -712,7 +767,9 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                       <option value="ALL">All Assigned Desks ({uniqueDesks.length})</option>
                     )}
                     {uniqueDesks.length === 0 && (
-                      <option value="NONE">No Desks Assigned</option>
+                      <option value="NONE">
+                        {isInitialLoading ? 'Syncing Desks...' : 'No Desks Assigned'}
+                      </option>
                     )}
                     {uniqueDesks.map((d) => (
                       <option key={d.key} value={d.key}>
@@ -727,12 +784,22 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
                 <div className="p-3 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
                   <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>Assigned Members</div>
-                  <div className="text-xl font-black mt-0.5" style={{ color: 'var(--text-primary)' }}>{assignedDeskLearners.length}</div>
+                  <div className="text-xl font-black mt-0.5" style={{ color: 'var(--text-primary)' }}>
+                    {isInitialLoading && assignedDeskLearners.length === 0 ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-amber-500 my-1" />
+                    ) : (
+                      assignedDeskLearners.length
+                    )}
+                  </div>
                 </div>
                 <div className="p-3 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
                   <div className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">Day {selectedDay} Present</div>
                   <div className="text-xl font-black mt-0.5 text-emerald-600 dark:text-emerald-400">
-                    {assignedDeskLearners.filter(l => selectedDay === 1 ? l.day1_checked_in : l.day2_checked_in).length}
+                    {isInitialLoading && assignedDeskLearners.length === 0 ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-emerald-500 my-1" />
+                    ) : (
+                      assignedDeskLearners.filter(l => selectedDay === 1 ? l.day1_checked_in : l.day2_checked_in).length
+                    )}
                   </div>
                 </div>
                 <div className="p-3 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
@@ -797,7 +864,14 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                     {filteredYuvaMembers.length === 0 ? (
                       <tr>
                         <td colSpan={6} className="text-center py-12 text-xs" style={{ color: 'var(--text-muted)' }}>
-                          No members found for this desk assignment.
+                          {isInitialLoading ? (
+                            <div className="flex items-center justify-center gap-2 py-4">
+                              <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
+                              <span>Synchronizing assignment data...</span>
+                            </div>
+                          ) : (
+                            'No members found for this desk assignment.'
+                          )}
                         </td>
                       </tr>
                     ) : (
