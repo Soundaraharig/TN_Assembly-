@@ -180,7 +180,59 @@ CREATE POLICY "Allow all operational access" ON public.volunteers FOR ALL TO ano
 CREATE POLICY "Allow all operational access" ON public.college_events FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
 -- Grant privileges to anon and authenticated roles
+-- Deadlines Configuration
+CREATE TABLE IF NOT EXISTS event_deadlines (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_slug TEXT NOT NULL UNIQUE,
+  questions_open_at TIMESTAMPTZ,
+  questions_deadline_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Submitted Questions
+CREATE TABLE IF NOT EXISTS proceedings_questions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_slug TEXT NOT NULL,
+  student_id UUID,
+  student_name TEXT NOT NULL,
+  bench TEXT CHECK (bench IN ('Ruling', 'Opposition')),
+  constituency TEXT,
+  ministry TEXT,
+  question_text TEXT NOT NULL,
+  question_type TEXT DEFAULT 'Standard',
+  status TEXT CHECK (status IN ('Submitted', 'Approved', 'Starred', 'Rejected')) DEFAULT 'Submitted',
+  queue_order INT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Proceedings Motions
+CREATE TABLE IF NOT EXISTS proceedings_motions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_slug TEXT NOT NULL,
+  title TEXT NOT NULL,
+  proposed_by TEXT NOT NULL,
+  bench TEXT DEFAULT 'Ruling',
+  committee_room TEXT DEFAULT 'General Assembly',
+  content TEXT NOT NULL,
+  status TEXT DEFAULT 'Submitted',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE event_deadlines ENABLE ROW LEVEL SECURITY;
+ALTER TABLE proceedings_questions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE proceedings_motions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Allow read access event_deadlines" ON public.event_deadlines FOR SELECT TO anon, authenticated USING (true);
+CREATE POLICY "Allow write access event_deadlines" ON public.event_deadlines FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+CREATE POLICY "Allow read access proceedings_questions" ON public.proceedings_questions FOR SELECT TO anon, authenticated USING (true);
+CREATE POLICY "Allow write access proceedings_questions" ON public.proceedings_questions FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+CREATE POLICY "Allow read access proceedings_motions" ON public.proceedings_motions FOR SELECT TO anon, authenticated USING (true);
+CREATE POLICY "Allow write access proceedings_motions" ON public.proceedings_motions FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
 GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, postgres, service_role;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, postgres, service_role;
+
 
 

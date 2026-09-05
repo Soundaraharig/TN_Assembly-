@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import type {
   Learner,
   CollegeEvent,
@@ -8,8 +8,11 @@ import type {
   Nomination,
   NominationPosition,
   Election,
-  LiveFlashVote
+  LiveFlashVote,
+  EventDeadline,
+  ProceedingsQuestion
 } from '../../types';
+import { storageService } from '../../services/storageService';
 import {
   Landmark,
   MapPin,
@@ -22,6 +25,8 @@ import {
   FileSpreadsheet,
   Send,
   Lock,
+  Unlock,
+  HelpCircle,
   UserCheck,
   Vote,
   Zap,
@@ -68,6 +73,66 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   );
   const [nomManifesto, setNomManifesto] = useState('');
   const [nomSubmitted, setNomSubmitted] = useState(false);
+
+  // Parliamentary Question Hour State
+  const eventSlug = event?.slug || 'jkkncet-tn-assembly-2026';
+  const [deadline, setDeadline] = useState<EventDeadline>({
+    id: `deadline-${eventSlug}`,
+    event_id: eventSlug,
+    event_slug: eventSlug,
+    questions_open_at: undefined,
+    questions_deadline_at: undefined,
+    updated_at: new Date().toISOString()
+  });
+  const [studentQuestions, setStudentQuestions] = useState<ProceedingsQuestion[]>([]);
+  const [questionMinistry, setQuestionMinistry] = useState<string>('Ministry of Education');
+  const [questionType, setQuestionType] = useState<ProceedingsQuestion['question_type']>('Standard');
+  const [questionText, setQuestionText] = useState<string>('');
+
+  useEffect(() => {
+    if (eventSlug) {
+      setDeadline(storageService.getEventDeadline(eventSlug));
+      const allQ = storageService.getProceedingsQuestions(eventSlug);
+      setStudentQuestions(allQ.filter(q => q.student_id === student.id || q.student_name === student.full_name));
+    }
+  }, [eventSlug, student.id, student.full_name]);
+
+  const isQuestionWindowOpen = useMemo(() => {
+    if (!deadline.questions_deadline_at) return true;
+    return new Date().getTime() <= new Date(deadline.questions_deadline_at).getTime();
+  }, [deadline.questions_deadline_at]);
+
+  const handleQuestionSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!questionText.trim()) return;
+    if (!isQuestionWindowOpen) {
+      onShowToast('Submission Closed', 'Question submission deadline has passed.', 'error');
+      return;
+    }
+
+    const studentBench: 'Ruling' | 'Opposition' = student.bench === 'Opposition' ? 'Opposition' : 'Ruling';
+
+    const newQ: ProceedingsQuestion = {
+      id: `q-${Date.now()}`,
+      event_id: eventSlug,
+      event_slug: eventSlug,
+      student_id: student.id,
+      student_name: student.full_name,
+      bench: studentBench,
+      constituency: student.constituency_name || 'General',
+      ministry: questionMinistry,
+      question_type: questionType,
+      question_text: questionText.trim(),
+      status: 'Submitted',
+      created_at: new Date().toISOString(),
+      queue_order: studentQuestions.length + 1
+    };
+
+    storageService.addProceedingsQuestion(newQ);
+    setStudentQuestions(prev => [...prev, newQ]);
+    setQuestionText('');
+    onShowToast('Question Submitted', 'Your question has been added to the parliamentary proceedings queue.', 'success');
+  };
 
   // Synchronize selected position whenever open positions list updates
   useEffect(() => {
@@ -679,6 +744,140 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Question Hour & Submissions Card */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-xl space-y-4 transition-colors">
+        
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
+          <div>
+            <span className="text-[10px] uppercase font-bold text-amber-500 tracking-wider">Parliamentary Question Hour</span>
+            <h3 className="text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+              <HelpCircle className="w-5 h-5 text-amber-500" /> Draft & Submit Parliamentary Question
+            </h3>
+          </div>
+
+          {/* Deadline Status Banner */}
+          <div className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-2 ${
+            isQuestionWindowOpen
+              ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-500/30'
+              : 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-500/30'
+          }`}>
+            {isQuestionWindowOpen ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+            <span>{isQuestionWindowOpen ? 'Open for Submissions' : 'Submission Window Closed'}</span>
+          </div>
+        </div>
+
+        {/* Form */}
+        <form onSubmit={handleQuestionSubmit} className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+            <div>
+              <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Target Ministry</label>
+              <select
+                value={questionMinistry}
+                onChange={(e) => setQuestionMinistry(e.target.value)}
+                className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white font-semibold focus:outline-none focus:border-amber-500"
+              >
+                <option value="Ministry of Education">Ministry of Education</option>
+                <option value="Ministry of Women & Child Development">Ministry of Women & Child Development</option>
+                <option value="Ministry of Youth Affairs & Sports">Ministry of Youth Affairs & Sports</option>
+                <option value="Ministry of Health & Family Welfare">Ministry of Health & Family Welfare</option>
+                <option value="Ministry of Skill Development">Ministry of Skill Development</option>
+                <option value="Ministry of Finance">Ministry of Finance</option>
+                <option value="Ministry of Home Affairs">Ministry of Home Affairs</option>
+                <option value="Ministry of Defence">Ministry of Defence</option>
+                <option value="Ministry of Agriculture">Ministry of Agriculture</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Question Type</label>
+              <select
+                value={questionType}
+                onChange={(e) => setQuestionType(e.target.value as any)}
+                className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white font-semibold focus:outline-none focus:border-amber-500"
+              >
+                <option value="Standard">Standard Question</option>
+                <option value="Starred">Starred (Oral Answer)</option>
+                <option value="Unstarred">Unstarred (Written Answer)</option>
+                <option value="Zero Hour">Zero Hour Notice</option>
+                <option value="Calling Attention">Calling Attention</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Submitting Delegate</label>
+              <input
+                type="text"
+                readOnly
+                value={`${student.full_name} (${student.bench || 'Ruling'} Bench)`}
+                className="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 text-slate-500 text-xs font-semibold"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Question Text & Details *</label>
+            <textarea
+              rows={3}
+              required
+              value={questionText}
+              onChange={(e) => setQuestionText(e.target.value)}
+              placeholder="State your question clearly for the Minister during Question Hour..."
+              className="w-full p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white text-xs focus:outline-none focus:border-amber-500"
+            />
+          </div>
+
+          <div className="flex items-center justify-between pt-1">
+            <span className="text-[11px] text-slate-400">
+              Deadline: <strong className="font-mono text-amber-500">{deadline.questions_deadline_at ? new Date(deadline.questions_deadline_at).toLocaleString() : 'Not set'}</strong>
+            </span>
+
+            <button
+              type="submit"
+              disabled={!isQuestionWindowOpen || !questionText.trim()}
+              className="px-5 py-2.5 rounded-xl font-bold text-xs bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white shadow-lg flex items-center gap-2 cursor-pointer transition-all"
+            >
+              <Send className="w-4 h-4" />
+              <span>Submit Question</span>
+            </button>
+          </div>
+        </form>
+
+        {/* Student's Questions Tracker */}
+        {studentQuestions.length > 0 && (
+          <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-2">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+              Your Submitted Questions ({studentQuestions.length})
+            </h4>
+
+            <div className="space-y-2">
+              {studentQuestions.map(q => (
+                <div
+                  key={q.id}
+                  className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs space-y-1"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-amber-600 dark:text-amber-400">{q.ministry} • {q.question_type}</span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                      q.status === 'Approved'
+                        ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
+                        : q.status === 'Starred'
+                        ? 'bg-amber-500/10 text-amber-500 border-amber-500/30'
+                        : q.status === 'Rejected'
+                        ? 'bg-rose-500/10 text-rose-600 border-rose-500/30'
+                        : 'bg-slate-500/10 text-slate-500 border-slate-500/30'
+                    }`}>
+                      {q.status}
+                    </span>
+                  </div>
+                  <p className="text-slate-800 dark:text-slate-200">{q.question_text}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
       </div>
 
     </div>

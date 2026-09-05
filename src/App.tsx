@@ -585,6 +585,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           proceedings={props.proceedings}
           learners={props.learners}
           eventId={activeEvent.id}
+          eventSlug={getEventSlug(activeEvent)}
           onAddBill={(bill) => storageService.addBill(bill)}
           onUpdateBillStatus={(id, status, ayes, noes) => storageService.updateBillStatus(id, status, ayes, noes)}
           onShowToast={props.addToast}

@@ -19,7 +19,10 @@ import type {
   ChatMessage,
   FeedbackEntry,
   TeamMember,
-  FlashVoteAudience
+  FlashVoteAudience,
+  EventDeadline,
+  ProceedingsQuestion,
+  ProceedingsMotion
 } from '../types';
 import {
   INITIAL_EVENTS,
@@ -70,7 +73,10 @@ const STORAGE_KEYS = {
   ALLOCATION_LOCK: 'tn_assembly_allocation_lock_v6',
   REGISTRATIONS_FROZEN: 'tn_assembly_registrations_frozen_v6',
   SCORES_LOCKED: 'tn_assembly_scores_locked_v6',
-  YUVA_ASSIGNMENTS: 'tn_assembly_yuva_assignments_v6'
+  YUVA_ASSIGNMENTS: 'tn_assembly_yuva_assignments_v6',
+  DEADLINES: 'tn_assembly_deadlines_v6',
+  PROCEEDINGS_QUESTIONS: 'tn_assembly_proceedings_questions_v6',
+  PROCEEDINGS_MOTIONS: 'tn_assembly_proceedings_motions_v6'
 };
 
 type Listener = () => void;
@@ -2453,6 +2459,132 @@ class StorageService {
    */
   public async forceRefresh(): Promise<void> {
     await this.syncFromSupabase();
+  }
+
+  // ── DEADLINES CONFIGURATION ─────────────────────────────────────────
+  public getEventDeadline(eventSlug: string): EventDeadline {
+    const list: EventDeadline[] = this.getItem(STORAGE_KEYS.DEADLINES, []);
+    const found = list.find(d => d.event_slug === eventSlug || d.event_id === eventSlug);
+    if (found) return found;
+
+    const defaultOpen = new Date().toISOString();
+    const defaultDeadline = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const created: EventDeadline = {
+      id: genUuid(),
+      event_id: eventSlug,
+      event_slug: eventSlug,
+      questions_open_at: defaultOpen,
+      questions_deadline_at: defaultDeadline,
+      updated_at: new Date().toISOString()
+    };
+    return created;
+  }
+
+  public updateEventDeadline(eventSlug: string, openAt?: string, deadlineAt?: string): EventDeadline {
+    const list: EventDeadline[] = this.getItem(STORAGE_KEYS.DEADLINES, []);
+    const idx = list.findIndex(d => d.event_slug === eventSlug || d.event_id === eventSlug);
+    const existing = idx >= 0 ? list[idx] : this.getEventDeadline(eventSlug);
+
+    const updated: EventDeadline = {
+      ...existing,
+      questions_open_at: openAt !== undefined ? openAt : existing.questions_open_at,
+      questions_deadline_at: deadlineAt !== undefined ? deadlineAt : existing.questions_deadline_at,
+      updated_at: new Date().toISOString()
+    };
+
+    if (idx >= 0) {
+      list[idx] = updated;
+    } else {
+      list.push(updated);
+    }
+    this.setItem(STORAGE_KEYS.DEADLINES, list);
+    this.sbUpsert('event_deadlines', updated as unknown as Record<string, unknown>);
+    this.notify();
+    return updated;
+  }
+
+  // ── PROCEEDINGS QUESTIONS ───────────────────────────────────────────
+  public getProceedingsQuestions(eventSlug: string): ProceedingsQuestion[] {
+    const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+    return list.filter(q => q.event_slug === eventSlug || q.event_id === eventSlug);
+  }
+
+  public addProceedingsQuestion(question: Partial<ProceedingsQuestion>): ProceedingsQuestion {
+    const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+    const eventSlug = question.event_slug || question.event_id || 'jkkncet-tn-assembly-2026';
+    const newQuestion: ProceedingsQuestion = {
+      id: question.id || genUuid(),
+      event_id: eventSlug,
+      event_slug: eventSlug,
+      student_id: question.student_id,
+      student_name: question.student_name || 'Hon. Member',
+      bench: question.bench || 'Ruling',
+      constituency: question.constituency || 'Assembly Delegate',
+      ministry: question.ministry || 'Ministry of Education',
+      question_text: question.question_text || '',
+      question_type: question.question_type || 'Standard',
+      status: question.status || 'Submitted',
+      queue_order: question.queue_order || list.length + 1,
+      created_at: new Date().toISOString()
+    };
+
+    list.unshift(newQuestion);
+    this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, list);
+    this.sbUpsert('proceedings_questions', newQuestion as unknown as Record<string, unknown>);
+    this.notify();
+    return newQuestion;
+  }
+
+  public updateProceedingsQuestionStatus(questionId: string, status: 'Submitted' | 'Approved' | 'Starred' | 'Rejected'): void {
+    const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+    const updated = list.map(q => q.id === questionId ? { ...q, status } : q);
+    this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, updated);
+    const target = updated.find(q => q.id === questionId);
+    if (target) {
+      this.sbUpsert('proceedings_questions', target as unknown as Record<string, unknown>);
+    }
+    this.notify();
+  }
+
+  public deleteProceedingsQuestion(questionId: string): void {
+    const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+    const filtered = list.filter(q => q.id !== questionId);
+    this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, filtered);
+    if (supabase) {
+      supabase.from('proceedings_questions').delete().eq('id', questionId).then(({ error }) => {
+        if (error) console.warn('[Supabase] delete question error:', error.message);
+      });
+    }
+    this.notify();
+  }
+
+  // ── PROCEEDINGS MOTIONS ─────────────────────────────────────────────
+  public getProceedingsMotions(eventSlug: string): ProceedingsMotion[] {
+    const list: ProceedingsMotion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_MOTIONS, []);
+    return list.filter(m => m.event_slug === eventSlug || m.event_id === eventSlug);
+  }
+
+  public addProceedingsMotion(motion: Partial<ProceedingsMotion>): ProceedingsMotion {
+    const list: ProceedingsMotion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_MOTIONS, []);
+    const eventSlug = motion.event_slug || motion.event_id || 'jkkncet-tn-assembly-2026';
+    const newMotion: ProceedingsMotion = {
+      id: motion.id || genUuid(),
+      event_id: eventSlug,
+      event_slug: eventSlug,
+      title: motion.title || 'Motion of Urgent Public Importance',
+      proposed_by: motion.proposed_by || 'Hon. Member',
+      bench: motion.bench || 'Ruling',
+      committee_room: motion.committee_room || 'Main Assembly Chamber',
+      content: motion.content || '',
+      status: motion.status || 'Submitted',
+      created_at: new Date().toISOString()
+    };
+
+    list.unshift(newMotion);
+    this.setItem(STORAGE_KEYS.PROCEEDINGS_MOTIONS, list);
+    this.sbUpsert('proceedings_motions', newMotion as unknown as Record<string, unknown>);
+    this.notify();
+    return newMotion;
   }
 }
 

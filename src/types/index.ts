@@ -249,6 +249,44 @@ export interface ScoreRecord {
   updated_at: string;
 }
 
+export interface EventDeadline {
+  id: string;
+  event_id: string;
+  event_slug: string;
+  questions_open_at?: string;
+  questions_deadline_at?: string;
+  updated_at: string;
+}
+
+export interface ProceedingsQuestion {
+  id: string;
+  event_id: string;
+  event_slug: string;
+  student_id?: string;
+  student_name: string;
+  bench: 'Ruling' | 'Opposition';
+  constituency?: string;
+  ministry: string;
+  question_text: string;
+  question_type: 'Standard' | 'Starred' | 'Unstarred' | 'Zero Hour' | 'Calling Attention';
+  status: 'Submitted' | 'Approved' | 'Starred' | 'Rejected';
+  queue_order?: number;
+  created_at: string;
+}
+
+export interface ProceedingsMotion {
+  id: string;
+  event_id: string;
+  event_slug: string;
+  title: string;
+  proposed_by: string;
+  bench: BenchType;
+  committee_room: string;
+  content: string;
+  status: 'Draft' | 'Submitted' | 'Under Review' | 'Admitted' | 'Rejected';
+  created_at: string;
+}
+
 export interface ParliamentQuestion {
   id: string;
   event_id: string;
