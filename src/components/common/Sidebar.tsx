@@ -1,4 +1,6 @@
 import React from 'react';
+import { NavLink, Link, useParams } from 'react-router-dom';
+import { tabToPath } from '../../utils/slug';
 import {
   LayoutDashboard,
   Users,
@@ -62,6 +64,7 @@ interface SidebarProps {
   completedTabs?: Set<ActiveNavTab>;
   role?: string;
   onBackToEvents?: () => void;
+  eventSlug?: string;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -71,8 +74,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCloseMobile,
   completedTabs,
   role,
-  onBackToEvents
+  onBackToEvents,
+  eventSlug: propEventSlug
 }) => {
+  const params = useParams<{ eventSlug?: string }>();
+  const activeEventSlug = propEventSlug || params.eventSlug || 'jkkncet-tn-assembly-2026';
+
   const beforeEventItems = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'team', label: 'Team', icon: Users },
@@ -109,11 +116,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const navContent = (
     <div className="space-y-6 text-xs overflow-y-auto pr-1 pb-10">
       {/* Super Admin Back to Hub Button */}
-      {role === 'super_admin' && onBackToEvents && (
+      {role === 'super_admin' && (
         <div className="pb-3 border-b border-slate-700/40">
-          <button
-            onClick={onBackToEvents}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl font-bold text-xs border transition-all cursor-pointer shadow-sm hover:opacity-95"
+          <Link
+            to="/events"
+            onClick={() => {
+              if (onBackToEvents) onBackToEvents();
+              if (onCloseMobile) onCloseMobile();
+            }}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl font-bold text-xs border transition-all cursor-pointer shadow-sm hover:opacity-95 text-center"
             style={{
               backgroundColor: 'var(--accent-soft)',
               borderColor: 'var(--accent)',
@@ -122,7 +133,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             <span>←</span>
             <span>All Events Hub</span>
-          </button>
+          </Link>
         </div>
       )}
       
@@ -134,42 +145,53 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <nav className="space-y-0.5">
           {beforeEventItems.map((item) => {
             const Icon = item.icon;
-            const isActive = activeTab === item.id;
+            const tabPath = tabToPath(item.id as ActiveNavTab);
+            const targetUrl = `/events/${activeEventSlug}/${tabPath}`;
             const isDone = completedTabs ? completedTabs.has(item.id as ActiveNavTab) : false;
 
             return (
-              <button
+              <NavLink
                 key={item.id}
+                to={targetUrl}
                 onClick={() => handleTabClick(item.id as ActiveNavTab)}
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-xl font-medium transition-all cursor-pointer ${
-                  isActive
-                    ? 'sidebar-item-active shadow-sm'
-                    : 'sidebar-item-hover'
-                }`}
-                style={{
-                  color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)'
-                }}
+                className={({ isActive }) =>
+                  `w-full flex items-center justify-between px-3 py-2 rounded-xl font-medium transition-all cursor-pointer ${
+                    isActive || activeTab === item.id
+                      ? 'sidebar-item-active shadow-sm'
+                      : 'sidebar-item-hover'
+                  }`
+                }
+                style={({ isActive }) => ({
+                  color: (isActive || activeTab === item.id) ? 'var(--text-primary)' : 'var(--text-secondary)'
+                })}
               >
-                <div className="flex items-center gap-2.5">
-                  <Icon className="w-4 h-4" style={{ color: isActive ? 'var(--amber)' : 'var(--text-muted)' }} />
-                  <span>{item.label}</span>
-                </div>
+                {({ isActive }) => {
+                  const activeState = isActive || activeTab === item.id;
+                  return (
+                    <>
+                      <div className="flex items-center gap-2.5">
+                        <Icon className="w-4 h-4" style={{ color: activeState ? 'var(--amber)' : 'var(--text-muted)' }} />
+                        <span>{item.label}</span>
+                      </div>
 
-                {isDone ? (
-                  <span
-                    className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold border"
-                    style={{
-                      background: 'var(--accent-soft)',
-                      color: 'var(--accent)',
-                      borderColor: 'var(--accent)'
-                    }}
-                  >
-                    ✓
-                  </span>
-                ) : (
-                  <span className="w-3.5 h-3.5 rounded-full border opacity-30" style={{ borderColor: 'var(--border)' }}></span>
-                )}
-              </button>
+                      {isDone ? (
+                        <span
+                          className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold border"
+                          style={{
+                            background: 'var(--accent-soft)',
+                            color: 'var(--accent)',
+                            borderColor: 'var(--accent)'
+                          }}
+                        >
+                          ✓
+                        </span>
+                      ) : (
+                        <span className="w-3.5 h-3.5 rounded-full border opacity-30" style={{ borderColor: 'var(--border)' }}></span>
+                      )}
+                    </>
+                  );
+                }}
+              </NavLink>
             );
           })}
         </nav>
@@ -183,26 +205,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <nav className="space-y-0.5">
           {eventDayItems.map((item) => {
             const Icon = item.icon;
-            const isActive = activeTab === item.id;
+            const tabPath = tabToPath(item.id as ActiveNavTab);
+            const targetUrl = `/events/${activeEventSlug}/${tabPath}`;
 
             return (
-              <button
+              <NavLink
                 key={item.id}
+                to={targetUrl}
                 onClick={() => handleTabClick(item.id as ActiveNavTab)}
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-xl font-medium transition-all cursor-pointer ${
-                  isActive
-                    ? 'sidebar-item-active shadow-sm'
-                    : 'sidebar-item-hover'
-                }`}
-                style={{
-                  color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)'
-                }}
+                className={({ isActive }) =>
+                  `w-full flex items-center justify-between px-3 py-2 rounded-xl font-medium transition-all cursor-pointer ${
+                    isActive || activeTab === item.id
+                      ? 'sidebar-item-active shadow-sm'
+                      : 'sidebar-item-hover'
+                  }`
+                }
+                style={({ isActive }) => ({
+                  color: (isActive || activeTab === item.id) ? 'var(--text-primary)' : 'var(--text-secondary)'
+                })}
               >
-                <div className="flex items-center gap-2.5">
-                  <Icon className="w-4 h-4" style={{ color: isActive ? 'var(--amber)' : 'var(--text-muted)' }} />
-                  <span>{item.label}</span>
-                </div>
-              </button>
+                {({ isActive }) => {
+                  const activeState = isActive || activeTab === item.id;
+                  return (
+                    <div className="flex items-center gap-2.5">
+                      <Icon className="w-4 h-4" style={{ color: activeState ? 'var(--amber)' : 'var(--text-muted)' }} />
+                      <span>{item.label}</span>
+                    </div>
+                  );
+                }}
+              </NavLink>
             );
           })}
         </nav>
@@ -216,26 +247,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <nav className="space-y-0.5">
           {afterEventItems.map((item) => {
             const Icon = item.icon;
-            const isActive = activeTab === item.id;
+            const tabPath = tabToPath(item.id as ActiveNavTab);
+            const targetUrl = `/events/${activeEventSlug}/${tabPath}`;
 
             return (
-              <button
+              <NavLink
                 key={item.id}
+                to={targetUrl}
                 onClick={() => handleTabClick(item.id as ActiveNavTab)}
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-xl font-medium transition-all cursor-pointer ${
-                  isActive
-                    ? 'sidebar-item-active shadow-sm'
-                    : 'sidebar-item-hover'
-                }`}
-                style={{
-                  color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)'
-                }}
+                className={({ isActive }) =>
+                  `w-full flex items-center justify-between px-3 py-2 rounded-xl font-medium transition-all cursor-pointer ${
+                    isActive || activeTab === item.id
+                      ? 'sidebar-item-active shadow-sm'
+                      : 'sidebar-item-hover'
+                  }`
+                }
+                style={({ isActive }) => ({
+                  color: (isActive || activeTab === item.id) ? 'var(--text-primary)' : 'var(--text-secondary)'
+                })}
               >
-                <div className="flex items-center gap-2.5">
-                  <Icon className="w-4 h-4" style={{ color: isActive ? 'var(--amber)' : 'var(--text-muted)' }} />
-                  <span>{item.label}</span>
-                </div>
-              </button>
+                {({ isActive }) => {
+                  const activeState = isActive || activeTab === item.id;
+                  return (
+                    <div className="flex items-center gap-2.5">
+                      <Icon className="w-4 h-4" style={{ color: activeState ? 'var(--amber)' : 'var(--text-muted)' }} />
+                      <span>{item.label}</span>
+                    </div>
+                  );
+                }}
+              </NavLink>
             );
           })}
         </nav>

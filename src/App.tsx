@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
+import { Routes, Route, Navigate, useParams, useNavigate, useLocation, Link } from 'react-router-dom';
+import { getEventSlug, findEventBySlug, pathToTab, tabToPath } from './utils/slug';
 import type {
   UserRole,
   CollegeEvent,
@@ -125,7 +127,513 @@ function getInitialRouteInfo(initialSession: SavedAuthSession | null) {
   return { role: initialSession.role, isAuthenticated: true };
 }
 
+function EventSlugOnlyRedirector({ events }: { events: CollegeEvent[] }) {
+  const { eventSlug } = useParams<{ eventSlug: string }>();
+  const matched = findEventBySlug(events, eventSlug);
+  if (!matched && events.length > 0) {
+    return <Navigate to="/events" replace />;
+  }
+  const slug = matched ? getEventSlug(matched) : (eventSlug || 'jkkncet-tn-assembly-2026');
+  return <Navigate to={`/events/${slug}/overview`} replace />;
+}
+
+interface EventTabRouteHandlerProps {
+  events: CollegeEvent[];
+  coordinators: Coordinator[];
+  currentEvent: CollegeEvent | null;
+  onEventChange: (ev: CollegeEvent) => void;
+  activeNavTab: ActiveNavTab;
+  setActiveNavTab: (tab: ActiveNavTab) => void;
+  saveSession: (sess: Partial<SavedAuthSession>) => void;
+  learners: Learner[];
+  parties: Party[];
+  committees: Committee[];
+  agenda: AgendaItem[];
+  jury: JuryMember[];
+  volunteers: Volunteer[];
+  nominations: Nomination[];
+  elections: Election[];
+  flashVotes: LiveFlashVote[];
+  checklist: ChecklistItem[];
+  questions: ParliamentQuestion[];
+  proceedings: BillProceeding[];
+  scores: ScoreRecord[];
+  chatMessages: ChatMessage[];
+  feedback: FeedbackEntry[];
+  team: TeamMember[];
+  openNominationPositions: string[];
+  role: UserRole;
+  userSession: UserSession | null;
+  addToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
+  handleToggleCheckIn: (id: string, day: 1 | 2) => void;
+  handleCheckInAll: (day: 1 | 2, present: boolean) => void;
+  handleUpdateLearner: (l: Learner) => void;
+  handleDeleteLearner: (id: string) => void;
+  handleDeleteMultipleLearners: (ids: string[]) => void;
+  handleClearAllLearners: () => void;
+  handleToggleOpenNominationPosition: (pos: string) => void;
+  handleSetAllOpenNominationPositions: (open: boolean, pos: string[]) => void;
+  handleAddCommittee: (comm: Partial<Committee>) => void;
+  handleUpdateCommittee: (comm: Committee) => void;
+  handleDeleteCommittee: (id: string) => void;
+  setCommittees: (comms: Committee[]) => void;
+  handleAddParty: (party: Partial<Party>) => void;
+  handleUpdateParty: (party: Party) => void;
+  handleDeleteParty: (id: string) => void;
+  setParties: (parties: Party[]) => void;
+  handleExecuteAllocation: (ratio: any) => void;
+  handleResetAllocation: () => void;
+  setCurrentEvent: React.Dispatch<React.SetStateAction<CollegeEvent | null>>;
+  handleAssignCabinetRole: (learnerId: string, role: string) => void;
+  handleAddJury: (j: Partial<JuryMember>) => void;
+  handleDeleteJury: (id: string) => void;
+  handleAddVolunteer: (v: Partial<Volunteer>) => void;
+  handleDeleteVolunteer: (id: string) => void;
+  setLearners: (learners: Learner[]) => void;
+  handleSetCurrentAgendaItem: (id: string) => void;
+  setElections: (elecs: Election[]) => void;
+  setFlashVotes: (votes: LiveFlashVote[]) => void;
+  setNominations: (noms: Nomination[]) => void;
+  setIsAddWalkInOpen: (open: boolean) => void;
+  setIsImportCsvOpen: (open: boolean) => void;
+  setIsAllocationModalOpen: (open: boolean) => void;
+  handleAddAgendaItem: (item: Partial<AgendaItem>) => void;
+  activeParty?: Party | null;
+  activeCommittee?: Committee | null;
+  currentStudent?: Learner | null;
+  navigate: (path: string, options?: any) => void;
+}
+
+function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
+  const { eventSlug, tab } = useParams<{ eventSlug: string; tab: string }>();
+  const matchedEvent = findEventBySlug(props.events, eventSlug);
+
+  useEffect(() => {
+    if (props.events.length > 0 && !matchedEvent) {
+      props.navigate('/events', { replace: true });
+      return;
+    }
+    if (matchedEvent && props.currentEvent?.id !== matchedEvent.id) {
+      props.onEventChange(matchedEvent);
+    }
+  }, [eventSlug, matchedEvent?.id, props.currentEvent?.id, props.events.length]);
+
+  const activeTabFromPath = pathToTab(tab);
+
+  useEffect(() => {
+    if (props.activeNavTab !== activeTabFromPath) {
+      props.setActiveNavTab(activeTabFromPath);
+      props.saveSession({ activeNavTab: activeTabFromPath });
+    }
+  }, [activeTabFromPath, props.activeNavTab]);
+
+  if (props.events.length > 0 && !matchedEvent) {
+    return <Navigate to="/events" replace />;
+  }
+
+  const activeEvent = matchedEvent || props.currentEvent || props.events[0];
+  if (!activeEvent && props.events.length > 0) {
+    return <Navigate to="/events" replace />;
+  }
+
+  if (props.role === 'student') {
+    return props.currentStudent ? (
+      <StudentDashboard
+        student={props.currentStudent}
+        event={activeEvent}
+        agenda={props.agenda}
+        party={props.activeParty || null}
+        committee={props.activeCommittee || null}
+        nominations={props.nominations}
+        openNominationPositions={props.openNominationPositions}
+        elections={props.elections}
+        flashVotes={props.flashVotes}
+        onFileNomination={(nom) => {
+          storageService.addNomination(nom);
+          if (activeEvent) {
+            props.setNominations(storageService.getNominations(activeEvent.id));
+          }
+        }}
+        onCastVote={(elecId, candId, delId) => {
+          storageService.castVoteInElection(elecId, candId, delId || props.currentStudent!.id);
+          if (activeEvent) {
+            props.setElections(storageService.getElections(activeEvent.id));
+          }
+        }}
+        onCastFlashVote={(vId, l, dec) => {
+          storageService.castFlashVote(vId, l, dec);
+          if (activeEvent) {
+            props.setFlashVotes(storageService.getFlashVotes(activeEvent.id));
+          }
+        }}
+        onShowToast={props.addToast}
+      />
+    ) : (
+      <div className="p-8 text-center" style={{ color: 'var(--text-muted)' }}>
+        No student delegate details found. Please sign in with your access code.
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {activeTabFromPath === 'overview' && (
+        <EventOverviewTab
+          event={activeEvent}
+          participantCount={props.learners.length}
+          onUpdateEvent={(upd) => {
+            storageService.updateEvent(upd);
+            props.setCurrentEvent(upd);
+          }}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'team' && (
+        <TeamTab
+          team={props.team}
+          eventId={activeEvent.id}
+          userRole={props.userSession?.role || props.role}
+          onAddMember={(tm) => storageService.addTeamMember(tm)}
+          onDeleteMember={(id) => storageService.deleteTeamMember(id)}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'checklist' && (
+        <ChecklistTab
+          checklist={props.checklist}
+          eventId={activeEvent.id}
+          userRole={props.userSession?.role || props.role}
+          onToggleItem={(id) => storageService.toggleChecklistItem(id)}
+          onAddItem={(item) => storageService.addChecklistItem(item)}
+          onDeleteItem={(id) => storageService.deleteChecklistItem(id)}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'agenda' && (
+        <AgendaTab
+          agenda={props.agenda}
+          eventId={activeEvent.id}
+          onAddAgendaItem={props.handleAddAgendaItem}
+          onSetCurrentItem={props.handleSetCurrentAgendaItem}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'participants' && (
+        <ParticipantsTab
+          learners={props.learners}
+          parties={props.parties}
+          committees={props.committees}
+          eventName={activeEvent.college_name}
+          eventId={activeEvent.id}
+          userRole={props.userSession?.role || props.role}
+          onToggleCheckIn={props.handleToggleCheckIn}
+          onCheckInAll={props.handleCheckInAll}
+          onOpenAddWalkIn={() => props.setIsAddWalkInOpen(true)}
+          onOpenImportCsv={() => props.setIsImportCsvOpen(true)}
+          onOpenAllocationModal={() => props.setIsAllocationModalOpen(true)}
+          onUpdateLearner={props.handleUpdateLearner}
+          onDeleteLearner={props.handleDeleteLearner}
+          onDeleteMultipleLearners={props.handleDeleteMultipleLearners}
+          onClearAllLearners={props.handleClearAllLearners}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'nominations' && (
+        <NominationsTab
+          nominations={props.nominations}
+          learners={props.learners}
+          parties={props.parties}
+          eventId={activeEvent.id}
+          userRole={props.userSession?.role || props.role}
+          openPositions={props.openNominationPositions}
+          onToggleOpenPosition={props.handleToggleOpenNominationPosition}
+          onSetAllOpenPositions={props.handleSetAllOpenNominationPositions}
+          onAddNomination={(nom) => {
+            storageService.addNomination(nom);
+            props.setNominations(storageService.getNominations(activeEvent.id));
+          }}
+          onUpdateStatus={(id, status) => {
+            storageService.updateNominationStatus(id, status);
+            props.setNominations(storageService.getNominations(activeEvent.id));
+          }}
+          onDeleteNomination={(id) => {
+            storageService.deleteNomination(id);
+            props.setNominations(storageService.getNominations(activeEvent.id));
+          }}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'questionnaire' && (
+        <QuestionnaireTab
+          questions={props.questions}
+          learners={props.learners}
+          eventId={activeEvent.id}
+          onAddQuestion={(q) => storageService.addQuestion(q)}
+          onAnswerQuestion={(id, resp) => storageService.answerQuestion(id, resp)}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'committees' && (
+        <CommitteesTab
+          committees={props.committees}
+          learners={props.learners}
+          eventId={activeEvent.id}
+          userRole={props.userSession?.role || props.role}
+          onAddCommittee={props.handleAddCommittee}
+          onUpdateCommittee={props.handleUpdateCommittee}
+          onDeleteCommittee={props.handleDeleteCommittee}
+          onSetCommitteeCount={(count) => {
+            const newComms = storageService.setCommitteeCount(activeEvent.id, count);
+            props.setCommittees(newComms);
+          }}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'parties' && (
+        <PartiesTab
+          parties={props.parties}
+          learners={props.learners}
+          eventId={activeEvent.id}
+          userRole={props.userSession?.role || props.role}
+          onUpdatePartyWhatsApp={(id, link) => storageService.updatePartyWhatsAppLink(id, link)}
+          onAddParty={props.handleAddParty}
+          onUpdateParty={props.handleUpdateParty}
+          onDeleteParty={props.handleDeleteParty}
+          onSetPartyCount={(count) => {
+            const newParties = storageService.setPartyCount(activeEvent.id, count);
+            props.setParties(newParties);
+          }}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'allocation' && (
+        <AllocationTab
+          learners={props.learners}
+          parties={props.parties}
+          committees={props.committees}
+          eventId={activeEvent.id}
+          onExecuteAllocation={props.handleExecuteAllocation}
+          onResetAllocation={props.handleResetAllocation}
+          onUpdateLearner={props.handleUpdateLearner}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'cabinet' && (
+        <CabinetTab
+          learners={props.learners}
+          eventId={activeEvent.id}
+          savedMinistries={activeEvent.cabinet_ministries}
+          onSaveCabinet={(ministries) => {
+            storageService.saveCabinetMinistries(activeEvent.id, ministries);
+            props.setCurrentEvent(prev => prev ? { ...prev, cabinet_ministries: ministries } : prev);
+          }}
+          onAssignCabinetRole={props.handleAssignCabinetRole}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'jury' && (
+        <JuryTab
+          jury={props.jury}
+          eventId={activeEvent.id}
+          userRole={props.userSession?.role || props.role}
+          onAddJury={props.handleAddJury}
+          onDeleteJury={props.handleDeleteJury}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'volunteers' && (
+        <VolunteersTab
+          volunteers={props.volunteers}
+          eventId={activeEvent.id}
+          userRole={props.userSession?.role || props.role}
+          parties={props.parties}
+          committees={props.committees}
+          onAddVolunteer={props.handleAddVolunteer}
+          onToggleArrival={(id) => storageService.toggleVolunteerArrival(id)}
+          onBulkImportVolunteers={(vols) => storageService.bulkImportVolunteers(vols, activeEvent.id)}
+          onDeleteVolunteer={props.handleDeleteVolunteer}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'control' && (
+        <ControlTab
+          learners={props.learners}
+          parties={props.parties}
+          agenda={props.agenda}
+          scores={props.scores}
+          elections={props.elections}
+          flashVotes={props.flashVotes}
+          currentEvent={activeEvent}
+          eventName={activeEvent.college_name}
+          onShowToast={props.addToast}
+          onSetCurrentAgendaItem={props.handleSetCurrentAgendaItem}
+          onUpdatePartyBench={(partyId, bench) => {
+            storageService.setPartyBench(partyId, bench, activeEvent.id);
+            props.setParties(storageService.getParties(activeEvent.id));
+            props.setLearners(storageService.getLearners(activeEvent.id));
+          }}
+          onOpenLivePollModal={() => props.navigate(`/events/${getEventSlug(activeEvent)}/elections`)}
+          onOpenProjectorView={() => props.navigate(`/events/${getEventSlug(activeEvent)}/projector`)}
+        />
+      )}
+
+      {activeTabFromPath === 'projector' && (
+        <ProjectorTab
+          currentEvent={activeEvent}
+          agenda={props.agenda}
+          elections={props.elections}
+          flashVotes={props.flashVotes}
+          learners={props.learners}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'elections' && (
+        <ElectionsTab
+          elections={props.elections}
+          flashVotes={props.flashVotes}
+          learners={props.learners}
+          parties={props.parties}
+          nominations={props.nominations}
+          eventId={activeEvent.id}
+          onCastVote={(elecId, candId, delId) => {
+            storageService.castVoteInElection(elecId, candId, delId);
+            props.setElections(storageService.getElections(activeEvent.id));
+          }}
+          onCloseElection={(elecId) => {
+            storageService.closeElection(elecId);
+            props.setElections(storageService.getElections(activeEvent.id));
+          }}
+          onSetElectionStatus={(elecId, status) => {
+            storageService.setElectionStatus(elecId, status);
+            props.setElections(storageService.getElections(activeEvent.id));
+          }}
+          onAddCandidate={(elecId, cand) => {
+            storageService.addCandidateToElection(elecId, cand);
+            props.setElections(storageService.getElections(activeEvent.id));
+          }}
+          onRemoveCandidate={(elecId, candId) => {
+            storageService.removeCandidateFromElection(elecId, candId);
+            props.setElections(storageService.getElections(activeEvent.id));
+          }}
+          onResetElection={(elecId) => {
+            storageService.resetElection(elecId);
+            props.setElections(storageService.getElections(activeEvent.id));
+          }}
+          onDeleteElection={(elecId) => {
+            storageService.deleteElection(elecId);
+            props.setElections(storageService.getElections(activeEvent.id));
+          }}
+          onCreateElection={(elec) => {
+            storageService.createElection(elec);
+            props.setElections(storageService.getElections(activeEvent.id));
+          }}
+          onCreateFlashVote={(evId, q, audience, motion) => {
+            storageService.createFlashVote(evId || activeEvent.id, q, audience, motion);
+            props.setFlashVotes(storageService.getFlashVotes(activeEvent.id));
+          }}
+          onCastFlashVote={(vId, learner, decision) => {
+            const res = storageService.castFlashVote(vId, learner, decision);
+            props.setFlashVotes(storageService.getFlashVotes(activeEvent.id));
+            return res;
+          }}
+          onCloseFlashVote={(vId) => {
+            storageService.closeFlashVote(vId);
+            props.setFlashVotes(storageService.getFlashVotes(activeEvent.id));
+          }}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'proceedings' && (
+        <ProceedingsTab
+          proceedings={props.proceedings}
+          learners={props.learners}
+          eventId={activeEvent.id}
+          onAddBill={(bill) => storageService.addBill(bill)}
+          onUpdateBillStatus={(id, status, ayes, noes) => storageService.updateBillStatus(id, status, ayes, noes)}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'chat' && (
+        <ChatTab
+          messages={props.chatMessages}
+          eventId={activeEvent.id}
+          onSendMessage={(evId, sName, sRole, msg, isAnn) => storageService.sendChatMessage(evId, sName, sRole, msg, isAnn)}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'scoregrid' && (
+        <ScoreGridTab
+          scores={props.scores}
+          learners={props.learners}
+          eventId={activeEvent.id}
+          onSaveScore={(sc) => storageService.saveScoreRecord(sc)}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'media' && (
+        <MediaTab
+          eventName={activeEvent.college_name}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'awards' && (
+        <AwardsTab
+          learners={props.learners}
+          eventName={activeEvent.college_name}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'chapterawards' && (
+        <ChapterAwardsTab
+          eventName={activeEvent.college_name}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'feedback' && (
+        <FeedbackTab
+          feedbackList={props.feedback}
+          eventId={activeEvent.id}
+          onSubmitFeedback={(fb) => storageService.submitFeedback(fb)}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'report' && (
+        <ReportTab
+          event={activeEvent}
+          learners={props.learners}
+          proceedings={props.proceedings}
+          onShowToast={props.addToast}
+        />
+      )}
+    </>
+  );
+}
+
 export function App() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const { theme, toggleTheme } = useTheme();
   const initialSession = getInitialSavedSession();
   const routeInfo = getInitialRouteInfo(initialSession);
@@ -606,6 +1114,13 @@ export function App() {
   const handleSelectTab = (tab: ActiveNavTab) => {
     setActiveNavTab(tab);
     saveSession({ activeNavTab: tab });
+    if (tab === 'events_dashboard') {
+      navigate('/events');
+    } else {
+      const slug = currentEvent ? getEventSlug(currentEvent) : 'jkkncet-tn-assembly-2026';
+      const path = tabToPath(tab);
+      navigate(`/events/${slug}/${path}`);
+    }
   };
 
   const handleCreateEvent = (collegeName: string, coordName: string, coordEmail: string, password: string) => {
@@ -1084,28 +1599,24 @@ export function App() {
             setCurrentStudent(learners[0]);
           }
         }}
-        onEventChange={handleEventChange}
+        onEventChange={(ev) => {
+          handleEventChange(ev);
+          const slug = getEventSlug(ev);
+          navigate(`/events/${slug}/overview`);
+        }}
         onLogout={() => {
           clearSession();
           setIsAuthenticated(false);
           setRole('coordinator');
-          if (typeof window !== 'undefined') window.history.pushState({}, '', '/');
+          navigate('/');
           addToast('Signed Out', 'You have been signed out', 'info');
         }}
         onGoHome={() => {
           if (role === 'student') {
-            if (typeof window !== 'undefined') window.history.pushState({}, '', '/me');
+            navigate('/me');
             return;
           }
-          if (userSession?.role === 'coordinator' || role === 'coordinator') {
-            setRole('coordinator');
-            setActiveNavTab('participants');
-            saveSession({ role: 'coordinator', activeNavTab: 'participants' });
-          } else {
-            setRole('super_admin');
-            setActiveNavTab('events_dashboard');
-            saveSession({ role: 'super_admin', activeNavTab: 'events_dashboard' });
-          }
+          navigate('/events');
         }}
         onToggleMobileMenu={() => setIsMobileSidebarOpen(prev => !prev)}
         isMobileMenuOpen={isMobileSidebarOpen}
@@ -1115,7 +1626,7 @@ export function App() {
       <div className="flex">
         
         {/* Left Vertical Sidebar (Desktop + Mobile Slide-Out Drawer) */}
-        {(role === 'coordinator' || (role === 'super_admin' && currentEvent && activeNavTab !== 'events_dashboard')) && (
+        {(role === 'coordinator' || (role === 'super_admin' && (location.pathname.startsWith('/events/') || currentEvent))) && (
           <Sidebar
             activeTab={activeNavTab}
             onSelectTab={(tab) => handleSelectTab(tab)}
@@ -1123,9 +1634,9 @@ export function App() {
             onCloseMobile={() => setIsMobileSidebarOpen(false)}
             completedTabs={completedTabsSet}
             role={role}
+            eventSlug={currentEvent ? getEventSlug(currentEvent) : 'jkkncet-tn-assembly-2026'}
             onBackToEvents={role === 'super_admin' ? () => {
-              setActiveNavTab('events_dashboard');
-              saveSession({ role: 'super_admin', activeNavTab: 'events_dashboard' });
+              navigate('/events');
             } : undefined}
           />
         )}
@@ -1134,13 +1645,16 @@ export function App() {
         <main className="flex-1 p-3 sm:p-5 lg:p-6 overflow-x-hidden min-w-0">
           
           {/* Mobile Quick-Navigation Pill Bar */}
-          {(role === 'coordinator' || (role === 'super_admin' && activeNavTab !== 'events_dashboard')) && currentEvent && (
+          {(role === 'coordinator' || (role === 'super_admin' && location.pathname.startsWith('/events/'))) && currentEvent && (
             <div className="lg:hidden mb-4 overflow-x-auto pb-1 flex items-center gap-1.5 scrollbar-none">
               {mobileQuickTabs.map(qTab => {
                 const isActive = activeNavTab === qTab.id;
+                const targetSlug = currentEvent ? getEventSlug(currentEvent) : 'jkkncet-tn-assembly-2026';
+                const targetPath = tabToPath(qTab.id);
                 return (
-                  <button
+                  <Link
                     key={qTab.id}
+                    to={`/events/${targetSlug}/${targetPath}`}
                     onClick={() => handleSelectTab(qTab.id)}
                     className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap border transition-all cursor-pointer flex items-center gap-1.5 ${
                       isActive ? 'shadow-sm' : ''
@@ -1153,7 +1667,7 @@ export function App() {
                   >
                     <span>{qTab.icon}</span>
                     <span>{qTab.label}</span>
-                  </button>
+                  </Link>
                 );
               })}
               <button
@@ -1166,478 +1680,120 @@ export function App() {
             </div>
           )}
 
-          {role === 'super_admin' && (activeNavTab === 'events_dashboard' || !currentEvent) && (
-            <MyEventsDashboard
-              events={events}
-              coordinators={coordinators}
-              role={role}
-              userEmail={userSession?.email}
-              onCreateEvent={handleCreateEvent}
-              onUpdateEvent={(upd) => storageService.updateEvent(upd)}
-              onDeleteEvent={(evId) => storageService.deleteEvent(evId)}
-              onUpdateCoordinator={handleUpdateCoordinator}
-              onSelectEvent={(ev) => {
-                handleEventChange(ev);
-                setActiveNavTab('overview');
-                saveSession({ role: 'super_admin', currentEventId: ev.id, activeNavTab: 'overview' });
-                addToast('Event Selected', `Opened ${ev.college_name}`, 'info');
-              }}
-              onShowToast={addToast}
+          <Routes>
+            {/* Root path -> redirect to /events */}
+            <Route path="/" element={<Navigate to="/events" replace />} />
+
+            {/* Event Hub / Selector */}
+            <Route
+              path="/events"
+              element={
+                <MyEventsDashboard
+                  events={events}
+                  coordinators={coordinators}
+                  role={role}
+                  userEmail={userSession?.email}
+                  onCreateEvent={handleCreateEvent}
+                  onUpdateEvent={(upd) => storageService.updateEvent(upd)}
+                  onDeleteEvent={(evId) => storageService.deleteEvent(evId)}
+                  onUpdateCoordinator={handleUpdateCoordinator}
+                  onSelectEvent={(ev) => {
+                    handleEventChange(ev);
+                    const slug = getEventSlug(ev);
+                    navigate(`/events/${slug}/overview`);
+                    addToast('Event Selected', `Opened ${ev.college_name}`, 'info');
+                  }}
+                  onShowToast={addToast}
+                />
+              }
             />
-          )}
 
-          {(role === 'coordinator' || (role === 'super_admin' && activeNavTab !== 'events_dashboard')) && currentEvent && (
-            <>
-              {/* 1. OVERVIEW TAB */}
-              {activeNavTab === 'overview' && (
-                <EventOverviewTab
-                  event={currentEvent}
-                  participantCount={learners.length}
-                  onUpdateEvent={(upd) => {
-                    storageService.updateEvent(upd);
-                    setCurrentEvent(upd);
-                  }}
-                  onShowToast={addToast}
-                />
-              )}
+            {/* Redirect /events/:eventSlug to /events/:eventSlug/overview */}
+            <Route
+              path="/events/:eventSlug"
+              element={
+                <EventSlugOnlyRedirector events={events} />
+              }
+            />
 
-              {/* 2. TEAM TAB */}
-              {activeNavTab === 'team' && (
-                <TeamTab
-                  team={team}
-                  eventId={currentEvent.id}
-                  userRole={userSession?.role || role}
-                  onAddMember={(tm) => {
-                    storageService.addTeamMember(tm);
-                  }}
-                  onDeleteMember={(id) => {
-                    storageService.deleteTeamMember(id);
-                  }}
-                  onShowToast={addToast}
-                />
-              )}
-
-              {/* 3. CHECKLIST TAB */}
-              {activeNavTab === 'checklist' && (
-                <ChecklistTab
-                  checklist={checklist}
-                  eventId={currentEvent.id}
-                  userRole={userSession?.role || role}
-                  onToggleItem={(id) => {
-                    storageService.toggleChecklistItem(id);
-                  }}
-                  onAddItem={(item) => {
-                    storageService.addChecklistItem(item);
-                  }}
-                  onDeleteItem={(id) => {
-                    storageService.deleteChecklistItem(id);
-                  }}
-                  onShowToast={addToast}
-                />
-              )}
-
-              {/* 4. AGENDA TAB */}
-              {activeNavTab === 'agenda' && (
-                <AgendaTab
+            {/* Event Tab Routes: /events/:eventSlug/:tab */}
+            <Route
+              path="/events/:eventSlug/:tab"
+              element={
+                <EventTabRouteHandler
+                  events={events}
+                  coordinators={coordinators}
+                  currentEvent={currentEvent}
+                  onEventChange={handleEventChange}
+                  activeNavTab={activeNavTab}
+                  setActiveNavTab={setActiveNavTab}
+                  saveSession={saveSession}
+                  learners={learners}
+                  parties={parties}
+                  committees={committees}
                   agenda={agenda}
-                  eventId={currentEvent.id}
-                  onAddAgendaItem={handleAddAgendaItem}
-                  onSetCurrentItem={handleSetCurrentAgendaItem}
-                  onShowToast={addToast}
-                />
-              )}
-
-              {/* 5. PARTICIPANTS TAB */}
-              {activeNavTab === 'participants' && (
-                <ParticipantsTab
-                  learners={learners}
-                  parties={parties}
-                  committees={committees}
-                  eventName={currentEvent.college_name}
-                  eventId={currentEvent.id}
-                  userRole={userSession?.role || role}
-                  onToggleCheckIn={handleToggleCheckIn}
-                  onCheckInAll={handleCheckInAll}
-                  onOpenAddWalkIn={() => setIsAddWalkInOpen(true)}
-                  onOpenImportCsv={() => setIsImportCsvOpen(true)}
-                  onOpenAllocationModal={() => setIsAllocationModalOpen(true)}
-                  onUpdateLearner={handleUpdateLearner}
-                  onDeleteLearner={handleDeleteLearner}
-                  onDeleteMultipleLearners={handleDeleteMultipleLearners}
-                  onClearAllLearners={handleClearAllLearners}
-                  onShowToast={addToast}
-                />
-              )}
-
-              {/* 6. NOMINATIONS TAB */}
-              {activeNavTab === 'nominations' && (
-                <NominationsTab
-                  nominations={nominations}
-                  learners={learners}
-                  parties={parties}
-                  eventId={currentEvent.id}
-                  userRole={userSession?.role || role}
-                  openPositions={openNominationPositions}
-                  onToggleOpenPosition={handleToggleOpenNominationPosition}
-                  onSetAllOpenPositions={handleSetAllOpenNominationPositions}
-                  onAddNomination={(nom) => {
-                    storageService.addNomination(nom);
-                    setNominations(storageService.getNominations(currentEvent.id));
-                  }}
-                  onUpdateStatus={(id, status) => {
-                    storageService.updateNominationStatus(id, status);
-                    setNominations(storageService.getNominations(currentEvent.id));
-                  }}
-                  onDeleteNomination={(id) => {
-                    storageService.deleteNomination(id);
-                    setNominations(storageService.getNominations(currentEvent.id));
-                  }}
-                  onShowToast={addToast}
-                />
-              )}
-
-              {/* 7. QUESTIONNAIRE TAB */}
-              {activeNavTab === 'questionnaire' && (
-                <QuestionnaireTab
-                  questions={questions}
-                  learners={learners}
-                  eventId={currentEvent.id}
-                  onAddQuestion={(q) => {
-                    storageService.addQuestion(q);
-                  }}
-                  onAnswerQuestion={(id, response) => {
-                    storageService.answerQuestion(id, response);
-                  }}
-                  onShowToast={addToast}
-                />
-              )}
-
-              {/* 8. COMMITTEES TAB */}
-              {activeNavTab === 'committees' && (
-                <CommitteesTab
-                  committees={committees}
-                  learners={learners}
-                  eventId={currentEvent.id}
-                  userRole={userSession?.role || role}
-                  onAddCommittee={handleAddCommittee}
-                  onUpdateCommittee={handleUpdateCommittee}
-                  onDeleteCommittee={handleDeleteCommittee}
-                  onSetCommitteeCount={(count) => {
-                    const newComms = storageService.setCommitteeCount(currentEvent.id, count);
-                    setCommittees(newComms);
-                  }}
-                  onShowToast={addToast}
-                />
-              )}
-
-              {/* 9. PARTIES TAB */}
-              {activeNavTab === 'parties' && (
-                <PartiesTab
-                  parties={parties}
-                  learners={learners}
-                  eventId={currentEvent.id}
-                  userRole={userSession?.role || role}
-                  onUpdatePartyWhatsApp={(id, link) => {
-                    storageService.updatePartyWhatsAppLink(id, link);
-                  }}
-                  onAddParty={handleAddParty}
-                  onUpdateParty={handleUpdateParty}
-                  onDeleteParty={handleDeleteParty}
-                  onSetPartyCount={(count) => {
-                    const newParties = storageService.setPartyCount(currentEvent.id, count);
-                    setParties(newParties);
-                  }}
-                  onShowToast={addToast}
-                />
-              )}
-
-              {/* 10. ALLOCATION TAB (Dedicated in-tab Auto-Allocation runner & roster) */}
-              {activeNavTab === 'allocation' && (
-                <AllocationTab
-                  learners={learners}
-                  parties={parties}
-                  committees={committees}
-                  eventId={currentEvent.id}
-                  onExecuteAllocation={handleExecuteAllocation}
-                  onResetAllocation={handleResetAllocation}
-                  onUpdateLearner={handleUpdateLearner}
-                  onShowToast={addToast}
-                />
-              )}
-
-              {/* 11. CABINET TAB */}
-              {activeNavTab === 'cabinet' && (
-                <CabinetTab
-                  learners={learners}
-                  eventId={currentEvent.id}
-                  savedMinistries={currentEvent.cabinet_ministries}
-                  onSaveCabinet={(ministries) => {
-                    storageService.saveCabinetMinistries(currentEvent.id, ministries);
-                    setCurrentEvent(prev => prev ? { ...prev, cabinet_ministries: ministries } : prev);
-                  }}
-                  onAssignCabinetRole={handleAssignCabinetRole}
-                  onShowToast={addToast}
-                />
-              )}
-
-              {/* 12. JURY TAB */}
-              {activeNavTab === 'jury' && (
-                <JuryTab
                   jury={jury}
-                  eventId={currentEvent.id}
-                  userRole={userSession?.role || role}
-                  onAddJury={handleAddJury}
-                  onDeleteJury={handleDeleteJury}
-                  onShowToast={addToast}
-                />
-              )}
-
-              {/* 13. VOLUNTEERS TAB */}
-              {activeNavTab === 'volunteers' && (
-                <VolunteersTab
                   volunteers={volunteers}
-                  eventId={currentEvent.id}
-                  userRole={userSession?.role || role}
-                  parties={parties}
-                  committees={committees}
-                  onAddVolunteer={handleAddVolunteer}
-                  onToggleArrival={(id) => {
-                    storageService.toggleVolunteerArrival(id);
-                  }}
-                  onBulkImportVolunteers={(vols) => {
-                    storageService.bulkImportVolunteers(vols, currentEvent.id);
-                  }}
-                  onDeleteVolunteer={handleDeleteVolunteer}
-                  onShowToast={addToast}
-                />
-              )}
-
-              {/* 14. CONTROL TAB (Live Assembly Floor / Speaker Gavel / Timer / Quorum) */}
-              {activeNavTab === 'control' && (
-                <ControlTab
-                  learners={learners}
-                  parties={parties}
-                  agenda={agenda}
-                  scores={scores}
-                  elections={elections}
-                  flashVotes={flashVotes}
-                  currentEvent={currentEvent}
-                  eventName={currentEvent.college_name}
-                  onShowToast={addToast}
-                  onSetCurrentAgendaItem={handleSetCurrentAgendaItem}
-                  onUpdatePartyBench={(partyId, bench) => {
-                    storageService.setPartyBench(partyId, bench, currentEvent.id);
-                    setParties(storageService.getParties(currentEvent.id));
-                    setLearners(storageService.getLearners(currentEvent.id));
-                  }}
-                  onOpenLivePollModal={() => handleSelectTab('elections')}
-                  onOpenProjectorView={() => handleSelectTab('projector')}
-                />
-              )}
-
-              {/* 25. PROJECTOR TAB */}
-              {activeNavTab === 'projector' && (
-                <ProjectorTab
-                  currentEvent={currentEvent}
-                  agenda={agenda}
-                  elections={elections}
-                  flashVotes={flashVotes}
-                  learners={learners}
-                  onShowToast={addToast}
-                />
-              )}
-
-              {/* 15. ELECTIONS TAB (Key Elections & Live Yes/No Division Polls) */}
-              {activeNavTab === 'elections' && (
-                <ElectionsTab
-                  elections={elections}
-                  flashVotes={flashVotes}
-                  learners={learners}
-                  parties={parties}
                   nominations={nominations}
-                  eventId={currentEvent.id}
-                  onCastVote={(elecId, candId, delId) => {
-                    storageService.castVoteInElection(elecId, candId, delId);
-                    setElections(storageService.getElections(currentEvent.id));
-                  }}
-                  onCloseElection={(elecId) => {
-                    storageService.closeElection(elecId);
-                    setElections(storageService.getElections(currentEvent.id));
-                  }}
-                  onSetElectionStatus={(elecId, status) => {
-                    storageService.setElectionStatus(elecId, status);
-                    setElections(storageService.getElections(currentEvent.id));
-                  }}
-                  onAddCandidate={(elecId, cand) => {
-                    storageService.addCandidateToElection(elecId, cand);
-                    setElections(storageService.getElections(currentEvent.id));
-                  }}
-                  onRemoveCandidate={(elecId, candId) => {
-                    storageService.removeCandidateFromElection(elecId, candId);
-                    setElections(storageService.getElections(currentEvent.id));
-                  }}
-                  onResetElection={(elecId) => {
-                    storageService.resetElection(elecId);
-                    setElections(storageService.getElections(currentEvent.id));
-                  }}
-                  onDeleteElection={(elecId) => {
-                    storageService.deleteElection(elecId);
-                    setElections(storageService.getElections(currentEvent.id));
-                  }}
-                  onCreateElection={(elec) => {
-                    storageService.createElection(elec);
-                    setElections(storageService.getElections(currentEvent.id));
-                  }}
-                  onCreateFlashVote={(evId, q, audience, motion) => {
-                    storageService.createFlashVote(evId || currentEvent.id, q, audience, motion);
-                    setFlashVotes(storageService.getFlashVotes(currentEvent.id));
-                  }}
-                  onCastFlashVote={(vId, learner, decision) => {
-                    const res = storageService.castFlashVote(vId, learner, decision);
-                    setFlashVotes(storageService.getFlashVotes(currentEvent.id));
-                    return res;
-                  }}
-                  onCloseFlashVote={(vId) => {
-                    storageService.closeFlashVote(vId);
-                    setFlashVotes(storageService.getFlashVotes(currentEvent.id));
-                  }}
-                  onShowToast={addToast}
-                />
-              )}
-
-              {/* 16. PROCEEDINGS TAB (Official Hansard, Bills & Passed Acts) */}
-              {activeNavTab === 'proceedings' && (
-                <ProceedingsTab
+                  elections={elections}
+                  flashVotes={flashVotes}
+                  checklist={checklist}
+                  questions={questions}
                   proceedings={proceedings}
-                  learners={learners}
-                  eventId={currentEvent.id}
-                  onAddBill={(bill) => {
-                    storageService.addBill(bill);
-                  }}
-                  onUpdateBillStatus={(id, status, ayes, noes) => {
-                    storageService.updateBillStatus(id, status, ayes, noes);
-                  }}
-                  onShowToast={addToast}
-                />
-              )}
-
-              {/* 17. CHAT TAB */}
-              {activeNavTab === 'chat' && (
-                <ChatTab
-                  messages={chatMessages}
-                  eventId={currentEvent.id}
-                  onSendMessage={(evId: string, sName: string, sRole: string, msg: string, isAnn?: boolean) => {
-                    storageService.sendChatMessage(evId, sName, sRole, msg, isAnn);
-                  }}
-                  onShowToast={addToast}
-                />
-              )}
-
-              {/* 18. SCORE GRID TAB (Jury Scoring & Live Leaderboard) */}
-              {activeNavTab === 'scoregrid' && (
-                <ScoreGridTab
                   scores={scores}
-                  learners={learners}
-                  eventId={currentEvent.id}
-                  onSaveScore={(sc: ScoreRecord) => {
-                    storageService.saveScoreRecord(sc);
-                  }}
-                  onShowToast={addToast}
-                />
-              )}
-
-              {/* 19. MEDIA TAB */}
-              {activeNavTab === 'media' && (
-                <MediaTab
-                  eventName={currentEvent.college_name}
-                  onShowToast={addToast}
-                />
-              )}
-
-              {/* 20. AWARDS TAB (Best Parliamentarian & Certificates) */}
-              {activeNavTab === 'awards' && (
-                <AwardsTab
-                  learners={learners}
-                  eventName={currentEvent.college_name}
-                  onShowToast={addToast}
-                />
-              )}
-
-              {/* 21. CHAPTER AWARDS TAB */}
-              {activeNavTab === 'chapterawards' && (
-                <ChapterAwardsTab
-                  eventName={currentEvent.college_name}
-                  onShowToast={addToast}
-                />
-              )}
-
-              {/* 22. FEEDBACK TAB (Delegate Surveys & Ratings) */}
-              {activeNavTab === 'feedback' && (
-                <FeedbackTab
-                  feedbackList={feedback}
-                  eventId={currentEvent.id}
-                  onSubmitFeedback={(fb) => {
-                    storageService.submitFeedback(fb);
-                  }}
-                  onShowToast={addToast}
-                />
-              )}
-
-              {/* 23. REPORT TAB (Executive Assembly Dossier) */}
-              {activeNavTab === 'report' && (
-                <ReportTab
-                  event={currentEvent}
-                  learners={learners}
-                  proceedings={proceedings}
-                  onShowToast={addToast}
-                />
-              )}
-            </>
-          )}
-
-          {role === 'student' && (
-            <>
-              {currentStudent ? (
-                <StudentDashboard
-                  student={currentStudent}
-                  event={currentEvent}
-                  agenda={agenda}
-                  party={activeParty}
-                  committee={activeCommittee}
-                  nominations={nominations}
+                  chatMessages={chatMessages}
+                  feedback={feedback}
+                  team={team}
                   openNominationPositions={openNominationPositions}
-                  elections={elections}
-                  flashVotes={flashVotes}
-                  onFileNomination={(nom) => {
-                    storageService.addNomination(nom);
-                    if (currentEvent) {
-                      setNominations(storageService.getNominations(currentEvent.id));
-                    }
-                  }}
-                  onCastVote={(elecId, candId, delId) => {
-                    storageService.castVoteInElection(elecId, candId, delId || currentStudent.id);
-                    if (currentEvent) {
-                      setElections(storageService.getElections(currentEvent.id));
-                    }
-                  }}
-                  onCastFlashVote={(vId, l, dec) => {
-                    storageService.castFlashVote(vId, l, dec);
-                    if (currentEvent) {
-                      setFlashVotes(storageService.getFlashVotes(currentEvent.id));
-                    }
-                  }}
-                  onShowToast={addToast}
+                  role={role}
+                  userSession={userSession}
+                  addToast={addToast}
+                  handleToggleCheckIn={handleToggleCheckIn}
+                  handleCheckInAll={handleCheckInAll}
+                  handleUpdateLearner={handleUpdateLearner}
+                  handleDeleteLearner={handleDeleteLearner}
+                  handleDeleteMultipleLearners={handleDeleteMultipleLearners}
+                  handleClearAllLearners={handleClearAllLearners}
+                  handleToggleOpenNominationPosition={handleToggleOpenNominationPosition}
+                  handleSetAllOpenNominationPositions={handleSetAllOpenNominationPositions}
+                  handleAddCommittee={handleAddCommittee}
+                  handleUpdateCommittee={handleUpdateCommittee}
+                  handleDeleteCommittee={handleDeleteCommittee}
+                  setCommittees={setCommittees}
+                  handleAddParty={handleAddParty}
+                  handleUpdateParty={handleUpdateParty}
+                  handleDeleteParty={handleDeleteParty}
+                  setParties={setParties}
+                  handleExecuteAllocation={handleExecuteAllocation}
+                  handleResetAllocation={handleResetAllocation}
+                  setCurrentEvent={setCurrentEvent}
+                  handleAssignCabinetRole={handleAssignCabinetRole}
+                  handleAddJury={handleAddJury}
+                  handleDeleteJury={handleDeleteJury}
+                  handleAddVolunteer={handleAddVolunteer}
+                  handleDeleteVolunteer={handleDeleteVolunteer}
+                  setLearners={setLearners}
+                  handleSetCurrentAgendaItem={handleSetCurrentAgendaItem}
+                  setElections={setElections}
+                  setFlashVotes={setFlashVotes}
+                  setNominations={setNominations}
+                  setIsAddWalkInOpen={setIsAddWalkInOpen}
+                  setIsImportCsvOpen={setIsImportCsvOpen}
+                  setIsAllocationModalOpen={setIsAllocationModalOpen}
+                  handleAddAgendaItem={handleAddAgendaItem}
+                  activeParty={activeParty}
+                  activeCommittee={activeCommittee}
+                  currentStudent={currentStudent}
+                  navigate={navigate}
                 />
-              ) : (
-                <div className="p-8 text-center" style={{ color: 'var(--text-muted)' }}>
-                  No student delegate details found. Please sign in with your access code.
-                </div>
-              )}
-            </>
-          )}
+              }
+            />
+
+            {/* Fallback wildcard */}
+            <Route path="*" element={<Navigate to="/events" replace />} />
+          </Routes>
 
         </main>
-
       </div>
 
       {/* Shared Modals */}

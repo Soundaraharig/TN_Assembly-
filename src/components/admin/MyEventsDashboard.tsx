@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { CollegeEvent, Coordinator, UserRole } from '../../types';
+import { getEventSlug } from '../../utils/slug';
 import { CreateEventModal } from './CreateEventModal';
 import { EditCoordinatorModal } from './EditCoordinatorModal';
 import { EditEventModal } from './EditEventModal';
@@ -30,6 +32,7 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
   onSelectEvent,
   onShowToast
 }) => {
+  const navigate = useNavigate();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingCoordinator, setEditingCoordinator] = useState<Coordinator | null>(null);
   const [editingEventName, setEditingEventName] = useState<string>('');
@@ -42,6 +45,12 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
   const displayedEvents = isSuperAdmin
     ? events
     : events.filter(e => e.assigned_coordinator_email?.toLowerCase() === userEmail?.toLowerCase());
+
+  const handleCardClick = (event: CollegeEvent) => {
+    onSelectEvent(event);
+    const slug = getEventSlug(event);
+    navigate(`/events/${slug}/overview`);
+  };
 
   const handleOpenEditCoordinator = (e: React.MouseEvent, event: CollegeEvent) => {
     e.stopPropagation();
@@ -129,7 +138,7 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
             return (
               <div
                 key={event.id}
-                onClick={() => onSelectEvent(event)}
+                onClick={() => handleCardClick(event)}
                 className="card p-5 cursor-pointer space-y-4 flex flex-col justify-between group transition-all relative"
               >
                 <div className="space-y-2.5">

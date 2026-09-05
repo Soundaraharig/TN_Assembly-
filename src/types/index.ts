@@ -20,6 +20,7 @@ export interface UserSession {
 
 export interface CollegeEvent {
   id: string;
+  slug?: string;
   college_name: string;
   chapter: string;
   level: string;
