@@ -1578,6 +1578,8 @@ export function App() {
     { id: 'report', label: 'Report', icon: '📊' }
   ];
 
+  const isTabRoute = location.pathname.startsWith('/events/') && location.pathname !== '/events';
+
   return (
     <div
       className="min-h-screen font-sans antialiased selection:bg-amber-500 selection:text-white transition-colors duration-300"
@@ -1624,63 +1626,63 @@ export function App() {
 
       {/* Main Body Layout */}
       <div className="flex">
-        
-        {/* Left Vertical Sidebar (Desktop + Mobile Slide-Out Drawer) */}
-        {(role === 'coordinator' || (role === 'super_admin' && (location.pathname.startsWith('/events/') || currentEvent))) && (
-          <Sidebar
-            activeTab={activeNavTab}
-            onSelectTab={(tab) => handleSelectTab(tab)}
-            isMobileOpen={isMobileSidebarOpen}
-            onCloseMobile={() => setIsMobileSidebarOpen(false)}
-            completedTabs={completedTabsSet}
-            role={role}
-            eventSlug={currentEvent ? getEventSlug(currentEvent) : 'jkkncet-tn-assembly-2026'}
-            onBackToEvents={role === 'super_admin' ? () => {
-              navigate('/events');
-            } : undefined}
-          />
-        )}
+            
+            {/* Left Vertical Sidebar (Desktop + Mobile Slide-Out Drawer) */}
+            {isTabRoute && (
+              <Sidebar
+                activeTab={activeNavTab}
+                onSelectTab={(tab) => handleSelectTab(tab)}
+                isMobileOpen={isMobileSidebarOpen}
+                onCloseMobile={() => setIsMobileSidebarOpen(false)}
+                completedTabs={completedTabsSet}
+                role={role}
+                eventSlug={currentEvent ? getEventSlug(currentEvent) : 'jkkncet-tn-assembly-2026'}
+                onBackToEvents={() => {
+                  navigate('/events');
+                }}
+              />
+            )}
 
-        {/* Main Content Area */}
-        <main className="flex-1 p-3 sm:p-5 lg:p-6 overflow-x-hidden min-w-0">
-          
-          {/* Mobile Quick-Navigation Pill Bar */}
-          {(role === 'coordinator' || (role === 'super_admin' && location.pathname.startsWith('/events/'))) && currentEvent && (
-            <div className="lg:hidden mb-4 overflow-x-auto pb-1 flex items-center gap-1.5 scrollbar-none">
-              {mobileQuickTabs.map(qTab => {
-                const isActive = activeNavTab === qTab.id;
-                const targetSlug = currentEvent ? getEventSlug(currentEvent) : 'jkkncet-tn-assembly-2026';
-                const targetPath = tabToPath(qTab.id);
-                return (
-                  <Link
-                    key={qTab.id}
-                    to={`/events/${targetSlug}/${targetPath}`}
-                    onClick={() => handleSelectTab(qTab.id)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap border transition-all cursor-pointer flex items-center gap-1.5 ${
-                      isActive ? 'shadow-sm' : ''
-                    }`}
-                    style={{
-                      backgroundColor: isActive ? 'var(--amber)' : 'var(--bg-surface)',
-                      color: isActive ? '#ffffff' : 'var(--text-secondary)',
-                      borderColor: isActive ? 'var(--amber)' : 'var(--border)'
-                    }}
+            {/* Main Content Area */}
+            <main className="flex-1 p-3 sm:p-5 lg:p-6 overflow-x-hidden min-w-0">
+              
+              {/* Mobile Quick-Navigation Pill Bar */}
+              {isTabRoute && currentEvent && (
+                <div className="lg:hidden mb-4 overflow-x-auto pb-1 flex items-center gap-1.5 scrollbar-none">
+                  {mobileQuickTabs.map(qTab => {
+                    const isActive = activeNavTab === qTab.id;
+                    const targetSlug = currentEvent ? getEventSlug(currentEvent) : 'jkkncet-tn-assembly-2026';
+                    const targetPath = tabToPath(qTab.id);
+                    return (
+                      <Link
+                        key={qTab.id}
+                        to={`/events/${targetSlug}/${targetPath}`}
+                        onClick={() => handleSelectTab(qTab.id)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap border transition-all cursor-pointer flex items-center gap-1.5 ${
+                          isActive ? 'shadow-sm' : ''
+                        }`}
+                        style={{
+                          backgroundColor: isActive ? 'var(--amber)' : 'var(--bg-surface)',
+                          color: isActive ? '#ffffff' : 'var(--text-secondary)',
+                          borderColor: isActive ? 'var(--amber)' : 'var(--border)'
+                        }}
+                      >
+                        <span>{qTab.icon}</span>
+                        <span>{qTab.label}</span>
+                      </Link>
+                    );
+                  })}
+                  <button
+                    onClick={() => setIsMobileSidebarOpen(true)}
+                    className="px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap border cursor-pointer transition-colors"
+                    style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
                   >
-                    <span>{qTab.icon}</span>
-                    <span>{qTab.label}</span>
-                  </Link>
-                );
-              })}
-              <button
-                onClick={() => setIsMobileSidebarOpen(true)}
-                className="px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap border cursor-pointer transition-colors"
-                style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
-              >
-                More ▾
-              </button>
-            </div>
-          )}
+                    More ▾
+                  </button>
+                </div>
+              )}
 
-          <Routes>
+              <Routes>
             {/* Root path -> redirect to /events */}
             <Route path="/" element={<Navigate to="/events" replace />} />
 
