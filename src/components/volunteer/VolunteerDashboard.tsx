@@ -440,6 +440,37 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   // Execute Proxy Vote for Election
   const handleExecuteProxyVote = (electionId: string) => {
     if (!proxyModalLearner) return;
+    const list = elections.length > 0 ? elections : storageService.getElections(eventId);
+    const elec = list.find(e => e.id === electionId);
+
+    if (elec) {
+      const partiesList = activeParties.length > 0 ? activeParties : storageService.getParties(eventId);
+      const partyLeaderParty = (() => {
+        if (elec.party_id) {
+          const match = partiesList.find(p => p.id === elec.party_id);
+          if (match) return match;
+        }
+        const title = (elec.title || '').toLowerCase();
+        const pos = (elec.position || '').toLowerCase();
+        if ((pos === 'party leader' || title.includes('party leader')) && !title.includes('ruling') && !title.includes('opposition')) {
+          const match = partiesList.find(p => title.includes(p.name.toLowerCase()) || p.name.toLowerCase().includes(title.replace('leader election', '').trim()));
+          if (match) return match;
+        }
+        return null;
+      })();
+
+      if (partyLeaderParty) {
+        const isMatch = proxyModalLearner.party_id
+          ? proxyModalLearner.party_id === partyLeaderParty.id
+          : proxyModalLearner.party_name?.toLowerCase() === partyLeaderParty.name.toLowerCase();
+
+        if (!isMatch) {
+          onShowToast('Ineligible Voter', `Only members of ${partyLeaderParty.name} can vote in this election.`, 'error');
+          return;
+        }
+      }
+    }
+
     const candId = selectedCandidateForElection[electionId];
     if (!candId) {
       onShowToast('Select Candidate', 'Please select a candidate before casting vote', 'error');
@@ -1362,6 +1393,26 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                   const hasVoted = elec.voted_delegate_ids?.includes(proxyModalLearner.id);
                   const selectedCandId = selectedCandidateForElection[elec.id];
 
+                  const partiesList = activeParties.length > 0 ? activeParties : storageService.getParties(eventId);
+                  const partyLeaderParty = (() => {
+                    if (elec.party_id) {
+                      const match = partiesList.find(p => p.id === elec.party_id);
+                      if (match) return match;
+                    }
+                    const title = (elec.title || '').toLowerCase();
+                    const pos = (elec.position || '').toLowerCase();
+                    if ((pos === 'party leader' || title.includes('party leader')) && !title.includes('ruling') && !title.includes('opposition')) {
+                      const match = partiesList.find(p => title.includes(p.name.toLowerCase()) || p.name.toLowerCase().includes(title.replace('leader election', '').trim()));
+                      if (match) return match;
+                    }
+                    return null;
+                  })();
+
+                  const isVoterEligible = partyLeaderParty ? (() => {
+                    if (proxyModalLearner.party_id) return proxyModalLearner.party_id === partyLeaderParty.id;
+                    return proxyModalLearner.party_name?.toLowerCase() === partyLeaderParty.name.toLowerCase();
+                  })() : true;
+
                   return (
                     <div
                       key={elec.id}
@@ -1372,14 +1423,18 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                           <h5 className="font-extrabold text-sm text-slate-900 dark:text-white">{elec.title}</h5>
                           <p className="text-[11px] text-slate-500">{elec.position}</p>
                         </div>
-                        {hasVoted && (
+                        {hasVoted ? (
                           <span className="px-2 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
                             <Check className="w-3 h-3" /> Voted
                           </span>
-                        )}
+                        ) : !isVoterEligible ? (
+                          <span className="px-2 py-1 rounded-lg bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 text-[10px] font-bold border border-rose-200 dark:border-rose-800 flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3" /> Restricted to {partyLeaderParty?.name} Members Only
+                          </span>
+                        ) : null}
                       </div>
 
-                      {!hasVoted && (
+                      {!hasVoted && isVoterEligible && (
                         <div className="space-y-2 pt-1">
                           <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">Select Candidate:</p>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">

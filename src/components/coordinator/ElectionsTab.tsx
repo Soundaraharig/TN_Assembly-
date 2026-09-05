@@ -145,16 +145,13 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   };
 
   const getElectorateRule = (election: Election): { type: 'ALL' | 'RULING' | 'OPPOSITION' | 'PARTY'; partyId?: string; partyName?: string; label: string } => {
+    const partyLeaderParty = getPartyLeaderElectionParty(election);
+    if (partyLeaderParty) {
+      return { type: 'PARTY', partyId: partyLeaderParty.id, partyName: partyLeaderParty.name, label: `${partyLeaderParty.name} Members Only` };
+    }
+
     const title = (election.title || '').toLowerCase();
     const pos = (election.position || '').toLowerCase();
-
-    if (title.includes('party leader') && !title.includes('ruling') && !title.includes('opposition')) {
-      const matchParty = parties.find(p => title.toLowerCase().includes(p.name.toLowerCase()));
-      if (matchParty) {
-        return { type: 'PARTY', partyId: matchParty.id, partyName: matchParty.name, label: `${matchParty.name} MLAs Only` };
-      }
-      return { type: 'PARTY', label: 'Party Members Only' };
-    }
 
     if (pos.includes('opposition') || title.includes('opposition') || title.includes('lop')) {
       return { type: 'OPPOSITION', label: 'Opposition Bench Only' };

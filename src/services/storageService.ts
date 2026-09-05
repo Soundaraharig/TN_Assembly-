@@ -1659,8 +1659,26 @@ class StorageService {
     const election = all.find(e => e.id === electionId);
     if (!election || election.status !== 'Live') return false;
 
-    if (delegateId && election.voted_delegate_ids?.includes(delegateId)) {
-      return false; // Already voted
+    if (delegateId) {
+      if (election.voted_delegate_ids?.includes(delegateId)) {
+        return false; // Already voted
+      }
+
+      // Server-Side Voter Eligibility Enforcement for Political Party Leader Elections
+      const partyLeaderParty = this.getPartyLeaderElectionParty(election);
+      if (partyLeaderParty) {
+        const learners = this.getLearners();
+        const voterLearner = learners.find(l => l.id === delegateId);
+        if (voterLearner) {
+          const isPartyMatch = voterLearner.party_id
+            ? voterLearner.party_id === partyLeaderParty.id
+            : voterLearner.party_name?.toLowerCase() === partyLeaderParty.name.toLowerCase();
+          if (!isPartyMatch) {
+            console.warn(`[StorageService] Rejected vote: Delegate ${voterLearner.full_name} is not a member of party ${partyLeaderParty.name}. Only members of ${partyLeaderParty.name} can vote in this election.`);
+            return false;
+          }
+        }
+      }
     }
 
     const candidate = election.candidates.find(c => c.id === candidateId);
@@ -1724,6 +1742,21 @@ class StorageService {
     if (targetEventId) this.syncEventStateToSupabase(targetEventId);
   }
 
+  public getPartyLeaderElectionParty(election: Election): Party | null {
+    const parties = this.getParties();
+    if (election.party_id) {
+      const match = parties.find(p => p.id === election.party_id);
+      if (match) return match;
+    }
+    const title = (election.title || '').toLowerCase();
+    const pos = (election.position || '').toLowerCase();
+    if ((pos === 'party leader' || title.includes('party leader')) && !title.includes('ruling') && !title.includes('opposition')) {
+      const match = parties.find(p => title.includes(p.name.toLowerCase()) || p.name.toLowerCase().includes(title.replace('leader election', '').trim()));
+      if (match) return match;
+    }
+    return null;
+  }
+
   public addCandidateToElection(electionId: string, candidate: Partial<ElectionCandidate>): boolean {
     const all = this.getElectionAll();
     const election = all.find(e => e.id === electionId);
@@ -1733,6 +1766,27 @@ class StorageService {
     if (election.status === 'Live' || election.status === 'Closed') {
       console.warn('[StorageService] Rejected candidate addition: Nominations are locked while voting is live or closed.');
       return false;
+    }
+
+    // Server-Side Validation: Restrict Party Leader Election to members of that specific party
+    const partyLeaderParty = this.getPartyLeaderElectionParty(election);
+    if (partyLeaderParty) {
+      const learners = this.getLearners();
+      const candidateLearner = learners.find(
+        l => (candidate.learner_id && l.id === candidate.learner_id) || l.full_name?.toLowerCase() === candidate.name?.toLowerCase()
+      );
+
+      const candidatePartyId = candidateLearner?.party_id;
+      const candidatePartyName = candidateLearner?.party_name || candidate.party;
+
+      const isPartyMatch = candidatePartyId
+        ? candidatePartyId === partyLeaderParty.id
+        : candidatePartyName?.toLowerCase() === partyLeaderParty.name.toLowerCase();
+
+      if (!isPartyMatch) {
+        console.warn(`[StorageService] Rejected candidate addition: Candidate ${candidate.name} is not a member of party ${partyLeaderParty.name} (${partyLeaderParty.id}). Candidate must be a member of the party holding this election.`);
+        return false;
+      }
     }
 
     // Check if already in ballot
@@ -1745,8 +1799,8 @@ class StorageService {
       id: candidate.id || uid('cand'),
       learner_id: candidate.learner_id,
       name: candidate.name || 'Nominated Candidate',
-      party: candidate.party || 'Independent',
-      bench: candidate.bench || 'Ruling',
+      party: candidate.party || partyLeaderParty?.name || 'Independent',
+      bench: candidate.bench || partyLeaderParty?.bench || 'Ruling',
       votes: 0
     };
 
