@@ -184,6 +184,7 @@ interface EventTabRouteHandlerProps {
   handleExecuteAllocation: (ratio: any) => void;
   handleResetAllocation: () => void;
   setCurrentEvent: React.Dispatch<React.SetStateAction<CollegeEvent | null>>;
+  setEvents?: React.Dispatch<React.SetStateAction<CollegeEvent[]>>;
   handleAssignCabinetRole: (learnerId: string, role: string) => void;
   handleAddJury: (j: Partial<JuryMember>) => void;
   handleDeleteJury: (id: string) => void;
@@ -227,13 +228,19 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
     }
   }, [activeTabFromPath, props.activeNavTab]);
 
-  if (props.events.length > 0 && !matchedEvent) {
-    return <Navigate to="/events" replace />;
-  }
-
   const activeEvent = matchedEvent || props.currentEvent || props.events[0];
-  if (!activeEvent && props.events.length > 0) {
-    return <Navigate to="/events" replace />;
+  if (!activeEvent) {
+    if (props.events.length > 0) {
+      return <Navigate to="/events" replace />;
+    }
+    return (
+      <div className="min-h-screen flex items-center justify-center p-8 text-center" style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-muted)' }}>
+        <div className="flex items-center gap-3">
+          <div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+          <span className="text-sm font-medium">Loading event details...</span>
+        </div>
+      </div>
+    );
   }
 
   if (props.role === 'student') {
@@ -436,8 +443,12 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           onSaveCabinet={(ministries) => {
             storageService.saveCabinetMinistries(activeEvent.id, ministries);
             props.setCurrentEvent(prev => prev ? { ...prev, cabinet_ministries: ministries } : prev);
+            props.setEvents?.(storageService.getEvents());
           }}
-          onAssignCabinetRole={props.handleAssignCabinetRole}
+          onAssignCabinetRole={(learnerId, portfolioRole) => {
+            storageService.assignCabinetRole(activeEvent.id, learnerId, portfolioRole);
+            props.setLearners(storageService.getLearners(activeEvent.id));
+          }}
           onShowToast={props.addToast}
         />
       )}
@@ -1773,6 +1784,7 @@ export function App() {
                   handleExecuteAllocation={handleExecuteAllocation}
                   handleResetAllocation={handleResetAllocation}
                   setCurrentEvent={setCurrentEvent}
+                  setEvents={setEvents}
                   handleAssignCabinetRole={handleAssignCabinetRole}
                   handleAddJury={handleAddJury}
                   handleDeleteJury={handleDeleteJury}

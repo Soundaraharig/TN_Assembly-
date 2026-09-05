@@ -262,7 +262,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
   const handleAssignRole = (learnerId: string, portfolioRole: string) => {
     if (onAssignCabinetRole) {
       onAssignCabinetRole(learnerId, portfolioRole);
-      const learner = learners.find(l => l.id === learnerId);
+      const learner = (learners || []).find(l => l.id === learnerId);
       if (learner) {
         onShowToast('Minister Appointed', `Assigned ${learner.full_name} as ${portfolioRole}`, 'success');
       } else {
@@ -272,7 +272,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
   };
 
   // Build active ministry portfolios based on selected Ministries
-  const cabinetPortfolios = selectedMinistries.map(m => {
+  const cabinetPortfolios = (selectedMinistries || []).map(m => {
     const shortName = m.replace(/^Ministry of\s+/, '');
     return {
       ministry: m,

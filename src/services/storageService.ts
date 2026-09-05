@@ -309,6 +309,9 @@ class StorageService {
             allScores = [...allScores, ...sc.scores];
           }
           
+          if (Array.isArray(sc.cabinet_ministries) && (!ev.cabinet_ministries || ev.cabinet_ministries.length === 0)) {
+            ev.cabinet_ministries = sc.cabinet_ministries;
+          }
           if (Array.isArray(sc.yuva_assignments)) {
             const key = `${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${ev.id}`;
             this.setItem(key, sc.yuva_assignments);
@@ -477,6 +480,7 @@ class StorageService {
         questions: qs,
         scores: scs,
         yuva_assignments: yuvaAssignments,
+        cabinet_ministries: currentEv?.cabinet_ministries || [],
         updated_at: new Date().toISOString()
       };
 
@@ -1391,6 +1395,12 @@ class StorageService {
       e.id === eventId ? { ...e, cabinet_ministries: ministries } : e
     );
     this.setItem(STORAGE_KEYS.EVENTS, events);
+    const target = events.find(e => e.id === eventId);
+    if (target) {
+      this.sbUpsert('college_events', target as unknown as Record<string, unknown>);
+      this.syncEventStateToSupabase(eventId);
+    }
+    this.notify();
   }
 
   public saveWhatsAppLinks(eventId: string, treasuryLink: string, oppositionLink: string) {
