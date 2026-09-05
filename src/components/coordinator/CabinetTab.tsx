@@ -29,6 +29,7 @@ interface CabinetTabProps {
 export interface MinistryItem {
   id: string;
   name: string;
+  isCustom?: boolean;
 }
 
 export const DEFAULT_MINISTRY_ITEMS: MinistryItem[] = [
@@ -57,6 +58,27 @@ export const DEFAULT_MINISTRY_ITEMS: MinistryItem[] = [
 ];
 
 export const DEFAULT_MINISTRIES = DEFAULT_MINISTRY_ITEMS.map((m: MinistryItem) => m.name);
+
+export const DEFAULT_CUSTOM_ITEMS: MinistryItem[] = [
+  { id: 'custom_electronics_it', name: 'Ministry of Electronics & IT', isCustom: true },
+  { id: 'custom_tourism_culture', name: 'Ministry of Tourism & Culture', isCustom: true },
+  { id: 'custom_environment', name: 'Ministry of Environment', isCustom: true }
+];
+
+export const DEFAULT_SELECTED_IDS: string[] = [
+  'min_edu',
+  'min_wcd',
+  'min_sports',
+  'min_health',
+  'min_skill',
+  'min_finance',
+  'min_home',
+  'min_defence',
+  'min_agri',
+  'custom_electronics_it',
+  'custom_tourism_culture',
+  'custom_environment'
+];
 
 // Helper Searchable Dropdown for assigning delegates to portfolio roles
 const SearchableDelegateSelect: React.FC<{
@@ -192,18 +214,17 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
   onAssignCabinetRole,
   onShowToast
 }) => {
-  const [selectedMinistries, setSelectedMinistries] = useState<string[]>([]);
-  const [customMinistries, setCustomMinistries] = useState<string[]>([
-    "Ministry of Electronics & IT",
-    "Ministry of Tourism & Culture",
-    "Ministry of Environment"
-  ]);
+  const [selectedMinistryIds, setSelectedMinistryIds] = useState<string[]>(DEFAULT_SELECTED_IDS);
+  const [customMinistries, setCustomMinistries] = useState<MinistryItem[]>(DEFAULT_CUSTOM_ITEMS);
   const [newMinistryInput, setNewMinistryInput] = useState('');
   const [viewMode, setViewMode] = useState<'roster' | 'config'>('roster');
 
   const isInitializedRef = useRef(false);
   const prevSavedMinistriesRef = useRef<string[] | undefined>(savedMinistries);
   const prevEventIdRef = useRef<string | undefined>(eventId);
+
+  const allMinistries: MinistryItem[] = [...DEFAULT_MINISTRY_ITEMS, ...customMinistries];
+  const activeCount = selectedMinistryIds.length;
 
   useEffect(() => {
     // If event changed, reset initialization flag
@@ -216,23 +237,43 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
     if (!isInitializedRef.current || prevSavedMinistriesRef.current !== savedMinistries) {
       prevSavedMinistriesRef.current = savedMinistries;
       if (Array.isArray(savedMinistries) && savedMinistries.length > 0) {
-        setSelectedMinistries(savedMinistries);
+        const newSelectedIds: string[] = [];
+        const newCustoms: MinistryItem[] = [...customMinistries];
+
+        savedMinistries.forEach((savedItemStr) => {
+          // Find matching standard item by ID or Name
+          const standardMatch = DEFAULT_MINISTRY_ITEMS.find(m => m.id === savedItemStr || m.name === savedItemStr);
+          if (standardMatch) {
+            if (!newSelectedIds.includes(standardMatch.id)) {
+              newSelectedIds.push(standardMatch.id);
+            }
+            return;
+          }
+
+          // Find matching custom item by ID or Name
+          const customMatch = newCustoms.find(m => m.id === savedItemStr || m.name === savedItemStr);
+          if (customMatch) {
+            if (!newSelectedIds.includes(customMatch.id)) {
+              newSelectedIds.push(customMatch.id);
+            }
+            return;
+          }
+
+          // If not found in standard or custom, create a new custom item
+          const newItem: MinistryItem = {
+            id: `custom_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            name: savedItemStr,
+            isCustom: true
+          };
+          newCustoms.push(newItem);
+          newSelectedIds.push(newItem.id);
+        });
+
+        setCustomMinistries(newCustoms);
+        setSelectedMinistryIds(newSelectedIds);
         isInitializedRef.current = true;
       } else if (!isInitializedRef.current) {
-        setSelectedMinistries([
-          "Ministry of Education",
-          "Ministry of Women & Child Development",
-          "Ministry of Youth Affairs & Sports",
-          "Ministry of Health & Family Welfare",
-          "Ministry of Skill Development & Entrepreneurship",
-          "Ministry of Finance",
-          "Ministry of Home Affairs",
-          "Ministry of Defence",
-          "Ministry of Agriculture",
-          "Ministry of Electronics & IT",
-          "Ministry of Tourism & Culture",
-          "Ministry of Environment"
-        ]);
+        setSelectedMinistryIds(DEFAULT_SELECTED_IDS);
         if (Array.isArray(savedMinistries)) {
           isInitializedRef.current = true;
         }
@@ -240,15 +281,13 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
     }
   }, [savedMinistries, eventId]);
 
-  const toggleMinistry = (ministry: string) => {
+  const toggleSelection = (id: string) => {
     if (isLocked) {
       onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
       return;
     }
-    setSelectedMinistries(prev =>
-      prev.includes(ministry)
-        ? prev.filter(m => m !== ministry)
-        : [...prev, ministry]
+    setSelectedMinistryIds(prev =>
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
     );
   };
 
@@ -257,8 +296,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
       onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
       return;
     }
-    const all = Array.from(new Set([...DEFAULT_MINISTRIES, ...customMinistries]));
-    setSelectedMinistries(all);
+    setSelectedMinistryIds(allMinistries.map(m => m.id));
   };
 
   const handleClearAll = () => {
@@ -266,7 +304,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
       onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
       return;
     }
-    setSelectedMinistries([]);
+    setSelectedMinistryIds([]);
   };
 
   const handleResetToDefault = () => {
@@ -274,20 +312,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
       onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
       return;
     }
-    setSelectedMinistries([
-      "Ministry of Education",
-      "Ministry of Women & Child Development",
-      "Ministry of Youth Affairs & Sports",
-      "Ministry of Health & Family Welfare",
-      "Ministry of Skill Development & Entrepreneurship",
-      "Ministry of Finance",
-      "Ministry of Home Affairs",
-      "Ministry of Defence",
-      "Ministry of Agriculture",
-      "Ministry of Electronics & IT",
-      "Ministry of Tourism & Culture",
-      "Ministry of Environment"
-    ]);
+    setSelectedMinistryIds(DEFAULT_SELECTED_IDS);
     onShowToast('Reset Complete', 'Restored default cabinet ministries', 'info');
   };
 
@@ -300,9 +325,15 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
     const trimmed = newMinistryInput.trim();
     if (!trimmed) return;
 
-    if (!customMinistries.includes(trimmed) && !DEFAULT_MINISTRIES.includes(trimmed)) {
-      setCustomMinistries(prev => [...prev, trimmed]);
-      setSelectedMinistries(prev => [...prev, trimmed]);
+    const exists = allMinistries.some(m => m.name.toLowerCase() === trimmed.toLowerCase());
+    if (!exists) {
+      const newItem: MinistryItem = {
+        id: `custom_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        name: trimmed,
+        isCustom: true
+      };
+      setCustomMinistries(prev => [...prev, newItem]);
+      setSelectedMinistryIds(prev => [...prev, newItem.id]);
       setNewMinistryInput('');
       onShowToast('Ministry Added', `Added ${trimmed} to custom list`, 'success');
     } else {
@@ -310,13 +341,13 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
     }
   };
 
-  const handleRemoveCustom = (m: string) => {
+  const handleRemoveCustom = (id: string) => {
     if (isLocked) {
       onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
       return;
     }
-    setCustomMinistries(prev => prev.filter(item => item !== m));
-    setSelectedMinistries(prev => prev.filter(item => item !== m));
+    setCustomMinistries(prev => prev.filter(item => item.id !== id));
+    setSelectedMinistryIds(prev => prev.filter(item => item !== id));
   };
 
   const handleSave = () => {
@@ -324,12 +355,16 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
       onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
       return;
     }
-    prevSavedMinistriesRef.current = selectedMinistries;
+    const selectedMinistryNames = selectedMinistryIds
+      .map(id => allMinistries.find(m => m.id === id)?.name)
+      .filter((name): name is string => Boolean(name));
+
+    prevSavedMinistriesRef.current = selectedMinistryNames;
     isInitializedRef.current = true;
     if (onSaveCabinet) {
-      onSaveCabinet(selectedMinistries);
+      onSaveCabinet(selectedMinistryNames);
     }
-    onShowToast('Cabinet Saved', `Saved ${selectedMinistries.length} active ministries for this event`, 'success');
+    onShowToast('Cabinet Saved', `Saved ${selectedMinistryNames.length} active ministries for this event`, 'success');
   };
 
   const handleAssignRole = (learnerId: string, portfolioRole: string) => {
@@ -348,15 +383,19 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
     }
   };
 
-  // Build active ministry portfolios based on selected Ministries
-  const cabinetPortfolios = (selectedMinistries || []).filter(Boolean).map(m => {
-    const shortName = typeof m === 'string' ? m.replace(/^Ministry of\s+/, '') : String(m);
-    return {
-      ministry: m,
-      rulingRole: `Minister for ${shortName}`,
-      shadowRole: `Shadow Minister for ${shortName}`
-    };
-  });
+  // Build active ministry portfolios based on selected Ministry IDs
+  const cabinetPortfolios = selectedMinistryIds
+    .map(id => allMinistries.find(m => m.id === id))
+    .filter((m): m is MinistryItem => Boolean(m))
+    .map(m => {
+      const shortName = m.name.replace(/^Ministry of\s+/, '');
+      return {
+        id: m.id,
+        ministry: m.name,
+        rulingRole: `Minister for ${shortName}`,
+        shadowRole: `Shadow Minister for ${shortName}`
+      };
+    });
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -391,7 +430,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
         {/* Top Right Actions */}
         <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
           <span className="px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
-            {selectedMinistries.length} Active Portfolios
+            {activeCount} Active Portfolios
           </span>
 
           <button
@@ -402,7 +441,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
             {viewMode === 'roster' ? (
               <>
                 <CheckSquare className="w-3.5 h-3.5" />
-                <span>Configure Active Ministries ({selectedMinistries.length})</span>
+                <span>Configure Active Ministries ({activeCount})</span>
               </>
             ) : (
               <>
@@ -483,7 +522,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
 
                 return (
                   <div
-                    key={port.ministry}
+                    key={port.id}
                     className="rounded-2xl p-5 border space-y-4 shadow-sm transition-all"
                     style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}
                   >
@@ -556,7 +595,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                 onClick={handleSelectAll}
                 className="text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
               >
-                Select all {DEFAULT_MINISTRIES.length + customMinistries.length}
+                Select all {allMinistries.length}
               </button>
               <span>·</span>
               <button
@@ -592,12 +631,11 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
           {/* Standard Catalogue List */}
           <div className="space-y-2.5">
             {DEFAULT_MINISTRY_ITEMS.map((item) => {
-              const ministryId = item.name;
-              const isSelected = selectedMinistries.includes(ministryId);
+              const isSelected = selectedMinistryIds.includes(item.id);
               return (
                 <div
                   key={item.id}
-                  onClick={() => toggleMinistry(ministryId)}
+                  onClick={() => toggleSelection(item.id)}
                   className={`w-full p-3 rounded-2xl border transition-all cursor-pointer flex items-center gap-3 ${
                     isSelected
                       ? 'bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-400/80 dark:border-emerald-700/80 shadow-xs'
@@ -626,11 +664,11 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
             </label>
 
             <div className="space-y-2.5">
-              {customMinistries.map((ministry) => {
-                const isSelected = selectedMinistries.includes(ministry);
+              {customMinistries.map((item) => {
+                const isSelected = selectedMinistryIds.includes(item.id);
                 return (
                   <div
-                    key={ministry}
+                    key={item.id}
                     className={`w-full p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 ${
                       isSelected
                         ? 'bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-400/80 dark:border-emerald-700/80'
@@ -638,7 +676,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                     }`}
                   >
                     <div
-                      onClick={() => toggleMinistry(ministry)}
+                      onClick={() => toggleSelection(item.id)}
                       className="flex items-center gap-3 cursor-pointer flex-1"
                     >
                       <div className={`p-0.5 rounded ${isSelected ? 'text-emerald-600' : 'text-slate-400'}`}>
@@ -649,14 +687,17 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                         )}
                       </div>
                       <span className="text-xs font-bold text-slate-900 dark:text-white">
-                        {ministry}
+                        {item.name}
                       </span>
                     </div>
 
                     <button
                       type="button"
-                      onClick={() => handleRemoveCustom(ministry)}
-                      className="text-slate-400 hover:text-rose-600 p-1 transition-colors"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleRemoveCustom(item.id);
+                      }}
+                      className="text-slate-400 hover:text-rose-600 p-1 transition-colors cursor-pointer"
                       title="Delete custom ministry"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
