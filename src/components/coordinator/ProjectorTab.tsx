@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 
 import { getEventSlug } from '../../utils/slug';
+import { StandaloneProjectorDisplay } from '../common/StandaloneProjectorDisplay';
 
 export interface ProjectorStudioSettings {
   displayScene: 'auto' | 'welcome' | 'agenda' | 'flash_vote' | 'election' | 'election_result' | 'break';
@@ -70,6 +71,7 @@ export const ProjectorTab: React.FC<ProjectorTabProps> = ({
 }) => {
   const [copiedLink, setCopiedLink] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [activeViewMode, setActiveViewMode] = useState<'studio' | 'presentation'>('studio');
 
   // Projector Studio Controls State
   const [settings, setSettings] = useState<ProjectorStudioSettings>(() => getProjectorSettings(currentEvent?.id));
@@ -127,17 +129,25 @@ export const ProjectorTab: React.FC<ProjectorTabProps> = ({
     speaker_role: 'SPEAKER ELECTION'
   };
 
-  // Active Live Election & Flash Vote
+  // Active Live Election
   const activeElection = elections.find(e => e.status === 'Live');
+  // Active Flash Vote
   const activeFlashVote = flashVotes.find(f => f.status === 'ACTIVE');
 
-  // Revealed Election Result
+  // Revealed Election Result (ONLY when explicitly requested by settings.revealedElectionId or displayScene === 'election_result')
   const revealedElection = settings.revealedElectionId
     ? elections.find(e => e.id === settings.revealedElectionId)
     : elections.find(e => e.status === 'Closed' || (e.winner && e.winner.trim().length > 0)) || elections[0];
 
   const sortedCandidates = [...(revealedElection?.candidates || [])].sort((a, b) => (b.votes || 0) - (a.votes || 0));
-  const winnerCandidate = sortedCandidates[0] || null;
+
+  const winnerCandidate = sortedCandidates.length > 0
+    ? (sortedCandidates.find(c =>
+        (revealedElection?.winner && (c.name.toLowerCase() === revealedElection.winner.toLowerCase() || c.id === revealedElection.winner))
+      ) || sortedCandidates[0])
+    : null;
+
+
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(projectorUrl);
@@ -176,9 +186,60 @@ export const ProjectorTab: React.FC<ProjectorTabProps> = ({
   }, []);
 
   return (
-    <div className="space-y-8 animate-fade-in pb-16">
+    <div className="space-y-6 animate-fade-in pb-16">
       
-      {/* Studio Header */}
+      {/* Studio Mode Switcher Bar */}
+      <div className="flex flex-col sm:flex-row items-center justify-between bg-slate-900 border border-slate-800 p-2.5 rounded-2xl shadow-lg gap-3">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <button
+            type="button"
+            onClick={() => setActiveViewMode('studio')}
+            className={`flex-1 sm:flex-none px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer ${
+              activeViewMode === 'studio'
+                ? 'bg-amber-500 text-slate-950 shadow-md'
+                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+            }`}
+          >
+            <Tv className="w-4 h-4" />
+            <span>🎛️ Studio Edit Mode</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveViewMode('presentation')}
+            className={`flex-1 sm:flex-none px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer ${
+              activeViewMode === 'presentation'
+                ? 'bg-amber-500 text-slate-950 shadow-md'
+                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+            }`}
+          >
+            <Sparkles className="w-4 h-4" />
+            <span>📺 Stage Presentation Screen</span>
+          </button>
+        </div>
+
+        <button
+          onClick={() => window.open(projectorUrl, '_blank')}
+          className="px-3.5 py-2 rounded-xl text-xs font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 flex items-center gap-1.5 cursor-pointer transition-all w-full sm:w-auto justify-center"
+        >
+          <ExternalLink className="w-3.5 h-3.5" />
+          <span>Launch Unauthenticated Window ↗</span>
+        </button>
+      </div>
+
+      {activeViewMode === 'presentation' ? (
+        <div className="rounded-3xl overflow-hidden border border-slate-800 shadow-2xl bg-slate-950 min-h-[650px] relative">
+          <StandaloneProjectorDisplay
+            currentEvent={currentEvent}
+            agenda={agenda}
+            elections={elections}
+            flashVotes={flashVotes}
+            learners={learners}
+          />
+        </div>
+      ) : (
+        <div className="space-y-8">
+          {/* Studio Header */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
         <div>
           <div className="flex items-center gap-2.5">
@@ -635,6 +696,8 @@ export const ProjectorTab: React.FC<ProjectorTabProps> = ({
         </div>
 
       </div>
+    </div>
+  )}
 
     </div>
   );

@@ -85,7 +85,6 @@ const TAB_PATH_MAP: Record<string, ActiveNavTab> = {
   'volunteers': 'volunteers',
   'control': 'control',
   'projector': 'projector',
-  'display': 'projector',
   'elections': 'elections',
   'proceedings': 'proceedings',
   'score-grid': 'scoregrid',

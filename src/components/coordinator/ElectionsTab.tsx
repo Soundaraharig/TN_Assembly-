@@ -18,6 +18,7 @@ import {
   Check,
   Search,
   X,
+  XCircle,
   AlertCircle,
   Lock,
   BarChart3,
@@ -432,6 +433,20 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
     }
   };
 
+  const handleCloseRevealResult = () => {
+    try {
+      const cur = getProjectorSettings(eventId);
+      saveProjectorSettings({
+        ...cur,
+        displayScene: 'auto',
+        revealedElectionId: undefined
+      }, eventId);
+      onShowToast('Stage Screen Reset', 'Closed result reveal and returned stage display to active agenda', 'info');
+    } catch {
+      onShowToast('Stage Reset', 'Returned stage display to active agenda', 'info');
+    }
+  };
+
   const renderElectionRow = (elec: Election, index: number) => {
     const isExpanded = expandedElectionIds.has(elec.id);
     const isLive = elec.status === 'Live';
@@ -573,13 +588,23 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                 )}
 
                 {isClosed && (
-                  <button
-                    onClick={() => handleProjectResult(elec.id, elec.title)}
-                    className="px-3.5 py-1.5 rounded-lg text-xs font-bold text-slate-950 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 shadow-md flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
-                    title="Project animated winner declaration on auditorium display"
-                  >
-                    <Tv className="w-3.5 h-3.5 text-slate-950" /> Reveal Result on Projector 🎬
-                  </button>
+                  <>
+                    <button
+                      onClick={() => handleProjectResult(elec.id, elec.title)}
+                      className="px-3.5 py-1.5 rounded-lg text-xs font-bold text-slate-950 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 shadow-md flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
+                      title="Project animated winner declaration on auditorium display"
+                    >
+                      <Tv className="w-3.5 h-3.5 text-slate-950" /> Reveal Result on Projector 🎬
+                    </button>
+
+                    <button
+                      onClick={handleCloseRevealResult}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
+                      title="Close result reveal and return stage screen to normal active agenda display"
+                    >
+                      <XCircle className="w-3.5 h-3.5 text-rose-400" /> Close Reveal Result ✖
+                    </button>
+                  </>
                 )}
 
                 {isClosed && (

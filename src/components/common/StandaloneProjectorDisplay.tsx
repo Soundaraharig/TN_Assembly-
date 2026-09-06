@@ -293,84 +293,42 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
 
         /* SCENE 3: PARLIAMENTARY ELECTION VOTING STAGE */
         ) : settings.displayScene === 'election' || (settings.displayScene === 'auto' && activeElection) ? (
-          <div className="space-y-8 animate-slide-up max-w-5xl mx-auto w-full">
-            
-            <div className="space-y-3">
-              {isBallotClosed ? (
-                <span className="text-xs md:text-base font-black uppercase tracking-widest text-rose-300 bg-rose-500/20 px-6 py-2 rounded-full border border-rose-500/40 inline-flex items-center gap-2 shadow-lg">
-                  <Shield className="w-4 h-4 text-rose-400" /> VOTING CLOSED & BALLOT DIVISION SEALED
-                </span>
-              ) : (
-                <span className="text-xs md:text-base font-black uppercase tracking-widest text-amber-400 bg-amber-500/10 px-6 py-2 rounded-full border border-amber-500/30 inline-block shadow-lg">
-                  <Sparkles className="w-4 h-4 inline mr-2" /> PARLIAMENTARY ELECTION BALLOT LIVE
-                </span>
-              )}
-              
-              <h1 className="text-4xl md:text-7xl font-black text-white tracking-tight leading-tight drop-shadow-xl">
-                {targetBallotElection?.title || 'Assembly Speaker Election'}
-              </h1>
-              
-              {isBallotClosed && (
-                <p className="text-sm md:text-base text-amber-400/90 font-medium">
-                  Voting has ended. Awaiting Coordinator to trigger official result declaration.
-                </p>
-              )}
-            </div>
-
-            {/* Turnout Progress Bar Box */}
-            <div className="bg-slate-900/90 border-2 border-slate-800 p-6 rounded-3xl space-y-3 shadow-2xl max-w-3xl mx-auto">
-              <div className="flex items-center justify-between text-sm md:text-base">
-                <span className="font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
-                  {isBallotClosed ? (
-                    <>
-                      <Shield className="w-4 h-4 text-rose-400" /> Final Sealed Turnout
-                    </>
-                  ) : (
-                    <>
-                      <Radio className="w-4 h-4 text-emerald-400 animate-pulse" /> Live House Turnout
-                    </>
-                  )}
-                </span>
-                <span className="font-mono font-black text-amber-400 text-lg md:text-xl">
-                  {targetBallotElection?.voted_delegate_ids?.length || targetBallotElection?.total_votes || 0} / {learners.length || 117} Ballots Cast
-                  ({learners.length > 0 ? Math.round(((targetBallotElection?.voted_delegate_ids?.length || targetBallotElection?.total_votes || 0) / learners.length) * 100) : 0}%)
-                </span>
-              </div>
-
-              <div className="w-full h-4 rounded-full bg-slate-950 overflow-hidden border border-slate-800">
-                <div
-                  className={`h-full transition-all duration-700 ${isBallotClosed ? 'bg-rose-500' : 'bg-gradient-to-r from-amber-500 to-emerald-500'}`}
-                  style={{
-                    width: `${learners.length > 0 ? Math.round(((targetBallotElection?.voted_delegate_ids?.length || targetBallotElection?.total_votes || 0) / learners.length) * 100) : 0}%`
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* Candidate Cards Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 max-w-4xl mx-auto pt-2">
-              {(targetBallotElection?.candidates || []).map((cand, idx) => (
-                <div
-                  key={cand.id || idx}
-                  className={`p-5 rounded-2xl bg-slate-900/90 border text-left space-y-3 shadow-xl transition-colors ${isBallotClosed ? 'border-rose-900/50' : 'border-slate-800 hover:border-slate-700'}`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-400 text-xs font-bold font-mono">
-                      CANDIDATE #{idx + 1}
-                    </span>
-                    <span className="px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs font-bold">
-                      {cand.bench} Bench
-                    </span>
-                  </div>
-
-                  <div>
-                    <h4 className="text-xl font-black text-white">{cand.name}</h4>
-                    <p className="text-xs text-slate-400 font-medium">{cand.party}</p>
-                  </div>
+          <div className="flex flex-col items-center justify-center space-y-6 animate-slide-up max-w-4xl mx-auto text-center py-10 w-full">
+            {isBallotClosed ? (
+              <>
+                <div className="px-10 py-3.5 rounded-full border-2 border-amber-500/80 bg-amber-950/40 text-amber-400 text-2xl md:text-4xl font-extrabold flex items-center justify-center gap-3 shadow-2xl shadow-amber-500/20">
+                  <span>VOTING CLOSED</span>
                 </div>
-              ))}
-            </div>
+                
+                <p className="text-xl md:text-3xl font-medium text-slate-300">
+                  Tallying results...
+                </p>
+                
+                <p className="text-sm md:text-lg text-slate-400 font-semibold uppercase tracking-wider">
+                  {targetBallotElection?.title || 'Speaker Election'}
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="px-8 py-3 rounded-full border-2 border-emerald-500/80 bg-emerald-950/40 text-emerald-400 text-2xl md:text-4xl font-extrabold flex items-center justify-center gap-3 shadow-2xl shadow-emerald-500/20">
+                  <span className="w-4 h-4 rounded-full bg-emerald-500 animate-ping" />
+                  <span>• VOTING IS OPEN</span>
+                </div>
+                
+                <p className="text-xl md:text-3xl font-medium text-slate-200">
+                  Cast your vote on your phone
+                </p>
+                
+                <p className="text-sm md:text-lg text-slate-400 font-semibold uppercase tracking-wider">
+                  {targetBallotElection?.title || 'Speaker Election'}
+                </p>
+              </>
+            )}
 
+            {/* Turnout Stats Box */}
+            <div className="mt-4 px-6 py-2.5 rounded-2xl bg-slate-900/80 border border-slate-800 text-xs md:text-sm text-slate-400 font-mono">
+              House Ballots Cast: <span className="text-amber-400 font-bold">{targetBallotElection?.voted_delegate_ids?.length || targetBallotElection?.total_votes || 0}</span> / {learners.length || 117}
+            </div>
           </div>
 
         /* SCENE 4: LIVE FLOOR DIVISION (FLASH VOTE) STAGE */

@@ -103,13 +103,13 @@ function getInitialRouteInfo(initialSession: SavedAuthSession | null) {
   const pathname = window.location.pathname.toLowerCase();
   const search = window.location.search.toLowerCase();
 
-  // Standalone Projector View (/display, ?projector=true, /live-projector, /events/*/display)
+  // Standalone Projector View (/display, ?projector=true, /live-projector) - strictly excluding /events/
   const isStandalone = (
     pathname.includes('/display') ||
     pathname.includes('/live-projector') ||
     search.includes('projector=true') ||
     search.includes('display=true')
-  );
+  ) && !pathname.includes('/events/');
 
   if (isStandalone) {
     return { role: 'coordinator' as UserRole, isAuthenticated: true, activeNavTab: 'projector' as ActiveNavTab };
@@ -910,23 +910,15 @@ export function App() {
         const pathname = (typeof window !== 'undefined' ? window.location.pathname : '').toLowerCase();
         const search = (typeof window !== 'undefined' ? window.location.search : '').toLowerCase();
 
-        const evs = storageService.getEvents();
-
-        // 1. Standalone Projector View requested (/display, ?projector=true, /live-projector, /events/*/display)
+        // 1. Standalone Projector View requested (/display, ?projector=true, /live-projector) - strictly excluding /events/
         const isStandalone = (
           pathname.includes('/display') ||
           pathname.includes('/live-projector') ||
           search.includes('projector=true') ||
           search.includes('display=true')
-        );
+        ) && !pathname.includes('/events/');
 
         if (isStandalone) {
-          const urlEv = extractEventFromUrl(evs);
-          if (urlEv) {
-            setCurrentEvent(urlEv);
-            currentEventRef.current = urlEv;
-            loadState(urlEv.id);
-          }
           setRole('coordinator');
           setActiveNavTab('projector');
           setIsAuthenticated(true);
@@ -935,6 +927,7 @@ export function App() {
 
         const saved = localStorage.getItem(SESSION_KEY);
         const sess: SavedAuthSession | null = saved ? JSON.parse(saved) : null;
+        const evs = storageService.getEvents();
 
         if (sess?.currentEventId) {
           const targetEv = evs.find(e => e.id === sess.currentEventId);
@@ -1387,12 +1380,13 @@ export function App() {
     ? committees.find(c => c.id === currentStudent.committee_id) || null
     : null;
 
-  // Standalone Projector Screen render check (/display, ?projector=true, /events/*/display)
+  // Standalone Projector Screen render check (strictly for standalone display paths like /display or /events/*/display, NOT /events/*/projector)
   const isStandaloneProjectorView = (typeof window !== 'undefined') && (
-    window.location.pathname.toLowerCase().includes('/display') ||
+    window.location.pathname.toLowerCase().endsWith('/display') ||
+    (window.location.pathname.toLowerCase().includes('/display') && !window.location.pathname.toLowerCase().includes('/projector')) ||
     window.location.pathname.toLowerCase().includes('/live-projector') ||
-    window.location.search.toLowerCase().includes('projector=true') ||
-    window.location.search.toLowerCase().includes('display=true')
+    window.location.search.toLowerCase().includes('display=true') ||
+    (window.location.search.toLowerCase().includes('projector=true') && !window.location.pathname.toLowerCase().includes('/events/'))
   );
 
   if (isStandaloneProjectorView) {
