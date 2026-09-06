@@ -325,6 +325,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           eventId={activeEvent.id}
           userRole={props.userSession?.role || props.role}
           onAddMember={(tm) => storageService.addTeamMember(tm)}
+          onUpdateMember={(tm) => storageService.updateTeamMember(tm)}
           onDeleteMember={(id) => storageService.deleteTeamMember(id)}
           onShowToast={props.addToast}
         />

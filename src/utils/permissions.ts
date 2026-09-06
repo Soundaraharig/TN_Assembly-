@@ -38,3 +38,13 @@ export function canAdd(role?: UserRole): boolean {
 export function canManageEvents(role?: UserRole): boolean {
   return role === 'super_admin';
 }
+
+/**
+ * Checks if the user role can manage team members (add, delete, or change roles).
+ * Coordinator and Super Admin have full management capabilities.
+ * Organiser is restricted from managing team members.
+ */
+export function canManageTeam(role?: UserRole): boolean {
+  if (!role) return false;
+  return role === 'super_admin' || role === 'coordinator';
+}

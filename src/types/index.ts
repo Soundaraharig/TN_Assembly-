@@ -372,8 +372,11 @@ export interface TeamMember {
   id: string;
   event_id: string;
   name: string;
-  role: string;
+  role: 'Organiser' | 'Coordinator' | string;
   email: string;
-  phone: string;
+  phone?: string;
   department?: string;
+  access_code?: string;
+  created_at?: string;
+  updated_at?: string;
 }

@@ -2473,25 +2473,83 @@ class StorageService {
     return all;
   }
 
-  public addTeamMember(tm: Partial<TeamMember>): TeamMember {
+  public addTeamMember(tm: Partial<TeamMember>): { member: TeamMember; initialPassword?: string } {
     const all = this.getItem<TeamMember[]>(STORAGE_KEYS.TEAM, INITIAL_TEAM);
+    const cleanEmail = (tm.email || '').trim().toLowerCase();
+    const eventId = tm.event_id || '';
+
+    if (cleanEmail && eventId) {
+      const duplicate = all.find(t => t.event_id === eventId && (t.email || '').trim().toLowerCase() === cleanEmail);
+      if (duplicate) {
+        throw new Error(`A team member with email "${cleanEmail}" is already assigned to this election.`);
+      }
+    }
+
+    const generatedPass = `TN${Math.floor(100000 + Math.random() * 900000)}`;
     const newTm: TeamMember = {
       id: uid('tm'),
-      event_id: tm.event_id || '',
-      name: tm.name || 'Team Member',
-      role: tm.role || 'Floor Coordinator',
-      email: tm.email || '',
-      phone: tm.phone || '',
-      department: tm.department || 'Coordination'
+      event_id: eventId,
+      name: tm.name?.trim() || 'Team Member',
+      role: (tm.role === 'Coordinator' ? 'Coordinator' : 'Organiser'),
+      email: cleanEmail,
+      phone: tm.phone?.trim() || '',
+      department: tm.department?.trim() || (tm.role === 'Coordinator' ? 'Election Administration' : 'Event Operations'),
+      access_code: generatedPass,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
     };
+
     all.push(newTm);
     this.setItem(STORAGE_KEYS.TEAM, all);
-    return newTm;
+
+    if (newTm.role === 'Coordinator') {
+      const coords = this.getCoordinators();
+      if (!coords.some(c => c.email.toLowerCase() === cleanEmail)) {
+        coords.push({
+          id: uid('coord'),
+          event_id: eventId,
+          name: newTm.name,
+          email: newTm.email,
+          password_hash: generatedPass,
+          raw_temp_password: generatedPass
+        });
+        this.setItem(STORAGE_KEYS.COORDINATORS, coords);
+      }
+    }
+
+    return { member: newTm, initialPassword: generatedPass };
   }
 
-  public deleteTeamMember(id: string) {
-    const all = this.getItem<TeamMember[]>(STORAGE_KEYS.TEAM, INITIAL_TEAM).filter(t => t.id !== id);
-    this.setItem(STORAGE_KEYS.TEAM, all);
+  public updateTeamMember(tm: Partial<TeamMember> & { id: string }): TeamMember {
+    const all = this.getItem<TeamMember[]>(STORAGE_KEYS.TEAM, INITIAL_TEAM);
+    const idx = all.findIndex(t => t.id === tm.id);
+    if (idx !== -1) {
+      all[idx] = {
+        ...all[idx],
+        ...tm,
+        updated_at: new Date().toISOString()
+      };
+      this.setItem(STORAGE_KEYS.TEAM, all);
+      return all[idx];
+    }
+    return tm as TeamMember;
+  }
+
+  public deleteTeamMember(id: string, eventId?: string) {
+    const all = this.getItem<TeamMember[]>(STORAGE_KEYS.TEAM, INITIAL_TEAM);
+    const target = all.find(t => t.id === id);
+    if (target) {
+      const targetEventId = eventId || target.event_id;
+      if (target.role === 'Coordinator') {
+        const coordinatorsCount = all.filter(t => t.event_id === targetEventId && t.role === 'Coordinator').length;
+        if (coordinatorsCount <= 1) {
+          throw new Error('At least one Coordinator must remain assigned to this election.');
+        }
+      }
+    }
+
+    const updated = all.filter(t => t.id !== id);
+    this.setItem(STORAGE_KEYS.TEAM, updated);
   }
 
   // ── AUTO-ALLOCATION & RESET ───────────────────────────────────────────────
