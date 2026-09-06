@@ -2468,9 +2468,62 @@ class StorageService {
   // ── TEAM ──────────────────────────────────────────────────────────────────
 
   public getTeam(eventId?: string): TeamMember[] {
-    const all = this.getItem<TeamMember[]>(STORAGE_KEYS.TEAM, INITIAL_TEAM);
-    if (eventId) return all.filter(t => t.event_id === eventId);
-    return all;
+    const storedTeam = this.getItem<TeamMember[]>(STORAGE_KEYS.TEAM, INITIAL_TEAM);
+    const coords = this.getCoordinators();
+    const events = this.getEvents();
+
+    const mergedMap = new Map<string, TeamMember>();
+
+    // 1. Add all explicitly stored team members
+    storedTeam.forEach(t => {
+      const key = `${t.event_id || ''}_${(t.email || '').toLowerCase()}`;
+      mergedMap.set(key, t);
+    });
+
+    // 2. Dynamically merge registered Coordinators from STORAGE_KEYS.COORDINATORS
+    coords.forEach(c => {
+      if (c.email) {
+        const key = `${c.event_id || ''}_${c.email.toLowerCase()}`;
+        if (!mergedMap.has(key)) {
+          mergedMap.set(key, {
+            id: c.id || `tm_coord_${c.email}`,
+            event_id: c.event_id || '',
+            name: c.name || 'Event Coordinator',
+            email: c.email.toLowerCase(),
+            role: 'Coordinator',
+            department: 'Election Administration',
+            access_code: c.raw_temp_password || c.password_hash || 'coord123',
+            created_at: new Date().toISOString()
+          });
+        }
+      }
+    });
+
+    // 3. Dynamically merge assigned Coordinator from STORAGE_KEYS.EVENTS
+    events.forEach(ev => {
+      if (ev.assigned_coordinator_email) {
+        const emailLower = ev.assigned_coordinator_email.toLowerCase();
+        const key = `${ev.id}_${emailLower}`;
+        if (!mergedMap.has(key)) {
+          mergedMap.set(key, {
+            id: `tm_ev_coord_${ev.id}`,
+            event_id: ev.id,
+            name: ev.assigned_coordinator_name || 'Assembly Coordinator',
+            email: emailLower,
+            role: 'Coordinator',
+            department: 'Election Administration',
+            access_code: 'coord123',
+            created_at: ev.created_at || new Date().toISOString()
+          });
+        }
+      }
+    });
+
+    const result = Array.from(mergedMap.values());
+    if (eventId) {
+      return result.filter(t => t.event_id === eventId);
+    }
+    return result;
   }
 
   public addTeamMember(tm: Partial<TeamMember>): { member: TeamMember; initialPassword?: string } {
@@ -2557,24 +2610,28 @@ class StorageService {
   }
 
   public deleteTeamMember(id: string, eventId?: string) {
-    const all = this.getItem<TeamMember[]>(STORAGE_KEYS.TEAM, INITIAL_TEAM);
-    const target = all.find(t => t.id === id);
-    if (target) {
-      const targetEventId = eventId || target.event_id;
-      if (target.role === 'Coordinator') {
-        const coordinatorsCount = all.filter(t => t.event_id === targetEventId && t.role === 'Coordinator').length;
-        if (coordinatorsCount <= 1) {
-          throw new Error('At least one Coordinator must remain assigned to this election.');
-        }
-      }
-      if (target.email) {
-        const coords = this.getCoordinators().filter(c => c.email.toLowerCase() !== target.email.toLowerCase());
-        this.setItem(STORAGE_KEYS.COORDINATORS, coords);
+    const fullTeam = this.getTeam(eventId);
+    const targetMember = fullTeam.find(t => t.id === id);
+    if (!targetMember) return;
+
+    const targetEventId = eventId || targetMember.event_id;
+    if (targetMember.role === 'Coordinator') {
+      const eventCoordinators = fullTeam.filter(t => (t.event_id === targetEventId || !t.event_id) && t.role === 'Coordinator');
+      if (eventCoordinators.length <= 1) {
+        throw new Error('At least one Coordinator must remain assigned to this election.');
       }
     }
 
-    const updated = all.filter(t => t.id !== id);
-    this.setItem(STORAGE_KEYS.TEAM, updated);
+    const cleanEmail = targetMember.email.toLowerCase();
+
+    // 1. Remove from stored TEAM list
+    const storedTeam = this.getItem<TeamMember[]>(STORAGE_KEYS.TEAM, INITIAL_TEAM);
+    const updatedTeam = storedTeam.filter(t => t.id !== id && (t.email || '').toLowerCase() !== cleanEmail);
+    this.setItem(STORAGE_KEYS.TEAM, updatedTeam);
+
+    // 2. Remove from COORDINATORS list if present
+    const coords = this.getCoordinators().filter(c => c.email.toLowerCase() !== cleanEmail);
+    this.setItem(STORAGE_KEYS.COORDINATORS, coords);
   }
 
   // ── AUTO-ALLOCATION & RESET ───────────────────────────────────────────────

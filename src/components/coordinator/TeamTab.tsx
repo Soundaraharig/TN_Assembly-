@@ -54,7 +54,7 @@ export const TeamTab: React.FC<TeamTabProps> = ({
     name: string;
     email: string;
     role: string;
-    accessCode: string;
+    password: string;
   } | null>(null);
   const [copiedPass, setCopiedPass] = useState(false);
 
@@ -113,13 +113,13 @@ export const TeamTab: React.FC<TeamTabProps> = ({
         department: role === 'Coordinator' ? 'Election Administration' : 'Event Operations'
       });
 
-      const accessCode = result?.initialPassword || trimmedPass || result?.member?.access_code || `TN${Math.floor(100000 + Math.random() * 900000)}`;
+      const finalPassword = result?.initialPassword || trimmedPass || result?.member?.access_code || `TN${Math.floor(100000 + Math.random() * 900000)}`;
 
       setCreatedCredential({
         name: trimmedName,
         email: trimmedEmail,
         role: role,
-        accessCode: accessCode
+        password: finalPassword
       });
 
       setName('');
@@ -141,10 +141,10 @@ export const TeamTab: React.FC<TeamTabProps> = ({
 
   const handleCopyCredentials = () => {
     if (!createdCredential) return;
-    const textToCopy = `TN Assembly Election Access Credentials\nName: ${createdCredential.name}\nEmail: ${createdCredential.email}\nRole: ${createdCredential.role}\nAccess Code: ${createdCredential.accessCode}`;
+    const textToCopy = `TN Assembly Portal Login Credentials\nName: ${createdCredential.name}\nEmail: ${createdCredential.email}\nRole: ${createdCredential.role}\nPassword: ${createdCredential.password}`;
     navigator.clipboard.writeText(textToCopy);
     setCopiedPass(true);
-    onShowToast('Credentials Copied', 'Login access code copied to clipboard', 'info');
+    onShowToast('Credentials Copied', 'Login password copied to clipboard', 'info');
     setTimeout(() => setCopiedPass(false), 2500);
   };
 
@@ -235,7 +235,7 @@ export const TeamTab: React.FC<TeamTabProps> = ({
               <div>
                 <h4 className="text-base font-extrabold text-amber-400">Team Member Account Created</h4>
                 <p className="text-xs text-slate-300">
-                  Initial access code generated for <span className="font-bold text-white">{createdCredential.name}</span> ({createdCredential.email})
+                  Initial login password set for <span className="font-bold text-white">{createdCredential.name}</span> ({createdCredential.email})
                 </p>
               </div>
             </div>
@@ -250,9 +250,9 @@ export const TeamTab: React.FC<TeamTabProps> = ({
 
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-950/80 p-4 rounded-2xl border border-amber-500/30">
             <div className="space-y-1 text-left w-full sm:w-auto">
-              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Access Credential / Password</span>
+              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Account Login Password</span>
               <div className="font-mono text-xl font-black text-amber-300 tracking-wider select-all">
-                {createdCredential.accessCode}
+                {createdCredential.password}
               </div>
             </div>
 
