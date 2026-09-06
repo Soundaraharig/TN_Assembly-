@@ -43,6 +43,7 @@ export const TeamTab: React.FC<TeamTabProps> = ({
   // Form State
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [passwordInput, setPasswordInput] = useState('');
   const [role, setRole] = useState<'Organiser' | 'Coordinator'>('Organiser');
 
   // Inline Errors
@@ -78,6 +79,7 @@ export const TeamTab: React.FC<TeamTabProps> = ({
 
     const trimmedName = name.trim();
     const trimmedEmail = email.trim().toLowerCase();
+    const trimmedPass = passwordInput.trim();
 
     if (!trimmedName) {
       newErrors.name = 'Full Name is required';
@@ -107,10 +109,11 @@ export const TeamTab: React.FC<TeamTabProps> = ({
         name: trimmedName,
         email: trimmedEmail,
         role: role,
+        access_code: trimmedPass || undefined,
         department: role === 'Coordinator' ? 'Election Administration' : 'Event Operations'
       });
 
-      const accessCode = result?.initialPassword || result?.member?.access_code || `TN${Math.floor(100000 + Math.random() * 900000)}`;
+      const accessCode = result?.initialPassword || trimmedPass || result?.member?.access_code || `TN${Math.floor(100000 + Math.random() * 900000)}`;
 
       setCreatedCredential({
         name: trimmedName,
@@ -121,6 +124,7 @@ export const TeamTab: React.FC<TeamTabProps> = ({
 
       setName('');
       setEmail('');
+      setPasswordInput('');
       setRole('Organiser');
 
       onShowToast(
@@ -417,7 +421,7 @@ export const TeamTab: React.FC<TeamTabProps> = ({
           )}
 
           <form onSubmit={handleAddSubmit} className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               
               {/* Full Name Input */}
               <div className="space-y-1.5">
@@ -455,6 +459,21 @@ export const TeamTab: React.FC<TeamTabProps> = ({
                   style={{ borderColor: errors.email ? 'var(--rose, #f43f5e)' : 'var(--border)' }}
                 />
                 {errors.email && <p className="text-xs font-bold text-rose-500">{errors.email}</p>}
+              </div>
+
+              {/* Password Input (Optional - Custom or Auto) */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-extrabold uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>
+                  Password <span className="text-[10px] text-slate-400 font-normal capitalize">(auto-generated if empty)</span>
+                </label>
+                <input
+                  type="text"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="e.g. Pass123 or leave empty"
+                  className="w-full px-4 py-3 rounded-2xl text-sm font-semibold border bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500 transition-colors"
+                  style={{ borderColor: 'var(--border)' }}
+                />
               </div>
 
             </div>

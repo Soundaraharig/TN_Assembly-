@@ -19,7 +19,7 @@ export function canDelete(role?: UserRole): boolean {
  */
 export function canModify(role?: UserRole): boolean {
   if (!role) return false;
-  return role === 'super_admin' || role === 'coordinator' || role === 'volunteer';
+  return role === 'super_admin' || role === 'coordinator' || role === 'volunteer' || role === 'organiser';
 }
 
 /**
@@ -28,7 +28,7 @@ export function canModify(role?: UserRole): boolean {
  */
 export function canAdd(role?: UserRole): boolean {
   if (!role) return false;
-  return role === 'super_admin' || role === 'coordinator' || role === 'volunteer';
+  return role === 'super_admin' || role === 'coordinator' || role === 'volunteer' || role === 'organiser';
 }
 
 /**

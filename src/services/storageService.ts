@@ -2485,7 +2485,7 @@ class StorageService {
       }
     }
 
-    const generatedPass = `TN${Math.floor(100000 + Math.random() * 900000)}`;
+    const finalPass = (tm.access_code && tm.access_code.trim()) ? tm.access_code.trim() : `TN${Math.floor(100000 + Math.random() * 900000)}`;
     const newTm: TeamMember = {
       id: uid('tm'),
       event_id: eventId,
@@ -2494,7 +2494,7 @@ class StorageService {
       email: cleanEmail,
       phone: tm.phone?.trim() || '',
       department: tm.department?.trim() || (tm.role === 'Coordinator' ? 'Election Administration' : 'Event Operations'),
-      access_code: generatedPass,
+      access_code: finalPass,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
@@ -2502,22 +2502,30 @@ class StorageService {
     all.push(newTm);
     this.setItem(STORAGE_KEYS.TEAM, all);
 
-    if (newTm.role === 'Coordinator') {
-      const coords = this.getCoordinators();
-      if (!coords.some(c => c.email.toLowerCase() === cleanEmail)) {
-        coords.push({
-          id: uid('coord'),
-          event_id: eventId,
-          name: newTm.name,
-          email: newTm.email,
-          password_hash: generatedPass,
-          raw_temp_password: generatedPass
-        });
-        this.setItem(STORAGE_KEYS.COORDINATORS, coords);
-      }
+    // Sync all team members (Organiser & Coordinator) to Coordinators list so they can log in via Organizer Sign In
+    const coords = this.getCoordinators();
+    const existingIdx = coords.findIndex(c => c.email.toLowerCase() === cleanEmail);
+    if (existingIdx !== -1) {
+      coords[existingIdx] = {
+        ...coords[existingIdx],
+        name: newTm.name,
+        password_hash: finalPass,
+        raw_temp_password: finalPass,
+        event_id: eventId
+      };
+    } else {
+      coords.push({
+        id: uid('coord'),
+        event_id: eventId,
+        name: newTm.name,
+        email: newTm.email,
+        password_hash: finalPass,
+        raw_temp_password: finalPass
+      });
     }
+    this.setItem(STORAGE_KEYS.COORDINATORS, coords);
 
-    return { member: newTm, initialPassword: generatedPass };
+    return { member: newTm, initialPassword: finalPass };
   }
 
   public updateTeamMember(tm: Partial<TeamMember> & { id: string }): TeamMember {
@@ -2530,6 +2538,19 @@ class StorageService {
         updated_at: new Date().toISOString()
       };
       this.setItem(STORAGE_KEYS.TEAM, all);
+
+      if (all[idx].email) {
+        const coords = this.getCoordinators();
+        const cIdx = coords.findIndex(c => c.email.toLowerCase() === all[idx].email.toLowerCase());
+        if (cIdx !== -1) {
+          coords[cIdx] = {
+            ...coords[cIdx],
+            name: all[idx].name,
+            password_hash: all[idx].access_code || coords[cIdx].password_hash
+          };
+          this.setItem(STORAGE_KEYS.COORDINATORS, coords);
+        }
+      }
       return all[idx];
     }
     return tm as TeamMember;
@@ -2545,6 +2566,10 @@ class StorageService {
         if (coordinatorsCount <= 1) {
           throw new Error('At least one Coordinator must remain assigned to this election.');
         }
+      }
+      if (target.email) {
+        const coords = this.getCoordinators().filter(c => c.email.toLowerCase() !== target.email.toLowerCase());
+        this.setItem(STORAGE_KEYS.COORDINATORS, coords);
       }
     }
 

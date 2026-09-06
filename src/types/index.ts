@@ -6,7 +6,7 @@ export type EventStatus = 'Draft' | 'Pre-Event' | 'Day 1 Live' | 'Day 2 Live' | 
 
 export type AcademicYear = '1st Year' | '2nd Year' | '3rd Year' | '4th Year';
 
-export type UserRole = 'super_admin' | 'coordinator' | 'student' | 'jury' | 'volunteer';
+export type UserRole = 'super_admin' | 'coordinator' | 'student' | 'jury' | 'volunteer' | 'organiser';
 
 export interface UserSession {
   role: UserRole;

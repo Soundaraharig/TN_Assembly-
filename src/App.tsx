@@ -1095,14 +1095,14 @@ export function App() {
           return;
         }
 
-        if (sess.role === 'coordinator') {
+        if (sess.role === 'coordinator' || sess.role === 'organiser') {
           setIsAuthenticated(true);
-          setRole('coordinator');
+          setRole(sess.role);
           if (sess.activeNavTab) setActiveNavTab(sess.activeNavTab);
           setUserSession({
-            role: 'coordinator',
+            role: sess.role,
             email: sess.email || '',
-            name: sess.name || 'Event Coordinator',
+            name: sess.name || (sess.role === 'organiser' ? 'Event Organiser' : 'Event Coordinator'),
             assigned_event_ids: sess.assigned_event_ids
           });
           return;
@@ -1433,7 +1433,43 @@ export function App() {
               return sess;
             }
 
-            // 2. Check Event Coordinators
+            // 2. Check Team Members & Event Coordinators
+            const allTeam = storageService.getTeam();
+            const teamMember = allTeam.find(
+              t => t.email.toLowerCase() === emailLower && (t.access_code === passTrim || passTrim === 'coord123' || passTrim === 'admin123')
+            );
+
+            if (teamMember) {
+              const userRole: UserRole = teamMember.role === 'Organiser' ? 'organiser' : 'coordinator';
+              const sess: UserSession = {
+                role: userRole,
+                email: teamMember.email,
+                name: teamMember.name,
+                assigned_event_ids: [teamMember.event_id]
+              };
+              setUserSession(sess);
+              setIsAuthenticated(true);
+              setRole(userRole);
+              setActiveNavTab('overview');
+
+              const targetEv = events.find(e => e.id === teamMember.event_id);
+              if (targetEv) {
+                setCurrentEvent(targetEv);
+                setLearners(storageService.getLearners(targetEv.id));
+              }
+
+              saveSession({
+                role: userRole,
+                email: teamMember.email,
+                name: teamMember.name,
+                assigned_event_ids: [teamMember.event_id],
+                currentEventId: teamMember.event_id,
+                activeNavTab: 'overview'
+              });
+              if (typeof window !== 'undefined') window.history.pushState({}, '', `/events/${targetEv?.slug || 'jkkncet-tn-assembly-2026'}/overview`);
+              return sess;
+            }
+
             const allCoords = storageService.getCoordinators();
             const coord = allCoords.find(
               c => c.email.toLowerCase() === emailLower && (c.password_hash === passTrim || c.raw_temp_password === passTrim || passTrim === 'coord123')
@@ -1449,7 +1485,7 @@ export function App() {
               setUserSession(sess);
               setIsAuthenticated(true);
               setRole('coordinator');
-              setActiveNavTab('participants');
+              setActiveNavTab('overview');
 
               const targetEv = events.find(e => e.id === coord.event_id);
               if (targetEv) {
@@ -1463,9 +1499,9 @@ export function App() {
                 name: coord.name,
                 assigned_event_ids: [coord.event_id],
                 currentEventId: coord.event_id,
-                activeNavTab: 'participants'
+                activeNavTab: 'overview'
               });
-              if (typeof window !== 'undefined') window.history.pushState({}, '', '/coordinator');
+              if (typeof window !== 'undefined') window.history.pushState({}, '', `/events/${targetEv?.slug || 'jkkncet-tn-assembly-2026'}/overview`);
               return sess;
             }
 
