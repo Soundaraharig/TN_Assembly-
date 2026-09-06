@@ -22,8 +22,10 @@ import {
   Lock,
   BarChart3,
   History,
-  Trash2
+  Trash2,
+  Tv
 } from 'lucide-react';
+import { getProjectorSettings, saveProjectorSettings } from './ProjectorTab';
 
 interface ElectionsTabProps {
   elections: Election[];
@@ -387,6 +389,49 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
     onShowToast('Candidate Nominated', `${learner.full_name} was added to the ballot.`, 'success');
   };
 
+  const handleProjectResult = (electionId: string, title: string) => {
+    try {
+      const cur = getProjectorSettings(eventId);
+      saveProjectorSettings({
+        ...cur,
+        displayScene: 'election_result',
+        revealedElectionId: electionId
+      }, eventId);
+      onShowToast('Projected on Display', `Broadcasting animated result declaration for "${title}" to stage screen.`, 'success');
+    } catch {
+      onShowToast('Projector Sync', `Updated stage display with results for "${title}"`, 'info');
+    }
+  };
+
+  const handleProjectLiveElection = (electionId: string, title: string) => {
+    try {
+      const cur = getProjectorSettings(eventId);
+      saveProjectorSettings({
+        ...cur,
+        displayScene: 'election',
+        revealedElectionId: electionId
+      }, eventId);
+      onShowToast('Live Voting Projected', `Broadcasting live ballot progress for "${title}" to stage screen.`, 'info');
+    } catch {
+      onShowToast('Projector Sync', `Updated stage display with live voting for "${title}"`, 'info');
+    }
+  };
+
+  const handleCloseElection = (electionId: string, title: string) => {
+    onCloseElection(electionId);
+    try {
+      const cur = getProjectorSettings(eventId);
+      saveProjectorSettings({
+        ...cur,
+        displayScene: 'election',
+        revealedElectionId: electionId
+      }, eventId);
+      onShowToast('Voting Closed', `Ballot for "${title}" is sealed. Click "Reveal Result on Projector" to announce winner.`, 'info');
+    } catch {
+      onShowToast('Voting Closed', `Ballot closed for "${title}"`, 'info');
+    }
+  };
+
   const renderElectionRow = (elec: Election, index: number) => {
     const isExpanded = expandedElectionIds.has(elec.id);
     const isLive = elec.status === 'Live';
@@ -500,7 +545,10 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
               <div className="flex items-center gap-2 flex-wrap">
                 {isUpcoming && (
                   <button
-                    onClick={() => onSetElectionStatus && onSetElectionStatus(elec.id, 'Live')}
+                    onClick={() => {
+                      if (onSetElectionStatus) onSetElectionStatus(elec.id, 'Live');
+                      handleProjectLiveElection(elec.id, elec.title);
+                    }}
                     className="px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-amber-600 hover:bg-amber-500 shadow-sm flex items-center gap-1.5 cursor-pointer transition-all"
                   >
                     <Play className="w-3.5 h-3.5" /> Start Live Voting
@@ -508,11 +556,29 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                 )}
 
                 {isLive && (
+                  <>
+                    <button
+                      onClick={() => handleCloseElection(elec.id, elec.title)}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 shadow-sm flex items-center gap-1.5 cursor-pointer transition-all"
+                    >
+                      <Trophy className="w-3.5 h-3.5" /> End Voting & Close Ballot
+                    </button>
+                    <button
+                      onClick={() => handleProjectLiveElection(elec.id, elec.title)}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold text-amber-300 bg-slate-800 hover:bg-slate-700 border border-amber-500/40 flex items-center gap-1.5 cursor-pointer transition-all"
+                    >
+                      <Tv className="w-3.5 h-3.5 text-amber-400" /> Project Live Ballot 📡
+                    </button>
+                  </>
+                )}
+
+                {isClosed && (
                   <button
-                    onClick={() => onCloseElection(elec.id)}
-                    className="px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 shadow-sm flex items-center gap-1.5 cursor-pointer transition-all"
+                    onClick={() => handleProjectResult(elec.id, elec.title)}
+                    className="px-3.5 py-1.5 rounded-lg text-xs font-bold text-slate-950 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 shadow-md flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
+                    title="Project animated winner declaration on auditorium display"
                   >
-                    <Trophy className="w-3.5 h-3.5" /> Close & Announce Winner
+                    <Tv className="w-3.5 h-3.5 text-slate-950" /> Reveal Result on Projector 🎬
                   </button>
                 )}
 
@@ -572,22 +638,24 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
             {/* Winner Banner if Closed */}
             {isClosed && (
-              <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center font-black">
-                  <Trophy className="w-5 h-5" />
-                </div>
-                <div>
-                  <span className="text-[10px] uppercase font-bold tracking-widest text-amber-500 block">
-                    Elected Winner
-                  </span>
-                  <h4 className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>
-                    {elec.winner || (leader ? leader.name : 'No winner declared')}
-                  </h4>
-                  {leader && (
-                    <p className="text-[11px] text-slate-400">
-                      Won with {leader.votes} votes ({elec.total_votes > 0 ? Math.round((leader.votes / elec.total_votes) * 100) : 0}%) • {leader.party}
-                    </p>
-                  )}
+              <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center font-black">
+                    <Trophy className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] uppercase font-bold tracking-widest text-amber-500 block">
+                      Elected Winner
+                    </span>
+                    <h4 className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>
+                      {elec.winner || (leader ? leader.name : 'No winner declared')}
+                    </h4>
+                    {leader && (
+                      <p className="text-[11px] text-slate-400">
+                        Won with {leader.votes} votes ({elec.total_votes > 0 ? Math.round((leader.votes / elec.total_votes) * 100) : 0}%) • {leader.party}
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
             )}

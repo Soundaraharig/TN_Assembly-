@@ -44,6 +44,32 @@ export function findEventBySlug(events: CollegeEvent[], slug?: string): CollegeE
   });
 }
 
+export function extractEventFromUrl(events: CollegeEvent[]): CollegeEvent | undefined {
+  if (typeof window === 'undefined' || !events || events.length === 0) return undefined;
+  
+  // 1. Query parameter check: ?event=... or ?eventId=... or ?event_id=...
+  const searchParams = new URLSearchParams(window.location.search);
+  const eventParam = searchParams.get('event') || searchParams.get('eventId') || searchParams.get('event_id');
+  if (eventParam) {
+    const matched = findEventBySlug(events, eventParam);
+    if (matched) return matched;
+  }
+
+  // 2. Path check: /events/:eventSlug/...
+  const pathname = window.location.pathname.toLowerCase();
+  if (pathname.includes('/events/')) {
+    const parts = window.location.pathname.split('/').filter(Boolean);
+    const eventsIdx = parts.findIndex(p => p.toLowerCase() === 'events');
+    if (eventsIdx !== -1 && parts.length > eventsIdx + 1) {
+      const slugCandidate = parts[eventsIdx + 1];
+      const matched = findEventBySlug(events, slugCandidate);
+      if (matched) return matched;
+    }
+  }
+
+  return undefined;
+}
+
 // Map between route path parameter (:tab) and internal ActiveNavTab
 const TAB_PATH_MAP: Record<string, ActiveNavTab> = {
   'overview': 'overview',
@@ -59,6 +85,7 @@ const TAB_PATH_MAP: Record<string, ActiveNavTab> = {
   'volunteers': 'volunteers',
   'control': 'control',
   'projector': 'projector',
+  'display': 'projector',
   'elections': 'elections',
   'proceedings': 'proceedings',
   'score-grid': 'scoregrid',

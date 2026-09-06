@@ -42,7 +42,7 @@ export function generateDelegateBadgesPDF(learners: Learner[], eventName: string
     doc.setTextColor(255, 255, 255);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
-    doc.text('TAMIL NADU YOUTH LEGISLATIVE ASSEMBLY', x + badgeWidth / 2, y + 5, { align: 'center' });
+    doc.text('TN LEGISLATIVE ASSEMBLY', x + badgeWidth / 2, y + 5, { align: 'center' });
     doc.setFontSize(7);
     doc.setFont('helvetica', 'normal');
     doc.text(eventName.toUpperCase(), x + badgeWidth / 2, y + 9.5, { align: 'center' });

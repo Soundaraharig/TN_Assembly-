@@ -47,7 +47,7 @@ export const EventOverviewTab: React.FC<EventOverviewTabProps> = ({
         style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
       >
         <span className="text-[10px] uppercase font-extrabold tracking-wider" style={{ color: 'var(--amber)' }}>
-          THE EVENT • TAMIL NADU YOUTH ASSEMBLY
+          THE EVENT • TN LEGISLATIVE ASSEMBLY
         </span>
 
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-4 my-3" style={{ borderColor: 'var(--border-soft)' }}>

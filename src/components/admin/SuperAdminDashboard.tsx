@@ -45,7 +45,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
               <ShieldCheck className="w-4 h-4" /> State Super Admin Control
             </div>
             <h2 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">
-              Tamil Nadu Youth Assembly Event Management
+              TN Legislative Assembly Event Management
             </h2>
             <p className="text-sm text-slate-300 max-w-2xl leading-relaxed">
               Provision college events across Tamil Nadu, auto-generate coordinator credentials, monitor delegate enrollment, and track stage progression.

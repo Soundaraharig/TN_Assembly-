@@ -352,7 +352,7 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
         </div>
 
         <p className="text-center text-[11px] mt-6 animate-fade-in" style={{ color: 'var(--text-muted)' }}>
-          Tamil Nadu Youth Legislative Assembly System • State Level Assembly Portal
+          TN Legislative Assembly System • Assembly Portal
         </p>
       </div>
     </div>

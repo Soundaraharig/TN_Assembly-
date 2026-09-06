@@ -587,7 +587,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                 className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider border"
                 style={{ background: 'var(--accent-soft)', color: 'var(--accent)', borderColor: 'var(--accent)' }}
               >
-                {event?.college_name || 'Tamil Nadu Youth Assembly'}
+                {event?.college_name || 'TN Assembly Platform'}
               </span>
             </div>
             <p className="text-xs flex items-center gap-2 mt-0.5" style={{ color: 'var(--text-muted)' }}>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Routes, Route, Navigate, useParams, useNavigate, useLocation, Link } from 'react-router-dom';
-import { getEventSlug, findEventBySlug, pathToTab, tabToPath } from './utils/slug';
+import { getEventSlug, findEventBySlug, extractEventFromUrl, pathToTab, tabToPath } from './utils/slug';
 import type {
   UserRole,
   CollegeEvent,
@@ -103,8 +103,15 @@ function getInitialRouteInfo(initialSession: SavedAuthSession | null) {
   const pathname = window.location.pathname.toLowerCase();
   const search = window.location.search.toLowerCase();
 
-  // Standalone Projector View (/display, /projector, or ?projector=true)
-  if (pathname.includes('/display') || pathname.includes('/projector') || search.includes('projector=true')) {
+  // Standalone Projector View (/display, ?projector=true, /live-projector, /events/*/display)
+  const isStandalone = (
+    pathname.includes('/display') ||
+    pathname.includes('/live-projector') ||
+    search.includes('projector=true') ||
+    search.includes('display=true')
+  );
+
+  if (isStandalone) {
     return { role: 'coordinator' as UserRole, isAuthenticated: true, activeNavTab: 'projector' as ActiveNavTab };
   }
 
@@ -903,8 +910,23 @@ export function App() {
         const pathname = (typeof window !== 'undefined' ? window.location.pathname : '').toLowerCase();
         const search = (typeof window !== 'undefined' ? window.location.search : '').toLowerCase();
 
-        // 1. Standalone Projector View requested (/display, /projector, or ?projector=true)
-        if (pathname.includes('/display') || pathname.includes('/projector') || search.includes('projector=true')) {
+        const evs = storageService.getEvents();
+
+        // 1. Standalone Projector View requested (/display, ?projector=true, /live-projector, /events/*/display)
+        const isStandalone = (
+          pathname.includes('/display') ||
+          pathname.includes('/live-projector') ||
+          search.includes('projector=true') ||
+          search.includes('display=true')
+        );
+
+        if (isStandalone) {
+          const urlEv = extractEventFromUrl(evs);
+          if (urlEv) {
+            setCurrentEvent(urlEv);
+            currentEventRef.current = urlEv;
+            loadState(urlEv.id);
+          }
           setRole('coordinator');
           setActiveNavTab('projector');
           setIsAuthenticated(true);
@@ -913,7 +935,6 @@ export function App() {
 
         const saved = localStorage.getItem(SESSION_KEY);
         const sess: SavedAuthSession | null = saved ? JSON.parse(saved) : null;
-        const evs = storageService.getEvents();
 
         if (sess?.currentEventId) {
           const targetEv = evs.find(e => e.id === sess.currentEventId);
@@ -1366,21 +1387,24 @@ export function App() {
     ? committees.find(c => c.id === currentStudent.committee_id) || null
     : null;
 
-  // Standalone Projector Screen render check (/projector, /display, ?projector=true)
+  // Standalone Projector Screen render check (/display, ?projector=true, /events/*/display)
   const isStandaloneProjectorView = (typeof window !== 'undefined') && (
     window.location.pathname.toLowerCase().includes('/display') ||
-    window.location.pathname.toLowerCase().includes('/projector') ||
-    window.location.search.toLowerCase().includes('projector=true')
+    window.location.pathname.toLowerCase().includes('/live-projector') ||
+    window.location.search.toLowerCase().includes('projector=true') ||
+    window.location.search.toLowerCase().includes('display=true')
   );
 
   if (isStandaloneProjectorView) {
+    const activeEv = extractEventFromUrl(events) || currentEvent || events[0];
+    const evId = activeEv?.id || '';
     return (
       <StandaloneProjectorDisplay
-        currentEvent={currentEvent}
-        agenda={agenda}
-        elections={elections}
-        flashVotes={flashVotes}
-        learners={learners}
+        currentEvent={activeEv}
+        agenda={storageService.getAgenda(evId)}
+        elections={storageService.getElections(evId)}
+        flashVotes={storageService.getFlashVotes(evId)}
+        learners={storageService.getLearners(evId)}
       />
     );
   }

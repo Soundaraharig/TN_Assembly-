@@ -33,7 +33,7 @@ export const OrganizerSignIn: React.FC<OrganizerSignInProps> = ({ onSignIn }) =>
         <h1 className="text-2xl font-black tracking-wide text-slate-800">
           TN Assembly
         </h1>
-        <p className="text-xs text-slate-500 font-medium">Tamil Nadu Youth Legislative Assembly — Organizer Portal</p>
+        <p className="text-xs text-slate-500 font-medium">TN Legislative Assembly — Organizer Portal</p>
       </div>
 
       {/* Sign In Card */}

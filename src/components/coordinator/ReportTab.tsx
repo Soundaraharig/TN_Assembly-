@@ -92,7 +92,7 @@ export const ReportTab: React.FC<ReportTabProps> = ({
         {/* Document Header */}
         <div className="text-center border-b pb-6 space-y-2" style={{ borderColor: 'var(--border-soft)' }}>
           <span className="text-[11px] font-black uppercase tracking-widest text-amber-500">
-            TAMIL NADU YOUTH LEGISLATIVE ASSEMBLY SECRETARIAT
+            TN LEGISLATIVE ASSEMBLY SECRETARIAT
           </span>
           <h2 className="text-2xl sm:text-3xl font-black" style={{ color: 'var(--text-primary)' }}>
             Official Post-Session Legislative Report
@@ -191,7 +191,7 @@ export const ReportTab: React.FC<ReportTabProps> = ({
         {/* Official Secretariat Signoff */}
         <div className="pt-8 border-t flex flex-col sm:flex-row justify-between items-end gap-6 text-xs" style={{ borderColor: 'var(--border-soft)', color: 'var(--text-secondary)' }}>
           <div>
-            <p className="font-bold">Prepared by: Youth Assembly Secretariat</p>
+            <p className="font-bold">Prepared by: Legislative Secretariat</p>
             <p className="text-[11px] text-slate-400">Signed on: {new Date().toLocaleDateString('en-GB')}</p>
           </div>
 

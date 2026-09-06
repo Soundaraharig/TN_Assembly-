@@ -36,7 +36,7 @@ const INITIAL_MEDIA_GALLERY: MediaItem[] = [
     title: 'Official Press Communiqué — Resolution Passed',
     category: 'PRESS_RELEASE',
     url: '#',
-    caption: 'Official Secretariat Release: Tamil Nadu Youth Assembly passes historic Student Incubation Venture Capital Statute.',
+    caption: 'Official Secretariat Release: Legislative Assembly passes historic Student Incubation Venture Capital Statute.',
     timestamp: 'Day 1 • 01:00 PM'
   }
 ];

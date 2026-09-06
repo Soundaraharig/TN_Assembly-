@@ -53,7 +53,7 @@ export const StudentJoinView: React.FC<StudentJoinViewProps> = ({ onLoginSuccess
           </div>
           <div>
             <span className="text-[10px] uppercase font-black tracking-widest text-amber-500">
-              TAMIL NADU YOUTH LEGISLATIVE ASSEMBLY
+              TN LEGISLATIVE ASSEMBLY
             </span>
             <h1 className="text-2xl font-black tracking-tight text-white mt-1">
               Participant Portal Login

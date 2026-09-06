@@ -246,7 +246,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 Official Delegate Pass
               </span>
               <h2 className="text-xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-                {event ? event.college_name : 'Tamil Nadu Youth Legislative Assembly'}
+                {event ? event.college_name : 'TN Legislative Assembly'}
               </h2>
             </div>
           </div>
