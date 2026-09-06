@@ -27,6 +27,7 @@ import { storageService } from './services/storageService';
 import { Header } from './components/common/Header';
 import { Sidebar, type ActiveNavTab } from './components/common/Sidebar';
 import { ToastContainer, type ToastMessage } from './components/common/Toast';
+import { StandaloneProjectorDisplay } from './components/common/StandaloneProjectorDisplay';
 import { useTheme } from './lib/theme';
 
 import { UnifiedLoginPage } from './components/auth/UnifiedLoginPage';
@@ -202,6 +203,12 @@ interface EventTabRouteHandlerProps {
   setIsImportCsvOpen: (open: boolean) => void;
   setIsAllocationModalOpen: (open: boolean) => void;
   handleAddAgendaItem: (item: Partial<AgendaItem>) => void;
+  handleUpdateAgendaItem?: (item: AgendaItem) => void;
+  handleDeleteAgendaItem?: (id: string) => void;
+  handleDuplicateAgendaItem?: (id: string) => void;
+  handleReorderAgendaItems?: (day: any, orderedIds: string[]) => void;
+  handleToggleEnableAgendaItem?: (id: string) => void;
+  handleSetAgendaStatus?: (id: string, status: any) => void;
   activeParty?: Party | null;
   activeCommittee?: Committee | null;
   currentStudent?: Learner | null;
@@ -332,7 +339,14 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
         <AgendaTab
           agenda={props.agenda}
           eventId={activeEvent.id}
+          userRole={props.userSession?.role || props.role}
           onAddAgendaItem={props.handleAddAgendaItem}
+          onUpdateAgendaItem={props.handleUpdateAgendaItem}
+          onDeleteAgendaItem={props.handleDeleteAgendaItem}
+          onDuplicateAgendaItem={props.handleDuplicateAgendaItem}
+          onReorderAgendaItems={props.handleReorderAgendaItems}
+          onToggleEnableAgendaItem={props.handleToggleEnableAgendaItem}
+          onSetAgendaStatus={props.handleSetAgendaStatus}
           onSetCurrentItem={props.handleSetCurrentAgendaItem}
           onShowToast={props.addToast}
         />
@@ -1264,6 +1278,32 @@ export function App() {
     storageService.addAgendaItem(a);
   };
 
+  const handleUpdateAgendaItem = (a: AgendaItem) => {
+    storageService.updateAgendaItem(a);
+  };
+
+  const handleDeleteAgendaItem = (id: string) => {
+    storageService.deleteAgendaItem(id);
+  };
+
+  const handleDuplicateAgendaItem = (id: string) => {
+    storageService.duplicateAgendaItem(id);
+  };
+
+  const handleReorderAgendaItems = (day: any, orderedIds: string[]) => {
+    if (currentEvent) {
+      storageService.reorderAgendaItems(currentEvent.id, day, orderedIds);
+    }
+  };
+
+  const handleToggleEnableAgendaItem = (id: string) => {
+    storageService.toggleEnableAgendaItem(id);
+  };
+
+  const handleSetAgendaStatus = (id: string, status: any) => {
+    storageService.setAgendaItemStatus(id, status);
+  };
+
   const handleSetCurrentAgendaItem = (itemId: string) => {
     if (currentEvent) {
       storageService.setCurrentAgendaItem(currentEvent.id, itemId);
@@ -1325,6 +1365,25 @@ export function App() {
   const activeCommittee = learners.length > 0 && currentStudent?.committee_id
     ? committees.find(c => c.id === currentStudent.committee_id) || null
     : null;
+
+  // Standalone Projector Screen render check (/projector, /display, ?projector=true)
+  const isStandaloneProjectorView = (typeof window !== 'undefined') && (
+    window.location.pathname.toLowerCase().includes('/display') ||
+    window.location.pathname.toLowerCase().includes('/projector') ||
+    window.location.search.toLowerCase().includes('projector=true')
+  );
+
+  if (isStandaloneProjectorView) {
+    return (
+      <StandaloneProjectorDisplay
+        currentEvent={currentEvent}
+        agenda={agenda}
+        elections={elections}
+        flashVotes={flashVotes}
+        learners={learners}
+      />
+    );
+  }
 
   // Unauthenticated Login view
   if (!isAuthenticated) {
@@ -1892,6 +1951,12 @@ export function App() {
                   setIsImportCsvOpen={setIsImportCsvOpen}
                   setIsAllocationModalOpen={setIsAllocationModalOpen}
                   handleAddAgendaItem={handleAddAgendaItem}
+                  handleUpdateAgendaItem={handleUpdateAgendaItem}
+                  handleDeleteAgendaItem={handleDeleteAgendaItem}
+                  handleDuplicateAgendaItem={handleDuplicateAgendaItem}
+                  handleReorderAgendaItems={handleReorderAgendaItems}
+                  handleToggleEnableAgendaItem={handleToggleEnableAgendaItem}
+                  handleSetAgendaStatus={handleSetAgendaStatus}
                   activeParty={activeParty}
                   activeCommittee={activeCommittee}
                   currentStudent={currentStudent}

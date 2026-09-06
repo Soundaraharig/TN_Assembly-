@@ -5,6 +5,8 @@ import type {
   Party,
   Committee,
   AgendaItem,
+  AgendaDay,
+  AgendaStatus,
   JuryMember,
   Volunteer,
   UserSession,
@@ -550,6 +552,19 @@ class StorageService {
     if (table === 'college_events') {
       const { cabinet_ministries, ...clean } = raw;
       return clean;
+    }
+    if (table === 'session_agenda') {
+      return {
+        id: raw.id,
+        event_id: raw.event_id,
+        day: raw.day || 'Day 1',
+        time: raw.time || '09:00 AM',
+        title: raw.title || 'Agenda Item',
+        description: raw.description || '',
+        speaker_role: raw.speaker_role || null,
+        is_current: !!raw.is_current,
+        created_at: raw.created_at || new Date().toISOString()
+      };
     }
     return raw;
   }
@@ -1212,36 +1227,294 @@ class StorageService {
 
   public getAgenda(eventId?: string): AgendaItem[] {
     const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA);
-    if (eventId) return all.filter(a => a.event_id === eventId);
-    return all;
+    if (eventId) {
+      const eventItems = all.filter(a => a.event_id === eventId);
+      // Auto-seed default fresh agenda if no items exist yet or less than 2 items exist for this event
+      if (eventItems.length < 2) {
+        return this.resetEventAgendaToDefault(eventId);
+      }
+      return [...eventItems].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+    }
+    return [...all].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+  }
+
+  public resetEventAgendaToDefault(eventId: string): AgendaItem[] {
+    if (!eventId) return [];
+    const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA);
+    const remaining = all.filter(a => a.event_id !== eventId);
+    this.setItem(STORAGE_KEYS.AGENDA, remaining);
+    return this.seedDefaultAgendaForEvent(eventId);
+  }
+
+  public seedDefaultAgendaForEvent(eventId: string): AgendaItem[] {
+    const defaultItems: Partial<AgendaItem>[] = [
+      // Pre-Event
+      { day: 'Pre-Event', title: 'Registration Opens', date: '15 Jun 2026', time: '09:00 AM', duration_minutes: 30, category: 'General', description: 'Participant access codes check-in & kit distribution', speaker_role: 'Registration Desk', order: 1 },
+      { day: 'Pre-Event', title: 'Delegate Seating', date: '15 Jun 2026', time: '09:30 AM', duration_minutes: 15, category: 'General', description: 'Seating of Ruling, Opposition & Independent members', speaker_role: 'Floor Marshals', order: 2 },
+      { day: 'Pre-Event', title: 'National Anthem', date: '15 Jun 2026', time: '09:45 AM', duration_minutes: 5, category: 'Ceremony', description: 'Assembly inauguration national anthem', speaker_role: 'All Delegates', order: 3 },
+      { day: 'Pre-Event', title: 'Welcome Address', date: '15 Jun 2026', time: '09:50 AM', duration_minutes: 15, category: 'Ceremony', description: 'Opening speech by Youth Legislative Secretariat', speaker_role: 'Convenor', order: 4 },
+      { day: 'Pre-Event', title: 'Chief Guest Address', date: '15 Jun 2026', time: '10:05 AM', duration_minutes: 25, category: 'Ceremony', description: 'Keynote address by Chief Guest & Dignitaries', speaker_role: 'Chief Guest', order: 5 },
+      { day: 'Pre-Event', title: 'Event Overview & Instructions', date: '15 Jun 2026', time: '10:30 AM', duration_minutes: 15, category: 'General', description: 'Briefing on Parliamentary procedures & Rules of Conduct', speaker_role: 'Assembly Secretary', order: 6 },
+      { day: 'Pre-Event', title: 'Seating of Speaker', date: '15 Jun 2026', time: '10:45 AM', duration_minutes: 10, category: 'Ceremony', description: 'Pro-tem Speaker assumes the Chair', speaker_role: 'Pro-tem Speaker', order: 7 },
+      { day: 'Pre-Event', title: 'Oath Taking Ceremony', date: '15 Jun 2026', time: '10:55 AM', duration_minutes: 20, category: 'Oath Taking', description: 'Swearing-in of all elected MLAs & Delegates', speaker_role: 'Pro-tem Speaker', order: 8 },
+      { day: 'Pre-Event', title: 'Government & Opposition Formation', date: '15 Jun 2026', time: '11:15 AM', duration_minutes: 30, category: 'Party Formation', description: 'Announcement of Treasury & Opposition Benches', speaker_role: 'Party Leaders', order: 9 },
+      { day: 'Pre-Event', title: 'Discussion on Matters of Urgent Public Importance', date: '15 Jun 2026', time: '11:45 AM', duration_minutes: 45, category: 'General', description: 'Initial public interest motions debate', speaker_role: 'Floor Members', order: 10 },
+      { day: 'Pre-Event', title: 'Lunch Break', date: '15 Jun 2026', time: '12:30 PM', duration_minutes: 45, category: 'Break', description: 'Networking & Lunch in Main Dining Hall', speaker_role: 'All Delegates', order: 11 },
+      { day: 'Pre-Event', title: 'Committee Discussions', date: '15 Jun 2026', time: '01:15 PM', duration_minutes: 60, category: 'Committee Discussion', description: 'Departmental standing committee sessions', speaker_role: 'Committee Chairs', order: 12 },
+      { day: 'Pre-Event', title: 'Instructions for Day 1', date: '15 Jun 2026', time: '02:15 PM', duration_minutes: 15, category: 'General', description: 'Announcements and schedule for Day 1 Legislative Session', speaker_role: 'Secretariat', order: 13 },
+
+      // Day 1
+      { day: 'Day 1', title: 'Registration Opens', date: '16 Jun 2026', time: '09:00 AM', duration_minutes: 30, category: 'General', description: 'Day 1 delegate arrival and check-in verification', speaker_role: 'Registration Desk', order: 1 },
+      { day: 'Day 1', title: 'Delegates Seated', date: '16 Jun 2026', time: '09:30 AM', duration_minutes: 10, category: 'Inaugural', description: 'Delegates seated according to bench allocations', speaker_role: 'Marshals', order: 2 },
+      { day: 'Day 1', title: 'National Anthem', date: '16 Jun 2026', time: '09:40 AM', duration_minutes: 5, category: 'Inaugural', description: 'Assembly commencement national anthem', speaker_role: 'All Delegates', order: 3 },
+      { day: 'Day 1', title: 'Welcome Address', date: '16 Jun 2026', time: '09:45 AM', duration_minutes: 10, category: 'Inaugural', description: 'Welcome speech by Hon. Speaker', speaker_role: 'Speaker of House', order: 4 },
+      { day: 'Day 1', title: 'Chief Guest Address', date: '16 Jun 2026', time: '09:55 AM', duration_minutes: 20, category: 'Inaugural', description: 'Special address by Chief Guest', speaker_role: 'Chief Guest', order: 5 },
+      { day: 'Day 1', title: 'Speaker Election', date: '16 Jun 2026', time: '10:15 AM', duration_minutes: 30, category: 'Speaker Election', description: 'Nomination and voting for Assembly Speaker', speaker_role: 'Pro-tem Speaker', order: 6 },
+      { day: 'Day 1', title: 'Government & Opposition Formation', date: '16 Jun 2026', time: '10:45 AM', duration_minutes: 30, category: 'Party Formation', description: 'Official designation of CM, Leader of Opposition & Cabinet', speaker_role: 'House Speaker', order: 7 },
+      { day: 'Day 1', title: 'Discussion on Matters of Urgent Public Importance', date: '16 Jun 2026', time: '11:15 AM', duration_minutes: 90, category: 'Opening Speech', description: 'Debate on pressing state governance & socio-economic issues', speaker_role: 'Floor Members', order: 8 },
+      { day: 'Day 1', title: 'Lunch Break', date: '16 Jun 2026', time: '12:45 PM', duration_minutes: 45, category: 'Break', description: 'Delegate lunch & informal consultations', speaker_role: 'All Delegates', order: 9 },
+      { day: 'Day 1', title: 'Committee Discussions (Bill Drafting)', date: '16 Jun 2026', time: '01:30 PM', duration_minutes: 60, category: 'Committee Discussion', description: 'Committee rooms convene to draft legislative bills', speaker_role: 'Committee Chairs', order: 10 },
+      { day: 'Day 1', title: 'Instructions for Day 2', date: '16 Jun 2026', time: '02:30 PM', duration_minutes: 15, category: 'Inaugural', description: 'End of Day 1 instructions and docket distribution', speaker_role: 'Secretariat', order: 11 },
+
+      // Day 2
+      { day: 'Day 2', title: 'Question Hour', date: '17 Jun 2026', time: '09:30 AM', duration_minutes: 60, category: 'Question Hour', description: 'Opposition interpellation & Cabinet Ministers oral answers', speaker_role: 'Hon. Speaker & Ministers', order: 1 },
+      { day: 'Day 2', title: 'Zero Hour', date: '17 Jun 2026', time: '10:30 AM', duration_minutes: 60, category: 'Zero Hour', description: 'Unscripted raise of urgent public concerns by MLAs', speaker_role: 'Elected Members', order: 2 },
+      { day: 'Day 2', title: 'Lunch Break', date: '17 Jun 2026', time: '11:30 AM', duration_minutes: 45, category: 'Break', description: 'Delegate lunch break', speaker_role: 'All Delegates', order: 3 },
+      { day: 'Day 2', title: 'Bill Presentation & Voting', date: '17 Jun 2026', time: '12:15 PM', duration_minutes: 105, category: 'Bill Presentation', description: 'Tabling of official Assembly Bills, floor debate & division voting', speaker_role: 'Sponsoring Ministers', order: 4 },
+      { day: 'Day 2', title: 'Closing Statements & Adjournment', date: '17 Jun 2026', time: '02:00 PM', duration_minutes: 15, category: 'Valedictory', description: 'Closing speeches by CM and Leader of Opposition', speaker_role: 'Party Leaders', order: 5 },
+      { day: 'Day 2', title: 'Valedictory: Chief Guest Address', date: '17 Jun 2026', time: '02:15 PM', duration_minutes: 20, category: 'Valedictory', description: 'Valedictory keynote speech', speaker_role: 'Chief Guest', order: 6 },
+      { day: 'Day 2', title: 'Declaration of Awards', date: '17 Jun 2026', time: '02:35 PM', duration_minutes: 15, category: 'Valedictory', description: 'Best Parliamentarian & Best Speaker awards ceremony', speaker_role: 'Jury Panel', order: 7 },
+      { day: 'Day 2', title: 'Felicitation Ceremony', date: '17 Jun 2026', time: '02:50 PM', duration_minutes: 10, category: 'Valedictory', description: 'Felicitation of coordinators, volunteers & jury', speaker_role: 'Organizing Committee', order: 8 },
+      { day: 'Day 2', title: 'National Anthem', date: '17 Jun 2026', time: '03:00 PM', duration_minutes: 5, category: 'Valedictory', description: 'Assembly formal adjournment national anthem', speaker_role: 'All Delegates', order: 9 }
+    ];
+
+    const createdItems: AgendaItem[] = defaultItems.map(item => {
+      const duration = item.duration_minutes || 30;
+      return {
+        id: uid('agd'),
+        event_id: eventId,
+        day: item.day || 'Day 1',
+        date: item.date || '15 Jun 2026',
+        time: item.time || '09:00 AM',
+        duration_minutes: duration,
+        endTime: this.calculateEndTime(item.time || '09:00 AM', duration),
+        title: item.title || 'Agenda Item',
+        description: item.description || '',
+        category: item.category || 'General',
+        status: 'Upcoming', // Fresh event items MUST start in Upcoming state
+        order: item.order || 1,
+        enabled: true,
+        speaker_role: item.speaker_role || '',
+        is_current: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+    });
+
+    const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA);
+    const merged = [...all.filter(a => a.event_id !== eventId), ...createdItems];
+    this.setItem(STORAGE_KEYS.AGENDA, merged);
+
+    // Sync default items to Supabase
+    if (supabase && createdItems.length > 0) {
+      const sanitized = createdItems.map(item => this.sanitizeRecordForTable('session_agenda', item as unknown as Record<string, unknown>));
+      supabase.from('session_agenda').upsert(sanitized, { onConflict: 'id' }).then(({ error }) => {
+        if (error) console.warn('[Supabase] default agenda seed error:', error.message);
+      });
+    }
+
+    return createdItems;
+  }
+
+  public calculateEndTime(startTimeStr: string, durationMinutes: number): string {
+    try {
+      let clean = (startTimeStr || '09:00 AM').trim().toUpperCase();
+      let isPM = clean.includes('PM');
+      let isAM = clean.includes('AM');
+      let timeParts = clean.replace(/(AM|PM)/g, '').trim().split(':');
+      let hours = parseInt(timeParts[0], 10) || 9;
+      let minutes = parseInt(timeParts[1], 10) || 0;
+
+      if (isPM && hours < 12) hours += 12;
+      if (isAM && hours === 12) hours = 0;
+
+      let totalMins = hours * 60 + minutes + (durationMinutes || 30);
+      let endHours = Math.floor(totalMins / 60) % 24;
+      let endMins = totalMins % 60;
+
+      let endPeriod = endHours >= 12 ? 'PM' : 'AM';
+      let displayHours = endHours % 12;
+      if (displayHours === 0) displayHours = 12;
+
+      let strHours = String(displayHours).padStart(2, '0');
+      let strMins = String(endMins).padStart(2, '0');
+
+      return `${strHours}:${strMins} ${endPeriod}`;
+    } catch {
+      return startTimeStr;
+    }
   }
 
   public addAgendaItem(item: Partial<AgendaItem>): AgendaItem {
-    const all = this.getAgenda();
+    const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA);
+    const eventId = item.event_id || '';
+    const day = item.day || 'Day 1';
+
+    const dayItems = all.filter(a => a.event_id === eventId && a.day === day);
+    const nextOrder = dayItems.length > 0 ? Math.max(...dayItems.map(i => i.order || 0)) + 1 : 1;
+
+    const duration = item.duration_minutes || 30;
+    const startTime = item.time || '09:00 AM';
+    const computedEndTime = item.endTime || this.calculateEndTime(startTime, duration);
+
     const newItem: AgendaItem = {
       id: uid('agd'),
-      event_id: item.event_id || '',
-      day: item.day || 'Day 1',
-      time: item.time || '10:00 AM',
-      title: item.title || 'Session',
+      event_id: eventId,
+      day: day,
+      date: item.date || (day === 'Pre-Event' ? '15 Jun 2026' : day === 'Day 1' ? '16 Jun 2026' : '17 Jun 2026'),
+      time: startTime,
+      duration_minutes: duration,
+      endTime: computedEndTime,
+      title: item.title || 'New Agenda Item',
       description: item.description || '',
-      speaker_role: item.speaker_role,
-      is_current: !!item.is_current
+      category: item.category || 'General',
+      status: item.status || 'Upcoming',
+      order: item.order ?? nextOrder,
+      enabled: item.enabled ?? true,
+      speaker_role: item.speaker_role || '',
+      is_current: !!item.is_current,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
     };
+
     all.push(newItem);
     this.setItem(STORAGE_KEYS.AGENDA, all);
     this.sbUpsert('session_agenda', newItem as unknown as Record<string, unknown>);
+    this.notify();
     return newItem;
+  }
+
+  public updateAgendaItem(item: AgendaItem): AgendaItem {
+    const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA);
+    const duration = item.duration_minutes || 30;
+    const computedEndTime = item.endTime || this.calculateEndTime(item.time, duration);
+
+    const updatedItem: AgendaItem = {
+      ...item,
+      duration_minutes: duration,
+      endTime: computedEndTime,
+      updated_at: new Date().toISOString()
+    };
+
+    const updated = all.map(a => (a.id === item.id ? updatedItem : a));
+    this.setItem(STORAGE_KEYS.AGENDA, updated);
+    this.sbUpsert('session_agenda', updatedItem as unknown as Record<string, unknown>);
+    this.notify();
+    return updatedItem;
+  }
+
+  public deleteAgendaItem(itemId: string) {
+    const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA);
+    const filtered = all.filter(a => a.id !== itemId);
+    this.setItem(STORAGE_KEYS.AGENDA, filtered);
+    this.sbDelete('session_agenda', itemId);
+    this.notify();
+  }
+
+  public duplicateAgendaItem(itemId: string): AgendaItem | null {
+    const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA);
+    const target = all.find(a => a.id === itemId);
+    if (!target) return null;
+
+    const copyItem: Partial<AgendaItem> = {
+      ...target,
+      id: undefined,
+      title: `${target.title} (Copy)`,
+      order: (target.order || 1) + 1,
+      status: 'Upcoming',
+      is_current: false
+    };
+
+    return this.addAgendaItem(copyItem);
+  }
+
+  public toggleEnableAgendaItem(itemId: string) {
+    const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA);
+    let target: AgendaItem | undefined;
+    const updated = all.map(a => {
+      if (a.id === itemId) {
+        target = { ...a, enabled: !(a.enabled ?? true), updated_at: new Date().toISOString() };
+        return target;
+      }
+      return a;
+    });
+    this.setItem(STORAGE_KEYS.AGENDA, updated);
+    if (target) {
+      this.sbUpsert('session_agenda', target as unknown as Record<string, unknown>);
+    }
+    this.notify();
+  }
+
+  public setAgendaItemStatus(itemId: string, status: AgendaStatus) {
+    const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA);
+    let target: AgendaItem | undefined;
+    const updated = all.map(a => {
+      if (a.id === itemId) {
+        target = {
+          ...a,
+          status,
+          is_current: status === 'In Progress',
+          updated_at: new Date().toISOString()
+        };
+        return target;
+      }
+      // If marking status as In Progress, clear is_current on other items for this event
+      if (status === 'In Progress' && a.event_id === target?.event_id) {
+        return { ...a, is_current: false };
+      }
+      return a;
+    });
+    this.setItem(STORAGE_KEYS.AGENDA, updated);
+    if (target) {
+      this.sbUpsert('session_agenda', target as unknown as Record<string, unknown>);
+    }
+    this.notify();
+  }
+
+  public reorderAgendaItems(eventId: string, day: AgendaDay, orderedIds: string[]) {
+    const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA);
+    const idOrderMap = new Map<string, number>();
+    orderedIds.forEach((id, idx) => idOrderMap.set(id, idx + 1));
+
+    const updated = all.map(a => {
+      if (a.event_id === eventId && a.day === day && idOrderMap.has(a.id)) {
+        const newOrder = idOrderMap.get(a.id)!;
+        const itemWithOrder = { ...a, order: newOrder, updated_at: new Date().toISOString() };
+        this.sbUpsert('session_agenda', itemWithOrder as unknown as Record<string, unknown>);
+        return itemWithOrder;
+      }
+      return a;
+    });
+
+    this.setItem(STORAGE_KEYS.AGENDA, updated);
+    this.notify();
   }
 
   public setCurrentAgendaItem(eventId: string, itemId: string) {
     const all = this.getAgenda().map(a => {
       if (a.event_id === eventId) {
-        return { ...a, is_current: a.id === itemId };
+        const isCurrent = a.id === itemId;
+        const itemStatus: AgendaStatus = isCurrent ? 'In Progress' : a.status || 'Upcoming';
+        const updated = { ...a, is_current: isCurrent, status: itemStatus };
+        if (isCurrent) {
+          this.sbUpsert('session_agenda', updated as unknown as Record<string, unknown>);
+        }
+        return updated;
       }
       return a;
     });
     this.setItem(STORAGE_KEYS.AGENDA, all);
+    this.notify();
   }
 
   // ── JURY ──────────────────────────────────────────────────────────────────

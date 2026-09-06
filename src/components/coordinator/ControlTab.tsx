@@ -14,7 +14,6 @@ import {
   CheckCircle2,
   Lock,
   Sparkles,
-  Edit2,
   Megaphone,
   Smartphone,
   ChevronDown,
@@ -58,23 +57,13 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   const [activeDayTab, setActiveDayTab] = useState<'Pre-Event' | 'Day 1' | 'Day 2'>('Day 1');
   const [agendaFilter, setAgendaFilter] = useState<'ALL' | 'SCORED_VOTED'>('ALL');
 
-  // Fallback items if agenda is empty
-  const defaultDay1Items: AgendaItem[] = [
-    { id: 'ag_1', event_id: currentEvent?.id || '', day: 'Day 1', time: '09:00 AM', title: 'Delegates Seated', description: '10 min', speaker_role: 'Secretariat', is_current: false },
-    { id: 'ag_2', event_id: currentEvent?.id || '', day: 'Day 1', time: '09:10 AM', title: 'National Anthem', description: '5 min', speaker_role: 'All Members', is_current: false },
-    { id: 'ag_3', event_id: currentEvent?.id || '', day: 'Day 1', time: '09:15 AM', title: 'Welcome Address', description: '5 min', speaker_role: 'Chapter Chair', is_current: false },
-    { id: 'ag_4', event_id: currentEvent?.id || '', day: 'Day 1', time: '09:20 AM', title: 'Assembly Orientation', description: '5 min', speaker_role: 'Secretariat', is_current: false },
-    { id: 'ag_5', event_id: currentEvent?.id || '', day: 'Day 1', time: '09:25 AM', title: 'Chief Guest Address', description: '20 min', speaker_role: 'Hon. Chief Guest', is_current: false },
-    { id: 'ag_6', event_id: currentEvent?.id || '', day: 'Day 1', time: '09:45 AM', title: 'Event Overview & Instructions', description: '5 min', speaker_role: 'Floor Coordinator', is_current: false },
-    { id: 'ag_7', event_id: currentEvent?.id || '', day: 'Day 1', time: '09:50 AM', title: 'Government & Opposition Formation', description: '10 min', speaker_role: 'Assembly Floor', is_current: false },
-    { id: 'ag_8', event_id: currentEvent?.id || '', day: 'Day 1', time: '10:00 AM', title: 'Seating of Speaker', description: '5 min', speaker_role: 'Presiding Officer', is_current: false },
-    { id: 'ag_9', event_id: currentEvent?.id || '', day: 'Day 1', time: '10:05 AM', title: 'Speaker Election', description: '10 min', speaker_role: 'speaker_election', is_current: true },
-    { id: 'ag_10', event_id: currentEvent?.id || '', day: 'Day 1', time: '10:15 AM', title: 'Oath Taking Ceremony', description: '5 min', speaker_role: 'All Delegates', is_current: false }
-  ];
 
-  const currentAgendaList = agenda.length > 0
-    ? agenda.filter(a => activeDayTab === 'Pre-Event' ? a.day.includes('Pre') : a.day === activeDayTab)
-    : defaultDay1Items;
+
+  const allEventAgenda = agenda.length >= 2 ? agenda : storageService.getAgenda(currentEvent?.id);
+
+  const currentAgendaList = allEventAgenda
+    .filter(a => activeDayTab === 'Pre-Event' ? (a.day === 'Pre-Event' || a.day.includes('Pre')) : a.day === activeDayTab)
+    .sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
 
   const filteredAgendaList = currentAgendaList.filter(item => {
     if (agendaFilter === 'SCORED_VOTED') {
@@ -665,38 +654,43 @@ export const ControlTab: React.FC<ControlTabProps> = ({
         {/* ── RIGHT COLUMN (Col 8 to 12): Agenda Timeline, Quick Stats, Security Locks ── */}
         <div className="lg:col-span-5 space-y-6">
 
-          {/* AGENDA CARD */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-black text-slate-900 dark:text-white">Agenda</h3>
+          {/* AGENDA CARD - YIP STYLED */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-3xl p-5 shadow-sm space-y-4">
+            
+            {/* Header: Agenda Title + Day Pills */}
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <h3 className="text-base font-extrabold text-slate-900 dark:text-white tracking-tight">Agenda</h3>
 
-              {/* Day Sub-tabs */}
-              <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-                {(['Pre-Event', 'Day 1', 'Day 2'] as const).map(day => (
-                  <button
-                    key={day}
-                    onClick={() => setActiveDayTab(day)}
-                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                      activeDayTab === day
-                        ? 'bg-amber-500 text-white shadow-sm'
-                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                    }`}
-                  >
-                    {day === 'Pre-Event' ? 'Pre-Event (Online)' : day}
-                  </button>
-                ))}
+              {/* Day Sub-tabs (YIP style: Orange active pill, white outlined inactive pills) */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {(['Pre-Event', 'Day 1', 'Day 2'] as const).map(day => {
+                  const isActive = activeDayTab === day;
+                  return (
+                    <button
+                      key={day}
+                      onClick={() => setActiveDayTab(day)}
+                      className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        isActive
+                          ? 'bg-orange-500 text-white shadow-sm font-black'
+                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'
+                      }`}
+                    >
+                      {day === 'Pre-Event' ? 'Pre-Event (Online)' : day}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
-            {/* Show filter pills */}
-            <div className="flex items-center gap-2 text-xs">
-              <span className="text-slate-400">Show:</span>
+            {/* Show filter pills (YIP style) */}
+            <div className="flex items-center gap-2 text-xs pt-1">
+              <span className="text-slate-400 font-medium">Show:</span>
               <button
                 onClick={() => setAgendaFilter('ALL')}
                 className={`px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
                   agendaFilter === 'ALL'
-                    ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                    ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-sm'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:text-slate-800'
                 }`}
               >
                 Full agenda
@@ -705,19 +699,23 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                 onClick={() => setAgendaFilter('SCORED_VOTED')}
                 className={`px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
                   agendaFilter === 'SCORED_VOTED'
-                    ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                    ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-sm'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:text-slate-800'
                 }`}
               >
                 Scored / voted only
               </button>
             </div>
 
-            {/* Scrollable Agenda Item List */}
-            <div className="space-y-1.5 max-h-[420px] overflow-y-auto pr-1">
+            {/* Scrollable Agenda Item List (YIP Style) */}
+            <div className="space-y-1.5 max-h-[460px] overflow-y-auto pr-1">
               {filteredAgendaList.map((item, idx) => {
                 const isSelected = item.id === activeAgendaItem.id;
-                const isCompleted = idx < currentAgendaIndex;
+                const durationText = item.duration_minutes
+                  ? `${item.duration_minutes} min`
+                  : item.description && item.description.includes('min')
+                    ? item.description
+                    : 'No duration set';
 
                 return (
                   <div
@@ -727,40 +725,50 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                       if (onSetCurrentAgendaItem && currentEvent) {
                         onSetCurrentAgendaItem(currentEvent.id, item.id);
                       }
-                      setSecondsLeft(timerDurationSec);
+                      setSecondsLeft((item.duration_minutes || 10) * 60);
                       setIsTimerRunning(false);
                     }}
-                    className={`p-2.5 rounded-xl border flex items-center justify-between gap-3 cursor-pointer transition-all ${
+                    className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 cursor-pointer ${
                       isSelected
-                        ? 'border-amber-500 bg-amber-50/60 dark:bg-amber-950/20'
-                        : 'border-slate-100 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-white dark:bg-slate-900'
+                        ? 'bg-emerald-50/90 dark:bg-emerald-950/40 border-emerald-400/80 dark:border-emerald-600/80 shadow-sm'
+                        : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800/80 hover:bg-slate-50 dark:hover:bg-slate-800/50'
                     }`}
                   >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
-                        isCompleted
-                          ? 'text-emerald-600'
-                          : isSelected
-                            ? 'text-amber-600 ring-2 ring-amber-500/40'
-                            : 'text-slate-300 dark:text-slate-600'
-                      }`}>
-                        {isCompleted ? '✓' : '○'}
-                      </span>
-                      <div className="truncate">
-                        <span className={`text-xs font-bold block truncate ${
-                          isSelected ? 'text-amber-600 dark:text-amber-400' : 'text-slate-800 dark:text-slate-200'
+                    <div className="flex items-start gap-3 min-w-0 flex-1">
+                      {/* Status Bullet: Green solid dot if selected, Circle outline if unselected */}
+                      {isSelected ? (
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 mt-1.5 shrink-0 animate-pulse" />
+                      ) : (
+                        <span className="w-3.5 h-3.5 rounded-full border border-slate-300 dark:border-slate-600 mt-0.5 shrink-0 flex items-center justify-center text-[8px] text-slate-400" />
+                      )}
+
+                      <div className="min-w-0 flex-1">
+                        <h5 className={`text-xs font-bold leading-tight ${
+                          isSelected
+                            ? 'text-emerald-800 dark:text-emerald-300 font-extrabold'
+                            : 'text-slate-900 dark:text-white font-bold'
                         }`}>
                           {item.title}
+                        </h5>
+                        <span className="text-[11px] text-slate-400 dark:text-slate-500 block mt-0.5 font-normal">
+                          {durationText}
                         </span>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-[11px] text-slate-400 font-mono">
-                        {item.description || '5 min'}
-                      </span>
-                      <Edit2 className="w-3 h-3 text-slate-400 opacity-60 hover:opacity-100" />
-                    </div>
+                    {/* Pencil Edit Icon */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onShowToast('Edit Agenda Item', `Editing "${item.title}" in Agenda Builder`, 'info');
+                      }}
+                      className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors shrink-0 cursor-pointer"
+                      title="Edit item"
+                    >
+                      <svg className="w-3.5 h-3.5 stroke-current fill-none stroke-[2]" viewBox="0 0 24 24">
+                        <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                      </svg>
+                    </button>
                   </div>
                 );
               })}

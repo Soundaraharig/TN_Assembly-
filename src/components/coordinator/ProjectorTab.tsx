@@ -96,11 +96,11 @@ export const ProjectorTab: React.FC<ProjectorTabProps> = ({
           </button>
 
           <button
-            onClick={handleLaunchFullScreen}
+            onClick={() => window.open(projectorUrl, '_blank')}
             className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-md flex items-center gap-1.5 cursor-pointer"
           >
-            <Maximize2 className="w-3.5 h-3.5" />
-            <span>Open Projector View</span>
+            <ExternalLink className="w-3.5 h-3.5" />
+            <span>Open Standalone Projector</span>
           </button>
         </div>
       </div>

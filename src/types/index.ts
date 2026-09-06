@@ -96,15 +96,47 @@ export interface Committee {
   max_capacity: number;
 }
 
+export type AgendaDay = 'Pre-Event' | 'Day 1' | 'Day 2';
+
+export type AgendaStatus = 'Upcoming' | 'In Progress' | 'Completed' | 'Skipped';
+
+export type AgendaCategory =
+  | 'General'
+  | 'Voting'
+  | 'Speaker Election'
+  | 'Committee Discussion'
+  | 'Break'
+  | 'Ceremony'
+  | 'Question Hour'
+  | 'Bill Presentation'
+  | 'Valedictory'
+  | 'Inaugural'
+  | 'Oath Taking'
+  | 'Party Formation'
+  | 'Opening Speech'
+  | 'Adjournment'
+  | 'Cabinet Intro'
+  | 'Zero Hour'
+  | string;
+
 export interface AgendaItem {
   id: string;
   event_id: string;
-  day: 'Day 1' | 'Day 2';
-  time: string;
+  day: AgendaDay;
+  date?: string;
+  time: string; // Start time e.g., "09:00 AM"
+  duration_minutes?: number; // Duration in minutes e.g., 30
+  endTime?: string; // Calculated end time e.g., "09:30 AM"
   title: string;
-  description: string;
+  description?: string;
+  category?: AgendaCategory;
+  status?: AgendaStatus;
+  order?: number;
+  enabled?: boolean;
   speaker_role?: string;
-  is_current: boolean;
+  is_current?: boolean;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface JuryMember {

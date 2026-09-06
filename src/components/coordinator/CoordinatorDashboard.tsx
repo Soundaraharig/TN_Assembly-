@@ -29,6 +29,12 @@ interface CoordinatorDashboardProps {
   onUpdateCommittee: (committee: Committee) => void;
   onDeleteCommittee: (committeeId: string) => void;
   onAddAgendaItem: (item: Partial<AgendaItem>) => void;
+  onUpdateAgendaItem?: (item: AgendaItem) => void;
+  onDeleteAgendaItem?: (itemId: string) => void;
+  onDuplicateAgendaItem?: (itemId: string) => void;
+  onReorderAgendaItems?: (day: any, orderedIds: string[]) => void;
+  onToggleEnableAgendaItem?: (itemId: string) => void;
+  onSetAgendaStatus?: (itemId: string, status: any) => void;
   onSetCurrentAgendaItem: (itemId: string) => void;
   onExecuteAllocation: (rulingRatio: number) => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
@@ -53,6 +59,12 @@ export const CoordinatorDashboard: React.FC<CoordinatorDashboardProps> = ({
   onUpdateCommittee,
   onDeleteCommittee,
   onAddAgendaItem,
+  onUpdateAgendaItem,
+  onDeleteAgendaItem,
+  onDuplicateAgendaItem,
+  onReorderAgendaItems,
+  onToggleEnableAgendaItem,
+  onSetAgendaStatus,
   onSetCurrentAgendaItem,
   onExecuteAllocation,
   onShowToast
@@ -211,6 +223,12 @@ export const CoordinatorDashboard: React.FC<CoordinatorDashboardProps> = ({
           agenda={agenda}
           eventId={currentEvent.id}
           onAddAgendaItem={onAddAgendaItem}
+          onUpdateAgendaItem={onUpdateAgendaItem}
+          onDeleteAgendaItem={onDeleteAgendaItem}
+          onDuplicateAgendaItem={onDuplicateAgendaItem}
+          onReorderAgendaItems={onReorderAgendaItems}
+          onToggleEnableAgendaItem={onToggleEnableAgendaItem}
+          onSetAgendaStatus={onSetAgendaStatus}
           onSetCurrentItem={onSetCurrentAgendaItem}
           onShowToast={onShowToast}
         />
