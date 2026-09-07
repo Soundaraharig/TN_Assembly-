@@ -139,8 +139,9 @@ CREATE TABLE volunteers (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Extra columns for college_events (chief guests & social coverage as JSONB)
+-- Extra columns for college_events (slug, chief guests, social coverage, etc.)
 ALTER TABLE college_events
+    ADD COLUMN IF NOT EXISTS slug TEXT,
     ADD COLUMN IF NOT EXISTS chapter TEXT DEFAULT 'College Domain',
     ADD COLUMN IF NOT EXISTS level TEXT DEFAULT 'College Round',
     ADD COLUMN IF NOT EXISTS location TEXT,
@@ -151,12 +152,44 @@ ALTER TABLE college_events
     ADD COLUMN IF NOT EXISTS is_locked BOOLEAN DEFAULT FALSE,
     ADD COLUMN IF NOT EXISTS participant_count INT DEFAULT 0,
     ADD COLUMN IF NOT EXISTS chief_guests JSONB DEFAULT '[]'::jsonb,
-    ADD COLUMN IF NOT EXISTS social_coverage JSONB DEFAULT '{}'::jsonb;
+    ADD COLUMN IF NOT EXISTS social_coverage JSONB DEFAULT '{}'::jsonb,
+    ADD COLUMN IF NOT EXISTS treasury_whatsapp_link TEXT,
+    ADD COLUMN IF NOT EXISTS opposition_whatsapp_link TEXT,
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- Extra columns for volunteers
+ALTER TABLE volunteers
+    ADD COLUMN IF NOT EXISTS access_code TEXT,
+    ADD COLUMN IF NOT EXISTS station TEXT DEFAULT 'Floating',
+    ADD COLUMN IF NOT EXISTS shift TEXT DEFAULT 'Both days',
+    ADD COLUMN IF NOT EXISTS is_yuva BOOLEAN DEFAULT TRUE,
+    ADD COLUMN IF NOT EXISTS has_arrived BOOLEAN DEFAULT FALSE;
+
+-- Extra columns for jury_members
+ALTER TABLE jury_members
+    ADD COLUMN IF NOT EXISTS access_code TEXT,
+    ADD COLUMN IF NOT EXISTS email TEXT,
+    ADD COLUMN IF NOT EXISTS phone TEXT,
+    ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Active';
+
+-- Extra columns for political_parties
+ALTER TABLE political_parties
+    ADD COLUMN IF NOT EXISTS whatsapp_group_link TEXT;
+
+-- Extra columns for learners
+ALTER TABLE learners
+    ADD COLUMN IF NOT EXISTS district TEXT,
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- Extra columns for coordinators
+ALTER TABLE coordinators
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
 -- Extra indexes
-CREATE INDEX idx_jury_event_id ON jury_members(event_id);
-CREATE INDEX idx_volunteers_event_id ON volunteers(event_id);
-CREATE INDEX idx_events_coordinator_email ON college_events(assigned_coordinator_email);
+CREATE INDEX IF NOT EXISTS idx_jury_event_id ON jury_members(event_id);
+CREATE INDEX IF NOT EXISTS idx_volunteers_event_id ON volunteers(event_id);
+CREATE INDEX IF NOT EXISTS idx_events_coordinator_email ON college_events(assigned_coordinator_email);
+CREATE INDEX IF NOT EXISTS idx_events_slug ON college_events(slug);
 
 -- ====================================================================
 -- ROW-LEVEL SECURITY (RLS) POLICIES & PERMISSIONS
@@ -173,7 +206,7 @@ ALTER TABLE session_agenda ENABLE ROW LEVEL SECURITY;
 ALTER TABLE jury_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE volunteers ENABLE ROW LEVEL SECURITY;
 
--- Drop existing policies if any to prevent conflicts
+-- Drop existing read policies if any to prevent conflicts
 DROP POLICY IF EXISTS "Allow read access to all users" ON college_events;
 DROP POLICY IF EXISTS "Allow read access to all users" ON coordinators;
 DROP POLICY IF EXISTS "Allow read access to all users" ON political_parties;
@@ -193,14 +226,24 @@ CREATE POLICY "Allow read access to all users" ON public.session_agenda FOR SELE
 CREATE POLICY "Allow read access to all users" ON public.jury_members FOR SELECT TO anon, authenticated USING (true);
 CREATE POLICY "Allow read access to all users" ON public.volunteers FOR SELECT TO anon, authenticated USING (true);
 
--- Universal Write/ALL Policies for operational tables
-DROP POLICY IF EXISTS "Allow all operational access" ON learners;
-DROP POLICY IF EXISTS "Allow all operational access" ON volunteers;
+-- Universal Write/ALL Policies for operational tables (Fix for Bug 10)
 DROP POLICY IF EXISTS "Allow all operational access" ON college_events;
+DROP POLICY IF EXISTS "Allow all operational access" ON coordinators;
+DROP POLICY IF EXISTS "Allow all operational access" ON political_parties;
+DROP POLICY IF EXISTS "Allow all operational access" ON committees;
+DROP POLICY IF EXISTS "Allow all operational access" ON learners;
+DROP POLICY IF EXISTS "Allow all operational access" ON session_agenda;
+DROP POLICY IF EXISTS "Allow all operational access" ON jury_members;
+DROP POLICY IF EXISTS "Allow all operational access" ON volunteers;
 
-CREATE POLICY "Allow all operational access" ON public.learners FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all operational access" ON public.volunteers FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all operational access" ON public.college_events FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all operational access" ON public.coordinators FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all operational access" ON public.political_parties FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all operational access" ON public.committees FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all operational access" ON public.learners FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all operational access" ON public.session_agenda FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all operational access" ON public.jury_members FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all operational access" ON public.volunteers FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
 -- Grant privileges to anon and authenticated roles
 -- Deadlines Configuration

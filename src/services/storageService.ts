@@ -113,6 +113,11 @@ function uid(_prefix?: string): string {
   return genUuid();
 }
 
+function isValidUuid(val?: string | null): boolean {
+  if (!val || typeof val !== 'string') return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val.trim());
+}
+
 function sortLearnersStably(list: Learner[]): Learner[] {
   return [...list].sort((a, b) => {
     const numA = Number(a.constituency_number) || 999999;
@@ -141,12 +146,30 @@ class StorageService {
   constructor() {
     this.initDefaults();
     if (isSupabaseEnabled) {
+      this.checkSupabaseHealth();
       this.syncFromSupabase().catch(err =>
         console.warn('[Supabase] Initial sync failed, using localStorage cache:', err)
       );
       this.setupRealtimeSync();
     } else {
       this.isHydrated = true;
+    }
+  }
+
+  public async checkSupabaseHealth(): Promise<{ isConnected: boolean; error?: string }> {
+    if (!supabase) {
+      return { isConnected: false, error: 'Supabase client is not configured (missing VITE_SUPABASE_URL)' };
+    }
+    try {
+      const { error } = await supabase.from('college_events').select('id').limit(1);
+      if (error) {
+        console.warn('⚠️ [Supabase Health Check] Query failed:', error.message);
+        return { isConnected: false, error: error.message };
+      }
+      console.log('✅ [Supabase Health Check] Connection established successfully with Supabase cloud database.');
+      return { isConnected: true };
+    } catch (e: any) {
+      return { isConnected: false, error: e?.message || 'Network error' };
     }
   }
 
@@ -824,12 +847,29 @@ class StorageService {
 
   private sanitizeRecordForTable(table: string, record: Record<string, unknown>): Record<string, unknown> {
     const raw = { ...record };
+    const sanitizeEventId = (evId: unknown) => {
+      if (typeof evId === 'string' && isValidUuid(evId)) return evId;
+      return null;
+    };
+
+    if (table === 'coordinators') {
+      return {
+        id: raw.id,
+        event_id: sanitizeEventId(raw.event_id),
+        name: raw.name || 'Coordinator',
+        email: (raw.email as string || '').trim().toLowerCase(),
+        password_hash: raw.password_hash || 'coord123',
+        raw_temp_password: raw.raw_temp_password || raw.password_hash || 'coord123',
+        created_at: raw.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+    }
     if (table === 'volunteers') {
       return {
         id: raw.id,
-        event_id: raw.event_id,
+        event_id: sanitizeEventId(raw.event_id),
         access_code: raw.access_code || null,
-        name: raw.name,
+        name: raw.name || 'Volunteer',
         email: raw.email || null,
         phone: raw.phone || null,
         station: raw.station || 'Floating',
@@ -843,17 +883,21 @@ class StorageService {
     if (table === 'jury_members') {
       return {
         id: raw.id,
-        event_id: raw.event_id && raw.event_id !== '' ? raw.event_id : null,
-        name: raw.name,
+        event_id: sanitizeEventId(raw.event_id),
+        access_code: raw.access_code || null,
+        name: raw.name || 'Jury Member',
+        email: raw.email || null,
+        phone: raw.phone || null,
         designation: raw.designation || 'Parliamentary Juror',
         assigned_bench: raw.assigned_bench || 'Ruling',
+        status: raw.status || 'Active',
         created_at: raw.created_at || new Date().toISOString()
       };
     }
     if (table === 'learners') {
       return {
         id: raw.id,
-        event_id: raw.event_id && raw.event_id !== '' ? raw.event_id : null,
+        event_id: sanitizeEventId(raw.event_id),
         access_code: raw.access_code,
         full_name: raw.full_name,
         email: raw.email || null,
@@ -862,25 +906,48 @@ class StorageService {
         academic_year: raw.academic_year || '1st Year',
         constituency_number: raw.constituency_number || null,
         constituency_name: raw.constituency_name || null,
-        party_id: raw.party_id && raw.party_id !== '' ? raw.party_id : null,
+        district: raw.district || null,
+        party_id: raw.party_id && isValidUuid(raw.party_id as string) ? raw.party_id : null,
         party_name: raw.party_name || null,
         bench: raw.bench || null,
         role: raw.role || 'Member of Legislative Assembly (MLA)',
-        committee_id: raw.committee_id && raw.committee_id !== '' ? raw.committee_id : null,
+        committee_id: raw.committee_id && isValidUuid(raw.committee_id as string) ? raw.committee_id : null,
         committee_name: raw.committee_name || null,
         day1_checked_in: !!raw.day1_checked_in,
         day2_checked_in: !!raw.day2_checked_in,
-        created_at: raw.created_at || new Date().toISOString()
+        created_at: raw.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString()
       };
     }
     if (table === 'college_events') {
       const { cabinet_ministries: _cm, ...clean } = raw;
-      return clean;
+      return {
+        id: clean.id,
+        college_name: clean.college_name || 'New Assembly',
+        event_stage: clean.event_stage || 'College Round',
+        status: clean.status || 'Pre-Event',
+        chapter: clean.chapter || 'Tamil Nadu',
+        level: clean.level || 'College Round',
+        location: clean.location || null,
+        dates: clean.dates || null,
+        assigned_coordinator_email: clean.assigned_coordinator_email || null,
+        assigned_coordinator_name: clean.assigned_coordinator_name || null,
+        elections_count: clean.elections_count || 3,
+        is_locked: !!clean.is_locked,
+        participant_count: clean.participant_count || 0,
+        chief_guests: clean.chief_guests || [],
+        social_coverage: clean.social_coverage || {},
+        slug: clean.slug || null,
+        treasury_whatsapp_link: clean.treasury_whatsapp_link || null,
+        opposition_whatsapp_link: clean.opposition_whatsapp_link || null,
+        created_at: clean.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
     }
     if (table === 'session_agenda') {
       return {
         id: raw.id,
-        event_id: raw.event_id,
+        event_id: sanitizeEventId(raw.event_id),
         day: raw.day || 'Day 1',
         time: raw.time || '09:00 AM',
         title: raw.title || 'Agenda Item',
@@ -893,19 +960,20 @@ class StorageService {
     if (table === 'political_parties') {
       return {
         id: raw.id,
-        event_id: raw.event_id && raw.event_id !== '' ? raw.event_id : null,
+        event_id: sanitizeEventId(raw.event_id),
         name: raw.name,
         bench: raw.bench || 'Ruling',
         color: raw.color || '#2563eb',
         leader: raw.leader || null,
         manifesto: raw.manifesto || null,
+        whatsapp_group_link: raw.whatsapp_group_link || null,
         created_at: raw.created_at || new Date().toISOString()
       };
     }
     if (table === 'committees') {
       return {
         id: raw.id,
-        event_id: raw.event_id && raw.event_id !== '' ? raw.event_id : null,
+        event_id: sanitizeEventId(raw.event_id),
         name: raw.name,
         topic: raw.topic || 'Deliberations',
         chairperson: raw.chairperson || null,
@@ -916,24 +984,41 @@ class StorageService {
     return raw;
   }
 
-  private async sbUpsert(table: string, record: Record<string, unknown>) {
-    if (!supabase) return;
+  public async sbUpsert(table: string, record: Record<string, unknown>): Promise<{ success: boolean; error: any; data?: any }> {
+    if (!supabase) {
+      console.warn(`[Supabase Write Skipped] Table: "${table}" — Supabase is not configured (running in localStorage-only mode).`);
+      return { success: false, error: new Error('Supabase not configured') };
+    }
     try {
       const sanitized = this.sanitizeRecordForTable(table, record);
-      const { error } = await supabase.from(table).upsert(sanitized, { onConflict: 'id' });
-      if (error) console.error(`Supabase Error [upsert to ${table}]:`, error);
-    } catch (e) {
-      console.error(`Supabase Error [upsert to ${table} failed]:`, e);
+      console.log(`[Supabase Write Attempt] Table: "${table}" Payload:`, sanitized);
+      const { data, error, status } = await supabase.from(table).upsert(sanitized, { onConflict: 'id' }).select();
+      if (error) {
+        console.error(`❌ [Supabase Write Error] Table: "${table}" (HTTP ${status}) Code: ${error.code} — ${error.message}. Details:`, error.details || error.hint);
+        return { success: false, error };
+      }
+      console.log(`✅ [Supabase Write Success] Table: "${table}" (HTTP ${status}) Data:`, data);
+      return { success: true, error: null, data };
+    } catch (e: any) {
+      console.error(`❌ [Supabase Write Exception] Table: "${table}":`, e);
+      return { success: false, error: e };
     }
   }
 
-  private async sbDelete(table: string, id: string) {
-    if (!supabase) return;
+  public async sbDelete(table: string, id: string): Promise<{ success: boolean; error: any }> {
+    if (!supabase) return { success: false, error: new Error('Supabase not configured') };
     try {
-      const { error } = await supabase.from(table).delete().eq('id', id);
-      if (error) console.error(`Supabase Error [delete from ${table}]:`, error);
-    } catch (e) {
-      console.error(`Supabase Error [delete from ${table} failed]:`, e);
+      console.log(`[Supabase Delete Attempt] Table: "${table}" ID: "${id}"`);
+      const { error, status } = await supabase.from(table).delete().eq('id', id);
+      if (error) {
+        console.error(`❌ [Supabase Delete Error] Table: "${table}" (HTTP ${status}) Code: ${error.code} — ${error.message}`);
+        return { success: false, error };
+      }
+      console.log(`✅ [Supabase Delete Success] Table: "${table}" ID: "${id}"`);
+      return { success: true, error: null };
+    } catch (e: any) {
+      console.error(`❌ [Supabase Delete Exception] Table: "${table}":`, e);
+      return { success: false, error: e };
     }
   }
 
@@ -1093,7 +1178,7 @@ class StorageService {
     return newCoord;
   }
 
-  public updateCoordinator(coord: Coordinator) {
+  public async updateCoordinator(coord: Coordinator): Promise<{ success: boolean; error: any; data?: any }> {
     const all = this.getCoordinators();
     const emailLower = coord.email?.trim().toLowerCase();
     let found = false;
@@ -1120,8 +1205,9 @@ class StorageService {
     }
 
     this.setItem(STORAGE_KEYS.COORDINATORS, unique);
-    this.sbUpsert('coordinators', coord as unknown as Record<string, unknown>);
+    const result = await this.sbUpsert('coordinators', coord as unknown as Record<string, unknown>);
     this.notify();
+    return result;
   }
 
   // ── LEARNERS ──────────────────────────────────────────────────────────────
@@ -2210,11 +2296,7 @@ class StorageService {
 
   public deleteJuryMember(memberId: string) {
     this.setItem(STORAGE_KEYS.JURY, this.getJury().filter(j => j.id !== memberId));
-    if (supabase) {
-      supabase.from('jury_members').delete().eq('id', memberId).then(({ error }) => {
-        if (error) console.warn('[Supabase] jury delete error:', error.message);
-      });
-    }
+    this.sbDelete('jury_members', memberId);
   }
 
   // ── VOLUNTEERS ────────────────────────────────────────────────────────────
@@ -2314,11 +2396,7 @@ class StorageService {
 
   public deleteVolunteer(volunteerId: string) {
     this.setItem(STORAGE_KEYS.VOLUNTEERS, this.getVolunteers().filter(v => v.id !== volunteerId));
-    if (supabase) {
-      supabase.from('volunteers').delete().eq('id', volunteerId).then(({ error }) => {
-        if (error) console.warn('[Supabase] volunteer delete error:', error.message);
-      });
-    }
+    this.sbDelete('volunteers', volunteerId);
   }
 
   public saveCabinetMinistries(eventId: string, ministries: string[]) {

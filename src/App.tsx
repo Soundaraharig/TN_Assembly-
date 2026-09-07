@@ -1260,11 +1260,15 @@ export function App() {
     addToast('Event Created', `Created ${newEv.college_name}`, 'success');
   };
 
-  const handleUpdateCoordinator = (coord: Coordinator) => {
-    storageService.updateCoordinator(coord);
+  const handleUpdateCoordinator = async (coord: Coordinator) => {
+    const res = await storageService.updateCoordinator(coord);
     setCoordinators(storageService.getCoordinators());
     setCurrentCoordinator(coord);
-    addToast('Coordinator Updated', `Updated credentials for ${coord.name}`, 'success');
+    if (res && !res.success && res.error) {
+      addToast('Saved Locally (Cloud Warning)', `Credentials updated locally, but Supabase rejected write: ${res.error.message || 'Check RLS permissions'}`, 'error');
+    } else {
+      addToast('Coordinator Updated', `Updated credentials for ${coord.name} (synced to cloud)`, 'success');
+    }
   };
 
   const handleAddLearner = (l: Partial<Learner>) => {
