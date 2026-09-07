@@ -18,6 +18,7 @@ interface MyEventsDashboardProps {
   onUpdateCoordinator?: (coordinator: Coordinator) => void;
   onSelectEvent: (event: CollegeEvent) => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
+  learners: Learner[];
 }
 
 export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
@@ -223,7 +224,9 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
                   </p>
                   <p className="flex items-center gap-2">
                     <Users className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--text-muted)' }} />
-                    <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{event.participant_count} participants</span>
+                    <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      {learners.filter(l => l.event_id === event.id || !l.event_id).length} participants
+                    </span>
                   </p>
                 </div>
 

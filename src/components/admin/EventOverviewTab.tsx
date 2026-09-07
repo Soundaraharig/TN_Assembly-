@@ -4,7 +4,7 @@ import { Calendar, MapPin, Users, Vote, Lock, Play, CheckCircle2, Zap, Shield, S
 
 interface EventOverviewTabProps {
   event: CollegeEvent;
-  participantCount?: number;
+  participantCount: number;
   electionsCount?: number;
   onUpdateEvent: (updated: CollegeEvent) => void;
   onNavigateTab?: (tab: string) => void;
@@ -36,7 +36,7 @@ export const EventOverviewTab: React.FC<EventOverviewTabProps> = ({
     onShowToast('House in Session', 'Day 1 of the Youth Parliament has commenced!', 'success');
   };
 
-  const displayCount = participantCount !== undefined ? participantCount : (event.participant_count || 0);
+  const displayCount = participantCount;
 
   return (
     <div className="space-y-6 animate-fade-in">
