@@ -1598,10 +1598,56 @@ export function App() {
               return sess;
             }
 
-            // 2. Check Team Members & Event Coordinators
+            // 2. Check Event Coordinators strictly with authoritative credentials
+            const allCoords = storageService.getCoordinators();
+            const coordAccount = allCoords.find(c => c.email.trim().toLowerCase() === emailLower);
+
+            if (coordAccount) {
+              const sess = storageService.authenticateCoordinator(emailInput, passTrim);
+              if (!sess) {
+                // Coordinator account exists but entered password does not match authoritative password
+                return null;
+              }
+
+              setUserSession(sess);
+              setIsAuthenticated(true);
+              setRole('coordinator');
+              setActiveNavTab('overview');
+
+              const allEvents = storageService.getEvents();
+              let targetEv = allEvents.find(e => e.id === coordAccount.event_id);
+              if (!targetEv && coordAccount.email) {
+                targetEv = allEvents.find(e => e.assigned_coordinator_email?.toLowerCase() === coordAccount.email.toLowerCase());
+              }
+              if (!targetEv && allEvents.length > 0) {
+                targetEv = allEvents[0];
+              }
+
+              if (targetEv) {
+                setCurrentEvent(targetEv);
+                currentEventRef.current = targetEv;
+                setLearners(storageService.getLearners(targetEv.id));
+                setParties(storageService.getParties(targetEv.id));
+                setCommittees(storageService.getCommittees(targetEv.id));
+              }
+
+              saveSession({
+                role: 'coordinator',
+                email: coordAccount.email,
+                name: coordAccount.name,
+                assigned_event_ids: [coordAccount.event_id],
+                currentEventId: targetEv?.id || coordAccount.event_id,
+                activeNavTab: 'overview'
+              });
+              const eventSlugToUse = targetEv ? getEventSlug(targetEv) : 'jkkncet-tn-assembly-2026';
+              navigate(`/events/${eventSlugToUse}/overview`);
+              return sess;
+            }
+
+            // 3. Check Other Team Members (e.g. Organiser)
             const allTeam = storageService.getTeam();
             const teamMember = allTeam.find(
-              t => t.email.toLowerCase() === emailLower && (t.access_code === passTrim || passTrim === 'admin123')
+              t => t.email.trim().toLowerCase() === emailLower && t.access_code === passTrim
             );
 
             if (teamMember) {
@@ -1633,56 +1679,6 @@ export function App() {
                 name: teamMember.name,
                 assigned_event_ids: [teamMember.event_id],
                 currentEventId: targetEv?.id || teamMember.event_id,
-                activeNavTab: 'overview'
-              });
-              const eventSlugToUse = targetEv ? getEventSlug(targetEv) : 'jkkncet-tn-assembly-2026';
-              navigate(`/events/${eventSlugToUse}/overview`);
-              return sess;
-            }
-
-            const allCoords = storageService.getCoordinators();
-            const coord = allCoords.find(
-              c => c.email.toLowerCase() === emailLower && (
-                (c.password_hash && c.password_hash === passTrim) ||
-                (c.raw_temp_password && c.raw_temp_password === passTrim)
-              )
-            );
-
-            if (coord) {
-              const sess: UserSession = {
-                role: 'coordinator',
-                email: coord.email,
-                name: coord.name,
-                assigned_event_ids: [coord.event_id]
-              };
-              setUserSession(sess);
-              setIsAuthenticated(true);
-              setRole('coordinator');
-              setActiveNavTab('overview');
-
-              const allEvents = storageService.getEvents();
-              let targetEv = allEvents.find(e => e.id === coord.event_id);
-              if (!targetEv && coord.email) {
-                targetEv = allEvents.find(e => e.assigned_coordinator_email?.toLowerCase() === coord.email.toLowerCase());
-              }
-              if (!targetEv && allEvents.length > 0) {
-                targetEv = allEvents[0];
-              }
-
-              if (targetEv) {
-                setCurrentEvent(targetEv);
-                currentEventRef.current = targetEv;
-                setLearners(storageService.getLearners(targetEv.id));
-                setParties(storageService.getParties(targetEv.id));
-                setCommittees(storageService.getCommittees(targetEv.id));
-              }
-
-              saveSession({
-                role: 'coordinator',
-                email: coord.email,
-                name: coord.name,
-                assigned_event_ids: [coord.event_id],
-                currentEventId: targetEv?.id || coord.event_id,
                 activeNavTab: 'overview'
               });
               const eventSlugToUse = targetEv ? getEventSlug(targetEv) : 'jkkncet-tn-assembly-2026';

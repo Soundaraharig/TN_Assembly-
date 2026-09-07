@@ -40,13 +40,14 @@ CREATE TABLE coordinators (
     email TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     raw_temp_password TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- 4. Political Parties Table
 CREATE TABLE political_parties (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    event_id UUID REFERENCES college_events(id) ON DELETE CASCADE,
+    event_id UUID NOT NULL REFERENCES college_events(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     bench bench_type NOT NULL DEFAULT 'Ruling',
     color TEXT DEFAULT '#2563eb',
@@ -58,7 +59,7 @@ CREATE TABLE political_parties (
 -- 5. Legislative Committees Table
 CREATE TABLE committees (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    event_id UUID REFERENCES college_events(id) ON DELETE CASCADE,
+    event_id UUID NOT NULL REFERENCES college_events(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     topic TEXT NOT NULL,
     chairperson TEXT,
@@ -69,7 +70,7 @@ CREATE TABLE committees (
 -- 6. Learners (Participants) Table
 CREATE TABLE learners (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    event_id UUID REFERENCES college_events(id) ON DELETE CASCADE,
+    event_id UUID NOT NULL REFERENCES college_events(id) ON DELETE CASCADE,
     access_code VARCHAR(10) UNIQUE NOT NULL,
     full_name TEXT NOT NULL,
     email TEXT,
@@ -106,8 +107,16 @@ CREATE TABLE session_agenda (
 CREATE INDEX idx_learners_access_code ON learners(access_code);
 CREATE INDEX idx_learners_event_id ON learners(event_id);
 CREATE INDEX idx_coordinators_email ON coordinators(email);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_coordinators_email_lower ON coordinators (LOWER(email));
 CREATE INDEX idx_parties_event_id ON political_parties(event_id);
 CREATE INDEX idx_committees_event_id ON committees(event_id);
+
+-- ====================================================================
+-- ONE-TIME DATA CLEANUP & DEDUPLICATION MIGRATION (BUG 9)
+-- Purge duplicate coordinators retaining the latest authoritative record
+-- ====================================================================
+-- DELETE FROM coordinators c1 USING coordinators c2
+-- WHERE c1.created_at < c2.created_at AND LOWER(c1.email) = LOWER(c2.email);
 
 -- 8. Jury Members Table
 CREATE TABLE jury_members (

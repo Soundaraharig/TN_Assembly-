@@ -251,6 +251,155 @@ class StorageService {
       this.setItem(STORAGE_KEYS.FEEDBACK, INITIAL_FEEDBACK);
     if (!localStorage.getItem(STORAGE_KEYS.TEAM))
       this.setItem(STORAGE_KEYS.TEAM, INITIAL_TEAM);
+
+    // Run systemic cleanup & deduplication on startup
+    this.cleanupAndDeduplicateData();
+  }
+
+  /**
+   * Systemic one-time and ongoing cleanup migration:
+   * 1. Deduplicates coordinators strictly by lowercased email, retaining the authoritative latest record.
+   * 2. Cleanses and assigns strict foreign-key event_id across all parties, committees, and learners.
+   * 3. Discards corrupted or orphaned duplicate rows to eliminate multi-password ambiguity and cross-event leaks.
+   */
+  public cleanupAndDeduplicateData(): {
+    duplicateCoordinatorsRemoved: number;
+    orphanedPartiesCleaned: number;
+    orphanedCommitteesCleaned: number;
+    orphanedLearnersCleaned: number;
+  } {
+    let duplicateCoordinatorsRemoved = 0;
+    let orphanedPartiesCleaned = 0;
+    let orphanedCommitteesCleaned = 0;
+    let orphanedLearnersCleaned = 0;
+
+    try {
+      const allEvents = this.getEvents();
+      const validEventIds = new Set(allEvents.map(e => e.id));
+      const defaultEventId = allEvents.length === 1 ? allEvents[0].id : '';
+
+      // 1. DEDUPLICATE COORDINATORS STRICTLY BY EMAIL
+      const rawCoords = this.getItem<Coordinator[]>(STORAGE_KEYS.COORDINATORS, INITIAL_COORDINATORS);
+      const coordsByEmail = new Map<string, Coordinator[]>();
+
+      rawCoords.forEach(c => {
+        if (!c || !c.email) return;
+        const normEmail = c.email.trim().toLowerCase();
+        if (!coordsByEmail.has(normEmail)) {
+          coordsByEmail.set(normEmail, []);
+        }
+        coordsByEmail.get(normEmail)!.push(c);
+      });
+
+      const deduplicatedCoords: Coordinator[] = [];
+      coordsByEmail.forEach((list) => {
+        if (list.length === 1) {
+          deduplicatedCoords.push(list[0]);
+        } else {
+          duplicateCoordinatorsRemoved += (list.length - 1);
+          // Pick the authoritative record:
+          // Prefer record with valid event_id, prefer record with non-default password
+          list.sort((a, b) => {
+            const aHasEvent = a.event_id && a.event_id.trim() && validEventIds.has(a.event_id.trim()) ? 1 : 0;
+            const bHasEvent = b.event_id && b.event_id.trim() && validEventIds.has(b.event_id.trim()) ? 1 : 0;
+            if (aHasEvent !== bHasEvent) return bHasEvent - aHasEvent;
+
+            const aCustomPass = a.password_hash && a.password_hash !== 'coord123' ? 1 : 0;
+            const bCustomPass = b.password_hash && b.password_hash !== 'coord123' ? 1 : 0;
+            if (aCustomPass !== bCustomPass) return bCustomPass - aCustomPass;
+
+            return 0;
+          });
+
+          const authoritative = { ...list[0] };
+          for (let i = 1; i < list.length; i++) {
+            if (!authoritative.event_id && list[i].event_id) {
+              authoritative.event_id = list[i].event_id;
+            }
+            if (!authoritative.name && list[i].name) {
+              authoritative.name = list[i].name;
+            }
+          }
+          deduplicatedCoords.push(authoritative);
+        }
+      });
+
+      this.setItem(STORAGE_KEYS.COORDINATORS, deduplicatedCoords);
+
+      // 2. DEDUPLICATE & STRICTLY SCOPE PARTIES
+      const rawParties = this.getItem<Party[]>(STORAGE_KEYS.PARTIES, INITIAL_PARTIES);
+      const cleanedParties: Party[] = [];
+      const seenPartyKeys = new Set<string>();
+
+      rawParties.forEach(p => {
+        let evId = p.event_id && p.event_id.trim() ? p.event_id.trim() : '';
+        if (!evId && defaultEventId) {
+          evId = defaultEventId;
+        }
+        if (!evId || (!validEventIds.has(evId) && validEventIds.size > 0)) {
+          orphanedPartiesCleaned++;
+          return;
+        }
+        const key = `${evId}:::${(p.name || '').trim().toLowerCase()}`;
+        if (!seenPartyKeys.has(key)) {
+          seenPartyKeys.add(key);
+          cleanedParties.push({ ...p, event_id: evId });
+        }
+      });
+      this.setItem(STORAGE_KEYS.PARTIES, cleanedParties);
+
+      // 3. DEDUPLICATE & STRICTLY SCOPE COMMITTEES
+      const rawComms = this.getItem<Committee[]>(STORAGE_KEYS.COMMITTEES, INITIAL_COMMITTEES);
+      const cleanedComms: Committee[] = [];
+      const seenCommKeys = new Set<string>();
+
+      rawComms.forEach(c => {
+        let evId = c.event_id && c.event_id.trim() ? c.event_id.trim() : '';
+        if (!evId && defaultEventId) {
+          evId = defaultEventId;
+        }
+        if (!evId || (!validEventIds.has(evId) && validEventIds.size > 0)) {
+          orphanedCommitteesCleaned++;
+          return;
+        }
+        const key = `${evId}:::${(c.name || '').trim().toLowerCase()}`;
+        if (!seenCommKeys.has(key)) {
+          seenCommKeys.add(key);
+          cleanedComms.push({ ...c, event_id: evId });
+        }
+      });
+      this.setItem(STORAGE_KEYS.COMMITTEES, cleanedComms);
+
+      // 4. DEDUPLICATE & STRICTLY SCOPE LEARNERS
+      const rawLearners = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, INITIAL_LEARNERS);
+      const cleanedLearners: Learner[] = [];
+      const seenLearnerIds = new Set<string>();
+
+      rawLearners.forEach(l => {
+        if (!l || !l.id || seenLearnerIds.has(l.id)) return;
+        let evId = l.event_id && l.event_id.trim() ? l.event_id.trim() : '';
+        if (!evId && defaultEventId) {
+          evId = defaultEventId;
+        }
+        if (!evId || (!validEventIds.has(evId) && validEventIds.size > 0)) {
+          orphanedLearnersCleaned++;
+          return;
+        }
+        seenLearnerIds.add(l.id);
+        cleanedLearners.push({ ...l, event_id: evId });
+      });
+      this.setItem(STORAGE_KEYS.LEARNERS, sortLearnersStably(cleanedLearners));
+
+    } catch (e) {
+      console.warn('[StorageService] Error during cleanupAndDeduplicateData:', e);
+    }
+
+    return {
+      duplicateCoordinatorsRemoved,
+      orphanedPartiesCleaned,
+      orphanedCommitteesCleaned,
+      orphanedLearnersCleaned
+    };
   }
 
   private getDeletedIds(): Set<string> {
@@ -412,17 +561,34 @@ class StorageService {
       } else if (coordinators !== null) {
         const localCoords = this.getItem<Coordinator[]>(STORAGE_KEYS.COORDINATORS, []);
         const coordMap = new Map<string, Coordinator>();
-        localCoords.forEach(c => coordMap.set(c.id, c));
+        localCoords.forEach(c => {
+          if (c.email) coordMap.set(c.email.trim().toLowerCase(), c);
+          coordMap.set(c.id, c);
+        });
         coordinators.forEach(remoteC => {
           if (deletedIds.has(remoteC.id)) return;
-          const local = coordMap.get(remoteC.id);
-          if (local) {
-            coordMap.set(remoteC.id, { ...remoteC, ...local });
+          const emailKey = remoteC.email ? remoteC.email.trim().toLowerCase() : '';
+          const existing = (emailKey && coordMap.get(emailKey)) || coordMap.get(remoteC.id);
+          if (existing) {
+            // Remote password and event updates take precedence
+            const merged = { ...existing, ...remoteC };
+            coordMap.set(existing.id, merged);
+            if (emailKey) coordMap.set(emailKey, merged);
           } else {
             coordMap.set(remoteC.id, remoteC as unknown as Coordinator);
+            if (emailKey) coordMap.set(emailKey, remoteC as unknown as Coordinator);
           }
         });
-        this.setItem(STORAGE_KEYS.COORDINATORS, Array.from(coordMap.values()));
+        const uniqueCoords: Coordinator[] = [];
+        const seenEmails = new Set<string>();
+        for (const c of coordMap.values()) {
+          const emailKey = c.email ? c.email.trim().toLowerCase() : c.id;
+          if (!seenEmails.has(emailKey)) {
+            seenEmails.add(emailKey);
+            uniqueCoords.push(c);
+          }
+        }
+        this.setItem(STORAGE_KEYS.COORDINATORS, uniqueCoords);
       }
 
       if (learnersErr) {
@@ -560,6 +726,7 @@ class StorageService {
       this.isSyncing = false;
       this.isHydrated = true;
       this.syncError = hasQueryError ? 'Partial query warning' : null;
+      this.cleanupAndDeduplicateData();
       this.notify();
     } catch (err: any) {
       console.error('Supabase Error [syncFromSupabase]:', err);
@@ -773,24 +940,26 @@ class StorageService {
   // ── AUTH & SESSIONS ───────────────────────────────────────────────────────
 
   public authenticateCoordinator(email: string, pass: string): UserSession | null {
+    this.cleanupAndDeduplicateData();
     const coords = this.getCoordinators();
     const emailLower = email.trim().toLowerCase();
     const passTrim = pass.trim();
-    const match = coords.find(c =>
-      c.email.toLowerCase() === emailLower && (
-        (c.password_hash && c.password_hash === passTrim) ||
-        (c.raw_temp_password && c.raw_temp_password === passTrim)
-      )
-    );
-    if (match) {
-      return {
-        role: 'coordinator',
-        email: match.email,
-        name: match.name,
-        assigned_event_ids: [match.event_id]
-      };
-    }
-    return null;
+
+    // 1. Locate the single authoritative coordinator record for this email
+    const coord = coords.find(c => c.email.trim().toLowerCase() === emailLower);
+    if (!coord) return null;
+
+    // 2. Validate password strictly against the authoritative record (invalidates old passwords)
+    const isValid = (coord.password_hash && coord.password_hash === passTrim) ||
+                    (coord.raw_temp_password && coord.raw_temp_password === passTrim);
+    if (!isValid) return null;
+
+    return {
+      role: 'coordinator',
+      email: coord.email,
+      name: coord.name,
+      assigned_event_ids: [coord.event_id]
+    };
   }
 
   public authenticateStudent(accessCode: string): Learner | null {
@@ -883,7 +1052,7 @@ class StorageService {
   public addCoordinator(coord: Partial<Coordinator>): Coordinator {
     const all = this.getCoordinators();
     const emailLower = coord.email?.trim().toLowerCase();
-    const existingIndex = emailLower ? all.findIndex(c => c.email.toLowerCase() === emailLower) : -1;
+    const existingIndex = emailLower ? all.findIndex(c => c.email.trim().toLowerCase() === emailLower) : -1;
 
     if (existingIndex >= 0) {
       const updated: Coordinator = {
@@ -895,8 +1064,15 @@ class StorageService {
         password_hash: coord.password_hash || all[existingIndex].password_hash,
         raw_temp_password: coord.raw_temp_password || coord.password_hash || all[existingIndex].raw_temp_password
       };
-      all[existingIndex] = updated;
-      this.setItem(STORAGE_KEYS.COORDINATORS, all);
+      // Overwrite the existing record and purge any secondary duplicates for this email
+      const cleaned = all.filter((c, idx) => idx === existingIndex || c.email.trim().toLowerCase() !== emailLower);
+      const targetIdx = cleaned.findIndex(c => c.id === updated.id || (emailLower && c.email.trim().toLowerCase() === emailLower));
+      if (targetIdx >= 0) {
+        cleaned[targetIdx] = updated;
+      } else {
+        cleaned.push(updated);
+      }
+      this.setItem(STORAGE_KEYS.COORDINATORS, cleaned);
       this.sbUpsert('coordinators', updated as unknown as Record<string, unknown>);
       this.notify();
       return updated;
@@ -920,16 +1096,31 @@ class StorageService {
   public updateCoordinator(coord: Coordinator) {
     const all = this.getCoordinators();
     const emailLower = coord.email?.trim().toLowerCase();
-    const existingIndex = all.findIndex(c => c.id === coord.id || (emailLower && c.email.toLowerCase() === emailLower));
+    let found = false;
 
-    if (existingIndex >= 0) {
-      all[existingIndex] = { ...all[existingIndex], ...coord };
-    } else {
-      all.push(coord);
+    const updated = all.map(c => {
+      const match = c.id === coord.id || (emailLower && c.email.trim().toLowerCase() === emailLower);
+      if (match) {
+        found = true;
+        return { ...c, ...coord };
+      }
+      return c;
+    });
+
+    const candidateList = found ? updated : [...updated, coord];
+    // Enforce strict uniqueness by email
+    const unique: Coordinator[] = [];
+    const seen = new Set<string>();
+    for (const c of candidateList) {
+      const key = c.email ? c.email.trim().toLowerCase() : c.id;
+      if (!seen.has(key)) {
+        seen.add(key);
+        unique.push(c);
+      }
     }
-    this.setItem(STORAGE_KEYS.COORDINATORS, all);
-    const toUpsert = existingIndex >= 0 ? all[existingIndex] : coord;
-    this.sbUpsert('coordinators', toUpsert as unknown as Record<string, unknown>);
+
+    this.setItem(STORAGE_KEYS.COORDINATORS, unique);
+    this.sbUpsert('coordinators', coord as unknown as Record<string, unknown>);
     this.notify();
   }
 
@@ -955,9 +1146,7 @@ class StorageService {
 
     const sortedAll = sortLearnersStably(unique);
     if (eventId) {
-      const matched = sortedAll.filter(l => l.event_id === eventId);
-      if (matched.length > 0) return matched;
-      return sortedAll.filter(l => l.event_id === eventId || (!l.event_id && sortedAll.length <= 100));
+      return sortedAll.filter(l => l.event_id === eventId);
     }
     return sortedAll;
   }
@@ -1270,7 +1459,7 @@ class StorageService {
 
   public checkInAll(eventId: string, day: 1 | 2, state: boolean) {
     const all = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, INITIAL_LEARNERS).map(l => {
-      if (l.event_id === eventId || !l.event_id || !eventId) {
+      if (l.event_id === eventId) {
         const updated = {
           ...l,
           day1_checked_in: day === 1 ? state : l.day1_checked_in,
@@ -1289,9 +1478,7 @@ class StorageService {
   public getParties(eventId?: string): Party[] {
     const all = this.getItem<Party[]>(STORAGE_KEYS.PARTIES, INITIAL_PARTIES);
     if (eventId) {
-      const matched = all.filter(p => p.event_id === eventId);
-      if (matched.length > 0) return matched;
-      return all.filter(p => p.event_id === eventId || !p.event_id);
+      return all.filter(p => p.event_id === eventId);
     }
     return all;
   }
@@ -1430,8 +1617,8 @@ class StorageService {
   public setPartyCount(eventId: string, targetCount: number): Party[] {
     const validCount = Math.max(1, Math.min(20, targetCount));
     const all = this.getParties();
-    const eventParties = all.filter(p => p.event_id === eventId || (!p.event_id && !!eventId));
-    const otherParties = all.filter(p => p.event_id !== eventId && !!p.event_id);
+    const eventParties = all.filter(p => p.event_id === eventId);
+    const otherParties = all.filter(p => p.event_id !== eventId);
 
     const updatedEventParties: Party[] = [];
     const colors = ['#059669', '#dc2626', '#2563eb', '#d97706', '#7c3aed', '#0891b2', '#ea580c', '#4f46e5'];
@@ -1525,9 +1712,7 @@ class StorageService {
   public getCommittees(eventId?: string): Committee[] {
     const all = this.getItem<Committee[]>(STORAGE_KEYS.COMMITTEES, INITIAL_COMMITTEES);
     if (eventId) {
-      const matched = all.filter(c => c.event_id === eventId);
-      if (matched.length > 0) return matched;
-      return all.filter(c => c.event_id === eventId || !c.event_id);
+      return all.filter(c => c.event_id === eventId);
     }
     return all;
   }
@@ -1535,8 +1720,8 @@ class StorageService {
   public setCommitteeCount(eventId: string, targetCount: number): Committee[] {
     const validCount = Math.max(1, Math.min(20, targetCount));
     const all = this.getCommittees();
-    const eventComms = all.filter(c => c.event_id === eventId || (!c.event_id && !!eventId));
-    const otherComms = all.filter(c => c.event_id !== eventId && !!c.event_id);
+    const eventComms = all.filter(c => c.event_id === eventId);
+    const otherComms = all.filter(c => c.event_id !== eventId);
 
     const defaultTopics = [
       "Public Accounts & Financial Estimates",
@@ -1998,7 +2183,7 @@ class StorageService {
     if (updated) {
       this.setItem(STORAGE_KEYS.JURY, sanitized);
     }
-    if (eventId) return sanitized.filter(j => j.event_id === eventId || !j.event_id);
+    if (eventId) return sanitized.filter(j => j.event_id === eventId);
     return sanitized;
   }
 
@@ -2170,7 +2355,7 @@ class StorageService {
     const allLearners = this.getLearners();
     
     const updated = allLearners.map(l => {
-      if (l.event_id === eventId || !l.event_id) {
+      if (l.event_id === eventId) {
         // If this learner is target, assign portfolioRole
         if (l.id === learnerId) {
           return { ...l, role: portfolioRole };
@@ -2841,7 +3026,7 @@ class StorageService {
 
   public getScores(eventId?: string): ScoreRecord[] {
     const all = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, INITIAL_SCORES);
-    if (eventId) return all.filter(s => s.event_id === eventId || !s.event_id);
+    if (eventId) return all.filter(s => s.event_id === eventId);
     return all;
   }
 
@@ -2849,7 +3034,7 @@ class StorageService {
     const all = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, INITIAL_SCORES);
     const idx = all.findIndex(s =>
       (s.id && score.id && s.id === score.id) ||
-      (s.learner_id === score.learner_id && (s.event_id === score.event_id || !s.event_id || !score.event_id))
+      (s.learner_id === score.learner_id && s.event_id === score.event_id)
     );
     if (idx >= 0) {
       all[idx] = { ...all[idx], ...score };
@@ -3074,7 +3259,7 @@ class StorageService {
 
     const targetEventId = eventId || targetMember.event_id;
     if (targetMember.role === 'Coordinator') {
-      const eventCoordinators = fullTeam.filter(t => (t.event_id === targetEventId || !t.event_id) && t.role === 'Coordinator');
+      const eventCoordinators = fullTeam.filter(t => t.event_id === targetEventId && t.role === 'Coordinator');
       if (eventCoordinators.length <= 1) {
         throw new Error('At least one Coordinator must remain assigned to this election.');
       }
@@ -3229,7 +3414,7 @@ class StorageService {
     }
 
     const all = this.getLearners().map(l => {
-      if (l.event_id === eventId || !l.event_id) {
+      if (l.event_id === eventId) {
         return {
           ...l,
           bench: undefined,
