@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { CollegeEvent, Coordinator, UserRole } from '../../types';
+import type { CollegeEvent, Coordinator, Learner, UserRole } from '../../types';
 import { getEventSlug } from '../../utils/slug';
 import { CreateEventModal } from './CreateEventModal';
 import { EditCoordinatorModal } from './EditCoordinatorModal';
@@ -18,7 +18,7 @@ interface MyEventsDashboardProps {
   onUpdateCoordinator?: (coordinator: Coordinator) => void;
   onSelectEvent: (event: CollegeEvent) => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
-  learners: Learner[];
+  learners?: Learner[];
 }
 
 export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
@@ -31,7 +31,8 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
   onDeleteEvent,
   onUpdateCoordinator,
   onSelectEvent,
-  onShowToast
+  onShowToast,
+  learners = []
 }) => {
   const navigate = useNavigate();
   const [isModalOpen, setIsModalOpen] = useState(false);
