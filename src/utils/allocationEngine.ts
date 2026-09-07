@@ -155,17 +155,20 @@ export function runAutoAllocation(
     }
   }
 
-  // Assign party, bench, and default role to each learner
+  // Assign party and default role to each learner (Bench is ONLY set via Government Formation or manual edit)
   activeParties.forEach((party, pIdx) => {
     partyBuckets[pIdx].forEach(l => {
       l.party_name = party.name;
       l.party_id = party.id;
-      l.bench = party.bench || 'Independent';
-      l.role = 'Member of Legislative Assembly (MLA)';
+      // Bench is strictly governed by Government Formation (party.bench) or manual edit, never invented
+      l.bench = (party.bench === 'Ruling' || party.bench === 'Opposition')
+        ? party.bench
+        : (l.bench || undefined);
+      l.role = l.role || 'Member of Legislative Assembly (MLA)';
 
-      if (party.bench === 'Ruling') {
+      if (l.bench === 'Ruling') {
         rulingLearners.push(l);
-      } else if (party.bench === 'Opposition') {
+      } else if (l.bench === 'Opposition') {
         oppLearners.push(l);
       } else {
         indLearners.push(l);

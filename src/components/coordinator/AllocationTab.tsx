@@ -215,7 +215,7 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
                 </div>
                 <button
                   onClick={() => {
-                    exportFullParticipantDataToCSV(filteredLearners, 'TN_Assembly', `TN_Assembly_Filtered_Allocation_${filteredLearners.length}.csv`);
+                    exportFullParticipantDataToCSV(filteredLearners, 'TN_Assembly', `TN_Assembly_Filtered_Allocation_${filteredLearners.length}.csv`, parties, committees);
                     onShowToast('Filtered Allocation Exported', `Exported ${filteredLearners.length} filtered records as CSV`, 'success');
                   }}
                   className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
@@ -225,7 +225,7 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
                 </button>
                 <button
                   onClick={() => {
-                    exportFullParticipantDataToExcel(filteredLearners, 'TN_Assembly', `TN_Assembly_Filtered_Allocation_${filteredLearners.length}.xlsx`);
+                    exportFullParticipantDataToExcel(filteredLearners, 'TN_Assembly', `TN_Assembly_Filtered_Allocation_${filteredLearners.length}.xlsx`, parties, committees);
                     onShowToast('Filtered Allocation Exported', `Exported ${filteredLearners.length} filtered records as Excel`, 'success');
                   }}
                   className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
@@ -241,7 +241,7 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
                 </div>
                 <button
                   onClick={() => {
-                    exportFullParticipantDataToCSV(learners, 'TN_Assembly', `TN_Assembly_Complete_Allocation_${learners.length}.csv`);
+                    exportFullParticipantDataToCSV(learners, 'TN_Assembly', `TN_Assembly_Complete_Allocation_${learners.length}.csv`, parties, committees);
                     onShowToast('Complete Allocation Exported', `Exported all ${learners.length} records as CSV`, 'success');
                   }}
                   className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
@@ -251,7 +251,7 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
                 </button>
                 <button
                   onClick={() => {
-                    exportFullParticipantDataToExcel(learners, 'TN_Assembly', `TN_Assembly_Complete_Allocation_${learners.length}.xlsx`);
+                    exportFullParticipantDataToExcel(learners, 'TN_Assembly', `TN_Assembly_Complete_Allocation_${learners.length}.xlsx`, parties, committees);
                     onShowToast('Complete Allocation Exported', `Exported all ${learners.length} records as Excel`, 'success');
                   }}
                   className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
@@ -556,7 +556,7 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {parties.map((party) => {
-              const partyMembers = learners.filter(l => l.party_name === party.name);
+              const partyMembers = learners.filter(l => l.party_id === party.id || (!l.party_id && l.party_name === party.name));
 
               return (
                 <div
@@ -612,7 +612,7 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {committees.map((committee, idx) => {
               const members = learners.filter(
-                l => l.committee_name === committee.name || l.committee_id === committee.id
+                l => l.committee_id === committee.id || (!l.committee_id && l.committee_name === committee.name)
               );
               const cRuling = members.filter(m => m.bench === 'Ruling').length;
               const cOpp = members.filter(m => m.bench === 'Opposition').length;

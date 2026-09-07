@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import type { Learner } from '../../types';
+import type { Learner, Party } from '../../types';
+import { getResolvedPartyName } from '../../services/storageService';
 import {
   Landmark,
   Save,
@@ -18,6 +19,7 @@ import {
 
 interface CabinetTabProps {
   learners: Learner[];
+  parties?: Party[];
   eventId?: string;
   savedMinistries?: string[];
   isLocked?: boolean;
@@ -102,14 +104,25 @@ const saveStoredCustomMinistries = (eId: string | undefined, customs: MinistryIt
 };
 
 // Helper Searchable Dropdown for assigning delegates to portfolio roles
-const SearchableDelegateSelect: React.FC<{
+interface SearchableDelegateSelectProps {
   learners: Learner[];
+  parties?: Party[];
   currentLearnerId?: string;
   disabled?: boolean;
   onSelect: (learnerId: string) => void;
   onShowToast?: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
   placeholder?: string;
-}> = ({ learners, currentLearnerId, disabled = false, onSelect, onShowToast, placeholder = 'Search by name or constituency no...' }) => {
+}
+
+const SearchableDelegateSelect: React.FC<SearchableDelegateSelectProps> = ({
+  learners,
+  parties = [],
+  currentLearnerId,
+  disabled = false,
+  onSelect,
+  onShowToast,
+  placeholder = 'Search by name or constituency no...'
+}) => {
   const [query, setQuery] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -210,7 +223,7 @@ const SearchableDelegateSelect: React.FC<{
                   <div className="truncate">
                     <span className="font-bold">{l.full_name}</span>
                     <span className="text-[10px] text-slate-400 ml-1.5">
-                      ({l.party_name || 'Independent'})
+                      ({getResolvedPartyName(l, parties) || 'Independent'})
                     </span>
                   </div>
                   <span className="text-[10px] font-mono text-amber-500 shrink-0">
@@ -228,6 +241,7 @@ const SearchableDelegateSelect: React.FC<{
 
 export const CabinetTab: React.FC<CabinetTabProps> = ({
   learners,
+  parties = [],
   eventId,
   savedMinistries,
   isLocked = false,
@@ -589,12 +603,13 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                           </span>
                           {rulingHolder && (
                             <span className="text-[10px] text-slate-400">
-                              {rulingHolder.party_name || 'Ruling'}
+                              {getResolvedPartyName(rulingHolder, parties) || 'Ruling'}
                             </span>
                           )}
                         </div>
                         <SearchableDelegateSelect
                           learners={learners}
+                          parties={parties}
                           currentLearnerId={rulingHolder?.id}
                           disabled={isLocked}
                           onSelect={(learnerId) => handleAssignRole(learnerId, port.rulingRole)}
@@ -611,12 +626,13 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                           </span>
                           {shadowHolder && (
                             <span className="text-[10px] text-slate-400">
-                              {shadowHolder.party_name || 'Opposition'}
+                              {getResolvedPartyName(shadowHolder, parties) || 'Opposition'}
                             </span>
                           )}
                         </div>
                         <SearchableDelegateSelect
                           learners={learners}
+                          parties={parties}
                           currentLearnerId={shadowHolder?.id}
                           disabled={isLocked}
                           onSelect={(learnerId) => handleAssignRole(learnerId, port.shadowRole)}

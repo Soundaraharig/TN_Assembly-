@@ -27,10 +27,13 @@ export const EditLearnerModal: React.FC<EditLearnerModalProps> = ({
   const [department, setDepartment] = useState(learner.department || 'Computer Science');
   const [academicYear, setAcademicYear] = useState<AcademicYear>(learner.academic_year || '1st Year');
   
-  const [partyName, setPartyName] = useState(learner.party_name || '');
-  const [bench, setBench] = useState<BenchType>(learner.bench || 'Ruling');
-  const [role, setRole] = useState(learner.role || 'Member of Legislative Assembly (MLA)');
-  const [committeeName, setCommitteeName] = useState(learner.committee_name || '');
+  const initialPartyId = learner.party_id || parties.find(p => p.name === learner.party_name)?.id || '';
+  const initialCommId = learner.committee_id || committees.find(c => c.name === learner.committee_name)?.id || '';
+
+  const [partyId, setPartyId] = useState(initialPartyId);
+  const [bench, setBench] = useState<string>(learner.bench || '');
+  const [role, setRole] = useState(learner.role || '');
+  const [committeeId, setCommitteeId] = useState(initialCommId);
   const [selectedConstNo, setSelectedConstNo] = useState<number>(learner.constituency_number || 109);
 
   if (!isOpen) return null;
@@ -40,8 +43,8 @@ export const EditLearnerModal: React.FC<EditLearnerModalProps> = ({
     if (!fullName.trim()) return;
 
     const matchedConst = TN_CONSTITUENCIES.find(c => c.number === Number(selectedConstNo)) || TN_CONSTITUENCIES[0];
-    const selectedParty = parties.find(p => p.name === partyName);
-    const selectedComm = committees.find(c => c.name === committeeName);
+    const selectedParty = parties.find(p => p.id === partyId);
+    const selectedComm = committees.find(c => c.id === committeeId);
 
     const updated: Learner = {
       ...learner,
@@ -51,12 +54,12 @@ export const EditLearnerModal: React.FC<EditLearnerModalProps> = ({
       phone: phone.trim(),
       department: department.trim(),
       academic_year: academicYear,
-      party_name: partyName || undefined,
-      party_id: selectedParty?.id || learner.party_id,
-      bench: selectedParty ? selectedParty.bench : bench,
+      party_name: selectedParty ? selectedParty.name : undefined,
+      party_id: selectedParty ? selectedParty.id : undefined,
+      bench: (bench as BenchType) || (selectedParty ? selectedParty.bench : undefined),
       role: role.trim(),
-      committee_name: committeeName || undefined,
-      committee_id: selectedComm?.id || learner.committee_id,
+      committee_name: selectedComm ? selectedComm.name : undefined,
+      committee_id: selectedComm ? selectedComm.id : undefined,
       constituency_number: matchedConst.number,
       constituency_name: `${matchedConst.number} - ${matchedConst.name} (${matchedConst.district})`,
       district: matchedConst.district
@@ -159,13 +162,20 @@ export const EditLearnerModal: React.FC<EditLearnerModalProps> = ({
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">Political Party</label>
               <select
-                value={partyName}
-                onChange={(e) => setPartyName(e.target.value)}
+                value={partyId}
+                onChange={(e) => {
+                  const pId = e.target.value;
+                  setPartyId(pId);
+                  const p = parties.find(party => party.id === pId);
+                  if (p && p.bench && p.bench !== 'Independent') {
+                    setBench(p.bench);
+                  }
+                }}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none"
               >
                 <option value="">Unassigned</option>
                 {parties.map(p => (
-                  <option key={p.id} value={p.name}>{p.name}</option>
+                  <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
               </select>
             </div>
@@ -174,9 +184,10 @@ export const EditLearnerModal: React.FC<EditLearnerModalProps> = ({
               <label className="block text-xs font-bold text-slate-700 mb-1">Bench</label>
               <select
                 value={bench}
-                onChange={(e) => setBench(e.target.value as BenchType)}
+                onChange={(e) => setBench(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none"
               >
+                <option value="">Unallocated (—)</option>
                 <option value="Ruling">Ruling</option>
                 <option value="Opposition">Opposition</option>
                 <option value="Independent">Independent</option>
@@ -189,6 +200,7 @@ export const EditLearnerModal: React.FC<EditLearnerModalProps> = ({
               <label className="block text-xs font-bold text-slate-700 mb-1">Role / Position</label>
               <input
                 type="text"
+                placeholder="e.g. MLA, Minister, Speaker"
                 value={role}
                 onChange={(e) => setRole(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-emerald-600"
@@ -198,13 +210,13 @@ export const EditLearnerModal: React.FC<EditLearnerModalProps> = ({
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">Committee</label>
               <select
-                value={committeeName}
-                onChange={(e) => setCommitteeName(e.target.value)}
+                value={committeeId}
+                onChange={(e) => setCommitteeId(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none"
               >
                 <option value="">Unassigned</option>
                 {committees.map(c => (
-                  <option key={c.id} value={c.name}>{c.name}</option>
+                  <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
             </div>

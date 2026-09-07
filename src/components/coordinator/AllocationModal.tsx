@@ -22,10 +22,7 @@ export const AllocationModal: React.FC<AllocationModalProps> = ({
   eventId,
   onExecuteAllocation
 }) => {
-  if (!isOpen) return null;
-
   const isLocked = storageService.getAllocationLock(eventId);
-
   const totalLearners = learners.length;
 
   // Breakdown by year
@@ -39,6 +36,8 @@ export const AllocationModal: React.FC<AllocationModalProps> = ({
     });
     return counts;
   }, [learners]);
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">

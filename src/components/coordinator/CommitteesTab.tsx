@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import type { Committee, Learner, UserRole } from '../../types';
 import { canDelete } from '../../utils/permissions';
-import { storageService } from '../../services/storageService';
 import { Plus, BookOpen, Users, Edit, Trash2, X, Eye, Layers, UserCheck } from 'lucide-react';
 
 interface CommitteesTabProps {
@@ -167,9 +166,10 @@ export const CommitteesTab: React.FC<CommitteesTabProps> = ({
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {committees.map((comm, index) => {
-          // Use database-sourced count for this committee
-          const committeeCounts = storageService.getAssignedCommitteeCounts(eventId || '');
-          const memberCount = committeeCounts[comm.name] || 0;
+          const commLearners = (learners || []).filter(
+            l => l.committee_id === comm.id || (!l.committee_id && l.committee_name === comm.name)
+          );
+          const memberCount = commLearners.length;
 
           return (
             <div

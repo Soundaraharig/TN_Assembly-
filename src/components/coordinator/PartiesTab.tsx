@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import type { Party, BenchType, Learner, UserRole } from '../../types';
 import { canDelete } from '../../utils/permissions';
-import { storageService } from '../../services/storageService';
 import {
   Plus,
   Users,
@@ -197,10 +196,9 @@ export const PartiesTab: React.FC<PartiesTabProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {parties.map((party, index) => {
           const partyLearners = (learners || []).filter(
-            l => l.party_id === party.id || l.party_name === party.name
+            l => l.party_id === party.id || (!l.party_id && l.party_name === party.name)
           );
-          const partyCounts = storageService.getAssignedPartyCounts(eventId || '');
-          const memberCount = partyLearners.length || partyCounts[party.name] || partyCounts[party.id] || 0;
+          const memberCount = partyLearners.length;
 
           return (
             <div

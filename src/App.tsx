@@ -450,6 +450,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           onSetCommitteeCount={(count) => {
             const newComms = storageService.setCommitteeCount(activeEvent.id, count);
             props.setCommittees(newComms);
+            props.setLearners(storageService.getLearners(activeEvent.id));
           }}
           onShowToast={props.addToast}
         />
@@ -468,6 +469,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           onSetPartyCount={(count) => {
             const newParties = storageService.setPartyCount(activeEvent.id, count);
             props.setParties(newParties);
+            props.setLearners(storageService.getLearners(activeEvent.id));
           }}
           onShowToast={props.addToast}
         />
@@ -499,6 +501,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
       {activeTabFromPath === 'cabinet' && (
         <CabinetTab
           learners={props.learners}
+          parties={props.parties}
           eventId={activeEvent.id}
           savedMinistries={activeEvent.cabinet_ministries}
           isLocked={activeEvent.is_locked}
@@ -1319,26 +1322,48 @@ export function App() {
 
   const handleAddParty = (p: Partial<Party>) => {
     storageService.addParty(p);
+    if (currentEventRef.current) {
+      setParties(storageService.getParties(currentEventRef.current.id));
+    }
   };
 
   const handleUpdateParty = (p: Party) => {
     storageService.updateParty(p);
+    if (currentEventRef.current) {
+      setParties(storageService.getParties(currentEventRef.current.id));
+      setLearners(storageService.getLearners(currentEventRef.current.id));
+    }
   };
 
   const handleDeleteParty = (id: string) => {
     storageService.deleteParty(id);
+    if (currentEventRef.current) {
+      setParties(storageService.getParties(currentEventRef.current.id));
+      setLearners(storageService.getLearners(currentEventRef.current.id));
+    }
   };
 
   const handleAddCommittee = (c: Partial<Committee>) => {
     storageService.addCommittee(c);
+    if (currentEventRef.current) {
+      setCommittees(storageService.getCommittees(currentEventRef.current.id));
+    }
   };
 
   const handleUpdateCommittee = (c: Committee) => {
     storageService.updateCommittee(c);
+    if (currentEventRef.current) {
+      setCommittees(storageService.getCommittees(currentEventRef.current.id));
+      setLearners(storageService.getLearners(currentEventRef.current.id));
+    }
   };
 
   const handleDeleteCommittee = (id: string) => {
     storageService.deleteCommittee(id);
+    if (currentEventRef.current) {
+      setCommittees(storageService.getCommittees(currentEventRef.current.id));
+      setLearners(storageService.getLearners(currentEventRef.current.id));
+    }
   };
 
   const handleAddAgendaItem = (a: Partial<AgendaItem>) => {

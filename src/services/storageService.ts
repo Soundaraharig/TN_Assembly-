@@ -5,6 +5,7 @@ import type {
   Party,
   Committee,
   BenchType,
+  AcademicYear,
   AgendaItem,
   AgendaDay,
   AgendaStatus,
@@ -79,7 +80,8 @@ const STORAGE_KEYS = {
   YUVA_ASSIGNMENTS: 'tn_assembly_yuva_assignments_v6',
   DEADLINES: 'tn_assembly_deadlines_v6',
   PROCEEDINGS_QUESTIONS: 'tn_assembly_proceedings_questions_v6',
-  PROCEEDINGS_MOTIONS: 'tn_assembly_proceedings_motions_v6'
+  PROCEEDINGS_MOTIONS: 'tn_assembly_proceedings_motions_v6',
+  DELETED_IDS: 'tn_assembly_deleted_ids_v6'
 };
 
 type Listener = () => void;
@@ -241,6 +243,27 @@ class StorageService {
       this.setItem(STORAGE_KEYS.TEAM, INITIAL_TEAM);
   }
 
+  private getDeletedIds(): Set<string> {
+    const arr = this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []);
+    return new Set(arr);
+  }
+
+  private addDeletedIds(ids: string[]) {
+    if (!ids || ids.length === 0) return;
+    const current = this.getDeletedIds();
+    ids.forEach(id => { if (id) current.add(id); });
+    this.setItem(STORAGE_KEYS.DELETED_IDS, Array.from(current));
+  }
+
+  private removeDeletedId(id: string) {
+    if (!id) return;
+    const current = this.getDeletedIds();
+    if (current.has(id)) {
+      current.delete(id);
+      this.setItem(STORAGE_KEYS.DELETED_IDS, Array.from(current));
+    }
+  }
+
   // ── Supabase sync ────────────────────────────────────────────────────────
 
   public async syncFromSupabase(): Promise<void> {
@@ -364,6 +387,8 @@ class StorageService {
         this.setItem(STORAGE_KEYS.COORDINATORS, coordinators);
       }
 
+      const deletedIds = this.getDeletedIds();
+
       if (learnersErr) {
         console.error("Supabase Error [learners]:", learnersErr);
         hasQueryError = true;
@@ -372,6 +397,7 @@ class StorageService {
         const learnerMap = new Map<string, Learner>();
         localLearners.forEach(l => learnerMap.set(l.id, l));
         learners.forEach(r => {
+          if (deletedIds.has(r.id)) return;
           const local = learnerMap.get(r.id);
           if (!local) {
             learnerMap.set(r.id, r as Learner);
@@ -389,15 +415,40 @@ class StorageService {
       if (partiesErr) {
         console.error("Supabase Error [political_parties]:", partiesErr);
         hasQueryError = true;
-      } else if (parties !== null) {
-        this.setItem(STORAGE_KEYS.PARTIES, parties);
+      } else if (parties !== null && parties.length > 0) {
+        const localParties = this.getItem<Party[]>(STORAGE_KEYS.PARTIES, []);
+        const partyMap = new Map<string, Party>();
+        localParties.forEach(p => partyMap.set(p.id, p));
+        parties.forEach(remote => {
+          if (deletedIds.has(remote.id)) return;
+          const local = partyMap.get(remote.id);
+          if (local) {
+            // Local party state takes precedence for user edits (bench, name, leader, etc.)
+            partyMap.set(remote.id, { ...remote, ...local });
+          } else {
+            partyMap.set(remote.id, remote as unknown as Party);
+          }
+        });
+        this.setItem(STORAGE_KEYS.PARTIES, Array.from(partyMap.values()));
       }
 
       if (commErr) {
         console.error("Supabase Error [committees]:", commErr);
         hasQueryError = true;
-      } else if (committees !== null) {
-        this.setItem(STORAGE_KEYS.COMMITTEES, committees);
+      } else if (committees !== null && committees.length > 0) {
+        const localComms = this.getItem<Committee[]>(STORAGE_KEYS.COMMITTEES, []);
+        const commMap = new Map<string, Committee>();
+        localComms.forEach(c => commMap.set(c.id, c));
+        committees.forEach(remote => {
+          if (deletedIds.has(remote.id)) return;
+          const local = commMap.get(remote.id);
+          if (local) {
+            commMap.set(remote.id, { ...remote, ...local });
+          } else {
+            commMap.set(remote.id, remote as unknown as Committee);
+          }
+        });
+        this.setItem(STORAGE_KEYS.COMMITTEES, Array.from(commMap.values()));
       }
 
       if (agendaErr) {
@@ -597,7 +648,7 @@ class StorageService {
       };
     }
     if (table === 'college_events') {
-      const { cabinet_ministries, ...clean } = raw;
+      const { cabinet_ministries: _cm, ...clean } = raw;
       return clean;
     }
     if (table === 'session_agenda') {
@@ -610,6 +661,29 @@ class StorageService {
         description: raw.description || '',
         speaker_role: raw.speaker_role || null,
         is_current: !!raw.is_current,
+        created_at: raw.created_at || new Date().toISOString()
+      };
+    }
+    if (table === 'political_parties') {
+      return {
+        id: raw.id,
+        event_id: raw.event_id && raw.event_id !== '' ? raw.event_id : null,
+        name: raw.name,
+        bench: raw.bench || 'Ruling',
+        color: raw.color || '#2563eb',
+        leader: raw.leader || null,
+        manifesto: raw.manifesto || null,
+        created_at: raw.created_at || new Date().toISOString()
+      };
+    }
+    if (table === 'committees') {
+      return {
+        id: raw.id,
+        event_id: raw.event_id && raw.event_id !== '' ? raw.event_id : null,
+        name: raw.name,
+        topic: raw.topic || 'Deliberations',
+        chairperson: raw.chairperson || null,
+        max_capacity: raw.max_capacity || 50,
         created_at: raw.created_at || new Date().toISOString()
       };
     }
@@ -827,43 +901,36 @@ class StorageService {
       if (l.party_name && l.party_name.trim()) {
         const key = l.party_name.trim().toLowerCase();
         if (!partyNameMap.has(key)) {
-          let bench: BenchType = l.bench || 'Independent';
-          if (!l.bench) {
-            if (key.includes('ruling') || key === 'party 1' || key.startsWith('party 1')) {
-              bench = 'Ruling';
-            } else if (key.includes('opp') || key === 'party 2' || key.startsWith('party 2')) {
-              bench = 'Opposition';
-            } else if (existingParties.length === 0) {
-              bench = 'Ruling';
-            } else if (!existingParties.some(p => p.bench === 'Opposition')) {
-              bench = 'Opposition';
-            }
-          }
           const newParty = this.addParty({
             event_id: eventId,
             name: l.party_name.trim(),
-            bench,
+            bench: 'Independent',
             color: colors[existingParties.length % colors.length]
           });
           existingParties.push(newParty);
           partyNameMap.set(key, newParty);
+          partyNameMap.set(newParty.id, newParty);
         }
       }
     });
 
-    // 2. Auto-register any missing committees referenced in the imported roster
+    // 2. Auto-register any missing committees referenced in the imported roster (only if committee data is in the sheet)
     learnersList.forEach(l => {
       if (l.committee_name && l.committee_name.trim()) {
-        const key = l.committee_name.trim().toLowerCase();
+        const cleanName = /^\d+$/.test(l.committee_name.trim())
+          ? `Committee ${l.committee_name.trim()}`
+          : l.committee_name.trim();
+        const key = cleanName.toLowerCase();
         if (!commNameMap.has(key)) {
           const newComm = this.addCommittee({
             event_id: eventId,
-            name: l.committee_name.trim(),
-            topic: l.committee_name.trim(),
+            name: cleanName,
+            topic: `${cleanName} Deliberations`,
             max_capacity: 50
           });
           existingCommittees.push(newComm);
           commNameMap.set(key, newComm);
+          commNameMap.set(newComm.id, newComm);
         }
       }
     });
@@ -894,13 +961,23 @@ class StorageService {
     };
 
     learnersList.forEach((l, index) => {
-      const partyMatch = l.party_name ? partyNameMap.get(l.party_name.trim().toLowerCase()) : undefined;
-      const commMatch = l.committee_name ? commNameMap.get(l.committee_name.trim().toLowerCase()) : undefined;
+      const partyMatch = l.party_id
+        ? partyNameMap.get(l.party_id)
+        : (l.party_name ? partyNameMap.get(l.party_name.trim().toLowerCase()) : undefined);
+
+      const commCleanName = l.committee_name && /^\d+$/.test(l.committee_name.trim())
+        ? `Committee ${l.committee_name.trim()}`
+        : l.committee_name?.trim();
+
+      const commMatch = l.committee_id
+        ? commNameMap.get(l.committee_id)
+        : (commCleanName ? commNameMap.get(commCleanName.toLowerCase()) : undefined);
 
       const resolvedPartyName = partyMatch ? partyMatch.name : (l.party_name || undefined);
       const resolvedPartyId = partyMatch ? partyMatch.id : (l.party_id || undefined);
-      const resolvedBench: BenchType | undefined = l.bench || (partyMatch ? partyMatch.bench : undefined);
-      const resolvedCommName = commMatch ? commMatch.name : (l.committee_name || undefined);
+      // Strictly column-driven: bench ONLY if explicit bench in CSV; never infer from party!
+      const resolvedBench: BenchType | undefined = l.bench || undefined;
+      const resolvedCommName = commMatch ? commMatch.name : (commCleanName || undefined);
       const resolvedCommId = commMatch ? commMatch.id : (l.committee_id || undefined);
 
       const existingMatch = findExisting(l);
@@ -912,17 +989,17 @@ class StorageService {
           full_name: (l.full_name && l.full_name.trim()) ? l.full_name : existingMatch.full_name,
           email: (l.email && l.email.trim()) ? l.email : existingMatch.email,
           phone: (l.phone && l.phone.trim()) ? l.phone : existingMatch.phone,
-          department: (l.department && l.department !== 'General') ? l.department : existingMatch.department,
+          department: l.department !== undefined ? l.department : existingMatch.department,
           academic_year: l.academic_year || existingMatch.academic_year,
           constituency_number: l.constituency_number !== undefined ? l.constituency_number : existingMatch.constituency_number,
-          constituency_name: (l.constituency_name && l.constituency_name.trim()) ? l.constituency_name : existingMatch.constituency_name,
-          district: (l.district && l.district.trim()) ? l.district : existingMatch.district,
-          party_name: resolvedPartyName !== undefined ? resolvedPartyName : existingMatch.party_name,
-          party_id: resolvedPartyId !== undefined ? resolvedPartyId : existingMatch.party_id,
+          constituency_name: l.constituency_name !== undefined ? l.constituency_name : existingMatch.constituency_name,
+          district: l.district !== undefined ? l.district : existingMatch.district,
+          party_name: resolvedPartyName,
+          party_id: resolvedPartyId,
           bench: resolvedBench !== undefined ? resolvedBench : existingMatch.bench,
-          role: (l.role && l.role.trim()) ? l.role : existingMatch.role || 'Member of Legislative Assembly (MLA)',
-          committee_name: resolvedCommName !== undefined ? resolvedCommName : existingMatch.committee_name,
-          committee_id: resolvedCommId !== undefined ? resolvedCommId : existingMatch.committee_id
+          role: l.role !== undefined ? l.role : existingMatch.role,
+          committee_name: resolvedCommName,
+          committee_id: resolvedCommId
         };
         updatedItems.push(updated);
         updatedEventLearnersMap.set(existingMatch.id, updated);
@@ -935,15 +1012,15 @@ class StorageService {
           full_name: l.full_name || 'Delegate',
           email: l.email || '',
           phone: l.phone || '',
-          department: l.department || 'General',
-          academic_year: l.academic_year || '1st Year',
+          department: l.department || '',
+          academic_year: l.academic_year || ('' as AcademicYear),
           constituency_number: l.constituency_number,
           constituency_name: l.constituency_name,
           district: l.district,
           party_name: resolvedPartyName,
           party_id: resolvedPartyId,
           bench: resolvedBench,
-          role: l.role || 'Member of Legislative Assembly (MLA)',
+          role: l.role,
           committee_name: resolvedCommName,
           committee_id: resolvedCommId,
           day1_checked_in: false,
@@ -1005,11 +1082,13 @@ class StorageService {
       );
       this.setItem(STORAGE_KEYS.EVENTS, events);
     }
+    this.addDeletedIds([learnerId]);
     this.sbDelete('learners', learnerId);
   }
 
   public deleteLearners(learnerIds: string[], eventId?: string) {
     if (!learnerIds || learnerIds.length === 0) return;
+    this.addDeletedIds(learnerIds);
     const idSet = new Set(learnerIds);
     const all = this.getLearners().filter(l => !idSet.has(l.id));
     this.setItem(STORAGE_KEYS.LEARNERS, all);
@@ -1101,6 +1180,7 @@ class StorageService {
       manifesto: party.manifesto || ''
     };
     all.push(newParty);
+    this.removeDeletedId(newParty.id);
     this.setItem(STORAGE_KEYS.PARTIES, all);
     this.sbUpsert('political_parties', newParty as unknown as Record<string, unknown>);
     return newParty;
@@ -1261,6 +1341,7 @@ class StorageService {
       const removed = eventParties.slice(validCount);
       const removedIds = new Set(removed.map(r => r.id));
       const removedNames = new Set(removed.map(r => r.name));
+      this.addDeletedIds(Array.from(removedIds));
       removed.forEach(r => this.sbDelete('political_parties', r.id));
 
       const allLearners = this.getLearners();
@@ -1272,7 +1353,7 @@ class StorageService {
             ...l,
             party_id: undefined,
             party_name: undefined,
-            bench: 'Independent' as const
+            bench: undefined
           };
         }
         return l;
@@ -1284,11 +1365,13 @@ class StorageService {
 
     const merged = [...otherParties, ...updatedEventParties];
     this.setItem(STORAGE_KEYS.PARTIES, merged);
+    this.notify();
     return updatedEventParties;
   }
 
   public deleteParty(partyId: string) {
     const targetParty = this.getParties().find(p => p.id === partyId);
+    this.addDeletedIds([partyId]);
     this.setItem(STORAGE_KEYS.PARTIES, this.getParties().filter(p => p.id !== partyId));
     this.sbDelete('political_parties', partyId);
 
@@ -1300,7 +1383,7 @@ class StorageService {
           ...l,
           party_id: undefined,
           party_name: undefined,
-          bench: 'Independent' as const
+          bench: undefined
         };
       }
       return l;
@@ -1352,6 +1435,7 @@ class StorageService {
           max_capacity: 50
         };
         updatedEventComms.push(newComm);
+        this.removeDeletedId(newComm.id);
         this.sbUpsert('committees', newComm as unknown as Record<string, unknown>);
       }
     }
@@ -1360,6 +1444,7 @@ class StorageService {
       const removed = eventComms.slice(validCount);
       const removedIds = new Set(removed.map(r => r.id));
       const removedNames = new Set(removed.map(r => r.name));
+      this.addDeletedIds(Array.from(removedIds));
       removed.forEach(r => this.sbDelete('committees', r.id));
 
       const allLearners = this.getLearners();
@@ -1382,23 +1467,25 @@ class StorageService {
 
     const merged = [...otherComms, ...updatedEventComms];
     this.setItem(STORAGE_KEYS.COMMITTEES, merged);
+    this.notify();
     return updatedEventComms;
   }
 
-  public addCommittee(com: Partial<Committee>): Committee {
+  public addCommittee(committee: Partial<Committee>): Committee {
     const all = this.getCommittees();
-    const newCom: Committee = {
+    const newComm: Committee = {
       id: uid('cmt'),
-      event_id: com.event_id || '',
-      name: com.name || 'Committee',
-      topic: com.topic || 'General Topic',
-      chairperson: com.chairperson || '',
-      max_capacity: com.max_capacity || 50
+      event_id: committee.event_id || '',
+      name: committee.name || 'Committee Name',
+      topic: committee.topic || 'General Assembly Topic',
+      chairperson: committee.chairperson || '',
+      max_capacity: committee.max_capacity || 50
     };
-    all.push(newCom);
+    all.push(newComm);
+    this.removeDeletedId(newComm.id);
     this.setItem(STORAGE_KEYS.COMMITTEES, all);
-    this.sbUpsert('committees', newCom as unknown as Record<string, unknown>);
-    return newCom;
+    this.sbUpsert('committees', newComm as unknown as Record<string, unknown>);
+    return newComm;
   }
 
   public updateCommittee(com: Committee) {
@@ -1442,6 +1529,7 @@ class StorageService {
 
   public deleteCommittee(comId: string) {
     const targetCom = this.getCommittees().find(c => c.id === comId);
+    this.addDeletedIds([comId]);
     this.setItem(STORAGE_KEYS.COMMITTEES, this.getCommittees().filter(c => c.id !== comId));
     this.sbDelete('committees', comId);
 
@@ -3415,7 +3503,7 @@ export function getResolvedPartyName(learner: Partial<Learner>, parties: Party[]
     if (found) return found.name;
     return learner.party_name;
   }
-  return 'Independent';
+  return '';
 }
 
 /**
@@ -3431,6 +3519,6 @@ export function getResolvedCommitteeName(learner: Partial<Learner>, committees: 
     if (found) return found.name;
     return learner.committee_name;
   }
-  return 'Unassigned';
+  return '';
 }
 

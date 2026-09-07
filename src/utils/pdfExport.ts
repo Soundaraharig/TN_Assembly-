@@ -1,7 +1,12 @@
 import jsPDF from 'jspdf';
-import type { Learner } from '../types';
+import type { Learner, Party } from '../types';
+import { getResolvedPartyName } from '../services/storageService';
 
-export function generateDelegateBadgesPDF(learners: Learner[], eventName: string = 'TN Assembly') {
+export function generateDelegateBadgesPDF(
+  learners: Learner[],
+  eventName: string = 'TN Assembly',
+  parties?: Party[]
+) {
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',
@@ -57,7 +62,10 @@ export function generateDelegateBadgesPDF(learners: Learner[], eventName: string
     doc.setFontSize(7.5);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(100, 100, 110);
-    doc.text(`${learner.department || 'General'} • ${learner.academic_year || '1st Year'}`, x + 6, y + 22);
+    const subText = [learner.department, learner.academic_year].filter(Boolean).join(' • ');
+    if (subText) {
+      doc.text(subText, x + 6, y + 22);
+    }
 
     // Bench & Party Pill
     const isRuling = learner.bench === 'Ruling';
@@ -74,7 +82,8 @@ export function generateDelegateBadgesPDF(learners: Learner[], eventName: string
     doc.setTextColor(40, 40, 60);
     doc.setFontSize(7);
     doc.setFont('helvetica', 'normal');
-    doc.text(learner.party_name ? `Party: ${learner.party_name}` : 'Party: Unassigned', x + 37, y + 28.5);
+    const resolvedParty = getResolvedPartyName(learner, parties || []);
+    doc.text(resolvedParty ? `Party: ${resolvedParty}` : 'Party: Unassigned', x + 37, y + 28.5);
 
     // Role & Constituency Box
     doc.setDrawColor(220, 220, 230);

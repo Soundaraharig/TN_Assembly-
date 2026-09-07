@@ -280,8 +280,56 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
   const handleBatchPrintBadges = () => {
     const selectedLearners = learners.filter(l => selectedLearnerIds.has(l.id));
     if (selectedLearners.length === 0) return;
-    generateDelegateBadgesPDF(selectedLearners, eventName);
+    generateDelegateBadgesPDF(selectedLearners, eventName, parties);
     onShowToast('Badges Generated', `Downloaded badges for ${selectedLearners.length} selected delegates`, 'success');
+  };
+
+  // Batch Assign Bench for selected
+  const handleBatchAssignBench = (bench: 'Ruling' | 'Opposition' | 'Independent' | 'Clear') => {
+    if (selectedLearnerIds.size === 0) return;
+    const benchValue = bench === 'Clear' ? undefined : bench;
+    selectedLearnerIds.forEach(id => {
+      const target = learners.find(l => l.id === id);
+      if (target) {
+        onUpdateLearner({ ...target, bench: benchValue });
+      }
+    });
+    onShowToast('Batch Bench Updated', `Assigned bench ${bench === 'Clear' ? 'None' : bench} to ${selectedLearnerIds.size} delegates`, 'success');
+  };
+
+  // Batch Assign Party for selected
+  const handleBatchAssignParty = (partyId: string) => {
+    if (selectedLearnerIds.size === 0) return;
+    const party = parties.find(p => p.id === partyId);
+    selectedLearnerIds.forEach(id => {
+      const target = learners.find(l => l.id === id);
+      if (target) {
+        onUpdateLearner({
+          ...target,
+          party_id: party ? party.id : undefined,
+          party_name: party ? party.name : undefined,
+          bench: party ? party.bench : target.bench
+        });
+      }
+    });
+    onShowToast('Batch Party Updated', `Assigned party ${party ? party.name : 'Unassigned'} to ${selectedLearnerIds.size} delegates`, 'success');
+  };
+
+  // Batch Assign Committee for selected
+  const handleBatchAssignCommittee = (committeeId: string) => {
+    if (selectedLearnerIds.size === 0) return;
+    const comm = committees.find(c => c.id === committeeId);
+    selectedLearnerIds.forEach(id => {
+      const target = learners.find(l => l.id === id);
+      if (target) {
+        onUpdateLearner({
+          ...target,
+          committee_id: comm ? comm.id : undefined,
+          committee_name: comm ? comm.name : undefined
+        });
+      }
+    });
+    onShowToast('Batch Committee Updated', `Assigned committee ${comm ? comm.name : 'Unassigned'} to ${selectedLearnerIds.size} delegates`, 'success');
   };
 
   return (
@@ -372,7 +420,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                 </div>
                 <button
                   onClick={() => {
-                    exportFullParticipantDataToCSV(filteredLearners, eventName, `${eventName}_Filtered_${filteredLearners.length}_Delegates.csv`);
+                    exportFullParticipantDataToCSV(filteredLearners, eventName, `${eventName}_Filtered_${filteredLearners.length}_Delegates.csv`, parties, committees);
                     onShowToast('Filtered CSV Exported', `Exported ${filteredLearners.length} filtered participant records`, 'success');
                   }}
                   className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
@@ -382,7 +430,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                 </button>
                 <button
                   onClick={() => {
-                    exportFullParticipantDataToExcel(filteredLearners, eventName, `${eventName}_Filtered_${filteredLearners.length}_Delegates.xlsx`);
+                    exportFullParticipantDataToExcel(filteredLearners, eventName, `${eventName}_Filtered_${filteredLearners.length}_Delegates.xlsx`, parties, committees);
                     onShowToast('Filtered Excel Exported', `Exported ${filteredLearners.length} filtered participant records`, 'success');
                   }}
                   className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
@@ -398,7 +446,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                 </div>
                 <button
                   onClick={() => {
-                    exportFullParticipantDataToCSV(learners, eventName, `${eventName}_Whole_Data_${learners.length}_Delegates.csv`);
+                    exportFullParticipantDataToCSV(learners, eventName, `${eventName}_Whole_Data_${learners.length}_Delegates.csv`, parties, committees);
                     onShowToast('Complete CSV Exported', `Exported all ${learners.length} participant records`, 'success');
                   }}
                   className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
@@ -408,7 +456,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                 </button>
                 <button
                   onClick={() => {
-                    exportFullParticipantDataToExcel(learners, eventName, `${eventName}_Whole_Data_${learners.length}_Delegates.xlsx`);
+                    exportFullParticipantDataToExcel(learners, eventName, `${eventName}_Whole_Data_${learners.length}_Delegates.xlsx`, parties, committees);
                     onShowToast('Complete Excel Exported', `Exported all ${learners.length} participant records`, 'success');
                   }}
                   className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
@@ -426,7 +474,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                 onShowToast('No Delegates', 'No delegates available to generate badges', 'error');
                 return;
               }
-              generateDelegateBadgesPDF(filteredLearners, eventName);
+              generateDelegateBadgesPDF(filteredLearners, eventName, parties);
               onShowToast('Badges Generated', 'Downloaded printable PDF delegate badges', 'success');
             }}
             className="px-3 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
@@ -705,7 +753,78 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
             </button>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Batch Assign Bench */}
+            <div className="flex items-center gap-1 bg-slate-800/90 rounded-xl p-1 border border-slate-700">
+              <span className="text-[11px] font-semibold text-slate-300 px-1.5">Bench:</span>
+              <button
+                onClick={() => handleBatchAssignBench('Ruling')}
+                className="px-2 py-1 rounded-lg text-[11px] font-bold bg-blue-600 hover:bg-blue-500 text-white transition-colors cursor-pointer"
+                title="Assign Ruling Bench"
+              >
+                Ruling
+              </button>
+              <button
+                onClick={() => handleBatchAssignBench('Opposition')}
+                className="px-2 py-1 rounded-lg text-[11px] font-bold bg-rose-600 hover:bg-rose-500 text-white transition-colors cursor-pointer"
+                title="Assign Opposition Bench"
+              >
+                Opposition
+              </button>
+              <button
+                onClick={() => handleBatchAssignBench('Independent')}
+                className="px-2 py-1 rounded-lg text-[11px] font-bold bg-slate-700 hover:bg-slate-600 text-slate-200 transition-colors cursor-pointer"
+                title="Assign Independent"
+              >
+                Ind.
+              </button>
+              <button
+                onClick={() => handleBatchAssignBench('Clear')}
+                className="px-1.5 py-1 text-[11px] text-slate-400 hover:text-white transition-colors cursor-pointer"
+                title="Clear Bench (—)"
+              >
+                Clear
+              </button>
+            </div>
+
+            {/* Batch Assign Party */}
+            {parties.length > 0 && (
+              <select
+                defaultValue=""
+                onChange={(e) => {
+                  if (e.target.value) {
+                    handleBatchAssignParty(e.target.value);
+                    e.target.value = '';
+                  }
+                }}
+                className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-xl px-2.5 py-1.5 focus:outline-none cursor-pointer"
+              >
+                <option value="" disabled>Assign Party...</option>
+                {parties.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            )}
+
+            {/* Batch Assign Committee */}
+            {committees.length > 0 && (
+              <select
+                defaultValue=""
+                onChange={(e) => {
+                  if (e.target.value) {
+                    handleBatchAssignCommittee(e.target.value);
+                    e.target.value = '';
+                  }
+                }}
+                className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-xl px-2.5 py-1.5 focus:outline-none cursor-pointer"
+              >
+                <option value="" disabled>Assign Committee...</option>
+                {committees.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            )}
+
             <button
               onClick={() => handleBatchCheckIn(1)}
               className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 flex items-center gap-1 transition-colors cursor-pointer"
@@ -808,6 +927,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                 <th className="py-3 px-4">Party</th>
                 <th className="py-3 px-4">Bench</th>
                 <th className="py-3 px-4">Assembly Role</th>
+                <th className="py-3 px-4">Committee</th>
                 <th className="py-3 px-3 text-center font-mono">No.</th>
                 <th className="py-3 px-4">Constituency</th>
                 <th className="py-3 px-4">District</th>
@@ -817,7 +937,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
             <tbody className="divide-y" style={{ borderColor: 'var(--border-soft)' }}>
               {filteredLearners.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="py-8 text-center text-slate-400 italic">
+                  <td colSpan={13} className="py-8 text-center text-slate-400 italic">
                     No delegate participants found. Click "+ Quick Add Walk-in" to add delegates.
                   </td>
                 </tr>
@@ -912,43 +1032,60 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                           <strong className="block font-bold text-sm" style={{ color: 'var(--text-primary)' }}>
                             {learner.full_name}
                           </strong>
-                          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                            {learner.department || 'General'} • {learner.academic_year || '1st Year'}
-                          </span>
+                          {(learner.department || learner.academic_year) ? (
+                            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                              {[learner.department, learner.academic_year].filter(Boolean).join(' • ')}
+                            </span>
+                          ) : null}
                         </div>
                       </td>
 
                       {/* Party */}
                       <td className="py-3 px-4">
                         <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>
-                          {getResolvedPartyName(learner, parties)}
+                          {getResolvedPartyName(learner, parties) || '—'}
                         </span>
                       </td>
 
                       {/* Bench */}
                       <td className="py-3 px-4">
-                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
-                          learner.bench === 'Ruling'
-                            ? 'bg-blue-50 text-blue-700 border-blue-300 dark:bg-blue-950/40 dark:text-blue-300'
-                            : learner.bench === 'Opposition'
-                              ? 'bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/40 dark:text-rose-300'
-                              : 'bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300'
-                        }`}>
-                          {learner.bench || 'Unallocated'}
-                        </span>
+                        {learner.bench ? (
+                          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                            learner.bench === 'Ruling'
+                              ? 'bg-blue-50 text-blue-700 border-blue-300 dark:bg-blue-950/40 dark:text-blue-300'
+                              : learner.bench === 'Opposition'
+                                ? 'bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/40 dark:text-rose-300'
+                                : 'bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300'
+                          }`}>
+                            {learner.bench}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 dark:text-slate-600 font-medium">—</span>
+                        )}
                       </td>
 
                       {/* Assembly Role */}
                       <td className="py-3 px-4">
-                        <span
-                          className="px-2 py-0.5 rounded text-[11px] font-medium inline-block max-w-[170px] truncate border"
-                          style={{
-                            backgroundColor: 'var(--bg-elevated)',
-                            borderColor: 'var(--border)',
-                            color: 'var(--text-primary)'
-                          }}
-                        >
-                          {learner.role || 'Member of Legislative Assembly'}
+                        {learner.role ? (
+                          <span
+                            className="px-2 py-0.5 rounded text-[11px] font-medium inline-block max-w-[170px] truncate border"
+                            style={{
+                              backgroundColor: 'var(--bg-elevated)',
+                              borderColor: 'var(--border)',
+                              color: 'var(--text-primary)'
+                            }}
+                          >
+                            {learner.role}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 dark:text-slate-600 font-medium">—</span>
+                        )}
+                      </td>
+
+                      {/* Committee */}
+                      <td className="py-3 px-4">
+                        <span className="font-medium text-xs" style={{ color: 'var(--text-secondary)' }}>
+                          {getResolvedCommitteeName(learner, committees) || '—'}
                         </span>
                       </td>
 
@@ -966,7 +1103,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
 
                       {/* District */}
                       <td className="py-3 px-4" style={{ color: 'var(--text-secondary)' }}>
-                        {learner.district || 'Tamil Nadu'}
+                        {learner.district || '—'}
                       </td>
 
                       {/* Actions: Edit & Delete */}

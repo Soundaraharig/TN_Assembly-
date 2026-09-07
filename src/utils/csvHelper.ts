@@ -1,8 +1,8 @@
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
-import type { Learner, AcademicYear, BenchType } from '../types';
+import type { Learner, AcademicYear, BenchType, Party, Committee } from '../types';
 import { generateAccessCode } from './accessCodeGenerator';
-import { TN_CONSTITUENCIES } from '../data/tnConstituencies';
+import { getResolvedPartyName, getResolvedCommitteeName } from '../services/storageService';
 
 export interface CSVImportResult {
   learners: Partial<Learner>[];
@@ -85,7 +85,11 @@ function processRows(rows: any[], eventId: string, existingCodes: Set<string>): 
     const rawHeaders = Object.keys(row);
     const headerMap = new Map(rawHeaders.map(h => [normalizeHeader(h), h]));
 
-    // Find Best Matching Column
+    // Check if column exists in the uploaded sheet
+    const hasField = (aliases: string[]): boolean =>
+      aliases.some(a => headerMap.has(normalizeHeader(a)));
+
+    // Find Best Matching Column value
     const findField = (aliases: string[]): string => {
       for (const alias of aliases) {
         const norm = normalizeHeader(alias);
@@ -98,37 +102,41 @@ function processRows(rows: any[], eventId: string, existingCodes: Set<string>): 
       return '';
     };
 
-    const name = findField([
+    const nameAliases = [
       'fullname', 'name', 'studentname', 'learnername', 'participantname',
       'delegatename', 'candidatename', 'firstname', 'nameofstudent',
       'studentsname', 'nameofthestudent', 'student', 'participant', 'delegate',
       'candidate', 'fullnameofstudent', 'nameofparticipant', 'nameofdelegate'
-    ]);
+    ];
+    const name = findField(nameAliases);
 
-    const email = findField([
+    const emailAliases = [
       'email', 'emailid', 'emailaddress', 'contactemail', 'mail', 'studentemail',
       'studentsemail', 'mailid', 'useremail'
-    ]);
+    ];
+    const email = hasField(emailAliases) ? findField(emailAliases) : undefined;
 
-    const phone = findField([
+    const phoneAliases = [
       'phone', 'phonenumber', 'mobile', 'mobilenumber', 'contact',
       'contactnumber', 'phoneno', 'mobileno', 'whatsapp', 'cell',
       'whatsappnumber', 'whatsappno', 'cellnumber', 'contactno'
-    ]);
+    ];
+    const phone = hasField(phoneAliases) ? findField(phoneAliases) : undefined;
 
-    const department = findField([
+    const deptAliases = [
       'department', 'dept', 'branch', 'course', 'major',
       'program', 'programme', 'specialization', 'stream', 'degree',
       'branchdept', 'coursename'
-    ]) || 'General';
+    ];
+    const department = hasField(deptAliases) ? findField(deptAliases) : '';
 
-    const yearVal = findField([
+    const yearAliases = [
       'academicyear', 'year', 'yearofstudy', 'studyingyear',
       'currentyear', 'class', 'batch', 'yr', 'std', 'semester', 'sem',
       'classyear', 'yearsem'
-    ]);
-
-    const academic_year = parseAcademicYear(yearVal);
+    ];
+    const yearVal = hasField(yearAliases) ? findField(yearAliases) : '';
+    const academic_year = yearVal ? parseAcademicYear(yearVal) : ('' as AcademicYear);
 
     if (!name) {
       errors.push(`Row ${index + 1}: Missing delegate name`);
@@ -143,83 +151,71 @@ function processRows(rows: any[], eventId: string, existingCodes: Set<string>): 
     }
     existingCodes.add(code);
 
-    // Constituency parsing
-    const rawConstNum = findField([
-      'constituencynumber', 'constituencyno', 'constno', 'constituency',
-      'seatnumber', 'seatno', 'constnum', 'acno', 'acnumber', 'const', 'constituencyn'
-    ]);
-    const numDigits = rawConstNum.match(/\d+/);
-    let parsedConstNo: number | undefined = numDigits ? parseInt(numDigits[0], 10) : undefined;
+    // Constituency parsing - strictly column-driven
+    const constNumAliases = [
+      'constituencynumber', 'constituencyno', 'constno', 'seatnumber', 'seatno', 'constnum', 'acno', 'acnumber', 'constituencyn'
+    ];
+    let parsedConstNo: number | undefined = undefined;
+    if (hasField(constNumAliases)) {
+      const rawConstNum = findField(constNumAliases);
+      const numDigits = rawConstNum.match(/\d+/);
+      parsedConstNo = numDigits ? parseInt(numDigits[0], 10) : undefined;
+    }
 
-    let rawConstName = findField([
+    const constNameAliases = [
       'constituencyname', 'constituency', 'tnconstituencyname', 'constname',
       'seatname', 'constituencyseat', 'constituencyseatname'
-    ]);
-
-    let district = findField(['district', 'tndistrict', 'districtname']);
-
-    // Cross-reference with TN_CONSTITUENCIES
-    if (parsedConstNo !== undefined && (!rawConstName || rawConstName === String(parsedConstNo))) {
-      const match = TN_CONSTITUENCIES.find(c => c.number === parsedConstNo);
-      if (match) {
-        rawConstName = match.name;
-        if (!district) district = match.district;
-      }
-    } else if (rawConstName && parsedConstNo === undefined) {
-      // Check if format like "1 - Gummidipoondi"
-      const prefixMatch = rawConstName.match(/^(\d+)\s*[-:]\s*(.+)$/);
-      if (prefixMatch) {
-        parsedConstNo = parseInt(prefixMatch[1], 10);
-        rawConstName = prefixMatch[2].trim();
-      }
-      const cleanName = rawConstName.toLowerCase().replace(/\s*\([^)]*\)/g, '').trim();
-      const match = TN_CONSTITUENCIES.find(
-        c => c.name.toLowerCase() === cleanName || c.name.toLowerCase().includes(cleanName)
-      );
-      if (match) {
-        parsedConstNo = parsedConstNo || match.number;
-        rawConstName = rawConstName || match.name;
-        if (!district) district = match.district;
-      }
-    } else if (parsedConstNo !== undefined && rawConstName) {
-      const match = TN_CONSTITUENCIES.find(c => c.number === parsedConstNo);
-      if (match && !district) {
-        district = match.district;
+    ];
+    let rawConstName: string | undefined = undefined;
+    if (hasField(constNameAliases)) {
+      const rawVal = findField(constNameAliases);
+      if (rawVal) {
+        // If it starts with "1 - Gummidipoondi" and constituency number wasn't given
+        const prefixMatch = rawVal.match(/^(\d+)\s*[-:]\s*(.+)$/);
+        if (prefixMatch && parsedConstNo === undefined) {
+          parsedConstNo = parseInt(prefixMatch[1], 10);
+          rawConstName = prefixMatch[2].trim();
+        } else {
+          rawConstName = rawVal;
+        }
       }
     }
 
-    // Party & Bench parsing
-    const party_name = findField([
+    // District parsing - only if column exists in uploaded sheet (never infer/default)
+    const districtAliases = ['district', 'tndistrict', 'districtname'];
+    const district = hasField(districtAliases) ? findField(districtAliases) : undefined;
+
+    // Party parsing - strictly from sheet
+    const partyAliases = [
       'partyassignment', 'party', 'politicalparty', 'partyname',
       'assignedparty', 'partyassigned', 'partyallocated'
-    ]);
+    ];
+    const rawParty = hasField(partyAliases) ? findField(partyAliases) : '';
+    const party_name = rawParty || undefined;
 
-    const rawBench = findField(['bench', 'benchassignment', 'side', 'rulingopposition', 'benchtype']);
-    let bench = normalizeBench(rawBench);
+    // Bench parsing - STRICTLY column-driven. Never auto-guess or infer from party name.
+    const benchAliases = ['bench', 'benchassignment', 'side', 'rulingopposition', 'benchtype'];
+    const rawBench = hasField(benchAliases) ? findField(benchAliases) : '';
+    const bench = rawBench ? normalizeBench(rawBench) : undefined;
 
-    // If bench not explicitly given, infer from party_name
-    if (!bench && party_name) {
-      const pLower = party_name.toLowerCase();
-      if (pLower.includes('ruling') || pLower === 'party 1' || pLower.startsWith('party 1')) {
-        bench = 'Ruling';
-      } else if (pLower.includes('opposition') || pLower.includes('opp') || pLower === 'party 2' || pLower.startsWith('party 2')) {
-        bench = 'Opposition';
-      } else if (pLower.includes('independent')) {
-        bench = 'Independent';
-      }
-    }
-
-    // Legislative Role
-    const rawRole = findField([
+    // Legislative Role - only if explicit role column exists in sheet
+    const roleAliases = [
       'role', 'legislativerole', 'cabinetrole', 'designation',
       'position', 'parliamentaryrole', 'cabinet'
-    ]);
-    const role = rawRole || 'Member of Legislative Assembly (MLA)';
+    ];
+    const role = hasField(roleAliases) ? (findField(roleAliases) || undefined) : undefined;
 
-    // Committee
-    const committee_name = findField([
-      'committee', 'committeename', 'assignedcommittee', 'committeegroup'
-    ]);
+    // Committee - only if explicit committee column exists in sheet
+    const commAliases = [
+      'committee', 'committeename', 'assignedcommittee', 'committeegroup', 'committeeassignment'
+    ];
+    let committee_name: string | undefined = undefined;
+    if (hasField(commAliases)) {
+      const rawComm = findField(commAliases);
+      if (rawComm) {
+        committee_name = /^\d+$/.test(rawComm) ? `Committee ${rawComm}` : rawComm;
+      }
+    }
 
     learners.push({
       id: `l_${Date.now()}_${index}_${Math.random().toString(36).substring(2, 6)}`,
@@ -287,19 +283,25 @@ export function parseCSVFile(
   });
 }
 
-export function exportFullParticipantDataToExcel(learners: Learner[], eventName: string = 'TN_Assembly', customFileName?: string) {
+export function exportFullParticipantDataToExcel(
+  learners: Learner[],
+  eventName: string = 'TN_Assembly',
+  customFileName?: string,
+  parties?: Party[],
+  committees?: Committee[]
+) {
   const exportData = learners.map((l, index) => ({
     'S.No': index + 1,
     'Student Name': l.full_name,
     'Constituency Number': l.constituency_number || '',
     'Constituency Name': l.constituency_name || '',
-    'Allocated Party': l.party_name || '',
-    'Allocated Committee': l.committee_name || '',
+    'Allocated Party': parties ? getResolvedPartyName(l, parties) : (l.party_name || ''),
+    'Allocated Committee': committees ? getResolvedCommitteeName(l, committees) : (l.committee_name || ''),
     'Bench': l.bench || '',
-    'Legislative Role': l.role || 'Member of Legislative Assembly (MLA)',
+    'Legislative Role': l.role || '',
     'Access Code': l.access_code,
     'Department': l.department || '',
-    'Academic Year': l.academic_year || '1st Year',
+    'Academic Year': l.academic_year || '',
     'Email ID': l.email || '',
     'Phone Number': l.phone || '',
     'Day 1 Check-in': l.day1_checked_in ? 'Checked In' : 'Not Checked In',
@@ -336,19 +338,25 @@ export function exportFullParticipantDataToExcel(learners: Learner[], eventName:
   XLSX.writeFile(workbook, fileName);
 }
 
-export function exportFullParticipantDataToCSV(learners: Learner[], eventName: string = 'TN_Assembly', customFileName?: string) {
+export function exportFullParticipantDataToCSV(
+  learners: Learner[],
+  eventName: string = 'TN_Assembly',
+  customFileName?: string,
+  parties?: Party[],
+  committees?: Committee[]
+) {
   const exportData = learners.map((l, index) => ({
     'S.No': index + 1,
     'Student Name': l.full_name,
     'Constituency Number': l.constituency_number || '',
     'Constituency Name': l.constituency_name || '',
-    'Allocated Party': l.party_name || '',
-    'Allocated Committee': l.committee_name || '',
+    'Allocated Party': parties ? getResolvedPartyName(l, parties) : (l.party_name || ''),
+    'Allocated Committee': committees ? getResolvedCommitteeName(l, committees) : (l.committee_name || ''),
     'Bench': l.bench || '',
-    'Legislative Role': l.role || 'Member of Legislative Assembly (MLA)',
+    'Legislative Role': l.role || '',
     'Access Code': l.access_code,
     'Department': l.department || '',
-    'Academic Year': l.academic_year || '1st Year',
+    'Academic Year': l.academic_year || '',
     'Email ID': l.email || '',
     'Phone Number': l.phone || '',
     'Day 1 Check-in': l.day1_checked_in ? 'Checked In' : 'Not Checked In',

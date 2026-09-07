@@ -53,7 +53,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   onUpdatePartyBench,
   onOpenProjectorView
 }) => {
-  const eventId = currentEvent?.id;
+
 
   // ── Agenda Navigation State ──────────────────────────────────────────────
   const [activeDayTab, setActiveDayTab] = useState<'Pre-Event' | 'Day 1' | 'Day 2'>('Day 1');
@@ -149,56 +149,25 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   const [spokenLearnersCount, setSpokenLearnersCount] = useState(0);
 
   // ── Government Formation State (Parties & Bench) ──────────────────────────
-  const defaultParties: Party[] = [
-    { id: 'p1', event_id: currentEvent?.id || '', name: 'National Youth Party - NYP', bench: 'Ruling', color: '#2563eb' },
-    { id: 'p2', event_id: currentEvent?.id || '', name: 'National Renaissance Party - NRP', bench: 'Opposition', color: '#e11d48' },
-    { id: 'p3', event_id: currentEvent?.id || '', name: 'Rising New Nation - RNN', bench: 'Ruling', color: '#2563eb' },
-    { id: 'p4', event_id: currentEvent?.id || '', name: 'National Integrity Front - NIF', bench: 'Opposition', color: '#e11d48' },
-    { id: 'p5', event_id: currentEvent?.id || '', name: 'Pulse of Progress', bench: 'Opposition', color: '#e11d48' },
-    { id: 'p6', event_id: currentEvent?.id || '', name: 'United Future Vision', bench: 'Ruling', color: '#2563eb' },
-    { id: 'p7', event_id: currentEvent?.id || '', name: "The People's Compass", bench: 'Ruling', color: '#2563eb' }
-  ];
-
-  const [localParties, setLocalParties] = useState<Party[]>(() => {
-    return parties && parties.length > 0 ? parties : defaultParties;
-  });
-
-  useEffect(() => {
-    if (parties && parties.length > 0) {
-      setLocalParties(parties);
-    }
-  }, [parties]);
-
-  const displayParties = localParties.length > 0 ? localParties : defaultParties;
-
   const handlePartyBenchChange = (partyId: string, newBench: 'Ruling' | 'Opposition' | 'Independent') => {
-    setLocalParties(prev => prev.map(p => p.id === partyId ? { ...p, bench: newBench } : p));
     if (onUpdatePartyBench) {
       onUpdatePartyBench(partyId, newBench);
     }
-    const targetParty = displayParties.find(p => p.id === partyId);
+    const targetParty = parties.find(p => p.id === partyId);
     onShowToast(
       'Party Bench Updated',
       `${targetParty?.name || 'Party'} set to ${newBench}`,
-      newBench === 'Ruling' ? 'success' : newBench === 'Opposition' ? 'info' : 'info'
+      newBench === 'Ruling' ? 'success' : 'info'
     );
   };
 
   const computedRulingCount = useMemo(() => {
-    if (eventId) {
-      const assigned = storageService.getAssignedBenchCounts(eventId);
-      return assigned['Ruling'] ?? learners.filter(l => l.bench === 'Ruling').length;
-    }
     return learners.filter(l => l.bench === 'Ruling').length;
-  }, [eventId, learners]);
+  }, [learners]);
 
   const computedOppositionCount = useMemo(() => {
-    if (eventId) {
-      const assigned = storageService.getAssignedBenchCounts(eventId);
-      return assigned['Opposition'] ?? learners.filter(l => l.bench === 'Opposition').length;
-    }
     return learners.filter(l => l.bench === 'Opposition').length;
-  }, [eventId, learners]);
+  }, [learners]);
 
   const [isGovtFormationOpen, setIsGovtFormationOpen] = useState(true);
 
@@ -526,79 +495,86 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
                 {/* Party Bench Assignment List */}
                 <div className="space-y-2.5 pt-1">
-                  {displayParties.map((party) => {
-                    const partyCounts = storageService.getAssignedPartyCounts(eventId || '');
-                    const partyMemberCount = partyCounts[party.name] || partyCounts[party.id] || learners.filter(l => l.party_id === party.id || l.party_name === party.name).length;
-                    const isRuling = party.bench === 'Ruling';
-                    const isOpposition = party.bench === 'Opposition';
+                  {parties.length === 0 ? (
+                    <div className="py-6 text-center text-xs text-slate-400 italic rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
+                      No political parties configured yet. Import participants with party assignments or configure parties in the Parties tab.
+                    </div>
+                  ) : (
+                    parties.map((party) => {
+                      const partyMemberCount = learners.filter(
+                        l => l.party_id === party.id || (!l.party_id && l.party_name === party.name)
+                      ).length;
+                      const isRuling = party.bench === 'Ruling';
+                      const isOpposition = party.bench === 'Opposition';
 
-                    return (
-                      <div
-                        key={party.id}
-                        className={`p-3 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-                          isRuling
-                            ? 'border-blue-400 dark:border-blue-700 bg-blue-50/60 dark:bg-blue-950/20 shadow-sm'
-                            : isOpposition
-                              ? 'border-rose-400 dark:border-rose-700 bg-rose-50/60 dark:bg-rose-950/20 shadow-sm'
-                              : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <strong
-                            className={`text-xs font-bold ${
-                              isRuling
-                                ? 'text-blue-700 dark:text-blue-400'
-                                : isOpposition
-                                  ? 'text-rose-700 dark:text-rose-400'
-                                  : 'text-slate-900 dark:text-white'
-                            }`}
-                          >
-                            {party.name}
-                          </strong>
-                          <span className="text-slate-400 text-[11px] font-normal">
-                            {partyMemberCount} members
-                          </span>
+                      return (
+                        <div
+                          key={party.id}
+                          className={`p-3 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                            isRuling
+                              ? 'border-blue-400 dark:border-blue-700 bg-blue-50/60 dark:bg-blue-950/20 shadow-sm'
+                              : isOpposition
+                                ? 'border-rose-400 dark:border-rose-700 bg-rose-50/60 dark:bg-rose-950/20 shadow-sm'
+                                : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <strong
+                              className={`text-xs font-bold ${
+                                isRuling
+                                  ? 'text-blue-700 dark:text-blue-400'
+                                  : isOpposition
+                                    ? 'text-rose-700 dark:text-rose-400'
+                                    : 'text-slate-900 dark:text-white'
+                              }`}
+                            >
+                              {party.name}
+                            </strong>
+                            <span className="text-slate-400 text-[11px] font-normal">
+                              {partyMemberCount} member{partyMemberCount !== 1 ? 's' : ''}
+                            </span>
+                          </div>
+
+                          {/* Interactive Ruling / Opposition / Clear Bench Switchers */}
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {/* Ruling Button */}
+                            <button
+                              onClick={() => handlePartyBenchChange(party.id, 'Ruling')}
+                              className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                                isRuling
+                                  ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20'
+                                  : 'border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
+                              }`}
+                            >
+                              {isRuling && <span>✓</span>}
+                              <span>Ruling</span>
+                            </button>
+
+                            {/* Opposition Button */}
+                            <button
+                              onClick={() => handlePartyBenchChange(party.id, 'Opposition')}
+                              className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                                isOpposition
+                                  ? 'bg-rose-600 text-white shadow-md shadow-rose-600/20'
+                                  : 'border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
+                              }`}
+                            >
+                              {isOpposition && <span>✓</span>}
+                              <span>Opposition</span>
+                            </button>
+
+                            {/* Clear Button */}
+                            <button
+                              onClick={() => handlePartyBenchChange(party.id, 'Independent')}
+                              className="px-2.5 py-1 text-xs text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-pointer font-medium"
+                            >
+                              Clear
+                            </button>
+                          </div>
                         </div>
-
-                        {/* Interactive Ruling / Opposition / Clear Bench Switchers */}
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {/* Ruling Button */}
-                          <button
-                            onClick={() => handlePartyBenchChange(party.id, 'Ruling')}
-                            className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
-                              isRuling
-                                ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20'
-                                : 'border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
-                            }`}
-                          >
-                            {isRuling && <span>✓</span>}
-                            <span>Ruling</span>
-                          </button>
-
-                          {/* Opposition Button */}
-                          <button
-                            onClick={() => handlePartyBenchChange(party.id, 'Opposition')}
-                            className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
-                              isOpposition
-                                ? 'bg-rose-600 text-white shadow-md shadow-rose-600/20'
-                                : 'border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
-                            }`}
-                          >
-                            {isOpposition && <span>✓</span>}
-                            <span>Opposition</span>
-                          </button>
-
-                          {/* Clear Button */}
-                          <button
-                            onClick={() => handlePartyBenchChange(party.id, 'Independent')}
-                            className="px-2.5 py-1 text-xs text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-pointer font-medium"
-                          >
-                            Clear
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })
+                  )}
                 </div>
               </div>
             )}
