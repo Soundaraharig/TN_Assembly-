@@ -1,5 +1,6 @@
 import React from 'react';
 import type { CollegeEvent, Learner, Party, Committee, BillProceeding, ScoreRecord } from '../../types';
+import { storageService } from '../../services/storageService';
 import { exportFullParticipantDataToCSV } from '../../utils/csvHelper';
 import {
   BarChart,
@@ -26,11 +27,14 @@ export const ReportTab: React.FC<ReportTabProps> = ({
   proceedings,
   onShowToast
 }) => {
-  const totalLearners = learners.length;
+  const eventId = event.id;
+  const totalLearners = storageService.getTotalAssignedCount(eventId);
   const d1CheckIn = learners.filter(l => l.day1_checked_in).length;
   const d2CheckIn = learners.filter(l => l.day2_checked_in).length;
-  const rulingCount = learners.filter(l => l.bench === 'Ruling').length;
-  const oppCount = learners.filter(l => l.bench === 'Opposition').length;
+
+  // Use database-sourced bench counts
+  const rulingCount = storageService.getAssignedPartyCounts(eventId)['Ruling'] || 0;
+  const oppCount = storageService.getAssignedPartyCounts(eventId)['Opposition'] || 0;
 
   const handlePrintDossier = () => {
     window.print();

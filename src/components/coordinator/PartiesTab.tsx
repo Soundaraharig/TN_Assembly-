@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import type { Party, BenchType, Learner, UserRole } from '../../types';
 import { canDelete } from '../../utils/permissions';
+import { storageService } from '../../services/storageService';
 import {
   Plus,
   Users,
@@ -195,12 +196,11 @@ export const PartiesTab: React.FC<PartiesTabProps> = ({
       {/* Grid of Political Parties */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {parties.map((party, index) => {
-          const partyLearners = learners.filter(
-            l => l.party_id === party.id || l.party_name === party.name
-          );
-          const memberCount = partyLearners.length;
+      // Use database-sourced count for this party
+      const partyCounts = storageService.getAssignedPartyCounts(eventId || '');
+      const memberCount = partyCounts[party.name] || 0;
 
-          return (
+      return (
             <div
               key={party.id}
               className="rounded-2xl p-4 border shadow-sm flex flex-col justify-between space-y-4 transition-all"
@@ -297,11 +297,6 @@ export const PartiesTab: React.FC<PartiesTabProps> = ({
                       }}
                     >
                       <option value="">-- Choose Leader from Members --</option>
-                      {partyLearners.map((learner) => (
-                        <option key={learner.id} value={learner.full_name}>
-                          {learner.full_name} ({learner.department || 'MLA'} • {learner.academic_year || 'Delegate'})
-                        </option>
-                      ))}
                     </select>
                   ) : (
                     <div className="p-2 rounded-xl border text-[11px] italic" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}>

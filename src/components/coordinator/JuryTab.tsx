@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { JuryMember, BenchType, UserRole } from '../../types';
 import { canDelete } from '../../utils/permissions';
 import {
@@ -12,6 +12,8 @@ import {
   ChevronUp,
   Link2
 } from 'lucide-react';
+
+import { storageService } from '../../services/storageService';
 
 interface JuryTabProps {
   jury: JuryMember[];
@@ -133,7 +135,7 @@ export const JuryTab: React.FC<JuryTabProps> = ({
         {/* Table Header Row */}
         <div className="p-5 flex items-center justify-between border-b border-slate-100 dark:border-slate-800">
           <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
-            Jury Members ({jury.length})
+            Jury Members ({storageService.getJuryCount(eventId)})
           </h3>
 
           <button

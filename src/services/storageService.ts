@@ -3132,6 +3132,57 @@ class StorageService {
     await this.syncFromSupabase();
   }
 
+  // ── PARTY / COMMITTEE / JURY COUNTS (Database-sourced) ─────────────────────
+
+  public getPartyCount(eventId: string): number {
+    const learners = this.getLearners(eventId);
+    return learners.filter(l => l.party_id || l.party_name).length;
+  }
+
+  public getCommitteeCount(eventId: string): number {
+    const learners = this.getLearners(eventId);
+    return learners.filter(l => l.committee_id || l.committee_name).length;
+  }
+
+  public getJuryCount(eventId: string): number {
+    const jury = this.getJury(eventId);
+    return jury.length;
+  }
+
+  public getUnassignedCount(eventId: string): number {
+    const learners = this.getLearners(eventId);
+    return learners.filter(l => !l.party_id && !l.party_name && !l.committee_id && !l.committee_name).length;
+  }
+
+  public getTotalAssignedCount(eventId: string): number {
+    const learners = this.getLearners(eventId);
+    return learners.filter(l => l.party_id || l.party_name || l.committee_id || l.committee_name).length;
+  }
+
+  public getAssignedPartyCounts(eventId: string): Record<string, number> {
+    const learners = this.getLearners(eventId);
+    const counts: Record<string, number> = {};
+    learners.forEach(l => {
+      if (l.party_id || l.party_name) {
+        const partyKey = l.party_id || l.party_name;
+        counts[partyKey] = (counts[partyKey] || 0) + 1;
+      }
+    });
+    return counts;
+  }
+
+  public getAssignedCommitteeCounts(eventId: string): Record<string, number> {
+    const learners = this.getLearners(eventId);
+    const counts: Record<string, number> = {};
+    learners.forEach(l => {
+      if (l.committee_id || l.committee_name) {
+        const key = l.committee_id || l.committee_name;
+        counts[key] = (counts[key] || 0) + 1;
+      }
+    });
+    return counts;
+  }
+
   // ── DEADLINES CONFIGURATION ─────────────────────────────────────────
   public getEventDeadline(eventSlug: string): EventDeadline {
     const list: EventDeadline[] = this.getItem(STORAGE_KEYS.DEADLINES, []);

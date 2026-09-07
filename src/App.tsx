@@ -324,7 +324,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
       {activeTabFromPath === 'overview' && (
         <EventOverviewTab
           event={activeEvent}
-          participantCount={props.learners.filter(l => l.event_id === activeEvent.id || !l.event_id).length}
+          participantCount={storageService.getTotalAssignedCount(activeEvent.id || '')}
           electionsCount={props.elections.filter(e => e.event_id === activeEvent.id || !e.event_id).length || activeEvent.elections_count || 3}
           onUpdateEvent={(upd) => {
             storageService.updateEvent(upd);

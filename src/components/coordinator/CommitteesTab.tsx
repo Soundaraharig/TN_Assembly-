@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import type { Committee, Learner, UserRole } from '../../types';
 import { canDelete } from '../../utils/permissions';
+import { storageService } from '../../services/storageService';
 import { Plus, BookOpen, Users, Edit, Trash2, X, Eye, Layers, UserCheck } from 'lucide-react';
 
 interface CommitteesTabProps {
@@ -166,9 +167,9 @@ export const CommitteesTab: React.FC<CommitteesTabProps> = ({
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {committees.map((comm, index) => {
-          const commLearners = learners.filter(
-            l => l.committee_id === comm.id || l.committee_name === comm.name
-          );
+          // Use database-sourced count for this committee
+          const committeeCounts = storageService.getAssignedCommitteeCounts(eventId || '');
+          const memberCount = committeeCounts[comm.name] || 0;
 
           return (
             <div
@@ -246,7 +247,7 @@ export const CommitteesTab: React.FC<CommitteesTabProps> = ({
                     className="font-bold px-2.5 py-0.5 rounded-full border text-[11px]"
                     style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
                   >
-                    {commLearners.length} / {comm.max_capacity || 50} Max
+                    {memberCount} / {comm.max_capacity || 50} Max
                   </span>
                 </div>
 
@@ -256,7 +257,7 @@ export const CommitteesTab: React.FC<CommitteesTabProps> = ({
                     <span>Committee Chairperson:</span>
                   </label>
 
-                  {commLearners.length > 0 ? (
+                  {memberCount > 0 ? (
                     <select
                       value={comm.chairperson || ''}
                       onChange={(e) => handleSelectChairperson(comm, e.target.value)}
@@ -268,11 +269,6 @@ export const CommitteesTab: React.FC<CommitteesTabProps> = ({
                       }}
                     >
                       <option value="">-- Choose Chairperson from Members --</option>
-                      {commLearners.map((learner) => (
-                        <option key={learner.id} value={learner.full_name}>
-                          {learner.full_name} ({learner.party_name || 'MLA'} • {learner.academic_year || 'Delegate'})
-                        </option>
-                      ))}
                     </select>
                   ) : (
                     <div className="p-2 rounded-xl border text-[11px] italic" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}>

@@ -182,8 +182,21 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     );
   };
 
-  const computedRulingCount = learners.filter(l => l.bench === 'Ruling').length || displayParties.filter(p => p.bench === 'Ruling').length * 25 || 98;
-  const computedOppositionCount = learners.filter(l => l.bench === 'Opposition').length || displayParties.filter(p => p.bench === 'Opposition').length * 25 || 75;
+  const computedRulingCount = useMemo(() => {
+    if (eventId) {
+      const assigned = storageService.getAssignedPartyCounts(eventId);
+      return assigned['Ruling'] || 0;
+    }
+    return learners.filter(l => l.bench === 'Ruling').length || displayParties.filter(p => p.bench === 'Ruling').length * 25 || 98;
+  }, [eventId, learners, displayParties]);
+
+  const computedOppositionCount = useMemo(() => {
+    if (eventId) {
+      const assigned = storageService.getAssignedPartyCounts(eventId);
+      return assigned['Opposition'] || 0;
+    }
+    return learners.filter(l => l.bench === 'Opposition').length || displayParties.filter(p => p.bench === 'Opposition').length * 25 || 75;
+  }, [eventId, learners, displayParties]);
 
   const [isGovtFormationOpen, setIsGovtFormationOpen] = useState(true);
 
@@ -253,7 +266,22 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   };
 
   // Checked in count
-  const checkedInCount = learners.filter(l => l.day1_checked_in || l.day2_checked_in).length;
+  const eventIdForCounts = currentEvent?.id || (learners.length > 0 ? learners[0].event_id : undefined);
+  const checkedInCount = useMemo(() => {
+    if (eventIdForCounts) {
+      // Use database-sourced checked-in count
+      const allLearners = storageService.getLearners(eventIdForCounts);
+      return allLearners.filter(l => l.day1_checked_in || l.day2_checked_in).length;
+    }
+    return learners.filter(l => l.day1_checked_in || l.day2_checked_in).length;
+  }, [eventIdForCounts, learners]);
+
+  const totalParticipantCount = useMemo(() => {
+    if (eventIdForCounts) {
+      return storageService.getTotalAssignedCount(eventIdForCounts);
+    }
+    return learners.length;
+  }, [eventIdForCounts, learners]);
 
   return (
     <div className="space-y-6 animate-fade-in pb-12">
@@ -497,8 +525,8 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                 {/* Party Bench Assignment List */}
                 <div className="space-y-2.5 pt-1">
                   {displayParties.map((party) => {
-                    const partyLearners = learners.filter(l => l.party_id === party.id || l.party_name === party.name);
-                    const partyMemberCount = partyLearners.length > 0 ? partyLearners.length : 25;
+                    const partyCounts = storageService.getAssignedPartyCounts(eventId || '');
+                    const partyMemberCount = partyCounts[party.name] || 0;
                     const isRuling = party.bench === 'Ruling';
                     const isOpposition = party.bench === 'Opposition';
 
@@ -788,7 +816,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   <span>Participants</span>
                 </div>
                 <strong className="text-sm font-black text-slate-900 dark:text-white font-mono">
-                  {learners.length}
+                  {totalParticipantCount}
                 </strong>
               </div>
 

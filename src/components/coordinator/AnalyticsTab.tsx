@@ -1,6 +1,7 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect } from 'react';
 import type { Learner, Party, Committee, AcademicYear } from '../../types';
 import { BarChart3, Shield, Sparkles } from 'lucide-react';
+import { storageService } from '../../services/storageService';
 
 interface AnalyticsTabProps {
   learners: Learner[];
@@ -17,11 +18,32 @@ export const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ learners, parties })
   const day1Rate = totalCount > 0 ? Math.round((day1Count / totalCount) * 100) : 0;
   const day2Rate = totalCount > 0 ? Math.round((day2Count / totalCount) * 100) : 0;
 
-  const rulingCount = learners.filter(l => l.bench === 'Ruling').length;
-  const oppCount = learners.filter(l => l.bench === 'Opposition').length;
+  // Use database-sourced bench counts for accurate ratio
+  const eventId = learners.length > 0 ? learners[0].event_id : undefined;
+  const rulingCount = useMemo(() => {
+    if (eventId) {
+      const assigned = storageService.getAssignedPartyCounts(eventId);
+      return assigned['Ruling'] || 0;
+    }
+    return learners.filter(l => l.bench === 'Ruling').length;
+  }, [eventId, learners]);
 
-  // Party breakdown
+  const oppCount = useMemo(() => {
+    if (eventId) {
+      const assigned = storageService.getAssignedPartyCounts(eventId);
+      return assigned['Opposition'] || 0;
+    }
+    return learners.filter(l => l.bench === 'Opposition').length;
+  }, [eventId, learners]);
+
+  // Party breakdown - use database-sourced counts for the current event
+  const eventId = learners.length > 0 ? learners[0].event_id : undefined;
   const partyCounts = useMemo(() => {
+    if (eventId) {
+      // Use database-sourced count from Supabase
+      return storageService.getAssignedPartyCounts(eventId);
+    }
+    // Fallback to local calculation
     const counts: Record<string, number> = {};
     learners.forEach(l => {
       if (l.party_name) {
@@ -29,7 +51,7 @@ export const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ learners, parties })
       }
     });
     return counts;
-  }, [learners]);
+  }, [learners, eventId]);
 
   // Year breakdown
   const yearCounts = useMemo(() => {
@@ -100,6 +122,7 @@ export const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ learners, parties })
           <div className="space-y-3">
             {parties.map(p => {
               const count = partyCounts[p.name] || 0;
+              // Use database-sourced total for accurate percentage
               const pct = totalCount > 0 ? Math.round((count / totalCount) * 100) : 0;
 
               return (
