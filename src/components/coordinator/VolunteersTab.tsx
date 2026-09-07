@@ -224,19 +224,57 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
       const file = e.target.files[0];
       setImportFile(file);
 
+      const normalizeHeader = (h: string) =>
+        h ? h.replace(/^\uFEFF/, '').trim().toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+
       Papa.parse(file, {
         header: true,
         skipEmptyLines: true,
         complete: (results) => {
-          const parsed: Partial<Volunteer>[] = results.data.map((row: any) => ({
-            name: row.Name || row.name || row['Volunteer Name'] || 'Volunteer',
-            phone: row.Phone || row.phone || row.Mobile || '',
-            email: row.Email || row.email || '',
-            station: row.Station || row.station || 'Floating',
-            shift: row.Shift || row.shift || 'Both days',
-            is_yuva: true,
-            has_arrived: false
-          })).filter((v: any) => v.name);
+          const parsed: Partial<Volunteer>[] = results.data.map((row: any) => {
+            const rawHeaders = Object.keys(row);
+            const headerMap = new Map(rawHeaders.map(h => [normalizeHeader(h), h]));
+
+            const findField = (aliases: string[]): string => {
+              for (const alias of aliases) {
+                const norm = normalizeHeader(alias);
+                const actualKey = headerMap.get(norm);
+                if (actualKey && row[actualKey] !== undefined && row[actualKey] !== null) {
+                  const val = String(row[actualKey]).trim();
+                  if (val) return val;
+                }
+              }
+              return '';
+            };
+
+            const name = findField([
+              'name', 'fullname', 'volunteername', 'studentname', 'participantname',
+              'delegatename', 'candidatename', 'firstname', 'nameofvolunteer'
+            ]);
+            const phone = findField([
+              'phone', 'phonenumber', 'mobile', 'mobilenumber', 'contact',
+              'contactnumber', 'phoneno', 'mobileno', 'cell'
+            ]);
+            const email = findField([
+              'email', 'emailid', 'emailaddress', 'contactemail', 'mail'
+            ]);
+            const station = findField([
+              'station', 'assignedstation', 'location', 'venue', 'post'
+            ]) || 'Floating';
+            const shift = findField([
+              'shift', 'assignedshift', 'timing', 'time', 'slot'
+            ]) || 'Both days';
+
+            return {
+              name: name || '',
+              phone,
+              email,
+              station,
+              shift,
+              is_yuva: true,
+              has_arrived: false
+            };
+          }).filter((v: any) => v.name && v.name.trim().length > 0);
 
           setImportPreview(parsed);
         }
@@ -812,6 +850,7 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
                 type="file"
                 accept=".csv"
                 id="vol-csv-input"
+                onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
                 onChange={handleFileChange}
                 className="hidden"
               />

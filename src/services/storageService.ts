@@ -368,7 +368,22 @@ class StorageService {
         console.error("Supabase Error [learners]:", learnersErr);
         hasQueryError = true;
       } else if (learners !== null) {
-        this.setItem(STORAGE_KEYS.LEARNERS, sortLearnersStably(learners));
+        const localLearners = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, []);
+        const learnerMap = new Map<string, Learner>();
+        localLearners.forEach(l => learnerMap.set(l.id, l));
+        learners.forEach(r => {
+          const local = learnerMap.get(r.id);
+          if (!local) {
+            learnerMap.set(r.id, r as Learner);
+          } else {
+            const localTime = new Date(local.updated_at || local.created_at || 0).getTime();
+            const remoteTime = new Date((r as any).updated_at || (r as any).created_at || 0).getTime();
+            if (remoteTime >= localTime) {
+              learnerMap.set(r.id, { ...local, ...(r as Learner) });
+            }
+          }
+        });
+        this.setItem(STORAGE_KEYS.LEARNERS, sortLearnersStably(Array.from(learnerMap.values())));
       }
 
       if (partiesErr) {
@@ -403,7 +418,22 @@ class StorageService {
         console.error("Supabase Error [volunteers]:", volErr);
         hasQueryError = true;
       } else if (volunteers !== null) {
-        this.setItem(STORAGE_KEYS.VOLUNTEERS, volunteers);
+        const localVolunteers = this.getItem<Volunteer[]>(STORAGE_KEYS.VOLUNTEERS, []);
+        const volMap = new Map<string, Volunteer>();
+        localVolunteers.forEach(v => volMap.set(v.id, v));
+        volunteers.forEach(r => {
+          const local = volMap.get(r.id);
+          if (!local) {
+            volMap.set(r.id, r as Volunteer);
+          } else {
+            const localTime = new Date(local.created_at || 0).getTime();
+            const remoteTime = new Date((r as any).created_at || 0).getTime();
+            if (remoteTime >= localTime) {
+              volMap.set(r.id, { ...local, ...(r as Volunteer) });
+            }
+          }
+        });
+        this.setItem(STORAGE_KEYS.VOLUNTEERS, Array.from(volMap.values()));
       }
 
       this.isSyncing = false;
@@ -510,9 +540,14 @@ class StorageService {
       return {
         id: raw.id,
         event_id: raw.event_id,
+        access_code: raw.access_code || null,
         name: raw.name,
         email: raw.email || null,
         phone: raw.phone || null,
+        station: raw.station || 'Floating',
+        shift: raw.shift || 'Both days',
+        is_yuva: raw.is_yuva !== undefined ? !!raw.is_yuva : true,
+        has_arrived: !!raw.has_arrived,
         role: raw.role || 'Volunteer',
         created_at: raw.created_at || new Date().toISOString()
       };
@@ -862,18 +897,18 @@ class StorageService {
         // Smart update existing delegate
         const updated: Learner = {
           ...existingMatch,
-          full_name: l.full_name || existingMatch.full_name,
-          email: l.email !== undefined ? l.email : existingMatch.email,
-          phone: l.phone !== undefined ? l.phone : existingMatch.phone,
+          full_name: (l.full_name && l.full_name.trim()) ? l.full_name : existingMatch.full_name,
+          email: (l.email && l.email.trim()) ? l.email : existingMatch.email,
+          phone: (l.phone && l.phone.trim()) ? l.phone : existingMatch.phone,
           department: (l.department && l.department !== 'General') ? l.department : existingMatch.department,
           academic_year: l.academic_year || existingMatch.academic_year,
           constituency_number: l.constituency_number !== undefined ? l.constituency_number : existingMatch.constituency_number,
-          constituency_name: l.constituency_name !== undefined ? l.constituency_name : existingMatch.constituency_name,
-          district: l.district !== undefined ? l.district : existingMatch.district,
+          constituency_name: (l.constituency_name && l.constituency_name.trim()) ? l.constituency_name : existingMatch.constituency_name,
+          district: (l.district && l.district.trim()) ? l.district : existingMatch.district,
           party_name: resolvedPartyName !== undefined ? resolvedPartyName : existingMatch.party_name,
           party_id: resolvedPartyId !== undefined ? resolvedPartyId : existingMatch.party_id,
           bench: resolvedBench !== undefined ? resolvedBench : existingMatch.bench,
-          role: l.role || existingMatch.role || 'Member of Legislative Assembly (MLA)',
+          role: (l.role && l.role.trim()) ? l.role : existingMatch.role || 'Member of Legislative Assembly (MLA)',
           committee_name: resolvedCommName !== undefined ? resolvedCommName : existingMatch.committee_name,
           committee_id: resolvedCommId !== undefined ? resolvedCommId : existingMatch.committee_id
         };

@@ -200,6 +200,7 @@ interface EventTabRouteHandlerProps {
   handleDeleteJury: (id: string) => void;
   handleAddVolunteer: (v: Partial<Volunteer>) => void;
   handleDeleteVolunteer: (id: string) => void;
+  setVolunteers?: (volunteers: Volunteer[]) => void;
   setLearners: (learners: Learner[]) => void;
   handleSetCurrentAgendaItem: (id: string) => void;
   setElections: (elecs: Election[]) => void;
@@ -510,7 +511,12 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           committees={props.committees}
           onAddVolunteer={props.handleAddVolunteer}
           onToggleArrival={(id) => storageService.toggleVolunteerArrival(id)}
-          onBulkImportVolunteers={(vols) => storageService.bulkImportVolunteers(vols, activeEvent.id)}
+          onBulkImportVolunteers={(vols) => {
+            storageService.bulkImportVolunteers(vols, activeEvent.id);
+            if (props.setVolunteers) {
+              props.setVolunteers(storageService.getVolunteers(activeEvent.id));
+            }
+          }}
           onDeleteVolunteer={props.handleDeleteVolunteer}
           onShowToast={props.addToast}
         />
@@ -2021,6 +2027,7 @@ export function App() {
                   handleDeleteJury={handleDeleteJury}
                   handleAddVolunteer={handleAddVolunteer}
                   handleDeleteVolunteer={handleDeleteVolunteer}
+                  setVolunteers={setVolunteers}
                   setLearners={setLearners}
                   handleSetCurrentAgendaItem={handleSetCurrentAgendaItem}
                   setElections={setElections}

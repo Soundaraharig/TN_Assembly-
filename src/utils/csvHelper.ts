@@ -79,7 +79,7 @@ function processRows(rows: any[], eventId: string, existingCodes: Set<string>): 
   const errors: string[] = [];
 
   const normalizeHeader = (h: string) =>
-    h ? h.trim().toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+    h ? h.replace(/^\uFEFF/, '').trim().toLowerCase().replace(/[^a-z0-9]/g, '') : '';
 
   rows.forEach((row: any, index: number) => {
     const rawHeaders = Object.keys(row);
@@ -100,26 +100,32 @@ function processRows(rows: any[], eventId: string, existingCodes: Set<string>): 
 
     const name = findField([
       'fullname', 'name', 'studentname', 'learnername', 'participantname',
-      'delegatename', 'candidatename', 'firstname', 'nameofstudent'
+      'delegatename', 'candidatename', 'firstname', 'nameofstudent',
+      'studentsname', 'nameofthestudent', 'student', 'participant', 'delegate',
+      'candidate', 'fullnameofstudent', 'nameofparticipant', 'nameofdelegate'
     ]);
 
     const email = findField([
-      'email', 'emailid', 'emailaddress', 'contactemail', 'mail', 'studentemail'
+      'email', 'emailid', 'emailaddress', 'contactemail', 'mail', 'studentemail',
+      'studentsemail', 'mailid', 'useremail'
     ]);
 
     const phone = findField([
       'phone', 'phonenumber', 'mobile', 'mobilenumber', 'contact',
-      'contactnumber', 'phoneno', 'mobileno', 'whatsapp', 'cell'
+      'contactnumber', 'phoneno', 'mobileno', 'whatsapp', 'cell',
+      'whatsappnumber', 'whatsappno', 'cellnumber', 'contactno'
     ]);
 
     const department = findField([
       'department', 'dept', 'branch', 'course', 'major',
-      'program', 'programme', 'specialization', 'stream', 'degree'
+      'program', 'programme', 'specialization', 'stream', 'degree',
+      'branchdept', 'coursename'
     ]) || 'General';
 
     const yearVal = findField([
       'academicyear', 'year', 'yearofstudy', 'studyingyear',
-      'currentyear', 'class', 'batch', 'yr', 'std', 'semester', 'sem'
+      'currentyear', 'class', 'batch', 'yr', 'std', 'semester', 'sem',
+      'classyear', 'yearsem'
     ]);
 
     const academic_year = parseAcademicYear(yearVal);
