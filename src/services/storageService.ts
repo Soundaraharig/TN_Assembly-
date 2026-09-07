@@ -3163,10 +3163,9 @@ class StorageService {
     const learners = this.getLearners(eventId);
     const counts: Record<string, number> = {};
     learners.forEach(l => {
-      if (l.party_id || l.party_name) {
-        const partyKey = l.party_id || l.party_name;
-        counts[partyKey] = (counts[partyKey] || 0) + 1;
-      }
+      if (l.party_id) counts[l.party_id] = (counts[l.party_id] || 0) + 1;
+      if (l.party_name) counts[l.party_name] = (counts[l.party_name] || 0) + 1;
+      if (l.bench) counts[l.bench] = (counts[l.bench] || 0) + 1;
     });
     return counts;
   }
@@ -3175,10 +3174,8 @@ class StorageService {
     const learners = this.getLearners(eventId);
     const counts: Record<string, number> = {};
     learners.forEach(l => {
-      if (l.committee_id || l.committee_name) {
-        const key = l.committee_id || l.committee_name;
-        counts[key] = (counts[key] || 0) + 1;
-      }
+      if (l.committee_id) counts[l.committee_id] = (counts[l.committee_id] || 0) + 1;
+      if (l.committee_name) counts[l.committee_name] = (counts[l.committee_name] || 0) + 1;
     });
     return counts;
   }

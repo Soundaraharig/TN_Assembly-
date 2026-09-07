@@ -81,10 +81,12 @@ export function runAutoAllocation(
   let oppParties = activeParties.filter(p => p.bench === 'Opposition');
 
   if (rulingParties.length === 0) {
+    activeParties[0] = { ...activeParties[0], bench: 'Ruling' };
     rulingParties = [activeParties[0]];
     oppParties = activeParties.slice(1);
   }
   if (oppParties.length === 0 && activeParties.length > 1) {
+    activeParties[1] = { ...activeParties[1], bench: 'Opposition' };
     oppParties = [activeParties[1]];
     rulingParties = [activeParties[0]];
   } else if (oppParties.length === 0) {
@@ -112,66 +114,111 @@ export function runAutoAllocation(
     learnersByYear[yr] = shuffleArray(learnersByYear[yr]);
   });
 
-  // 3. True Stratified Split: Guarantee Ruling Majority and Cross-Year Balance
   const totalLearners = learners.length;
-  // In parliamentary democracy, Ruling coalition must hold majority (>50%) when delegates >= 2
-  const targetTotalRuling = Math.min(
-    totalLearners,
-    Math.max(
-      totalLearners >= 2 ? Math.ceil(totalLearners * 0.5) : 1,
-      Math.round(totalLearners * rulingRatio)
-    )
-  );
+  const numParties = activeParties.length;
 
   const rulingLearners: Learner[] = [];
   const oppLearners: Learner[] = [];
+  const indLearners: Learner[] = [];
 
-  years.forEach(yr => {
-    const yrLearners = learnersByYear[yr];
-    if (yrLearners.length === 0) return;
+  if (numParties > 2) {
+    // 3. Balanced Equal Party Allocation (for 3+ parties):
+    // Distribute delegates equally across all active parties (e.g. 120 / 5 = 24 each)
+    // with stratified sampling across academic years.
+    const baseQuota = Math.floor(totalLearners / numParties);
+    const remainder = totalLearners % numParties;
+    const partyQuotas = activeParties.map((_, i) => baseQuota + (i < remainder ? 1 : 0));
 
-    // Distribute each year proportionally according to rulingRatio
-    const yrRulingTarget = Math.min(
-      yrLearners.length,
+    const partyBuckets: Learner[][] = activeParties.map(() => []);
+
+    // Interleave years from senior to junior into party buckets respecting party quotas
+    let partyIdx = 0;
+    for (const yr of years) {
+      const yrLearners = learnersByYear[yr];
+      for (const learner of yrLearners) {
+        // Find next party that still has quota remaining
+        let attempts = 0;
+        while (partyBuckets[partyIdx].length >= partyQuotas[partyIdx] && attempts < numParties) {
+          partyIdx = (partyIdx + 1) % numParties;
+          attempts++;
+        }
+        partyBuckets[partyIdx].push(learner);
+        partyIdx = (partyIdx + 1) % numParties;
+      }
+    }
+
+    // Assign party, bench, and default role to each learner
+    activeParties.forEach((party, pIdx) => {
+      partyBuckets[pIdx].forEach(l => {
+        l.party_name = party.name;
+        l.party_id = party.id;
+        l.bench = party.bench || 'Independent';
+        l.role = 'Member of Legislative Assembly (MLA)';
+
+        if (party.bench === 'Ruling') {
+          rulingLearners.push(l);
+        } else if (party.bench === 'Opposition') {
+          oppLearners.push(l);
+        } else {
+          indLearners.push(l);
+        }
+      });
+    });
+
+  } else {
+    // 2-party allocation: support configured rulingRatio (e.g. 55% / 45%)
+    const targetTotalRuling = Math.min(
+      totalLearners,
       Math.max(
-        yrLearners.length >= 2 ? 1 : 0,
-        Math.round(yrLearners.length * rulingRatio)
+        totalLearners >= 2 ? Math.ceil(totalLearners * 0.5) : 1,
+        Math.round(totalLearners * rulingRatio)
       )
     );
 
-    for (let i = 0; i < yrLearners.length; i++) {
-      if (i < yrRulingTarget) {
-        rulingLearners.push(yrLearners[i]);
-      } else {
-        oppLearners.push(yrLearners[i]);
+    years.forEach(yr => {
+      const yrLearners = learnersByYear[yr];
+      if (yrLearners.length === 0) return;
+
+      const yrRulingTarget = Math.min(
+        yrLearners.length,
+        Math.max(
+          yrLearners.length >= 2 ? 1 : 0,
+          Math.round(yrLearners.length * rulingRatio)
+        )
+      );
+
+      for (let i = 0; i < yrLearners.length; i++) {
+        if (i < yrRulingTarget) {
+          rulingLearners.push(yrLearners[i]);
+        } else {
+          oppLearners.push(yrLearners[i]);
+        }
       }
+    });
+
+    while (rulingLearners.length < targetTotalRuling && oppLearners.length > 0) {
+      rulingLearners.push(oppLearners.pop()!);
     }
-  });
+    while (rulingLearners.length > targetTotalRuling && rulingLearners.length > 1) {
+      oppLearners.push(rulingLearners.pop()!);
+    }
 
-  // Fine-tune to hit exact targetTotalRuling while preserving year balance
-  while (rulingLearners.length < targetTotalRuling && oppLearners.length > 0) {
-    rulingLearners.push(oppLearners.pop()!);
+    rulingLearners.forEach((l, i) => {
+      const party = rulingParties[i % rulingParties.length];
+      l.party_name = party.name;
+      l.party_id = party.id;
+      l.bench = 'Ruling';
+      l.role = 'Member of Legislative Assembly (MLA)';
+    });
+
+    oppLearners.forEach((l, i) => {
+      const party = oppParties[i % oppParties.length];
+      l.party_name = party.name;
+      l.party_id = party.id;
+      l.bench = 'Opposition';
+      l.role = 'Member of Legislative Assembly (MLA)';
+    });
   }
-  while (rulingLearners.length > targetTotalRuling && rulingLearners.length > 1) {
-    oppLearners.push(rulingLearners.pop()!);
-  }
-
-  // 4. Party Distribution within Benches
-  rulingLearners.forEach((l, i) => {
-    const party = rulingParties[i % rulingParties.length];
-    l.party_name = party.name;
-    l.party_id = party.id;
-    l.bench = 'Ruling';
-    l.role = 'Member of Legislative Assembly (MLA)';
-  });
-
-  oppLearners.forEach((l, i) => {
-    const party = oppParties[i % oppParties.length];
-    l.party_name = party.name;
-    l.party_id = party.id;
-    l.bench = 'Opposition';
-    l.role = 'Member of Legislative Assembly (MLA)';
-  });
 
   // 5. Senior Role Assignments (Chief Minister, Speaker, Opposition Leader, Ministers)
   // Senior years (4th/3rd) receive top cabinet roles
@@ -207,7 +254,7 @@ export function runAutoAllocation(
 
   // 6. TN Constituencies Mapping (1–234)
   const availableConstituencies = shuffleArray(TN_CONSTITUENCIES);
-  const combinedQueue = shuffleArray([...rulingLearners, ...oppLearners]);
+  const combinedQueue = shuffleArray([...rulingLearners, ...oppLearners, ...indLearners]);
 
   const updatedLearners = combinedQueue.map((learner, idx) => {
     let constNo: number;

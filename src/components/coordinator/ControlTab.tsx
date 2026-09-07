@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import type { Learner, Party, AgendaItem, ScoreRecord, Election, LiveFlashVote, CollegeEvent } from '../../types';
 import {
   Clock,
@@ -53,6 +53,8 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   onUpdatePartyBench,
   onOpenProjectorView
 }) => {
+  const eventId = currentEvent?.id;
+
   // ── Agenda Navigation State ──────────────────────────────────────────────
   const [activeDayTab, setActiveDayTab] = useState<'Pre-Event' | 'Day 1' | 'Day 2'>('Day 1');
   const [agendaFilter, setAgendaFilter] = useState<'ALL' | 'SCORED_VOTED'>('ALL');

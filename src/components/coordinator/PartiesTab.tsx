@@ -31,7 +31,7 @@ interface PartiesTabProps {
 
 export const PartiesTab: React.FC<PartiesTabProps> = ({
   parties,
-  learners,
+  learners: _learners,
   eventId,
   userRole,
   onUpdatePartyWhatsApp,
@@ -343,6 +343,24 @@ export const PartiesTab: React.FC<PartiesTabProps> = ({
                     color: 'var(--text-primary)'
                   }}
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>Bench Assignment</label>
+                <select
+                  value={bench}
+                  onChange={(e) => setBench(e.target.value as BenchType)}
+                  className="w-full rounded-xl px-3 py-2 text-xs focus:outline-none border"
+                  style={{
+                    backgroundColor: 'var(--bg-elevated)',
+                    borderColor: 'var(--border)',
+                    color: 'var(--text-primary)'
+                  }}
+                >
+                  <option value="Ruling">Ruling Bench (Treasury)</option>
+                  <option value="Opposition">Opposition Bench</option>
+                  <option value="Independent">Independent / Neutral</option>
+                </select>
               </div>
 
               <div>

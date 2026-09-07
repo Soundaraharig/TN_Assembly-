@@ -1,4 +1,4 @@
-import React, { useMemo, useEffect } from 'react';
+import React, { useMemo } from 'react';
 import type { Learner, Party, Committee, AcademicYear } from '../../types';
 import { BarChart3, Shield, Sparkles } from 'lucide-react';
 import { storageService } from '../../services/storageService';
@@ -37,7 +37,6 @@ export const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ learners, parties })
   }, [eventId, learners]);
 
   // Party breakdown - use database-sourced counts for the current event
-  const eventId = learners.length > 0 ? learners[0].event_id : undefined;
   const partyCounts = useMemo(() => {
     if (eventId) {
       // Use database-sourced count from Supabase

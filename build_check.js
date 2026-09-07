@@ -1,8 +1,8 @@
-const { execSync } = require('child_process');
+import { execSync } from 'child_process';
 try {
-  execSync('cd C:\\Users\\Soundarahari\\Documents\\GitHub\\TN_Assembly- && npx tsc --noEmit', { stdio: 'pipe' });
-  console.log('TypeScript check passed');
+  execSync('npm.cmd run build', { stdio: 'inherit' });
+  console.log('Build check passed');
 } catch (err) {
-  console.error('TypeScript check failed:', err.stdout || err.stderr);
+  console.error('Build check failed');
   process.exit(1);
 }
