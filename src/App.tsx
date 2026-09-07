@@ -115,19 +115,38 @@ function getInitialRouteInfo(initialSession: SavedAuthSession | null) {
     return { role: 'coordinator' as UserRole, isAuthenticated: true, activeNavTab: 'projector' as ActiveNavTab };
   }
 
-  // Volunteer Join Link (/volunteer/join)
-  if (pathname.includes('/volunteer')) {
-    return { role: 'volunteer' as UserRole, isAuthenticated: false };
+  // If user has a valid saved session, preserve their role and authentication
+  if (initialSession) {
+    if (initialSession.role === 'coordinator' || initialSession.role === 'super_admin' || initialSession.role === 'organiser') {
+      if (!pathname.startsWith('/jury') && !pathname.startsWith('/volunteer') && !pathname.startsWith('/join')) {
+        return { role: initialSession.role, isAuthenticated: true };
+      }
+    } else if (initialSession.role === 'jury' && initialSession.juryCode) {
+      if (pathname.includes('/jury') || !pathname.includes('/events/')) {
+        return { role: 'jury' as UserRole, isAuthenticated: true };
+      }
+    } else if (initialSession.role === 'volunteer' && initialSession.volunteerCode) {
+      if (pathname.includes('/volunteer') || !pathname.includes('/events/')) {
+        return { role: 'volunteer' as UserRole, isAuthenticated: true };
+      }
+    } else if (initialSession.role === 'student' && initialSession.studentCode) {
+      if (pathname.includes('/join') || pathname.includes('/dashboard') || pathname.includes('/me') || pathname.includes('/student') || !pathname.includes('/events/')) {
+        return { role: 'student' as UserRole, isAuthenticated: true };
+      }
+    }
   }
 
-  // Jury Link (/jury)
-  if (pathname.includes('/jury')) {
-    return { role: 'jury' as UserRole, isAuthenticated: false };
-  }
-
-  // Student Delegate Join / Dashboard (/join, /dashboard, /me, or /student)
-  if (pathname.includes('/join') || pathname.includes('/dashboard') || pathname.includes('/me') || pathname.includes('/student')) {
-    return { role: 'student' as UserRole, isAuthenticated: false };
+  // Unauthenticated portal checks (strictly excluding /events/ coordinator routes)
+  if (!pathname.includes('/events/')) {
+    if (pathname.startsWith('/volunteer')) {
+      return { role: 'volunteer' as UserRole, isAuthenticated: false };
+    }
+    if (pathname.startsWith('/jury')) {
+      return { role: 'jury' as UserRole, isAuthenticated: false };
+    }
+    if (pathname.includes('/join') || pathname.includes('/dashboard') || pathname.includes('/me') || pathname.includes('/student')) {
+      return { role: 'student' as UserRole, isAuthenticated: false };
+    }
   }
 
   // Default: Use initialSession
@@ -951,12 +970,12 @@ export function App() {
           }
         }
 
-        // 2. Explicit Volunteer Join Link requested (/join)
-        if (pathname.includes('/join')) {
+        // 2. Explicit Volunteer Join Link requested (/join or /volunteer) - strictly excluding coordinator /events/ routes
+        if (!pathname.includes('/events/') && (pathname.startsWith('/volunteer') || pathname === '/join' || pathname.startsWith('/join/'))) {
           if (sess && sess.role === 'volunteer' && sess.volunteerCode) {
             const cleanCode = sess.volunteerCode.trim().toUpperCase();
             const allVols = storageService.getVolunteers();
-            const foundVol = allVols.find(v => v.access_code?.toUpperCase() === cleanCode);
+            const foundVol = allVols.find(v => (v.access_code || '').toUpperCase() === cleanCode);
             const volObj: Volunteer = foundVol || {
               id: 'vol',
               event_id: sess.currentEventId || (evs[0]?.id || ''),
@@ -976,12 +995,12 @@ export function App() {
           return;
         }
 
-        // 3. Explicit Jury Link requested (/jury)
-        if (pathname.includes('/jury')) {
+        // 3. Explicit Jury Link requested (/jury) - strictly excluding coordinator /events/ routes
+        if (!pathname.includes('/events/') && (pathname.startsWith('/jury') || pathname === '/jury')) {
           if (sess && sess.role === 'jury' && sess.juryCode) {
             const cleanCode = sess.juryCode.trim().toUpperCase();
             const allJury = storageService.getJury();
-            const foundJury = allJury.find(j => j.access_code?.toUpperCase() === cleanCode);
+            const foundJury = allJury.find(j => (j.access_code || '').toUpperCase() === cleanCode);
             const juryObj: JuryMember = foundJury || {
               id: 'jury',
               event_id: sess.currentEventId || (evs[0]?.id || ''),
@@ -1000,8 +1019,8 @@ export function App() {
           return;
         }
 
-        // 4. Explicit Student Delegate Link requested (/me or /student)
-        if (pathname.includes('/me') || pathname.includes('/student')) {
+        // 4. Explicit Student Delegate Link requested (/me or /student) - strictly excluding coordinator /events/ routes
+        if (!pathname.includes('/events/') && (pathname.startsWith('/me') || pathname.startsWith('/student') || pathname === '/dashboard')) {
           if (sess && sess.role === 'student' && sess.studentCode) {
             const cleanCode = sess.studentCode.trim().toUpperCase();
             const allLearners = storageService.getLearners();
@@ -1231,7 +1250,16 @@ export function App() {
   };
 
   const handleAddLearner = (l: Partial<Learner>) => {
-    storageService.addLearner(l);
+    const activeEv = extractEventFromUrl(events) || currentEvent;
+    const targetEventId = l.event_id || activeEv?.id || '';
+    storageService.addLearner({ ...l, event_id: targetEventId });
+    if (targetEventId) {
+      setLearners(storageService.getLearners(targetEventId));
+      setCurrentEvent(prev => prev ? { ...prev, participant_count: (prev.participant_count || 0) + 1 } : prev);
+      setEvents(storageService.getEvents());
+    } else {
+      setLearners(storageService.getLearners());
+    }
   };
 
   const handleUpdateLearner = (l: Learner) => {
@@ -1346,19 +1374,45 @@ export function App() {
   };
 
   const handleAddJury = (j: Partial<JuryMember>) => {
-    storageService.addJuryMember(j);
+    const activeEv = extractEventFromUrl(events) || currentEvent;
+    const targetEventId = j.event_id || activeEv?.id || '';
+    storageService.addJuryMember({ ...j, event_id: targetEventId });
+    if (targetEventId) {
+      setJury(storageService.getJury(targetEventId));
+    } else {
+      setJury(storageService.getJury());
+    }
   };
 
   const handleDeleteJury = (id: string) => {
     storageService.deleteJuryMember(id);
+    const activeEv = extractEventFromUrl(events) || currentEvent;
+    if (activeEv) {
+      setJury(storageService.getJury(activeEv.id));
+    } else {
+      setJury(storageService.getJury());
+    }
   };
 
   const handleAddVolunteer = (v: Partial<Volunteer>) => {
-    storageService.addVolunteer(v);
+    const activeEv = extractEventFromUrl(events) || currentEvent;
+    const targetEventId = v.event_id || activeEv?.id || '';
+    storageService.addVolunteer({ ...v, event_id: targetEventId });
+    if (targetEventId) {
+      setVolunteers(storageService.getVolunteers(targetEventId));
+    } else {
+      setVolunteers(storageService.getVolunteers());
+    }
   };
 
   const handleDeleteVolunteer = (id: string) => {
     storageService.deleteVolunteer(id);
+    const activeEv = extractEventFromUrl(events) || currentEvent;
+    if (activeEv) {
+      setVolunteers(storageService.getVolunteers(activeEv.id));
+    } else {
+      setVolunteers(storageService.getVolunteers());
+    }
   };
 
   // Auto Allocation Execution
@@ -1958,6 +2012,7 @@ export function App() {
                     addToast('Event Selected', `Opened ${ev.college_name}`, 'info');
                   }}
                   onShowToast={addToast}
+                  learners={learners}
                 />
               }
             />
@@ -2071,7 +2126,7 @@ export function App() {
               eventId={activeEvModal.id}
               existingCodes={existingCodesSet}
               onAddLearner={(l) => {
-                handleAddLearner(l);
+                handleAddLearner({ ...l, event_id: activeEvModal.id });
                 addToast('Walk-in Added', `Registered ${l.full_name} with access code ${l.access_code}`, 'success');
               }}
             />

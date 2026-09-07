@@ -287,21 +287,21 @@ export function parseCSVFile(
   });
 }
 
-export function exportFullParticipantDataToExcel(learners: Learner[], eventName: string = 'TN_Assembly') {
+export function exportFullParticipantDataToExcel(learners: Learner[], eventName: string = 'TN_Assembly', customFileName?: string) {
   const exportData = learners.map((l, index) => ({
     'S.No': index + 1,
+    'Student Name': l.full_name,
+    'Constituency Number': l.constituency_number || '',
+    'Constituency Name': l.constituency_name || '',
+    'Allocated Party': l.party_name || '',
+    'Allocated Committee': l.committee_name || '',
+    'Bench': l.bench || '',
+    'Legislative Role': l.role || 'Member of Legislative Assembly (MLA)',
     'Access Code': l.access_code,
-    'Learner Name': l.full_name,
-    'Email ID': l.email || 'N/A',
-    'Phone Number': l.phone || 'N/A',
-    'Department': l.department || 'N/A',
+    'Department': l.department || '',
     'Academic Year': l.academic_year || '1st Year',
-    'Bench': l.bench || 'Unallocated',
-    'Political Party': l.party_name || 'Unallocated',
-    'Legislative Role': l.role || 'Unallocated',
-    'Const. No.': l.constituency_number || 'N/A',
-    'TN Constituency Name': l.constituency_name || 'Unallocated',
-    'Committee': l.committee_name || 'Unallocated',
+    'Email ID': l.email || '',
+    'Phone Number': l.phone || '',
     'Day 1 Check-in': l.day1_checked_in ? 'Checked In' : 'Not Checked In',
     'Day 2 Check-in': l.day2_checked_in ? 'Checked In' : 'Not Checked In'
   }));
@@ -313,42 +313,44 @@ export function exportFullParticipantDataToExcel(learners: Learner[], eventName:
   // Auto column width formatting
   const max_widths = [
     { wch: 6 },  // S.No
+    { wch: 24 }, // Student Name
+    { wch: 20 }, // Constituency Number
+    { wch: 30 }, // Constituency Name
+    { wch: 24 }, // Allocated Party
+    { wch: 28 }, // Allocated Committee
+    { wch: 14 }, // Bench
+    { wch: 30 }, // Legislative Role
     { wch: 14 }, // Access Code
-    { wch: 24 }, // Learner Name
+    { wch: 20 }, // Department
+    { wch: 14 }, // Academic Year
     { wch: 26 }, // Email
     { wch: 15 }, // Phone
-    { wch: 20 }, // Dept
-    { wch: 14 }, // Year
-    { wch: 14 }, // Bench
-    { wch: 28 }, // Party
-    { wch: 30 }, // Role
-    { wch: 10 }, // Const No
-    { wch: 30 }, // Constituency Name
-    { wch: 28 }, // Committee
     { wch: 16 }, // Day 1
     { wch: 16 }  // Day 2
   ];
   worksheet['!cols'] = max_widths;
 
-  const fileName = `${eventName.replace(/\s+/g, '_')}_Full_Participant_Roster.xlsx`;
+  const fileName = customFileName 
+    ? (customFileName.endsWith('.xlsx') ? customFileName : `${customFileName}.xlsx`)
+    : `${eventName.replace(/\s+/g, '_')}_Participant_Roster.xlsx`;
   XLSX.writeFile(workbook, fileName);
 }
 
-export function exportFullParticipantDataToCSV(learners: Learner[], eventName: string = 'TN_Assembly') {
+export function exportFullParticipantDataToCSV(learners: Learner[], eventName: string = 'TN_Assembly', customFileName?: string) {
   const exportData = learners.map((l, index) => ({
     'S.No': index + 1,
+    'Student Name': l.full_name,
+    'Constituency Number': l.constituency_number || '',
+    'Constituency Name': l.constituency_name || '',
+    'Allocated Party': l.party_name || '',
+    'Allocated Committee': l.committee_name || '',
+    'Bench': l.bench || '',
+    'Legislative Role': l.role || 'Member of Legislative Assembly (MLA)',
     'Access Code': l.access_code,
-    'Learner Name': l.full_name,
-    'Email ID': l.email || '',
-    'Phone Number': l.phone || '',
     'Department': l.department || '',
     'Academic Year': l.academic_year || '1st Year',
-    'Bench': l.bench || '',
-    'Political Party': l.party_name || '',
-    'Legislative Role': l.role || '',
-    'Const. No.': l.constituency_number || '',
-    'TN Constituency Name': l.constituency_name || '',
-    'Committee': l.committee_name || '',
+    'Email ID': l.email || '',
+    'Phone Number': l.phone || '',
     'Day 1 Check-in': l.day1_checked_in ? 'Checked In' : 'Not Checked In',
     'Day 2 Check-in': l.day2_checked_in ? 'Checked In' : 'Not Checked In'
   }));
@@ -358,7 +360,10 @@ export function exportFullParticipantDataToCSV(learners: Learner[], eventName: s
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.setAttribute('download', `${eventName.replace(/\s+/g, '_')}_Full_Roster.csv`);
+  const fileName = customFileName 
+    ? (customFileName.endsWith('.csv') ? customFileName : `${customFileName}.csv`)
+    : `${eventName.replace(/\s+/g, '_')}_Roster.csv`;
+  link.setAttribute('download', fileName);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

@@ -411,7 +411,18 @@ class StorageService {
         console.error("Supabase Error [jury_members]:", juryErr);
         hasQueryError = true;
       } else if (juryMembers !== null) {
-        this.setItem(STORAGE_KEYS.JURY, juryMembers);
+        const localJury = this.getItem<JuryMember[]>(STORAGE_KEYS.JURY, []);
+        const juryMap = new Map<string, JuryMember>();
+        localJury.forEach(j => juryMap.set(j.id, j));
+        juryMembers.forEach(r => {
+          const local = juryMap.get(r.id);
+          juryMap.set(r.id, {
+            ...local,
+            ...r,
+            access_code: r.access_code || local?.access_code || `JURY${String(r.id).slice(-2)}`
+          });
+        });
+        this.setItem(STORAGE_KEYS.JURY, Array.from(juryMap.values()));
       }
 
       if (volErr) {
@@ -555,7 +566,7 @@ class StorageService {
     if (table === 'jury_members') {
       return {
         id: raw.id,
-        event_id: raw.event_id,
+        event_id: raw.event_id && raw.event_id !== '' ? raw.event_id : null,
         name: raw.name,
         designation: raw.designation || 'Parliamentary Juror',
         assigned_bench: raw.assigned_bench || 'Ruling',
@@ -565,7 +576,7 @@ class StorageService {
     if (table === 'learners') {
       return {
         id: raw.id,
-        event_id: raw.event_id,
+        event_id: raw.event_id && raw.event_id !== '' ? raw.event_id : null,
         access_code: raw.access_code,
         full_name: raw.full_name,
         email: raw.email || null,
@@ -574,11 +585,11 @@ class StorageService {
         academic_year: raw.academic_year || '1st Year',
         constituency_number: raw.constituency_number || null,
         constituency_name: raw.constituency_name || null,
-        party_id: raw.party_id || null,
+        party_id: raw.party_id && raw.party_id !== '' ? raw.party_id : null,
         party_name: raw.party_name || null,
         bench: raw.bench || null,
         role: raw.role || 'Member of Legislative Assembly (MLA)',
-        committee_id: raw.committee_id || null,
+        committee_id: raw.committee_id && raw.committee_id !== '' ? raw.committee_id : null,
         committee_name: raw.committee_name || null,
         day1_checked_in: !!raw.day1_checked_in,
         day2_checked_in: !!raw.day2_checked_in,
@@ -775,7 +786,8 @@ class StorageService {
       committee_id: learner.committee_id,
       day1_checked_in: !!learner.day1_checked_in,
       day2_checked_in: !!learner.day2_checked_in,
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
     };
     all.unshift(newLearner);
     this.setItem(STORAGE_KEYS.LEARNERS, all);
@@ -974,9 +986,13 @@ class StorageService {
   }
 
   public updateLearner(learner: Learner) {
-    const all = this.getLearners().map(l => (l.id === learner.id ? learner : l));
+    const withUpdated: Learner = {
+      ...learner,
+      updated_at: new Date().toISOString()
+    };
+    const all = this.getLearners().map(l => (l.id === learner.id ? withUpdated : l));
     this.setItem(STORAGE_KEYS.LEARNERS, all);
-    this.sbUpsert('learners', learner as unknown as Record<string, unknown>);
+    this.sbUpsert('learners', withUpdated as unknown as Record<string, unknown>);
   }
 
   public deleteLearner(learnerId: string) {
@@ -1762,12 +1778,12 @@ class StorageService {
     if (updated) {
       this.setItem(STORAGE_KEYS.JURY, sanitized);
     }
-    if (eventId) return sanitized.filter(j => j.event_id === eventId);
+    if (eventId) return sanitized.filter(j => j.event_id === eventId || !j.event_id);
     return sanitized;
   }
 
   public addJuryMember(member: Partial<JuryMember>): JuryMember {
-    const all = this.getJury();
+    const all = this.getItem<JuryMember[]>(STORAGE_KEYS.JURY, INITIAL_JURY);
     const codeNum = String(all.length + 1).padStart(2, '0');
     const defaultCode = `JURY${codeNum}`;
     const newMember: JuryMember = {

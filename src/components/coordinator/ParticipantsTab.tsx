@@ -359,33 +359,64 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
               style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
             >
               <Download className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
-              <span>Download List & Attendance</span>
+              <span>Download Data</span>
               <ChevronDown className="w-3 h-3" style={{ color: 'var(--text-muted)' }} />
             </button>
             <div
-              className="absolute right-0 top-full mt-1.5 w-48 border rounded-xl shadow-xl py-1.5 hidden group-hover:block z-30"
+              className="absolute right-0 top-full mt-1.5 w-60 border rounded-xl shadow-xl py-2 hidden group-hover:block z-30 divide-y divide-slate-100 dark:divide-slate-800"
               style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
             >
-              <button
-                onClick={() => {
-                  exportFullParticipantDataToExcel(filteredLearners, eventName);
-                  onShowToast('Excel Exported', `Exported ${filteredLearners.length} participant records`, 'success');
-                }}
-                className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
-                style={{ color: 'var(--text-primary)' }}
-              >
-                Export to Excel (.xlsx)
-              </button>
-              <button
-                onClick={() => {
-                  exportFullParticipantDataToCSV(filteredLearners, eventName);
-                  onShowToast('CSV Exported', `Exported ${filteredLearners.length} participant records`, 'success');
-                }}
-                className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
-                style={{ color: 'var(--text-primary)' }}
-              >
-                Export to CSV (.csv)
-              </button>
+              <div className="py-1">
+                <div className="px-3.5 py-1 text-[10px] font-black uppercase tracking-wider text-amber-500">
+                  Filtered List ({filteredLearners.length})
+                </div>
+                <button
+                  onClick={() => {
+                    exportFullParticipantDataToCSV(filteredLearners, eventName, `${eventName}_Filtered_${filteredLearners.length}_Delegates.csv`);
+                    onShowToast('Filtered CSV Exported', `Exported ${filteredLearners.length} filtered participant records`, 'success');
+                  }}
+                  className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  Download Filtered List (CSV)
+                </button>
+                <button
+                  onClick={() => {
+                    exportFullParticipantDataToExcel(filteredLearners, eventName, `${eventName}_Filtered_${filteredLearners.length}_Delegates.xlsx`);
+                    onShowToast('Filtered Excel Exported', `Exported ${filteredLearners.length} filtered participant records`, 'success');
+                  }}
+                  className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  Download Filtered List (Excel)
+                </button>
+              </div>
+
+              <div className="py-1">
+                <div className="px-3.5 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-500">
+                  Whole Data List ({learners.length})
+                </div>
+                <button
+                  onClick={() => {
+                    exportFullParticipantDataToCSV(learners, eventName, `${eventName}_Whole_Data_${learners.length}_Delegates.csv`);
+                    onShowToast('Complete CSV Exported', `Exported all ${learners.length} participant records`, 'success');
+                  }}
+                  className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  Download Whole Data List (CSV)
+                </button>
+                <button
+                  onClick={() => {
+                    exportFullParticipantDataToExcel(learners, eventName, `${eventName}_Whole_Data_${learners.length}_Delegates.xlsx`);
+                    onShowToast('Complete Excel Exported', `Exported all ${learners.length} participant records`, 'success');
+                  }}
+                  className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  Download Whole Data List (Excel)
+                </button>
+              </div>
             </div>
           </div>
 

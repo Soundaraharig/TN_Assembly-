@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import type { Learner, Party, Committee, AcademicYear, BenchType } from '../../types';
 import { storageService, getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
-import { exportFullParticipantDataToCSV } from '../../utils/csvHelper';
+import { exportFullParticipantDataToCSV, exportFullParticipantDataToExcel } from '../../utils/csvHelper';
 import {
   RotateCcw,
   Download,
@@ -14,7 +14,8 @@ import {
   Users,
   Shield,
   Table as TableIcon,
-  Lock
+  Lock,
+  ChevronDown
 } from 'lucide-react';
 
 interface AllocationTabProps {
@@ -127,10 +128,6 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
     );
   };
 
-  const handleExportCSV = () => {
-    exportFullParticipantDataToCSV(learners, 'TN_Assembly_Allocation_Roster.csv');
-    onShowToast('Roster Exported', 'Downloaded complete allocation CSV with constituency mappings', 'info');
-  };
 
   const handleSaveManualEdit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -195,14 +192,73 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
             <span>Reset</span>
           </button>
 
-          <button
-            onClick={handleExportCSV}
-            className="px-3.5 py-2 rounded-xl text-xs font-bold border transition-colors flex items-center gap-1.5 cursor-pointer"
-            style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>Export Roster</span>
-          </button>
+          {/* Export Dropdown */}
+          <div className="relative group">
+            <button
+              className="px-3.5 py-2 rounded-xl text-xs font-bold border transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+              style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Download Data</span>
+              <ChevronDown className="w-3 h-3" />
+            </button>
+            <div
+              className="absolute right-0 top-full mt-1.5 w-60 border rounded-xl shadow-xl py-2 hidden group-hover:block z-30 divide-y divide-slate-100 dark:divide-slate-800"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+            >
+              <div className="py-1">
+                <div className="px-3.5 py-1 text-[10px] font-black uppercase tracking-wider text-amber-500">
+                  Filtered List ({filteredLearners.length})
+                </div>
+                <button
+                  onClick={() => {
+                    exportFullParticipantDataToCSV(filteredLearners, 'TN_Assembly', `TN_Assembly_Filtered_Allocation_${filteredLearners.length}.csv`);
+                    onShowToast('Filtered Allocation Exported', `Exported ${filteredLearners.length} filtered records as CSV`, 'success');
+                  }}
+                  className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  Download Filtered List (CSV)
+                </button>
+                <button
+                  onClick={() => {
+                    exportFullParticipantDataToExcel(filteredLearners, 'TN_Assembly', `TN_Assembly_Filtered_Allocation_${filteredLearners.length}.xlsx`);
+                    onShowToast('Filtered Allocation Exported', `Exported ${filteredLearners.length} filtered records as Excel`, 'success');
+                  }}
+                  className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  Download Filtered List (Excel)
+                </button>
+              </div>
+
+              <div className="py-1">
+                <div className="px-3.5 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-500">
+                  Whole Data List ({learners.length})
+                </div>
+                <button
+                  onClick={() => {
+                    exportFullParticipantDataToCSV(learners, 'TN_Assembly', `TN_Assembly_Complete_Allocation_${learners.length}.csv`);
+                    onShowToast('Complete Allocation Exported', `Exported all ${learners.length} records as CSV`, 'success');
+                  }}
+                  className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  Download Whole Data List (CSV)
+                </button>
+                <button
+                  onClick={() => {
+                    exportFullParticipantDataToExcel(learners, 'TN_Assembly', `TN_Assembly_Complete_Allocation_${learners.length}.xlsx`);
+                    onShowToast('Complete Allocation Exported', `Exported all ${learners.length} records as Excel`, 'success');
+                  }}
+                  className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  Download Whole Data List (Excel)
+                </button>
+              </div>
+            </div>
+          </div>
 
           {onOpenImportCsv && (
             <button
