@@ -4,6 +4,7 @@ import type {
   Learner,
   Party,
   Committee,
+  BenchType,
   AgendaItem,
   AgendaDay,
   AgendaStatus,
@@ -757,49 +758,184 @@ class StorageService {
   }
 
   public importLearners(learnersList: Partial<Learner>[], eventId: string) {
-    const existing = this.getLearners();
-    const newItems: Learner[] = learnersList.map(l => ({
-      id: uid('lrn'),
-      event_id: eventId,
-      access_code: l.access_code || Math.random().toString(36).substring(2, 8).toUpperCase(),
-      full_name: l.full_name || 'Delegate',
-      email: l.email || '',
-      phone: l.phone || '',
-      department: l.department || 'Engineering',
-      academic_year: l.academic_year || '1st Year',
-      constituency_number: l.constituency_number,
-      constituency_name: l.constituency_name,
-      district: l.district,
-      party_name: l.party_name,
-      party_id: l.party_id,
-      bench: l.bench,
-      role: l.role || 'Member of Legislative Assembly (MLA)',
-      committee_name: l.committee_name,
-      committee_id: l.committee_id,
-      day1_checked_in: false,
-      day2_checked_in: false,
-      created_at: new Date().toISOString()
-    }));
+    const allLearners = this.getLearners();
+    const eventLearners = allLearners.filter(l => l.event_id === eventId);
+    const existingParties = this.getParties(eventId);
+    const existingCommittees = this.getCommittees(eventId);
 
-    const merged = [...newItems, ...existing];
-    this.setItem(STORAGE_KEYS.LEARNERS, merged);
+    const partyNameMap = new Map<string, Party>();
+    existingParties.forEach(p => {
+      partyNameMap.set(p.name.trim().toLowerCase(), p);
+    });
 
-    // Update count
+    const commNameMap = new Map<string, Committee>();
+    existingCommittees.forEach(c => {
+      commNameMap.set(c.name.trim().toLowerCase(), c);
+    });
+
+    const colors = ['#059669', '#dc2626', '#2563eb', '#d97706', '#7c3aed', '#0891b2', '#ea580c', '#4f46e5'];
+
+    // 1. Auto-register any missing parties referenced in the imported roster
+    learnersList.forEach(l => {
+      if (l.party_name && l.party_name.trim()) {
+        const key = l.party_name.trim().toLowerCase();
+        if (!partyNameMap.has(key)) {
+          let bench: BenchType = l.bench || 'Independent';
+          if (!l.bench) {
+            if (key.includes('ruling') || key === 'party 1' || key.startsWith('party 1')) {
+              bench = 'Ruling';
+            } else if (key.includes('opp') || key === 'party 2' || key.startsWith('party 2')) {
+              bench = 'Opposition';
+            } else if (existingParties.length === 0) {
+              bench = 'Ruling';
+            } else if (!existingParties.some(p => p.bench === 'Opposition')) {
+              bench = 'Opposition';
+            }
+          }
+          const newParty = this.addParty({
+            event_id: eventId,
+            name: l.party_name.trim(),
+            bench,
+            color: colors[existingParties.length % colors.length]
+          });
+          existingParties.push(newParty);
+          partyNameMap.set(key, newParty);
+        }
+      }
+    });
+
+    // 2. Auto-register any missing committees referenced in the imported roster
+    learnersList.forEach(l => {
+      if (l.committee_name && l.committee_name.trim()) {
+        const key = l.committee_name.trim().toLowerCase();
+        if (!commNameMap.has(key)) {
+          const newComm = this.addCommittee({
+            event_id: eventId,
+            name: l.committee_name.trim(),
+            topic: l.committee_name.trim(),
+            max_capacity: 50
+          });
+          existingCommittees.push(newComm);
+          commNameMap.set(key, newComm);
+        }
+      }
+    });
+
+    // 3. Smart Merge or Insert Delegates
+    const updatedItems: Learner[] = [];
+    const newItems: Learner[] = [];
+    const updatedEventLearnersMap = new Map<string, Learner>(eventLearners.map(l => [l.id, l]));
+
+    // Helper to find matching existing delegate
+    const findExisting = (item: Partial<Learner>): Learner | undefined => {
+      if (item.access_code && item.access_code.trim()) {
+        const cleanCode = item.access_code.trim().toUpperCase();
+        const byCode = eventLearners.find(e => (e.access_code || '').trim().toUpperCase() === cleanCode);
+        if (byCode) return byCode;
+      }
+      if (item.email && item.email.trim()) {
+        const cleanEmail = item.email.trim().toLowerCase();
+        const byEmail = eventLearners.find(e => (e.email || '').trim().toLowerCase() === cleanEmail);
+        if (byEmail) return byEmail;
+      }
+      if (item.full_name && item.full_name.trim()) {
+        const cleanName = item.full_name.trim().toLowerCase();
+        const byName = eventLearners.find(e => (e.full_name || '').trim().toLowerCase() === cleanName);
+        if (byName) return byName;
+      }
+      return undefined;
+    };
+
+    learnersList.forEach((l, index) => {
+      const partyMatch = l.party_name ? partyNameMap.get(l.party_name.trim().toLowerCase()) : undefined;
+      const commMatch = l.committee_name ? commNameMap.get(l.committee_name.trim().toLowerCase()) : undefined;
+
+      const resolvedPartyName = partyMatch ? partyMatch.name : (l.party_name || undefined);
+      const resolvedPartyId = partyMatch ? partyMatch.id : (l.party_id || undefined);
+      const resolvedBench: BenchType | undefined = l.bench || (partyMatch ? partyMatch.bench : undefined);
+      const resolvedCommName = commMatch ? commMatch.name : (l.committee_name || undefined);
+      const resolvedCommId = commMatch ? commMatch.id : (l.committee_id || undefined);
+
+      const existingMatch = findExisting(l);
+
+      if (existingMatch) {
+        // Smart update existing delegate
+        const updated: Learner = {
+          ...existingMatch,
+          full_name: l.full_name || existingMatch.full_name,
+          email: l.email !== undefined ? l.email : existingMatch.email,
+          phone: l.phone !== undefined ? l.phone : existingMatch.phone,
+          department: (l.department && l.department !== 'General') ? l.department : existingMatch.department,
+          academic_year: l.academic_year || existingMatch.academic_year,
+          constituency_number: l.constituency_number !== undefined ? l.constituency_number : existingMatch.constituency_number,
+          constituency_name: l.constituency_name !== undefined ? l.constituency_name : existingMatch.constituency_name,
+          district: l.district !== undefined ? l.district : existingMatch.district,
+          party_name: resolvedPartyName !== undefined ? resolvedPartyName : existingMatch.party_name,
+          party_id: resolvedPartyId !== undefined ? resolvedPartyId : existingMatch.party_id,
+          bench: resolvedBench !== undefined ? resolvedBench : existingMatch.bench,
+          role: l.role || existingMatch.role || 'Member of Legislative Assembly (MLA)',
+          committee_name: resolvedCommName !== undefined ? resolvedCommName : existingMatch.committee_name,
+          committee_id: resolvedCommId !== undefined ? resolvedCommId : existingMatch.committee_id
+        };
+        updatedItems.push(updated);
+        updatedEventLearnersMap.set(existingMatch.id, updated);
+      } else {
+        // Create new delegate
+        const newLearner: Learner = {
+          id: uid('lrn'),
+          event_id: eventId,
+          access_code: l.access_code || `${Math.random().toString(36).substring(2, 6)}${index}`.toUpperCase().substring(0, 6),
+          full_name: l.full_name || 'Delegate',
+          email: l.email || '',
+          phone: l.phone || '',
+          department: l.department || 'General',
+          academic_year: l.academic_year || '1st Year',
+          constituency_number: l.constituency_number,
+          constituency_name: l.constituency_name,
+          district: l.district,
+          party_name: resolvedPartyName,
+          party_id: resolvedPartyId,
+          bench: resolvedBench,
+          role: l.role || 'Member of Legislative Assembly (MLA)',
+          committee_name: resolvedCommName,
+          committee_id: resolvedCommId,
+          day1_checked_in: false,
+          day2_checked_in: false,
+          created_at: new Date().toISOString()
+        };
+        newItems.push(newLearner);
+        updatedEventLearnersMap.set(newLearner.id, newLearner);
+      }
+    });
+
+    // Reconstruct full master list
+    const otherEventLearners = allLearners.filter(l => l.event_id !== eventId);
+    const finalEventLearners = Array.from(updatedEventLearnersMap.values());
+    const finalAllLearners = [...finalEventLearners, ...otherEventLearners];
+
+    this.setItem(STORAGE_KEYS.LEARNERS, finalAllLearners);
+
+    // Update participant count on event
     const events = this.getEvents().map(e =>
-      e.id === eventId ? { ...e, participant_count: e.participant_count + newItems.length } : e
+      e.id === eventId ? { ...e, participant_count: finalEventLearners.length } : e
     );
     this.setItem(STORAGE_KEYS.EVENTS, events);
 
     // Sync to Supabase
-    if (supabase && newItems.length > 0) {
-      const sanitizedBatch = newItems.map(item => this.sanitizeRecordForTable('learners', item as unknown as Record<string, unknown>));
-      supabase
-        .from('learners')
-        .upsert(sanitizedBatch, { onConflict: 'id' })
-        .then(({ error }) => {
-          if (error) console.warn('[Supabase] import sync error:', error.message);
-        });
+    if (supabase) {
+      const allToSync = [...newItems, ...updatedItems];
+      if (allToSync.length > 0) {
+        const sanitizedBatch = allToSync.map(item => this.sanitizeRecordForTable('learners', item as unknown as Record<string, unknown>));
+        supabase
+          .from('learners')
+          .upsert(sanitizedBatch, { onConflict: 'id' })
+          .then(({ error }) => {
+            if (error) console.warn('[Supabase] import sync error:', error.message);
+          });
+      }
     }
+
+    this.notify();
   }
 
   public updateLearner(learner: Learner) {
@@ -2664,6 +2800,7 @@ class StorageService {
         });
     }
 
+    this.notify();
     return result;
   }
 
@@ -2689,6 +2826,7 @@ class StorageService {
       return l;
     });
     this.setItem(STORAGE_KEYS.LEARNERS, all);
+    this.notify();
   }
 
   public rebalanceCommittees(eventId: string) {
@@ -2725,6 +2863,7 @@ class StorageService {
     const updatedMap = new Map(updatedLearners.map(l => [l.id, l]));
     const allLearners = this.getLearners().map(l => updatedMap.get(l.id) || l);
     this.setItem(STORAGE_KEYS.LEARNERS, allLearners);
+    this.notify();
   }
 
   // ── Security Locks (Allocation Lock, Registrations Frozen, Scores Locked) ──

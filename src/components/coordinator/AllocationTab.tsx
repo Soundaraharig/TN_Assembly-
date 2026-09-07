@@ -5,6 +5,7 @@ import { exportFullParticipantDataToCSV } from '../../utils/csvHelper';
 import {
   RotateCcw,
   Download,
+  Upload,
   Search,
   Sparkles,
   Zap,
@@ -24,6 +25,7 @@ interface AllocationTabProps {
   onExecuteAllocation: (rulingRatio: number) => void;
   onResetAllocation: () => void;
   onUpdateLearner: (learner: Learner) => void;
+  onOpenImportCsv?: () => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -35,6 +37,7 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
   onExecuteAllocation,
   onResetAllocation,
   onUpdateLearner,
+  onOpenImportCsv,
   onShowToast
 }) => {
   const [activeRosterView, setActiveRosterView] = useState<'party' | 'committee' | 'table'>('party');
@@ -200,6 +203,25 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
             <Download className="w-3.5 h-3.5" />
             <span>Export Roster</span>
           </button>
+
+          {onOpenImportCsv && (
+            <button
+              onClick={() => {
+                if (isAllocationLocked) {
+                  onShowToast('Allocation Locked', 'Unlock allocation in Control Tab to import roster', 'error');
+                  return;
+                }
+                onOpenImportCsv();
+              }}
+              disabled={isAllocationLocked}
+              className="px-3.5 py-2 rounded-xl text-xs font-bold border transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-300 dark:hover:bg-emerald-950/40"
+              style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+              title="Import already made allocations via CSV / Excel"
+            >
+              <Upload className="w-3.5 h-3.5 text-emerald-500" />
+              <span>Import Allocation</span>
+            </button>
+          )}
 
           <button
             onClick={handleRunAutoAllocation}

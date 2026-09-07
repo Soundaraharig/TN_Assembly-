@@ -1,7 +1,8 @@
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
-import type { Learner, AcademicYear } from '../types';
+import type { Learner, AcademicYear, BenchType } from '../types';
 import { generateAccessCode } from './accessCodeGenerator';
+import { TN_CONSTITUENCIES } from '../data/tnConstituencies';
 
 export interface CSVImportResult {
   learners: Partial<Learner>[];
@@ -64,6 +65,15 @@ export function parseAcademicYear(val: any): AcademicYear {
   return '1st Year';
 }
 
+function normalizeBench(val: string): BenchType | undefined {
+  if (!val) return undefined;
+  const s = val.trim().toLowerCase();
+  if (s.includes('ruling') || s === 'treasury') return 'Ruling';
+  if (s.includes('opp') || s.includes('opposition')) return 'Opposition';
+  if (s.includes('indep') || s.includes('independent') || s === 'neutral') return 'Independent';
+  return undefined;
+}
+
 function processRows(rows: any[], eventId: string, existingCodes: Set<string>): CSVImportResult {
   const learners: Partial<Learner>[] = [];
   const errors: string[] = [];
@@ -119,8 +129,91 @@ function processRows(rows: any[], eventId: string, existingCodes: Set<string>): 
       return;
     }
 
-    const code = generateAccessCode(existingCodes);
+    // Access code: use provided or generate
+    const rawCode = findField(['accesscode', 'code', 'delegatecode', 'studentcode', 'passcode']);
+    let code = rawCode ? rawCode.toUpperCase().trim() : '';
+    if (!code || existingCodes.has(code)) {
+      code = generateAccessCode(existingCodes);
+    }
     existingCodes.add(code);
+
+    // Constituency parsing
+    const rawConstNum = findField([
+      'constituencynumber', 'constituencyno', 'constno', 'constituency',
+      'seatnumber', 'seatno', 'constnum', 'acno', 'acnumber', 'const', 'constituencyn'
+    ]);
+    const numDigits = rawConstNum.match(/\d+/);
+    let parsedConstNo: number | undefined = numDigits ? parseInt(numDigits[0], 10) : undefined;
+
+    let rawConstName = findField([
+      'constituencyname', 'constituency', 'tnconstituencyname', 'constname',
+      'seatname', 'constituencyseat', 'constituencyseatname'
+    ]);
+
+    let district = findField(['district', 'tndistrict', 'districtname']);
+
+    // Cross-reference with TN_CONSTITUENCIES
+    if (parsedConstNo !== undefined && (!rawConstName || rawConstName === String(parsedConstNo))) {
+      const match = TN_CONSTITUENCIES.find(c => c.number === parsedConstNo);
+      if (match) {
+        rawConstName = match.name;
+        if (!district) district = match.district;
+      }
+    } else if (rawConstName && parsedConstNo === undefined) {
+      // Check if format like "1 - Gummidipoondi"
+      const prefixMatch = rawConstName.match(/^(\d+)\s*[-:]\s*(.+)$/);
+      if (prefixMatch) {
+        parsedConstNo = parseInt(prefixMatch[1], 10);
+        rawConstName = prefixMatch[2].trim();
+      }
+      const cleanName = rawConstName.toLowerCase().replace(/\s*\([^)]*\)/g, '').trim();
+      const match = TN_CONSTITUENCIES.find(
+        c => c.name.toLowerCase() === cleanName || c.name.toLowerCase().includes(cleanName)
+      );
+      if (match) {
+        parsedConstNo = parsedConstNo || match.number;
+        rawConstName = rawConstName || match.name;
+        if (!district) district = match.district;
+      }
+    } else if (parsedConstNo !== undefined && rawConstName) {
+      const match = TN_CONSTITUENCIES.find(c => c.number === parsedConstNo);
+      if (match && !district) {
+        district = match.district;
+      }
+    }
+
+    // Party & Bench parsing
+    const party_name = findField([
+      'partyassignment', 'party', 'politicalparty', 'partyname',
+      'assignedparty', 'partyassigned', 'partyallocated'
+    ]);
+
+    const rawBench = findField(['bench', 'benchassignment', 'side', 'rulingopposition', 'benchtype']);
+    let bench = normalizeBench(rawBench);
+
+    // If bench not explicitly given, infer from party_name
+    if (!bench && party_name) {
+      const pLower = party_name.toLowerCase();
+      if (pLower.includes('ruling') || pLower === 'party 1' || pLower.startsWith('party 1')) {
+        bench = 'Ruling';
+      } else if (pLower.includes('opposition') || pLower.includes('opp') || pLower === 'party 2' || pLower.startsWith('party 2')) {
+        bench = 'Opposition';
+      } else if (pLower.includes('independent')) {
+        bench = 'Independent';
+      }
+    }
+
+    // Legislative Role
+    const rawRole = findField([
+      'role', 'legislativerole', 'cabinetrole', 'designation',
+      'position', 'parliamentaryrole', 'cabinet'
+    ]);
+    const role = rawRole || 'Member of Legislative Assembly (MLA)';
+
+    // Committee
+    const committee_name = findField([
+      'committee', 'committeename', 'assignedcommittee', 'committeegroup'
+    ]);
 
     learners.push({
       id: `l_${Date.now()}_${index}_${Math.random().toString(36).substring(2, 6)}`,
@@ -131,6 +224,13 @@ function processRows(rows: any[], eventId: string, existingCodes: Set<string>): 
       phone: phone,
       department: department,
       academic_year,
+      constituency_number: parsedConstNo,
+      constituency_name: rawConstName || undefined,
+      district: district || undefined,
+      party_name: party_name || undefined,
+      bench: bench || undefined,
+      role: role,
+      committee_name: committee_name || undefined,
       day1_checked_in: false,
       day2_checked_in: false,
       created_at: new Date().toISOString()
@@ -253,6 +353,61 @@ export function exportFullParticipantDataToCSV(learners: Learner[], eventName: s
   const link = document.createElement('a');
   link.href = url;
   link.setAttribute('download', `${eventName.replace(/\s+/g, '_')}_Full_Roster.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+export function exportAllocationTemplateCSV() {
+  const sampleAllocation = [
+    {
+      'Student Name': 'V. vishnu',
+      'Constituency Number': 1,
+      'Party Assignment': 'Party 1',
+      'Constituency Name': 'Gummidipoondi',
+      'Bench': 'Ruling',
+      'Role': 'Member of Legislative Assembly (MLA)',
+      'Academic Year': '3rd Year',
+      'Department': 'Computer Science'
+    },
+    {
+      'Student Name': 'R. Janani',
+      'Constituency Number': 4,
+      'Party Assignment': 'Party 2',
+      'Constituency Name': 'Thiruvallur',
+      'Bench': 'Opposition',
+      'Role': 'Member of Legislative Assembly (MLA)',
+      'Academic Year': '2nd Year',
+      'Department': 'Electronics & Comm'
+    },
+    {
+      'Student Name': 'K. Karthik',
+      'Constituency Number': 11,
+      'Party Assignment': 'Party 1',
+      'Constituency Name': 'Dr. Radhakrishnan Nagar',
+      'Bench': 'Ruling',
+      'Role': 'Chief Minister',
+      'Academic Year': '4th Year',
+      'Department': 'Mechanical'
+    },
+    {
+      'Student Name': 'S. Priya',
+      'Constituency Number': 13,
+      'Party Assignment': 'Party 2',
+      'Constituency Name': 'Kolathur',
+      'Bench': 'Opposition',
+      'Role': 'Leader of the Opposition',
+      'Academic Year': '4th Year',
+      'Department': 'Civil'
+    }
+  ];
+
+  const csv = Papa.unparse(sampleAllocation);
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', 'TN_Assembly_PreAllocated_Template.csv');
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

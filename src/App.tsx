@@ -462,6 +462,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           onExecuteAllocation={props.handleExecuteAllocation}
           onResetAllocation={props.handleResetAllocation}
           onUpdateLearner={props.handleUpdateLearner}
+          onOpenImportCsv={() => props.setIsImportCsvOpen(true)}
           onShowToast={props.addToast}
         />
       )}
@@ -1351,6 +1352,8 @@ export function App() {
       }
       try {
         storageService.executeAllocationForEvent(currentEvent.id, rulingRatio);
+        setLearners(storageService.getLearners(currentEvent.id));
+        setParties(storageService.getParties(currentEvent.id));
       } catch (err: any) {
         addToast('Allocation Locked', err?.message || 'Cannot execute allocation while lock is enabled.', 'error');
       }
@@ -1365,6 +1368,7 @@ export function App() {
       }
       try {
         storageService.resetAllocationsForEvent(currentEvent.id);
+        setLearners(storageService.getLearners(currentEvent.id));
       } catch (err: any) {
         addToast('Allocation Locked', err?.message || 'Cannot reset allocation while lock is enabled.', 'error');
       }
@@ -2049,7 +2053,9 @@ export function App() {
             onImportSuccess={(imported: Partial<Learner>[]) => {
               storageService.importLearners(imported, currentEvent.id);
               setLearners(storageService.getLearners(currentEvent.id));
-              addToast('Import Successful', `Imported ${imported.length} delegate participants`, 'success');
+              setParties(storageService.getParties(currentEvent.id));
+              setCommittees(storageService.getCommittees(currentEvent.id));
+              addToast('Import Successful', `Processed ${imported.length} delegate participants`, 'success');
             }}
             onShowToast={addToast}
           />
