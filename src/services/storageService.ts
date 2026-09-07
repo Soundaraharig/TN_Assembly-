@@ -48,8 +48,18 @@ import {
   INITIAL_FEEDBACK,
   INITIAL_TEAM
 } from '../data/initialMockData';
-import { runAutoAllocation } from '../utils/allocationEngine';
+import {
+  runAutoAllocation,
+  allocateParties,
+  allocateCommittees
+} from '../utils/allocationEngine';
+import type {
+  AllocationResult,
+  PartyAllocationOptions,
+  CommitteeAllocationOptions
+} from '../utils/allocationEngine';
 import { supabase, isSupabaseEnabled } from '../lib/supabase';
+import { getEventSlug } from '../utils/slug';
 
 // ---------------------------------------------------------------------------
 // Local-storage keys (cache layer)
@@ -302,6 +312,8 @@ class StorageService {
 
       let hasQueryError = false;
 
+      const deletedIds = this.getDeletedIds();
+
       if (eventsErr) {
         console.error("Supabase Error [college_events]:", eventsErr);
         hasQueryError = true;
@@ -349,7 +361,21 @@ class StorageService {
           }
         });
 
-        this.setItem(STORAGE_KEYS.EVENTS, events);
+        // Merge local and remote events
+        const localEvents = this.getItem<CollegeEvent[]>(STORAGE_KEYS.EVENTS, []);
+        const eventMap = new Map<string, CollegeEvent>();
+        localEvents.forEach(e => eventMap.set(e.id, e));
+        events.forEach(remoteEv => {
+          if (deletedIds.has(remoteEv.id)) return;
+          const local = eventMap.get(remoteEv.id);
+          if (local) {
+            eventMap.set(remoteEv.id, { ...remoteEv, ...local });
+          } else {
+            eventMap.set(remoteEv.id, remoteEv as unknown as CollegeEvent);
+          }
+        });
+
+        this.setItem(STORAGE_KEYS.EVENTS, Array.from(eventMap.values()));
         this.setItem(STORAGE_KEYS.OPEN_NOMINATIONS, openNomMap);
         this.setItem(STORAGE_KEYS.NOMINATIONS, allNoms);
         this.setItem(STORAGE_KEYS.ELECTIONS, allElecs);
@@ -384,10 +410,20 @@ class StorageService {
         console.error("Supabase Error [coordinators]:", coordErr);
         hasQueryError = true;
       } else if (coordinators !== null) {
-        this.setItem(STORAGE_KEYS.COORDINATORS, coordinators);
+        const localCoords = this.getItem<Coordinator[]>(STORAGE_KEYS.COORDINATORS, []);
+        const coordMap = new Map<string, Coordinator>();
+        localCoords.forEach(c => coordMap.set(c.id, c));
+        coordinators.forEach(remoteC => {
+          if (deletedIds.has(remoteC.id)) return;
+          const local = coordMap.get(remoteC.id);
+          if (local) {
+            coordMap.set(remoteC.id, { ...remoteC, ...local });
+          } else {
+            coordMap.set(remoteC.id, remoteC as unknown as Coordinator);
+          }
+        });
+        this.setItem(STORAGE_KEYS.COORDINATORS, Array.from(coordMap.values()));
       }
-
-      const deletedIds = this.getDeletedIds();
 
       if (learnersErr) {
         console.error("Supabase Error [learners]:", learnersErr);
@@ -395,18 +431,41 @@ class StorageService {
       } else if (learners !== null) {
         const localLearners = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, []);
         const learnerMap = new Map<string, Learner>();
-        localLearners.forEach(l => learnerMap.set(l.id, l));
+        const codeMap = new Map<string, string>(); // accessCode -> learnerId
+        const nameMap = new Map<string, string>(); // name + constNo -> learnerId
+
+        localLearners.forEach(l => {
+          learnerMap.set(l.id, l);
+          if (l.access_code && l.access_code.trim()) {
+            codeMap.set(`${l.event_id || ''}:::${l.access_code.trim().toUpperCase()}`, l.id);
+          }
+          if (l.full_name && l.full_name.trim()) {
+            nameMap.set(`${l.event_id || ''}:::${l.full_name.trim().toLowerCase()}:::${l.constituency_number || ''}`, l.id);
+          }
+        });
+
         learners.forEach(r => {
           if (deletedIds.has(r.id)) return;
-          const local = learnerMap.get(r.id);
+          const codeKey = r.access_code && r.access_code.trim() ? `${r.event_id || ''}:::${r.access_code.trim().toUpperCase()}` : null;
+          const nameKey = r.full_name && r.full_name.trim() ? `${r.event_id || ''}:::${r.full_name.trim().toLowerCase()}:::${r.constituency_number || ''}` : null;
+
+          // Identify if learner is already present by ID or access code or name+constituency
+          let matchId: string | undefined = learnerMap.has(r.id) ? r.id : undefined;
+          if (!matchId && codeKey && codeMap.has(codeKey)) {
+            matchId = codeMap.get(codeKey);
+          }
+          if (!matchId && nameKey && nameMap.has(nameKey)) {
+            matchId = nameMap.get(nameKey);
+          }
+
+          const local = matchId ? learnerMap.get(matchId) : undefined;
           if (!local) {
             learnerMap.set(r.id, r as Learner);
+            if (codeKey) codeMap.set(codeKey, r.id);
+            if (nameKey) nameMap.set(nameKey, r.id);
           } else {
-            const localTime = new Date(local.updated_at || local.created_at || 0).getTime();
-            const remoteTime = new Date((r as any).updated_at || (r as any).created_at || 0).getTime();
-            if (remoteTime >= localTime) {
-              learnerMap.set(r.id, { ...local, ...(r as Learner) });
-            }
+            // Local user changes take precedence; merge remote non-conflicting fields
+            learnerMap.set(local.id, { ...(r as Learner), ...local });
           }
         });
         this.setItem(STORAGE_KEYS.LEARNERS, sortLearnersStably(Array.from(learnerMap.values())));
@@ -715,7 +774,14 @@ class StorageService {
 
   public authenticateCoordinator(email: string, pass: string): UserSession | null {
     const coords = this.getCoordinators();
-    const match = coords.find(c => c.email.toLowerCase() === email.toLowerCase() && (c.password_hash === pass || c.raw_temp_password === pass));
+    const emailLower = email.trim().toLowerCase();
+    const passTrim = pass.trim();
+    const match = coords.find(c =>
+      c.email.toLowerCase() === emailLower && (
+        (c.password_hash && c.password_hash === passTrim) ||
+        (c.raw_temp_password && c.raw_temp_password === passTrim)
+      )
+    );
     if (match) {
       return {
         role: 'coordinator',
@@ -762,8 +828,16 @@ class StorageService {
 
   public addEvent(event: Partial<CollegeEvent>): CollegeEvent {
     const all = this.getEvents();
+    const eventId = uid('ev');
+    const computedSlug = getEventSlug({
+      id: eventId,
+      college_name: event.college_name || 'New Assembly',
+      chapter: event.chapter || 'Tamil Nadu',
+      slug: event.slug
+    } as CollegeEvent);
+
     const newEvent: CollegeEvent = {
-      id: uid('ev'),
+      id: eventId,
       college_name: event.college_name || 'New Assembly',
       chapter: event.chapter || 'Tamil Nadu',
       level: event.level || 'College Round',
@@ -776,6 +850,7 @@ class StorageService {
       assigned_coordinator_name: event.assigned_coordinator_name,
       elections_count: event.elections_count || 3,
       is_locked: false,
+      slug: event.slug || computedSlug,
       created_at: new Date().toISOString()
     };
     all.unshift(newEvent);
@@ -807,33 +882,82 @@ class StorageService {
 
   public addCoordinator(coord: Partial<Coordinator>): Coordinator {
     const all = this.getCoordinators();
+    const emailLower = coord.email?.trim().toLowerCase();
+    const existingIndex = emailLower ? all.findIndex(c => c.email.toLowerCase() === emailLower) : -1;
+
+    if (existingIndex >= 0) {
+      const updated: Coordinator = {
+        ...all[existingIndex],
+        ...coord,
+        event_id: coord.event_id || all[existingIndex].event_id,
+        name: coord.name || all[existingIndex].name,
+        email: coord.email || all[existingIndex].email,
+        password_hash: coord.password_hash || all[existingIndex].password_hash,
+        raw_temp_password: coord.raw_temp_password || coord.password_hash || all[existingIndex].raw_temp_password
+      };
+      all[existingIndex] = updated;
+      this.setItem(STORAGE_KEYS.COORDINATORS, all);
+      this.sbUpsert('coordinators', updated as unknown as Record<string, unknown>);
+      this.notify();
+      return updated;
+    }
+
     const newCoord: Coordinator = {
-      id: uid('coord'),
+      id: coord.id || uid('coord'),
       event_id: coord.event_id || '',
       name: coord.name || 'Coordinator',
       email: coord.email || '',
-      password_hash: coord.password_hash || 'pass1234',
-      raw_temp_password: coord.raw_temp_password || coord.password_hash || 'pass1234'
+      password_hash: coord.password_hash || 'coord123',
+      raw_temp_password: coord.raw_temp_password || coord.password_hash || 'coord123'
     };
     all.push(newCoord);
     this.setItem(STORAGE_KEYS.COORDINATORS, all);
     this.sbUpsert('coordinators', newCoord as unknown as Record<string, unknown>);
+    this.notify();
     return newCoord;
   }
 
   public updateCoordinator(coord: Coordinator) {
-    const all = this.getCoordinators().map(c => (c.id === coord.id ? coord : c));
+    const all = this.getCoordinators();
+    const emailLower = coord.email?.trim().toLowerCase();
+    const existingIndex = all.findIndex(c => c.id === coord.id || (emailLower && c.email.toLowerCase() === emailLower));
+
+    if (existingIndex >= 0) {
+      all[existingIndex] = { ...all[existingIndex], ...coord };
+    } else {
+      all.push(coord);
+    }
     this.setItem(STORAGE_KEYS.COORDINATORS, all);
-    this.sbUpsert('coordinators', coord as unknown as Record<string, unknown>);
+    const toUpsert = existingIndex >= 0 ? all[existingIndex] : coord;
+    this.sbUpsert('coordinators', toUpsert as unknown as Record<string, unknown>);
+    this.notify();
   }
 
   // ── LEARNERS ──────────────────────────────────────────────────────────────
 
   public getLearners(eventId?: string): Learner[] {
     const all = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, INITIAL_LEARNERS);
-    const sortedAll = sortLearnersStably(all);
+    const seenIds = new Set<string>();
+    const seenCodes = new Set<string>();
+    const unique: Learner[] = [];
+
+    for (const l of all) {
+      if (!l.id || seenIds.has(l.id)) continue;
+      const codeKey = l.access_code && l.access_code.trim()
+        ? `${l.event_id || ''}:::${l.access_code.trim().toUpperCase()}`
+        : null;
+      if (codeKey && seenCodes.has(codeKey)) continue;
+
+      seenIds.add(l.id);
+      if (codeKey) seenCodes.add(codeKey);
+      unique.push(l);
+    }
+
+    const sortedAll = sortLearnersStably(unique);
     if (eventId) {
-      return sortedAll.filter(l => l.event_id === eventId || !l.event_id);
+      const matched = sortedAll.filter(l => l.event_id === eventId);
+      if (matched.length > 0) return matched;
+      return sortedAll.filter(l => l.event_id === eventId || (!l.event_id && sortedAll.length <= 100));
     }
     return sortedAll;
   }
@@ -1164,7 +1288,11 @@ class StorageService {
 
   public getParties(eventId?: string): Party[] {
     const all = this.getItem<Party[]>(STORAGE_KEYS.PARTIES, INITIAL_PARTIES);
-    if (eventId) return all.filter(p => p.event_id === eventId || !p.event_id);
+    if (eventId) {
+      const matched = all.filter(p => p.event_id === eventId);
+      if (matched.length > 0) return matched;
+      return all.filter(p => p.event_id === eventId || !p.event_id);
+    }
     return all;
   }
 
@@ -1396,7 +1524,11 @@ class StorageService {
 
   public getCommittees(eventId?: string): Committee[] {
     const all = this.getItem<Committee[]>(STORAGE_KEYS.COMMITTEES, INITIAL_COMMITTEES);
-    if (eventId) return all.filter(c => c.event_id === eventId || !c.event_id);
+    if (eventId) {
+      const matched = all.filter(c => c.event_id === eventId);
+      if (matched.length > 0) return matched;
+      return all.filter(c => c.event_id === eventId || !c.event_id);
+    }
     return all;
   }
 
@@ -2961,6 +3093,89 @@ class StorageService {
   }
 
   // ── AUTO-ALLOCATION & RESET ───────────────────────────────────────────────
+
+  public allocatePartiesForEvent(
+    eventId: string,
+    options: PartyAllocationOptions = {}
+  ): AllocationResult {
+    if (this.getAllocationLock(eventId)) {
+      throw new Error('Allocation is currently locked by Assembly Coordinator.');
+    }
+
+    const eventLearners = this.getLearners(eventId);
+    const eventParties = this.getParties(eventId);
+
+    const result = allocateParties(eventLearners, eventParties, options);
+
+    const allLearners = this.getLearners();
+    const updatedMap = new Map(result.updatedLearners.map(l => [l.id, l]));
+    const nextLearners = allLearners.map(l => updatedMap.get(l.id) || l);
+    this.setItem(STORAGE_KEYS.LEARNERS, nextLearners);
+
+    // If updated parties, persist updated parties
+    if (result.updatedParties && result.updatedParties.length > 0) {
+      const allParties = this.getParties();
+      const partyMap = new Map(result.updatedParties.map(p => [p.id, p]));
+      const nextParties = allParties.map(p => partyMap.get(p.id) || p);
+      this.setItem(STORAGE_KEYS.PARTIES, nextParties);
+      if (supabase) {
+        result.updatedParties.forEach(p => {
+          this.sbUpsert('political_parties', p as unknown as Record<string, unknown>);
+        });
+      }
+    }
+
+    // Sync updated learners to Supabase
+    if (supabase && result.updatedLearners.length > 0) {
+      const sanitized = result.updatedLearners.map(l =>
+        this.sanitizeRecordForTable('learners', l as unknown as Record<string, unknown>)
+      );
+      supabase
+        .from('learners')
+        .upsert(sanitized, { onConflict: 'id' })
+        .then(({ error }) => {
+          if (error) console.warn('[Supabase] party allocation sync:', error.message);
+        });
+    }
+
+    this.notify();
+    return result;
+  }
+
+  public allocateCommitteesForEvent(
+    eventId: string,
+    options: CommitteeAllocationOptions = {}
+  ): { updatedLearners: Learner[]; stats: Record<string, number> } {
+    if (this.getAllocationLock(eventId)) {
+      throw new Error('Allocation is currently locked by Assembly Coordinator.');
+    }
+
+    const eventLearners = this.getLearners(eventId);
+    const eventCommittees = this.getCommittees(eventId);
+
+    const result = allocateCommittees(eventLearners, eventCommittees, options);
+
+    const allLearners = this.getLearners();
+    const updatedMap = new Map(result.updatedLearners.map(l => [l.id, l]));
+    const nextLearners = allLearners.map(l => updatedMap.get(l.id) || l);
+    this.setItem(STORAGE_KEYS.LEARNERS, nextLearners);
+
+    // Sync updated learners to Supabase
+    if (supabase && result.updatedLearners.length > 0) {
+      const sanitized = result.updatedLearners.map(l =>
+        this.sanitizeRecordForTable('learners', l as unknown as Record<string, unknown>)
+      );
+      supabase
+        .from('learners')
+        .upsert(sanitized, { onConflict: 'id' })
+        .then(({ error }) => {
+          if (error) console.warn('[Supabase] committee allocation sync:', error.message);
+        });
+    }
+
+    this.notify();
+    return result;
+  }
 
   public executeAllocationForEvent(eventId: string, rulingRatio = 0.55) {
     if (this.getAllocationLock(eventId)) {

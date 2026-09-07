@@ -65,6 +65,8 @@ interface SidebarProps {
   role?: string;
   onBackToEvents?: () => void;
   eventSlug?: string;
+  eventId?: string;
+  eventName?: string;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -75,7 +77,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   completedTabs,
   role,
   onBackToEvents,
-  eventSlug: propEventSlug
+  eventSlug: propEventSlug,
+  eventId,
+  eventName
 }) => {
   const params = useParams<{ eventSlug?: string }>();
   const activeEventSlug = propEventSlug || params.eventSlug || 'jkkncet-tn-assembly-2026';
@@ -115,6 +119,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const navContent = (
     <div className="space-y-6 text-xs overflow-y-auto pr-1 pb-10">
+      {/* Event Info Badge */}
+      {eventId && (
+        <div className="px-3 py-2 rounded-xl border mb-2 flex flex-col gap-0.5" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
+          <div className="flex items-center justify-between text-[10px] font-bold text-amber-500 uppercase tracking-wider">
+            <span>EVENT ID</span>
+            <span className="font-mono text-[11px] text-amber-400 font-bold">{eventId}</span>
+          </div>
+          {eventName && (
+            <span className="text-[11px] font-medium text-slate-300 truncate" title={eventName}>
+              {eventName}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Super Admin Back to Hub Button */}
       {role === 'super_admin' && (
         <div className="pb-3 border-b border-slate-700/40">

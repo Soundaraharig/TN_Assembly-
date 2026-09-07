@@ -2,9 +2,9 @@ import React, { useState, useMemo } from 'react';
 import type { Learner, Party, Committee, UserRole } from '../../types';
 import { storageService, getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
 import { canDelete } from '../../utils/permissions';
-import { exportFullParticipantDataToExcel, exportFullParticipantDataToCSV } from '../../utils/csvHelper';
 import { generateDelegateBadgesPDF } from '../../utils/pdfExport';
 import { EditLearnerModal } from './EditLearnerModal';
+import { DownloadModal } from './DownloadModal';
 import {
   Search,
   Plus,
@@ -14,7 +14,6 @@ import {
   Printer,
   Mail,
   SlidersHorizontal,
-  ChevronDown,
   Trash2,
   Pencil,
   AlertTriangle,
@@ -104,6 +103,9 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
   const [massDeleteScope, setMassDeleteScope] = useState<'SELECTED' | 'FILTERED' | 'ALL'>('SELECTED');
   const [massDeletePass, setMassDeletePass] = useState('');
   const [massDeleteError, setMassDeleteError] = useState('');
+
+  // Download Modal State
+  const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);
 
   // Copy Access Code state
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
@@ -400,73 +402,16 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
             <span>Import CSV / Excel</span>
           </button>
 
-          {/* Export Dropdown */}
-          <div className="relative group">
-            <button
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
-              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
-            >
-              <Download className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
-              <span>Download Data</span>
-              <ChevronDown className="w-3 h-3" style={{ color: 'var(--text-muted)' }} />
-            </button>
-            <div
-              className="absolute right-0 top-full mt-1.5 w-60 border rounded-xl shadow-xl py-2 hidden group-hover:block z-30 divide-y divide-slate-100 dark:divide-slate-800"
-              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
-            >
-              <div className="py-1">
-                <div className="px-3.5 py-1 text-[10px] font-black uppercase tracking-wider text-amber-500">
-                  Filtered List ({filteredLearners.length})
-                </div>
-                <button
-                  onClick={() => {
-                    exportFullParticipantDataToCSV(filteredLearners, eventName, `${eventName}_Filtered_${filteredLearners.length}_Delegates.csv`, parties, committees);
-                    onShowToast('Filtered CSV Exported', `Exported ${filteredLearners.length} filtered participant records`, 'success');
-                  }}
-                  className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
-                  style={{ color: 'var(--text-primary)' }}
-                >
-                  Download Filtered List (CSV)
-                </button>
-                <button
-                  onClick={() => {
-                    exportFullParticipantDataToExcel(filteredLearners, eventName, `${eventName}_Filtered_${filteredLearners.length}_Delegates.xlsx`, parties, committees);
-                    onShowToast('Filtered Excel Exported', `Exported ${filteredLearners.length} filtered participant records`, 'success');
-                  }}
-                  className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
-                  style={{ color: 'var(--text-primary)' }}
-                >
-                  Download Filtered List (Excel)
-                </button>
-              </div>
-
-              <div className="py-1">
-                <div className="px-3.5 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-500">
-                  Whole Data List ({learners.length})
-                </div>
-                <button
-                  onClick={() => {
-                    exportFullParticipantDataToCSV(learners, eventName, `${eventName}_Whole_Data_${learners.length}_Delegates.csv`, parties, committees);
-                    onShowToast('Complete CSV Exported', `Exported all ${learners.length} participant records`, 'success');
-                  }}
-                  className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
-                  style={{ color: 'var(--text-primary)' }}
-                >
-                  Download Whole Data List (CSV)
-                </button>
-                <button
-                  onClick={() => {
-                    exportFullParticipantDataToExcel(learners, eventName, `${eventName}_Whole_Data_${learners.length}_Delegates.xlsx`, parties, committees);
-                    onShowToast('Complete Excel Exported', `Exported all ${learners.length} participant records`, 'success');
-                  }}
-                  className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
-                  style={{ color: 'var(--text-primary)' }}
-                >
-                  Download Whole Data List (Excel)
-                </button>
-              </div>
-            </div>
-          </div>
+          {/* Download Data Modal Trigger */}
+          <button
+            onClick={() => setIsDownloadModalOpen(true)}
+            className="px-3 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs hover:opacity-90"
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+            title="Export CSV / Excel with custom column picker"
+          >
+            <Download className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
+            <span>Download Data</span>
+          </button>
 
           <button
             onClick={() => {
@@ -1351,6 +1296,29 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
           </div>
         </div>
       )}
+
+      {/* Download / Export Modal */}
+      <DownloadModal
+        isOpen={isDownloadModalOpen}
+        onClose={() => setIsDownloadModalOpen(false)}
+        learners={learners}
+        filteredLearners={filteredLearners}
+        parties={parties}
+        committees={committees}
+        eventName={eventName}
+        activeFilterSummary={
+          selectedParty !== 'ALL' || selectedRole !== 'ALL' || selectedCommittee !== 'ALL' || selectedBench !== 'ALL' || searchTerm.trim()
+            ? `Filtered by: ${[
+                selectedParty !== 'ALL' ? `Party: ${selectedParty}` : '',
+                selectedRole !== 'ALL' ? `Role: ${selectedRole}` : '',
+                selectedCommittee !== 'ALL' ? `Committee: ${selectedCommittee}` : '',
+                selectedBench !== 'ALL' ? `Bench: ${selectedBench}` : '',
+                searchTerm.trim() ? `Search: "${searchTerm.trim()}"` : ''
+              ].filter(Boolean).join(', ')}`
+            : undefined
+        }
+        onShowToast={onShowToast}
+      />
 
     </div>
   );

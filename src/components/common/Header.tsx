@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { UserRole, CollegeEvent, Coordinator, Learner, UserSession } from '../../types';
-import { LogOut, Landmark, Sun, Moon, Menu, X } from 'lucide-react';
+import { LogOut, Landmark, Sun, Moon, Menu, X, Copy, Check } from 'lucide-react';
 import type { Theme } from '../../lib/theme';
 
 interface HeaderProps {
@@ -34,6 +34,17 @@ export const Header: React.FC<HeaderProps> = ({
   isMobileMenuOpen
 }) => {
   const isDark = theme === 'dark';
+  const [copiedId, setCopiedId] = useState(false);
+
+  const handleCopyEventId = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!currentEvent?.id) return;
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(currentEvent.id);
+      setCopiedId(true);
+      setTimeout(() => setCopiedId(false), 2000);
+    }
+  };
 
   // Determine user display name dynamically
   const displayName =
@@ -91,6 +102,37 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </button>
         </div>
+
+        {/* Active Event ID Badge (Visible to Super Admin & Coordinator) */}
+        {currentEvent && (
+          <div
+            onClick={handleCopyEventId}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl border text-xs font-mono select-all transition-all hover:border-amber-500/50 cursor-pointer shadow-sm"
+            style={{
+              backgroundColor: 'var(--bg-elevated)',
+              borderColor: 'var(--border)',
+              color: 'var(--text-primary)'
+            }}
+            title={`Active Event ID: ${currentEvent.id} (Click to copy)`}
+          >
+            <span className="text-[9px] uppercase font-black tracking-wider px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-500 font-sans">
+              EVENT ID
+            </span>
+            <span className="text-amber-400 font-bold font-mono text-[11px]">
+              {currentEvent.id}
+            </span>
+            {copiedId ? (
+              <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            ) : (
+              <Copy className="w-3 h-3 text-slate-400 hover:text-slate-200 shrink-0" />
+            )}
+            {currentEvent.college_name && (
+              <span className="text-slate-400 font-sans hidden xl:inline max-w-[180px] truncate text-[11px]">
+                • {currentEvent.college_name}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Right side: theme toggle + user info + sign out */}
         <div className="flex items-center gap-2 sm:gap-3">

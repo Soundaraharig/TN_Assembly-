@@ -283,6 +283,194 @@ export function parseCSVFile(
   });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPORT COLUMN REGISTRY & DEDUPLICATION
+// ─────────────────────────────────────────────────────────────────────────────
+export interface ExportColumnDef {
+  key: string;
+  label: string;
+  defaultSelected: boolean;
+  getValue: (learner: Learner, index: number, parties?: Party[], committees?: Committee[]) => string | number;
+}
+
+export const EXPORT_COLUMNS_REGISTRY: ExportColumnDef[] = [
+  {
+    key: 'sno',
+    label: 'S.No',
+    defaultSelected: true,
+    getValue: (_l, index) => index + 1
+  },
+  {
+    key: 'full_name',
+    label: 'Student Name',
+    defaultSelected: true,
+    getValue: (l) => l.full_name || ''
+  },
+  {
+    key: 'access_code',
+    label: 'Access Code',
+    defaultSelected: true,
+    getValue: (l) => l.access_code || ''
+  },
+  {
+    key: 'constituency_number',
+    label: 'Constituency Number',
+    defaultSelected: true,
+    getValue: (l) => l.constituency_number || ''
+  },
+  {
+    key: 'constituency_name',
+    label: 'Constituency Name',
+    defaultSelected: true,
+    getValue: (l) => l.constituency_name || ''
+  },
+  {
+    key: 'district',
+    label: 'District',
+    defaultSelected: false,
+    getValue: (l) => l.district || ''
+  },
+  {
+    key: 'party',
+    label: 'Allocated Party',
+    defaultSelected: true,
+    getValue: (l, _i, parties) => parties ? getResolvedPartyName(l, parties) : (l.party_name || '')
+  },
+  {
+    key: 'bench',
+    label: 'Bench',
+    defaultSelected: true,
+    getValue: (l) => l.bench || ''
+  },
+  {
+    key: 'committee',
+    label: 'Allocated Committee',
+    defaultSelected: true,
+    getValue: (l, _i, _p, committees) => committees ? getResolvedCommitteeName(l, committees) : (l.committee_name || '')
+  },
+  {
+    key: 'role',
+    label: 'Legislative Role',
+    defaultSelected: true,
+    getValue: (l) => l.role || ''
+  },
+  {
+    key: 'department',
+    label: 'Department',
+    defaultSelected: true,
+    getValue: (l) => l.department || ''
+  },
+  {
+    key: 'academic_year',
+    label: 'Academic Year',
+    defaultSelected: true,
+    getValue: (l) => l.academic_year || ''
+  },
+  {
+    key: 'email',
+    label: 'Email ID',
+    defaultSelected: false,
+    getValue: (l) => l.email || ''
+  },
+  {
+    key: 'phone',
+    label: 'Phone Number',
+    defaultSelected: false,
+    getValue: (l) => l.phone || ''
+  },
+  {
+    key: 'day1_checked_in',
+    label: 'Day 1 Check-in',
+    defaultSelected: false,
+    getValue: (l) => l.day1_checked_in ? 'Checked In' : 'Not Checked In'
+  },
+  {
+    key: 'day2_checked_in',
+    label: 'Day 2 Check-in',
+    defaultSelected: false,
+    getValue: (l) => l.day2_checked_in ? 'Checked In' : 'Not Checked In'
+  }
+];
+
+export function deduplicateLearners(learners: Learner[]): Learner[] {
+  const seenIds = new Set<string>();
+  const seenCodes = new Set<string>();
+  const unique: Learner[] = [];
+
+  for (const l of learners) {
+    if (!l) continue;
+    if (l.id && seenIds.has(l.id)) continue;
+    const code = l.access_code?.trim().toUpperCase();
+    if (code && seenCodes.has(code)) continue;
+
+    if (l.id) seenIds.add(l.id);
+    if (code) seenCodes.add(code);
+    unique.push(l);
+  }
+
+  return unique;
+}
+
+export interface CustomExportOptions {
+  learners: Learner[];
+  selectedKeys: string[];
+  format: 'csv' | 'xlsx';
+  customFileName?: string;
+  eventName?: string;
+  parties?: Party[];
+  committees?: Committee[];
+}
+
+export function exportCustomParticipantData(options: CustomExportOptions): number {
+  const {
+    learners,
+    selectedKeys,
+    format,
+    customFileName,
+    eventName = 'TN_Assembly',
+    parties,
+    committees
+  } = options;
+
+  const dedupedLearners = deduplicateLearners(learners);
+
+  // Filter columns based on selectedKeys in user-selected order
+  const activeColDefs = selectedKeys
+    .map(key => EXPORT_COLUMNS_REGISTRY.find(col => col.key === key))
+    .filter((col): col is ExportColumnDef => Boolean(col));
+
+  const exportData = dedupedLearners.map((learner, idx) => {
+    const row: Record<string, string | number> = {};
+    activeColDefs.forEach(col => {
+      row[col.label] = col.getValue(learner, idx, parties, committees);
+    });
+    return row;
+  });
+
+  const baseName = customFileName
+    ? customFileName.replace(/\.(csv|xlsx)$/i, '')
+    : `${eventName.replace(/\s+/g, '_')}_${dedupedLearners.length}_Delegates`;
+
+  if (format === 'xlsx') {
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Participants');
+    XLSX.writeFile(workbook, `${baseName}.xlsx`);
+  } else {
+    const csv = Papa.unparse(exportData);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `${baseName}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
+  return dedupedLearners.length;
+}
+
 export function exportFullParticipantDataToExcel(
   learners: Learner[],
   eventName: string = 'TN_Assembly',
@@ -290,52 +478,17 @@ export function exportFullParticipantDataToExcel(
   parties?: Party[],
   committees?: Committee[]
 ) {
-  const exportData = learners.map((l, index) => ({
-    'S.No': index + 1,
-    'Student Name': l.full_name,
-    'Constituency Number': l.constituency_number || '',
-    'Constituency Name': l.constituency_name || '',
-    'Allocated Party': parties ? getResolvedPartyName(l, parties) : (l.party_name || ''),
-    'Allocated Committee': committees ? getResolvedCommitteeName(l, committees) : (l.committee_name || ''),
-    'Bench': l.bench || '',
-    'Legislative Role': l.role || '',
-    'Access Code': l.access_code,
-    'Department': l.department || '',
-    'Academic Year': l.academic_year || '',
-    'Email ID': l.email || '',
-    'Phone Number': l.phone || '',
-    'Day 1 Check-in': l.day1_checked_in ? 'Checked In' : 'Not Checked In',
-    'Day 2 Check-in': l.day2_checked_in ? 'Checked In' : 'Not Checked In'
-  }));
-
-  const worksheet = XLSX.utils.json_to_sheet(exportData);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Participants');
-
-  // Auto column width formatting
-  const max_widths = [
-    { wch: 6 },  // S.No
-    { wch: 24 }, // Student Name
-    { wch: 20 }, // Constituency Number
-    { wch: 30 }, // Constituency Name
-    { wch: 24 }, // Allocated Party
-    { wch: 28 }, // Allocated Committee
-    { wch: 14 }, // Bench
-    { wch: 30 }, // Legislative Role
-    { wch: 14 }, // Access Code
-    { wch: 20 }, // Department
-    { wch: 14 }, // Academic Year
-    { wch: 26 }, // Email
-    { wch: 15 }, // Phone
-    { wch: 16 }, // Day 1
-    { wch: 16 }  // Day 2
-  ];
-  worksheet['!cols'] = max_widths;
-
-  const fileName = customFileName 
-    ? (customFileName.endsWith('.xlsx') ? customFileName : `${customFileName}.xlsx`)
-    : `${eventName.replace(/\s+/g, '_')}_Participant_Roster.xlsx`;
-  XLSX.writeFile(workbook, fileName);
+  const deduped = deduplicateLearners(learners);
+  const defaultKeys = EXPORT_COLUMNS_REGISTRY.filter(c => c.defaultSelected).map(c => c.key);
+  exportCustomParticipantData({
+    learners: deduped,
+    selectedKeys: defaultKeys,
+    format: 'xlsx',
+    eventName,
+    customFileName: customFileName || `${eventName.replace(/\s+/g, '_')}_Participant_Roster.xlsx`,
+    parties,
+    committees
+  });
 }
 
 export function exportFullParticipantDataToCSV(
@@ -345,36 +498,17 @@ export function exportFullParticipantDataToCSV(
   parties?: Party[],
   committees?: Committee[]
 ) {
-  const exportData = learners.map((l, index) => ({
-    'S.No': index + 1,
-    'Student Name': l.full_name,
-    'Constituency Number': l.constituency_number || '',
-    'Constituency Name': l.constituency_name || '',
-    'Allocated Party': parties ? getResolvedPartyName(l, parties) : (l.party_name || ''),
-    'Allocated Committee': committees ? getResolvedCommitteeName(l, committees) : (l.committee_name || ''),
-    'Bench': l.bench || '',
-    'Legislative Role': l.role || '',
-    'Access Code': l.access_code,
-    'Department': l.department || '',
-    'Academic Year': l.academic_year || '',
-    'Email ID': l.email || '',
-    'Phone Number': l.phone || '',
-    'Day 1 Check-in': l.day1_checked_in ? 'Checked In' : 'Not Checked In',
-    'Day 2 Check-in': l.day2_checked_in ? 'Checked In' : 'Not Checked In'
-  }));
-
-  const csv = Papa.unparse(exportData);
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  const fileName = customFileName 
-    ? (customFileName.endsWith('.csv') ? customFileName : `${customFileName}.csv`)
-    : `${eventName.replace(/\s+/g, '_')}_Roster.csv`;
-  link.setAttribute('download', fileName);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+  const deduped = deduplicateLearners(learners);
+  const defaultKeys = EXPORT_COLUMNS_REGISTRY.filter(c => c.defaultSelected).map(c => c.key);
+  exportCustomParticipantData({
+    learners: deduped,
+    selectedKeys: defaultKeys,
+    format: 'csv',
+    eventName,
+    customFileName: customFileName || `${eventName.replace(/\s+/g, '_')}_Roster.csv`,
+    parties,
+    committees
+  });
 }
 
 export function exportAllocationTemplateCSV() {

@@ -211,6 +211,8 @@ interface EventTabRouteHandlerProps {
   handleDeleteParty: (id: string) => void;
   setParties: (parties: Party[]) => void;
   handleExecuteAllocation: (ratio: any, targetEventId?: string) => void;
+  handleAllocateParties?: (options?: any, targetEventId?: string) => void;
+  handleAllocateCommittees?: (options?: any, targetEventId?: string) => void;
   handleResetAllocation: (targetEventId?: string) => void;
   setCurrentEvent: React.Dispatch<React.SetStateAction<CollegeEvent | null>>;
   setEvents?: React.Dispatch<React.SetStateAction<CollegeEvent[]>>;
@@ -244,7 +246,8 @@ interface EventTabRouteHandlerProps {
 
 function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
   const { eventSlug, tab } = useParams<{ eventSlug: string; tab: string }>();
-  const matchedEvent = findEventBySlug(props.events, eventSlug);
+  const preferredEventId = props.userSession?.assigned_event_ids?.[0] || props.currentEvent?.id;
+  const matchedEvent = findEventBySlug(props.events, eventSlug, preferredEventId);
 
   useEffect(() => {
     if (props.events.length > 0 && !matchedEvent) {
@@ -483,6 +486,12 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           eventId={activeEvent.id}
           onExecuteAllocation={(rulingRatio) => {
             props.handleExecuteAllocation(rulingRatio, activeEvent.id);
+          }}
+          onAllocateParties={(options) => {
+            props.handleAllocateParties?.(options, activeEvent.id);
+          }}
+          onAllocateCommittees={(options) => {
+            props.handleAllocateCommittees?.(options, activeEvent.id);
           }}
           onResetAllocation={() => {
             props.handleResetAllocation(activeEvent.id);
@@ -1253,6 +1262,7 @@ export function App() {
 
   const handleUpdateCoordinator = (coord: Coordinator) => {
     storageService.updateCoordinator(coord);
+    setCoordinators(storageService.getCoordinators());
     setCurrentCoordinator(coord);
     addToast('Coordinator Updated', `Updated credentials for ${coord.name}`, 'success');
   };
@@ -1467,6 +1477,46 @@ export function App() {
     }
   };
 
+  const handleAllocateParties = (options?: any, targetEventId?: string) => {
+    const activeEv = targetEventId
+      ? events.find(e => e.id === targetEventId) || currentEvent
+      : extractEventFromUrl(events) || currentEvent;
+
+    if (activeEv) {
+      if (storageService.getAllocationLock(activeEv.id)) {
+        addToast('Allocation Locked', 'Allocation lock is active. Unlock in Control Panel to run allocation.', 'error');
+        return;
+      }
+      try {
+        storageService.allocatePartiesForEvent(activeEv.id, options);
+        setLearners(storageService.getLearners(activeEv.id));
+        setParties(storageService.getParties(activeEv.id));
+      } catch (err: any) {
+        addToast('Allocation Locked', err?.message || 'Cannot execute party allocation while lock is enabled.', 'error');
+      }
+    }
+  };
+
+  const handleAllocateCommittees = (options?: any, targetEventId?: string) => {
+    const activeEv = targetEventId
+      ? events.find(e => e.id === targetEventId) || currentEvent
+      : extractEventFromUrl(events) || currentEvent;
+
+    if (activeEv) {
+      if (storageService.getAllocationLock(activeEv.id)) {
+        addToast('Allocation Locked', 'Allocation lock is active. Unlock in Control Panel to run allocation.', 'error');
+        return;
+      }
+      try {
+        storageService.allocateCommitteesForEvent(activeEv.id, options);
+        setLearners(storageService.getLearners(activeEv.id));
+        setCommittees(storageService.getCommittees(activeEv.id));
+      } catch (err: any) {
+        addToast('Allocation Locked', err?.message || 'Cannot execute committee allocation while lock is enabled.', 'error');
+      }
+    }
+  };
+
   const handleResetAllocation = (targetEventId?: string) => {
     const activeEv = targetEventId
       ? events.find(e => e.id === targetEventId) || currentEvent
@@ -1551,7 +1601,7 @@ export function App() {
             // 2. Check Team Members & Event Coordinators
             const allTeam = storageService.getTeam();
             const teamMember = allTeam.find(
-              t => t.email.toLowerCase() === emailLower && (t.access_code === passTrim || passTrim === 'coord123' || passTrim === 'admin123')
+              t => t.email.toLowerCase() === emailLower && (t.access_code === passTrim || passTrim === 'admin123')
             );
 
             if (teamMember) {
@@ -1567,10 +1617,14 @@ export function App() {
               setRole(userRole);
               setActiveNavTab('overview');
 
-              const targetEv = events.find(e => e.id === teamMember.event_id);
+              const allEvents = storageService.getEvents();
+              let targetEv = allEvents.find(e => e.id === teamMember.event_id) || allEvents[0];
               if (targetEv) {
                 setCurrentEvent(targetEv);
+                currentEventRef.current = targetEv;
                 setLearners(storageService.getLearners(targetEv.id));
+                setParties(storageService.getParties(targetEv.id));
+                setCommittees(storageService.getCommittees(targetEv.id));
               }
 
               saveSession({
@@ -1578,16 +1632,20 @@ export function App() {
                 email: teamMember.email,
                 name: teamMember.name,
                 assigned_event_ids: [teamMember.event_id],
-                currentEventId: teamMember.event_id,
+                currentEventId: targetEv?.id || teamMember.event_id,
                 activeNavTab: 'overview'
               });
-              if (typeof window !== 'undefined') window.history.pushState({}, '', `/events/${targetEv?.slug || 'jkkncet-tn-assembly-2026'}/overview`);
+              const eventSlugToUse = targetEv ? getEventSlug(targetEv) : 'jkkncet-tn-assembly-2026';
+              navigate(`/events/${eventSlugToUse}/overview`);
               return sess;
             }
 
             const allCoords = storageService.getCoordinators();
             const coord = allCoords.find(
-              c => c.email.toLowerCase() === emailLower && (c.password_hash === passTrim || c.raw_temp_password === passTrim || passTrim === 'coord123')
+              c => c.email.toLowerCase() === emailLower && (
+                (c.password_hash && c.password_hash === passTrim) ||
+                (c.raw_temp_password && c.raw_temp_password === passTrim)
+              )
             );
 
             if (coord) {
@@ -1602,10 +1660,21 @@ export function App() {
               setRole('coordinator');
               setActiveNavTab('overview');
 
-              const targetEv = events.find(e => e.id === coord.event_id);
+              const allEvents = storageService.getEvents();
+              let targetEv = allEvents.find(e => e.id === coord.event_id);
+              if (!targetEv && coord.email) {
+                targetEv = allEvents.find(e => e.assigned_coordinator_email?.toLowerCase() === coord.email.toLowerCase());
+              }
+              if (!targetEv && allEvents.length > 0) {
+                targetEv = allEvents[0];
+              }
+
               if (targetEv) {
                 setCurrentEvent(targetEv);
+                currentEventRef.current = targetEv;
                 setLearners(storageService.getLearners(targetEv.id));
+                setParties(storageService.getParties(targetEv.id));
+                setCommittees(storageService.getCommittees(targetEv.id));
               }
 
               saveSession({
@@ -1613,10 +1682,11 @@ export function App() {
                 email: coord.email,
                 name: coord.name,
                 assigned_event_ids: [coord.event_id],
-                currentEventId: coord.event_id,
+                currentEventId: targetEv?.id || coord.event_id,
                 activeNavTab: 'overview'
               });
-              if (typeof window !== 'undefined') window.history.pushState({}, '', `/events/${targetEv?.slug || 'jkkncet-tn-assembly-2026'}/overview`);
+              const eventSlugToUse = targetEv ? getEventSlug(targetEv) : 'jkkncet-tn-assembly-2026';
+              navigate(`/events/${eventSlugToUse}/overview`);
               return sess;
             }
 
@@ -1902,6 +1972,8 @@ export function App() {
                 completedTabs={completedTabsSet}
                 role={role}
                 eventSlug={currentEvent ? getEventSlug(currentEvent) : 'jkkncet-tn-assembly-2026'}
+                eventId={currentEvent?.id}
+                eventName={currentEvent?.college_name}
                 onBackToEvents={() => {
                   navigate('/events');
                 }}
@@ -2104,6 +2176,8 @@ export function App() {
                   handleDeleteParty={handleDeleteParty}
                   setParties={setParties}
                   handleExecuteAllocation={handleExecuteAllocation}
+                  handleAllocateParties={handleAllocateParties}
+                  handleAllocateCommittees={handleAllocateCommittees}
                   handleResetAllocation={handleResetAllocation}
                   setCurrentEvent={setCurrentEvent}
                   setEvents={setEvents}
@@ -2185,6 +2259,12 @@ export function App() {
               eventId={activeEvModal.id}
               onExecuteAllocation={(ratio) => {
                 handleExecuteAllocation(ratio, activeEvModal.id);
+              }}
+              onAllocateParties={(options) => {
+                handleAllocateParties(options, activeEvModal.id);
+              }}
+              onAllocateCommittees={(options) => {
+                handleAllocateCommittees(options, activeEvModal.id);
               }}
             />
           </>

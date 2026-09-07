@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import type { Learner, Party, Committee, AcademicYear, BenchType } from '../../types';
 import { storageService, getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
-import { exportFullParticipantDataToCSV, exportFullParticipantDataToExcel } from '../../utils/csvHelper';
+import { DownloadModal } from './DownloadModal';
 import {
   RotateCcw,
   Download,
@@ -15,7 +15,8 @@ import {
   Shield,
   Table as TableIcon,
   Lock,
-  ChevronDown
+  ChevronDown,
+  Building2
 } from 'lucide-react';
 
 interface AllocationTabProps {
@@ -24,6 +25,8 @@ interface AllocationTabProps {
   committees: Committee[];
   eventId?: string;
   onExecuteAllocation: (rulingRatio: number) => void;
+  onAllocateParties?: (options?: { mode?: 'UNASSIGNED_ONLY' | 'REALLOCATE_ALL'; rulingRatio?: number }) => void;
+  onAllocateCommittees?: (options?: { mode?: 'UNASSIGNED_ONLY' | 'REALLOCATE_ALL' }) => void;
   onResetAllocation: () => void;
   onUpdateLearner: (learner: Learner) => void;
   onOpenImportCsv?: () => void;
@@ -37,6 +40,8 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
   committees,
   eventId,
   onExecuteAllocation,
+  onAllocateParties,
+  onAllocateCommittees,
   onResetAllocation,
   onUpdateLearner,
   onOpenImportCsv,
@@ -112,6 +117,69 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
       return true;
     });
   }, [learners, searchTerm, selectedBench, selectedParty, selectedCommittee, selectedYear]);
+
+  // Unallocated counters
+  const unassignedPartyCount = learners.filter(l => !l.party_id && !l.party_name).length;
+  const unassignedCommitteeCount = learners.filter(l => !l.committee_id && !l.committee_name).length;
+
+  // Download & action dropdown states
+  const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);
+  const [partyDropdownOpen, setPartyDropdownOpen] = useState(false);
+  const [committeeDropdownOpen, setCommitteeDropdownOpen] = useState(false);
+
+  const handleAllocateParties = (mode: 'UNASSIGNED_ONLY' | 'REALLOCATE_ALL' = 'UNASSIGNED_ONLY') => {
+    if (isAllocationLocked) {
+      onShowToast('Allocation Locked', 'Unlock allocation in Control Tab to run party allocation', 'error');
+      return;
+    }
+    if (totalLearners === 0) {
+      onShowToast('No Delegates Found', 'Please add or import delegates before running allocation', 'error');
+      return;
+    }
+    if (onAllocateParties) {
+      onAllocateParties({ mode, rulingRatio: 0.55 });
+    } else if (eventId) {
+      storageService.allocatePartiesForEvent(eventId, { mode, rulingRatio: 0.55 });
+    } else {
+      onExecuteAllocation(0.55);
+    }
+    onShowToast(
+      '⚡ Party Allocation Completed',
+      mode === 'UNASSIGNED_ONLY'
+        ? `Allocated unassigned delegates across parties while preserving existing committees and benches!`
+        : `Reallocated all delegates across parties with TN Constituencies!`,
+      'success'
+    );
+    setPartyDropdownOpen(false);
+  };
+
+  const handleAllocateCommittees = (mode: 'UNASSIGNED_ONLY' | 'REALLOCATE_ALL' = 'UNASSIGNED_ONLY') => {
+    if (isAllocationLocked) {
+      onShowToast('Allocation Locked', 'Unlock allocation in Control Tab to run committee allocation', 'error');
+      return;
+    }
+    if (totalLearners === 0) {
+      onShowToast('No Delegates Found', 'Please add or import delegates before running allocation', 'error');
+      return;
+    }
+    if (committees.length === 0) {
+      onShowToast('No Committees', 'Please add at least one committee in the Committees tab first', 'error');
+      return;
+    }
+    if (onAllocateCommittees) {
+      onAllocateCommittees({ mode });
+    } else if (eventId) {
+      storageService.allocateCommitteesForEvent(eventId, { mode });
+    }
+    onShowToast(
+      '🏛️ Committee Allocation Completed',
+      mode === 'UNASSIGNED_ONLY'
+        ? `Distributed unallocated delegates into committees while leaving parties, constituencies, and benches 100% intact!`
+        : `Reallocated all delegates across active committees!`,
+      'success'
+    );
+    setCommitteeDropdownOpen(false);
+  };
 
   const handleRunAutoAllocation = () => {
     if (isAllocationLocked) {
@@ -195,73 +263,16 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
             <span>Reset</span>
           </button>
 
-          {/* Export Dropdown */}
-          <div className="relative group">
-            <button
-              className="px-3.5 py-2 rounded-xl text-xs font-bold border transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
-              style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Download Data</span>
-              <ChevronDown className="w-3 h-3" />
-            </button>
-            <div
-              className="absolute right-0 top-full mt-1.5 w-60 border rounded-xl shadow-xl py-2 hidden group-hover:block z-30 divide-y divide-slate-100 dark:divide-slate-800"
-              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
-            >
-              <div className="py-1">
-                <div className="px-3.5 py-1 text-[10px] font-black uppercase tracking-wider text-amber-500">
-                  Filtered List ({filteredLearners.length})
-                </div>
-                <button
-                  onClick={() => {
-                    exportFullParticipantDataToCSV(filteredLearners, 'TN_Assembly', `TN_Assembly_Filtered_Allocation_${filteredLearners.length}.csv`, parties, committees);
-                    onShowToast('Filtered Allocation Exported', `Exported ${filteredLearners.length} filtered records as CSV`, 'success');
-                  }}
-                  className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
-                  style={{ color: 'var(--text-primary)' }}
-                >
-                  Download Filtered List (CSV)
-                </button>
-                <button
-                  onClick={() => {
-                    exportFullParticipantDataToExcel(filteredLearners, 'TN_Assembly', `TN_Assembly_Filtered_Allocation_${filteredLearners.length}.xlsx`, parties, committees);
-                    onShowToast('Filtered Allocation Exported', `Exported ${filteredLearners.length} filtered records as Excel`, 'success');
-                  }}
-                  className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
-                  style={{ color: 'var(--text-primary)' }}
-                >
-                  Download Filtered List (Excel)
-                </button>
-              </div>
-
-              <div className="py-1">
-                <div className="px-3.5 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-500">
-                  Whole Data List ({learners.length})
-                </div>
-                <button
-                  onClick={() => {
-                    exportFullParticipantDataToCSV(learners, 'TN_Assembly', `TN_Assembly_Complete_Allocation_${learners.length}.csv`, parties, committees);
-                    onShowToast('Complete Allocation Exported', `Exported all ${learners.length} records as CSV`, 'success');
-                  }}
-                  className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
-                  style={{ color: 'var(--text-primary)' }}
-                >
-                  Download Whole Data List (CSV)
-                </button>
-                <button
-                  onClick={() => {
-                    exportFullParticipantDataToExcel(learners, 'TN_Assembly', `TN_Assembly_Complete_Allocation_${learners.length}.xlsx`, parties, committees);
-                    onShowToast('Complete Allocation Exported', `Exported all ${learners.length} records as Excel`, 'success');
-                  }}
-                  className="w-full text-left px-3.5 py-1.5 text-xs font-medium hover:opacity-80 cursor-pointer"
-                  style={{ color: 'var(--text-primary)' }}
-                >
-                  Download Whole Data List (Excel)
-                </button>
-              </div>
-            </div>
-          </div>
+          {/* Download Data Modal Trigger */}
+          <button
+            onClick={() => setIsDownloadModalOpen(true)}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold border transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs hover:opacity-90"
+            style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+            title="Download CSV / Excel with custom column selection"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Download Data</span>
+          </button>
 
           {onOpenImportCsv && (
             <button
@@ -282,18 +293,153 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
             </button>
           )}
 
+          {/* Action 1: Independent Party Allocation */}
+          <div className="relative">
+            <div className="inline-flex rounded-xl shadow-sm">
+              <button
+                onClick={() => handleAllocateParties('UNASSIGNED_ONLY')}
+                disabled={learners.length === 0 || isAllocationLocked}
+                className="px-4 py-2 rounded-l-xl font-bold text-xs text-white flex items-center gap-1.5 transition-transform hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ backgroundColor: 'var(--accent)' }}
+                title="Assign parties to unallocated participants without changing existing committees or benches"
+              >
+                <Zap className="w-3.5 h-3.5 fill-white" />
+                <span>Allocate Parties</span>
+                {unassignedPartyCount > 0 && (
+                  <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-black bg-white/20 text-white">
+                    {unassignedPartyCount} unassigned
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setPartyDropdownOpen(prev => !prev)}
+                disabled={learners.length === 0 || isAllocationLocked}
+                className="px-2 py-2 rounded-r-xl border-l border-white/20 font-bold text-xs text-white transition-opacity hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ backgroundColor: 'var(--accent)' }}
+                title="Party allocation options"
+              >
+                <ChevronDown className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {partyDropdownOpen && (
+              <div
+                className="absolute right-0 top-full mt-1.5 w-64 border rounded-xl shadow-xl py-1.5 z-40 animate-scale-in"
+                style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+              >
+                <button
+                  type="button"
+                  onClick={() => handleAllocateParties('UNASSIGNED_ONLY')}
+                  className="w-full text-left px-3.5 py-2 text-xs font-semibold hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer block"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  <div className="font-bold flex items-center justify-between">
+                    <span>Fill Unassigned Only</span>
+                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-extrabold">Default</span>
+                  </div>
+                  <p className="text-[11px] font-normal" style={{ color: 'var(--text-secondary)' }}>
+                    Preserves previously set parties & committees. Only assigns empty seats.
+                  </p>
+                </button>
+                <div className="my-1 border-t" style={{ borderColor: 'var(--border)' }} />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm('Reallocate all parties? This will redistribute all delegates across parties and constituencies.')) {
+                      handleAllocateParties('REALLOCATE_ALL');
+                    }
+                  }}
+                  className="w-full text-left px-3.5 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/20 cursor-pointer block"
+                >
+                  <div className="font-bold">Reallocate All Parties</div>
+                  <p className="text-[11px] font-normal text-rose-500/80">
+                    Overwrites all party & constituency mappings. Committees remain intact.
+                  </p>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Action 2: Independent Committee Allocation */}
+          <div className="relative">
+            <div className="inline-flex rounded-xl shadow-sm">
+              <button
+                onClick={() => handleAllocateCommittees('UNASSIGNED_ONLY')}
+                disabled={learners.length === 0 || isAllocationLocked || committees.length === 0}
+                className="px-4 py-2 rounded-l-xl font-bold text-xs text-white flex items-center gap-1.5 transition-transform hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ backgroundColor: '#059669' }}
+                title="Distribute participants into committees without modifying party, bench, or constituency data"
+              >
+                <Building2 className="w-3.5 h-3.5" />
+                <span>Allocate Committees</span>
+                {unassignedCommitteeCount > 0 && (
+                  <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-black bg-white/20 text-white">
+                    {unassignedCommitteeCount} unassigned
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setCommitteeDropdownOpen(prev => !prev)}
+                disabled={learners.length === 0 || isAllocationLocked || committees.length === 0}
+                className="px-2 py-2 rounded-r-xl border-l border-white/20 font-bold text-xs text-white transition-opacity hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ backgroundColor: '#059669' }}
+                title="Committee allocation options"
+              >
+                <ChevronDown className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {committeeDropdownOpen && (
+              <div
+                className="absolute right-0 top-full mt-1.5 w-64 border rounded-xl shadow-xl py-1.5 z-40 animate-scale-in"
+                style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+              >
+                <button
+                  type="button"
+                  onClick={() => handleAllocateCommittees('UNASSIGNED_ONLY')}
+                  className="w-full text-left px-3.5 py-2 text-xs font-semibold hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer block"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  <div className="font-bold flex items-center justify-between">
+                    <span>Fill Unassigned Only</span>
+                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-extrabold">Default</span>
+                  </div>
+                  <p className="text-[11px] font-normal" style={{ color: 'var(--text-secondary)' }}>
+                    Preserves manually set committees. Only fills empty committee slots.
+                  </p>
+                </button>
+                <div className="my-1 border-t" style={{ borderColor: 'var(--border)' }} />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm('Reallocate all committees? This will redistribute all delegates across committees.')) {
+                      handleAllocateCommittees('REALLOCATE_ALL');
+                    }
+                  }}
+                  className="w-full text-left px-3.5 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/20 cursor-pointer block"
+                >
+                  <div className="font-bold">Reallocate All Committees</div>
+                  <p className="text-[11px] font-normal text-rose-500/80">
+                    Overwrites all committee assignments. Parties, benches & constituencies remain intact.
+                  </p>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Action 3: Full Auto-Allocation (Both Parties & Committees) */}
           <button
+            type="button"
             onClick={handleRunAutoAllocation}
             disabled={learners.length === 0 || isAllocationLocked}
-            className="px-5 py-2 rounded-xl font-black text-xs text-white shadow-md flex items-center gap-2 transition-transform hover:scale-102 disabled:opacity-50 disabled:cursor-not-allowed"
-            style={{ 
-              backgroundColor: 'var(--amber)',
-              opacity: (learners.length === 0 || isAllocationLocked) ? 0.5 : 1,
-              cursor: (learners.length === 0 || isAllocationLocked) ? 'not-allowed' : 'pointer'
-            }}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold border transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:bg-amber-50 hover:text-amber-600 hover:border-amber-300 dark:hover:bg-amber-950/40"
+            style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+            title="Run full allocation pipeline (both parties and committees)"
           >
-            <Zap className="w-4 h-4 fill-white" />
-            <span>⚡ Run Auto-Allocation Now</span>
+            <Zap className="w-3.5 h-3.5 text-amber-500" />
+            <span>Full Auto-Allocation</span>
           </button>
         </div>
       </div>
@@ -1091,6 +1237,29 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
           </div>
         </div>
       )}
+
+      {/* Download Data Modal */}
+      <DownloadModal
+        isOpen={isDownloadModalOpen}
+        onClose={() => setIsDownloadModalOpen(false)}
+        learners={learners}
+        filteredLearners={filteredLearners}
+        parties={parties}
+        committees={committees}
+        eventName={eventId || 'TN_Assembly'}
+        activeFilterSummary={
+          selectedParty !== 'ALL' || selectedCommittee !== 'ALL' || selectedBench !== 'ALL' || selectedYear !== 'ALL' || searchTerm.trim()
+            ? `Filtered by: ${[
+                selectedParty !== 'ALL' ? `Party: ${selectedParty}` : '',
+                selectedCommittee !== 'ALL' ? `Committee: ${selectedCommittee}` : '',
+                selectedBench !== 'ALL' ? `Bench: ${selectedBench}` : '',
+                selectedYear !== 'ALL' ? `Year: ${selectedYear}` : '',
+                searchTerm.trim() ? `Search: "${searchTerm.trim()}"` : ''
+              ].filter(Boolean).join(', ')}`
+            : undefined
+        }
+        onShowToast={onShowToast}
+      />
 
     </div>
   );

@@ -56,18 +56,21 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
 
   const handleOpenEditCoordinator = (e: React.MouseEvent, event: CollegeEvent) => {
     e.stopPropagation();
-    const coord = coordinators.find(c => c.event_id === event.id || c.email.toLowerCase() === event.assigned_coordinator_email?.toLowerCase());
+    const coord = coordinators.find(c => c.event_id === event.id || (event.assigned_coordinator_email && c.email.toLowerCase() === event.assigned_coordinator_email.toLowerCase()));
 
     if (coord) {
-      setEditingCoordinator(coord);
+      setEditingCoordinator({
+        ...coord,
+        event_id: event.id
+      });
     } else {
       setEditingCoordinator({
         id: `coord_${event.id}`,
         event_id: event.id,
         name: event.assigned_coordinator_name || 'Coordinator',
         email: event.assigned_coordinator_email || 'coordinator@college.edu',
-        password_hash: 'coord123',
-        raw_temp_password: 'coord123'
+        password_hash: '',
+        raw_temp_password: ''
       });
     }
     setEditingEventName(event.college_name);

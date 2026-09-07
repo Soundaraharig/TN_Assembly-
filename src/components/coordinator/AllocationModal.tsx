@@ -11,6 +11,8 @@ interface AllocationModalProps {
   committees: Committee[];
   eventId?: string;
   onExecuteAllocation: (rulingRatio: number) => void;
+  onAllocateParties?: (options?: any) => void;
+  onAllocateCommittees?: (options?: any) => void;
 }
 
 export const AllocationModal: React.FC<AllocationModalProps> = ({
@@ -20,10 +22,14 @@ export const AllocationModal: React.FC<AllocationModalProps> = ({
   parties,
   committees,
   eventId,
-  onExecuteAllocation
+  onExecuteAllocation,
+  onAllocateParties,
+  onAllocateCommittees
 }) => {
   const isLocked = storageService.getAllocationLock(eventId);
   const totalLearners = learners.length;
+  const unassignedParties = learners.filter(l => !l.party_id && !l.party_name).length;
+  const unassignedCommittees = learners.filter(l => !l.committee_id && !l.committee_name).length;
 
   // Breakdown by year
   const yearCounts = useMemo(() => {
@@ -57,8 +63,8 @@ export const AllocationModal: React.FC<AllocationModalProps> = ({
               <Zap className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">Automated TN Assembly Allocation Engine</h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Cross-year balanced allocation & TN constituency mapping</p>
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">TN Assembly Allocation Engine</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Independent party & committee assignments with cross-year balance</p>
             </div>
           </div>
           <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
@@ -71,7 +77,7 @@ export const AllocationModal: React.FC<AllocationModalProps> = ({
           {/* Allocation Modal Preview Summary */}
           <div className="border border-amber-200 dark:border-amber-500/20 bg-amber-50/60 dark:bg-amber-950/10 rounded-2xl p-4 space-y-3">
             <h4 className="text-xs font-black uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5" /> Pre-Allocation Modal Preview
+              <Sparkles className="w-3.5 h-3.5" /> Allocation Status Summary
             </h4>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center text-xs">
@@ -81,18 +87,18 @@ export const AllocationModal: React.FC<AllocationModalProps> = ({
               </div>
 
               <div className="bg-white dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400 block">Unassigned Parties</span>
+                <strong className="text-sm text-blue-600 dark:text-blue-400 font-extrabold">{unassignedParties}</strong>
+              </div>
+
+              <div className="bg-white dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400 block">Unassigned Committees</span>
+                <strong className="text-sm text-amber-600 dark:text-amber-300 font-extrabold">{unassignedCommittees}</strong>
+              </div>
+
+              <div className="bg-white dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
                 <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400 block">Active Parties</span>
                 <strong className="text-sm text-emerald-600 dark:text-emerald-400 font-extrabold">{parties.length} Parties</strong>
-              </div>
-
-              <div className="bg-white dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400 block">TN Constituencies</span>
-                <strong className="text-sm text-blue-600 dark:text-blue-400 font-extrabold">1 to {Math.min(totalLearners, 234)}</strong>
-              </div>
-
-              <div className="bg-white dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400 block">Committees</span>
-                <strong className="text-sm text-amber-600 dark:text-amber-300 font-extrabold">{committees.length} Active</strong>
               </div>
             </div>
 
@@ -110,6 +116,57 @@ export const AllocationModal: React.FC<AllocationModalProps> = ({
             </div>
           </div>
 
+          {/* Independent Options */}
+          <div className="space-y-3">
+            <h5 className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
+              Run Independent Allocation Steps
+            </h5>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                disabled={isLocked || totalLearners === 0}
+                onClick={() => {
+                  if (onAllocateParties) {
+                    onAllocateParties({ mode: 'UNASSIGNED_ONLY' });
+                  } else {
+                    onExecuteAllocation(0.55);
+                  }
+                  onClose();
+                }}
+                className="p-3.5 rounded-xl border border-blue-200 dark:border-blue-900 bg-blue-50/50 dark:bg-blue-950/20 text-left hover:border-blue-400 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <div className="font-bold text-xs text-blue-700 dark:text-blue-300 flex items-center gap-1.5">
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>Allocate Parties Only</span>
+                </div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1">
+                  Fills unallocated parties & constituencies. Leaves committees and benches untouched.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                disabled={isLocked || totalLearners === 0 || committees.length === 0}
+                onClick={() => {
+                  if (onAllocateCommittees) {
+                    onAllocateCommittees({ mode: 'UNASSIGNED_ONLY' });
+                  }
+                  onClose();
+                }}
+                className="p-3.5 rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/50 dark:bg-emerald-950/20 text-left hover:border-emerald-400 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <div className="font-bold text-xs text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Allocate Committees Only</span>
+                </div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1">
+                  Distributes unassigned delegates into committees. Leaves parties, benches, and constituencies 100% intact.
+                </p>
+              </button>
+            </div>
+          </div>
+
           {/* Allocation Rules Checklist */}
           <div className="space-y-2 text-xs text-slate-700 dark:text-slate-300">
             <h5 className="font-bold text-slate-900 dark:text-slate-200">Engine Allocation Rules:</h5>
@@ -124,24 +181,16 @@ export const AllocationModal: React.FC<AllocationModalProps> = ({
               </li>
               <li className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                <span>Stratifies 1st through 4th-year students evenly across all political parties.</span>
-              </li>
-              <li className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                <span>Assigns Chief Minister, Speaker, Opposition Leader & Cabinet Minister portfolios.</span>
-              </li>
-              <li className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                <span>Distributes delegates into selected committees in equal proportions.</span>
+                <span>Non-destructive by default: preserves existing party and committee values unless reallocated.</span>
               </li>
             </ul>
           </div>
 
           {/* Footer Actions */}
-          <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+          <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800">
             <button
               onClick={onClose}
-              className="px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
             >
               Cancel
             </button>
@@ -152,9 +201,9 @@ export const AllocationModal: React.FC<AllocationModalProps> = ({
                 onClose();
               }}
               disabled={isLocked}
-              className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-md shadow-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-all cursor-pointer"
+              className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-md shadow-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-all cursor-pointer"
             >
-              <Zap className="w-4 h-4" /> Run Auto-Allocation Now
+              <Zap className="w-4 h-4" /> Full Reallocation (Both)
             </button>
           </div>
 

@@ -27,7 +27,9 @@ export const EditCoordinatorModal: React.FC<EditCoordinatorModalProps> = ({
     if (coordinator) {
       setName(coordinator.name || '');
       setEmail(coordinator.email || '');
-      setPassword(coordinator.password_hash || coordinator.raw_temp_password || '');
+      // On edit, keep password field blank with placeholder instead of pre-filling existing password
+      setPassword('');
+      setCopied(false);
     }
   }, [coordinator]);
 
@@ -39,7 +41,8 @@ export const EditCoordinatorModal: React.FC<EditCoordinatorModalProps> = ({
   };
 
   const handleCopyCredentials = () => {
-    const text = `TN Assembly Coordinator Credentials\nEvent: ${eventName || 'College Event'}\nName: ${name}\nEmail: ${email}\nPassword: ${password}`;
+    const passToCopy = password.trim() || coordinator.raw_temp_password || coordinator.password_hash || '(hidden existing password)';
+    const text = `TN Assembly Coordinator Credentials\nEvent: ${eventName || 'College Event'}\nName: ${name}\nEmail: ${email}\nPassword: ${passToCopy}`;
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -47,14 +50,18 @@ export const EditCoordinatorModal: React.FC<EditCoordinatorModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !email.trim() || !password.trim()) return;
+    if (!name.trim() || !email.trim()) return;
+
+    // Use newly entered password, or retain existing stored password if left blank
+    const finalPassword = password.trim() || coordinator.password_hash || coordinator.raw_temp_password || generateRandomPassword(10);
 
     onSave({
       ...coordinator,
+      event_id: coordinator.event_id,
       name: name.trim(),
       email: email.trim(),
-      password_hash: password.trim(),
-      raw_temp_password: password.trim()
+      password_hash: finalPassword,
+      raw_temp_password: finalPassword
     });
     onClose();
   };
@@ -137,8 +144,8 @@ export const EditCoordinatorModal: React.FC<EditCoordinatorModalProps> = ({
               <Key className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
-                required
-                placeholder="New password"
+                required={!coordinator.password_hash && !coordinator.raw_temp_password}
+                placeholder={coordinator.password_hash || coordinator.raw_temp_password ? "Enter new password (leave blank to keep current)" : "Enter new password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-24 py-2.5 text-sm font-mono text-amber-300 font-bold tracking-wider focus:outline-none focus:border-amber-500"
