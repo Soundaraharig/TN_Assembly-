@@ -33,8 +33,9 @@ export const ReportTab: React.FC<ReportTabProps> = ({
   const d2CheckIn = learners.filter(l => l.day2_checked_in).length;
 
   // Use database-sourced bench counts
-  const rulingCount = storageService.getAssignedPartyCounts(eventId)['Ruling'] || 0;
-  const oppCount = storageService.getAssignedPartyCounts(eventId)['Opposition'] || 0;
+  const benchCounts = storageService.getAssignedBenchCounts(eventId);
+  const rulingCount = benchCounts['Ruling'] ?? learners.filter(l => l.bench === 'Ruling').length;
+  const oppCount = benchCounts['Opposition'] ?? learners.filter(l => l.bench === 'Opposition').length;
 
   const handlePrintDossier = () => {
     window.print();

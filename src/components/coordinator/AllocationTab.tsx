@@ -27,6 +27,7 @@ interface AllocationTabProps {
   onResetAllocation: () => void;
   onUpdateLearner: (learner: Learner) => void;
   onOpenImportCsv?: () => void;
+  onUpdatePartyBench?: (partyId: string, bench: BenchType) => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -39,6 +40,7 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
   onResetAllocation,
   onUpdateLearner,
   onOpenImportCsv,
+  onUpdatePartyBench,
   onShowToast
 }) => {
   const [activeRosterView, setActiveRosterView] = useState<'party' | 'committee' | 'table'>('party');
@@ -121,9 +123,10 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
       return;
     }
     onExecuteAllocation(0.55);
+    const perParty = parties.length > 0 ? Math.round(totalLearners / parties.length) : 0;
     onShowToast(
-      '⚡ Auto-Allocation Completed',
-      `Allocated ${totalLearners} delegates across ${parties.length} parties, ${committees.length} committees & mapped 1-${Math.min(totalLearners, 234)} TN Constituencies!`,
+      '⚡ Balanced Auto-Allocation Completed',
+      `Allocated ${totalLearners} delegates equally across ${parties.length} parties (~${perParty} seats each) with cross-year balance & TN Constituencies!`,
       'success'
     );
   };
@@ -305,29 +308,103 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
         >
           <div className="flex items-center justify-between">
             <h4 className="text-xs font-black uppercase tracking-wider flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
-              <Scale className="w-4 h-4 text-amber-500" /> Allocation Config
+              <Scale className="w-4 h-4 text-amber-500" /> Allocation Distribution
             </h4>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
+              Balanced Equal Quotas
+            </span>
           </div>
 
           {/* Allocation Summary */}
           <div
-            className="p-3.5 rounded-xl border space-y-2"
+            className="p-3.5 rounded-xl border space-y-2.5 text-xs"
             style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)' }}
           >
-            <div className="flex justify-between text-xs">
+            <div className="flex justify-between">
               <span className="font-bold" style={{ color: 'var(--text-secondary)' }}>Total Delegates:</span>
               <strong style={{ color: 'var(--text-primary)' }}>{totalLearners}</strong>
             </div>
-            <div className="flex justify-between text-xs">
-              <span className="font-bold" style={{ color: 'var(--text-secondary)' }}>Parties Configured:</span>
+            <div className="flex justify-between">
+              <span className="font-bold" style={{ color: 'var(--text-secondary)' }}>Active Parties:</span>
               <strong style={{ color: 'var(--text-primary)' }}>{parties.length}</strong>
             </div>
-            <div className="flex justify-between text-xs">
-              <span className="font-bold" style={{ color: 'var(--text-secondary)' }}>Committees Configured:</span>
+            <div className="flex justify-between">
+              <span className="font-bold" style={{ color: 'var(--text-secondary)' }}>Equal Party Quota:</span>
+              <strong className="text-emerald-500 font-black">
+                ~{parties.length > 0 ? Math.round(totalLearners / parties.length) : 0} seats ({parties.length > 0 ? (100 / parties.length).toFixed(1) : 0}% each)
+              </strong>
+            </div>
+            <div className="flex justify-between">
+              <span className="font-bold" style={{ color: 'var(--text-secondary)' }}>Active Committees:</span>
               <strong style={{ color: 'var(--text-primary)' }}>{committees.length}</strong>
             </div>
-            <div className="pt-2 border-t text-[11px]" style={{ borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}>
-              Set up parties (with Ruling/Opposition bench) in the <strong>Parties Tab</strong> and committees in the <strong>Committees Tab</strong> before running allocation.
+          </div>
+
+          {/* Bench Coalition Config */}
+          <div className="space-y-2 pt-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase font-bold tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                Party Benches (Government Formation)
+              </span>
+              <span className="text-[10px] text-slate-400">
+                Ruling: {parties.filter(p => p.bench === 'Ruling').length} • Opp: {parties.filter(p => p.bench === 'Opposition').length}
+              </span>
+            </div>
+
+            <div className="max-h-56 overflow-y-auto space-y-1.5 pr-1 text-xs">
+              {parties.map(p => (
+                <div
+                  key={p.id}
+                  className="p-2 rounded-xl border flex items-center justify-between gap-2"
+                  style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)' }}
+                >
+                  <span className="flex items-center gap-1.5 font-bold truncate" style={{ color: 'var(--text-primary)' }}>
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: p.color }}></span>
+                    <span className="truncate">{p.name}</span>
+                  </span>
+
+                  {onUpdatePartyBench ? (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => onUpdatePartyBench(p.id, 'Ruling')}
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold border transition-colors cursor-pointer ${
+                          p.bench === 'Ruling'
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                            : 'bg-transparent text-slate-400 border-slate-300 dark:border-slate-700 hover:text-blue-500'
+                        }`}
+                        title="Set to Ruling Bench"
+                      >
+                        Ruling
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onUpdatePartyBench(p.id, 'Opposition')}
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold border transition-colors cursor-pointer ${
+                          p.bench === 'Opposition'
+                            ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
+                            : 'bg-transparent text-slate-400 border-slate-300 dark:border-slate-700 hover:text-rose-500'
+                        }`}
+                        title="Set to Opposition Bench"
+                      >
+                        Opp
+                      </button>
+                    </div>
+                  ) : (
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0 ${
+                        p.bench === 'Ruling'
+                          ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
+                          : p.bench === 'Opposition'
+                          ? 'bg-rose-500/10 text-rose-600 border-rose-500/30'
+                          : 'bg-slate-500/10 text-slate-400 border-slate-500/20'
+                      }`}
+                    >
+                      {p.bench || 'Independent'}
+                    </span>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         </div>

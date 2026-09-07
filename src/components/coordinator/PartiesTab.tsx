@@ -31,7 +31,7 @@ interface PartiesTabProps {
 
 export const PartiesTab: React.FC<PartiesTabProps> = ({
   parties,
-  learners: _learners,
+  learners,
   eventId,
   userRole,
   onUpdatePartyWhatsApp,
@@ -196,11 +196,13 @@ export const PartiesTab: React.FC<PartiesTabProps> = ({
       {/* Grid of Political Parties */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {parties.map((party, index) => {
-      // Use database-sourced count for this party
-      const partyCounts = storageService.getAssignedPartyCounts(eventId || '');
-      const memberCount = partyCounts[party.name] || 0;
+          const partyLearners = (learners || []).filter(
+            l => l.party_id === party.id || l.party_name === party.name
+          );
+          const partyCounts = storageService.getAssignedPartyCounts(eventId || '');
+          const memberCount = partyLearners.length || partyCounts[party.name] || partyCounts[party.id] || 0;
 
-      return (
+          return (
             <div
               key={party.id}
               className="rounded-2xl p-4 border shadow-sm flex flex-col justify-between space-y-4 transition-all"
@@ -266,16 +268,59 @@ export const PartiesTab: React.FC<PartiesTabProps> = ({
                 </div>
               </div>
 
-              {/* Party Members Count & Leader Selector Dropdown */}
+              {/* Party Members Count, Bench Toggle & Leader Selector Dropdown */}
               <div className="space-y-2 pt-2 border-t" style={{ borderColor: 'var(--border-soft)' }}>
-                <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center justify-between text-xs gap-2 flex-wrap">
                   <div className="flex items-center gap-1.5 font-semibold" style={{ color: 'var(--text-secondary)' }}>
                     <Users className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
                     <span>{memberCount} enrolled members</span>
                   </div>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
-                    {party.bench || 'Independent'}
-                  </span>
+
+                  {/* Interactive Bench Quick Switcher */}
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onUpdateParty({ ...party, bench: 'Ruling' });
+                        onShowToast('Bench Updated', `${party.name} assigned to Ruling Bench`, 'success');
+                      }}
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold border cursor-pointer transition-all ${
+                        party.bench === 'Ruling'
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-blue-600 border-transparent'
+                      }`}
+                    >
+                      Ruling
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onUpdateParty({ ...party, bench: 'Opposition' });
+                        onShowToast('Bench Updated', `${party.name} assigned to Opposition Bench`, 'info');
+                      }}
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold border cursor-pointer transition-all ${
+                        party.bench === 'Opposition'
+                          ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-rose-600 border-transparent'
+                      }`}
+                    >
+                      Opp
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onUpdateParty({ ...party, bench: 'Independent' });
+                        onShowToast('Bench Updated', `${party.name} set to Independent`, 'info');
+                      }}
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold border cursor-pointer transition-all ${
+                        party.bench === 'Independent'
+                          ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-amber-600 border-transparent'
+                      }`}
+                    >
+                      Ind
+                    </button>
+                  </div>
                 </div>
 
                 {/* Party Leader Selection Dropdown */}
@@ -285,7 +330,7 @@ export const PartiesTab: React.FC<PartiesTabProps> = ({
                     <span>Party Leader / Floor Leader:</span>
                   </label>
 
-                  {memberCount > 0 ? (
+                  {partyLearners.length > 0 ? (
                     <select
                       value={party.leader || ''}
                       onChange={(e) => handleSelectLeader(party, e.target.value)}
@@ -297,6 +342,11 @@ export const PartiesTab: React.FC<PartiesTabProps> = ({
                       }}
                     >
                       <option value="">-- Choose Leader from Members --</option>
+                      {partyLearners.map((learner) => (
+                        <option key={learner.id} value={learner.full_name}>
+                          {learner.full_name} ({learner.department || 'MLA'} • {learner.academic_year || 'Delegate'})
+                        </option>
+                      ))}
                     </select>
                   ) : (
                     <div className="p-2 rounded-xl border text-[11px] italic" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}>

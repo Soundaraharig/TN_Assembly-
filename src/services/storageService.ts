@@ -2890,6 +2890,19 @@ class StorageService {
     const nextLearners = allLearners.map(l => updatedMap.get(l.id) || l);
     this.setItem(STORAGE_KEYS.LEARNERS, nextLearners);
 
+    // If auto-allocation assigned benches or updated parties, persist updated parties
+    if (result.updatedParties && result.updatedParties.length > 0) {
+      const allParties = this.getParties();
+      const partyMap = new Map(result.updatedParties.map(p => [p.id, p]));
+      const nextParties = allParties.map(p => partyMap.get(p.id) || p);
+      this.setItem(STORAGE_KEYS.PARTIES, nextParties);
+      if (supabase) {
+        result.updatedParties.forEach(p => {
+          this.sbUpsert('political_parties', p as unknown as Record<string, unknown>);
+        });
+      }
+    }
+
     // Sync updated learners to Supabase (sanitized to prevent rejection on schema mismatches)
     if (supabase && result.updatedLearners.length > 0) {
       const sanitized = result.updatedLearners.map(l =>
@@ -2903,6 +2916,7 @@ class StorageService {
         });
     }
 
+    this.notify();
     return result;
   }
 
@@ -3166,6 +3180,17 @@ class StorageService {
       if (l.party_id) counts[l.party_id] = (counts[l.party_id] || 0) + 1;
       if (l.party_name) counts[l.party_name] = (counts[l.party_name] || 0) + 1;
       if (l.bench) counts[l.bench] = (counts[l.bench] || 0) + 1;
+    });
+    return counts;
+  }
+
+  public getAssignedBenchCounts(eventId: string): Record<string, number> {
+    const learners = this.getLearners(eventId);
+    const counts: Record<string, number> = { Ruling: 0, Opposition: 0, Independent: 0 };
+    learners.forEach(l => {
+      if (l.bench === 'Ruling') counts.Ruling = (counts.Ruling || 0) + 1;
+      else if (l.bench === 'Opposition') counts.Opposition = (counts.Opposition || 0) + 1;
+      else if (l.bench === 'Independent') counts.Independent = (counts.Independent || 0) + 1;
     });
     return counts;
   }

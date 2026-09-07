@@ -513,7 +513,12 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                 { role: 'Chief Minister (Leader of the House)', title: 'Chief Minister', bench: 'Ruling Bench' },
                 { role: 'Leader of the Opposition', title: 'Leader of Opposition', bench: 'Opposition Bench' }
               ].map(item => {
-                const holder = (learners || []).find(l => l.role === item.role);
+                const holder = (learners || []).find(l =>
+                  l.role === item.role ||
+                  (item.role === 'Chief Minister (Leader of the House)' && (l.role === 'Chief Minister' || l.role?.includes('Chief Minister'))) ||
+                  (item.role === 'Speaker of Legislative Assembly' && (l.role === 'Speaker of the Assembly' || l.role?.includes('Speaker'))) ||
+                  (item.role === 'Leader of the Opposition' && (l.role === 'Opposition Leader' || l.role?.includes('Leader of the Opposition')))
+                );
                 return (
                   <div
                     key={item.role}

@@ -186,19 +186,19 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
   const computedRulingCount = useMemo(() => {
     if (eventId) {
-      const assigned = storageService.getAssignedPartyCounts(eventId);
-      return assigned['Ruling'] || 0;
+      const assigned = storageService.getAssignedBenchCounts(eventId);
+      return assigned['Ruling'] ?? learners.filter(l => l.bench === 'Ruling').length;
     }
-    return learners.filter(l => l.bench === 'Ruling').length || displayParties.filter(p => p.bench === 'Ruling').length * 25 || 98;
-  }, [eventId, learners, displayParties]);
+    return learners.filter(l => l.bench === 'Ruling').length;
+  }, [eventId, learners]);
 
   const computedOppositionCount = useMemo(() => {
     if (eventId) {
-      const assigned = storageService.getAssignedPartyCounts(eventId);
-      return assigned['Opposition'] || 0;
+      const assigned = storageService.getAssignedBenchCounts(eventId);
+      return assigned['Opposition'] ?? learners.filter(l => l.bench === 'Opposition').length;
     }
-    return learners.filter(l => l.bench === 'Opposition').length || displayParties.filter(p => p.bench === 'Opposition').length * 25 || 75;
-  }, [eventId, learners, displayParties]);
+    return learners.filter(l => l.bench === 'Opposition').length;
+  }, [eventId, learners]);
 
   const [isGovtFormationOpen, setIsGovtFormationOpen] = useState(true);
 
@@ -528,7 +528,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                 <div className="space-y-2.5 pt-1">
                   {displayParties.map((party) => {
                     const partyCounts = storageService.getAssignedPartyCounts(eventId || '');
-                    const partyMemberCount = partyCounts[party.name] || 0;
+                    const partyMemberCount = partyCounts[party.name] || partyCounts[party.id] || learners.filter(l => l.party_id === party.id || l.party_name === party.name).length;
                     const isRuling = party.bench === 'Ruling';
                     const isOpposition = party.bench === 'Opposition';
 

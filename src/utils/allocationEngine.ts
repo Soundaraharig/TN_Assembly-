@@ -3,6 +3,7 @@ import { TN_CONSTITUENCIES } from '../data/tnConstituencies';
 
 export interface AllocationResult {
   updatedLearners: Learner[];
+  updatedParties?: Party[];
   stats: {
     totalAllocated: number;
     constituenciesUsed: number;
@@ -14,27 +15,34 @@ export interface AllocationResult {
 }
 
 const CABINET_PORTFOLIOS = [
-  "Minister for Finance & Human Resources",
-  "Minister for Public Health & Family Welfare",
-  "Minister for Higher Education & Skill Development",
-  "Minister for Agriculture & Farmers Welfare",
-  "Minister for Home Affairs & Law",
-  "Minister for Industries & Commerce",
-  "Minister for Environment & Climate Change",
-  "Minister for Information Technology & Digital Services",
-  "Minister for Public Works & Water Resources",
-  "Minister for Rural Development & Local Administration"
+  "Minister for Education",
+  "Minister for Women & Child Development",
+  "Minister for Youth Affairs & Sports",
+  "Minister for Health & Family Welfare",
+  "Minister for Social Justice & Empowerment",
+  "Minister for Road Transport & Highways",
+  "Minister for Rural Development",
+  "Minister for Science & Technology",
+  "Minister for MSME",
+  "Minister for Environment, Forest, & Climate Change",
+  "Minister for Skill Development & Entrepreneurship",
+  "Minister for Electronics & IT",
+  "Minister for Finance",
+  "Minister for Home Affairs",
+  "Minister for Agriculture"
 ];
 
 const SHADOW_PORTFOLIOS = [
-  "Shadow Minister for Finance",
-  "Shadow Minister for Health & Medical Care",
   "Shadow Minister for Education",
-  "Shadow Minister for Agriculture",
+  "Shadow Minister for Women & Child Development",
+  "Shadow Minister for Youth Affairs & Sports",
+  "Shadow Minister for Health & Family Welfare",
+  "Shadow Minister for Finance",
   "Shadow Minister for Home Affairs",
-  "Shadow Minister for Industries",
-  "Shadow Minister for Environment",
-  "Shadow Minister for Rural Development"
+  "Shadow Minister for Agriculture",
+  "Shadow Minister for Electronics & IT",
+  "Shadow Minister for Rural Development",
+  "Shadow Minister for Environment"
 ];
 
 // Helper to shuffle an array in place
@@ -56,6 +64,7 @@ export function runAutoAllocation(
   if (learners.length === 0) {
     return {
       updatedLearners: learners,
+      updatedParties: parties,
       stats: {
         totalAllocated: 0,
         constituenciesUsed: 0,
@@ -69,7 +78,7 @@ export function runAutoAllocation(
 
   // 1. Prepare Active Parties (ensure fallback if no parties configured)
   const eventId = learners[0]?.event_id || '';
-  let activeParties = [...parties];
+  let activeParties = parties.map(p => ({ ...p }));
   if (activeParties.length === 0) {
     activeParties = [
       { id: 'pty_default_ruling', event_id: eventId, name: 'Party 1', bench: 'Ruling', color: '#059669' },
@@ -77,21 +86,22 @@ export function runAutoAllocation(
     ];
   }
 
-  let rulingParties = activeParties.filter(p => p.bench === 'Ruling');
-  let oppParties = activeParties.filter(p => p.bench === 'Opposition');
+  // Ensure Ruling and Opposition benches are established if not configured
+  const hasRuling = activeParties.some(p => p.bench === 'Ruling');
+  const hasOpp = activeParties.some(p => p.bench === 'Opposition');
 
-  if (rulingParties.length === 0) {
-    activeParties[0] = { ...activeParties[0], bench: 'Ruling' };
-    rulingParties = [activeParties[0]];
-    oppParties = activeParties.slice(1);
-  }
-  if (oppParties.length === 0 && activeParties.length > 1) {
-    activeParties[1] = { ...activeParties[1], bench: 'Opposition' };
-    oppParties = [activeParties[1]];
-    rulingParties = [activeParties[0]];
-  } else if (oppParties.length === 0) {
-    // Single party event
-    oppParties = rulingParties;
+  if (!hasRuling && !hasOpp) {
+    const rulingCount = Math.max(1, Math.min(activeParties.length - 1, Math.round(activeParties.length * rulingRatio) || 1));
+    activeParties = activeParties.map((p, idx) => ({
+      ...p,
+      bench: idx < rulingCount ? 'Ruling' : 'Opposition'
+    }));
+  } else if (!hasRuling && hasOpp) {
+    const firstInd = activeParties.find(p => p.bench !== 'Opposition') || activeParties[0];
+    firstInd.bench = 'Ruling';
+  } else if (hasRuling && !hasOpp && activeParties.length > 1) {
+    const firstInd = activeParties.find(p => p.bench !== 'Ruling') || activeParties[1];
+    firstInd.bench = 'Opposition';
   }
 
   // 2. Group learners by Academic Year for Stratified Sampling
@@ -121,106 +131,49 @@ export function runAutoAllocation(
   const oppLearners: Learner[] = [];
   const indLearners: Learner[] = [];
 
-  if (numParties > 2) {
-    // 3. Balanced Equal Party Allocation (for 3+ parties):
-    // Distribute delegates equally across all active parties (e.g. 120 / 5 = 24 each)
-    // with stratified sampling across academic years.
-    const baseQuota = Math.floor(totalLearners / numParties);
-    const remainder = totalLearners % numParties;
-    const partyQuotas = activeParties.map((_, i) => baseQuota + (i < remainder ? 1 : 0));
+  // 3. Balanced Equal Party Allocation:
+  // Distribute delegates equally across all active parties (e.g. 120 / 5 = 24 each)
+  // with stratified sampling across academic years.
+  const baseQuota = Math.floor(totalLearners / numParties);
+  const remainder = totalLearners % numParties;
+  const partyQuotas = activeParties.map((_, i) => baseQuota + (i < remainder ? 1 : 0));
 
-    const partyBuckets: Learner[][] = activeParties.map(() => []);
+  const partyBuckets: Learner[][] = activeParties.map(() => []);
 
-    // Interleave years from senior to junior into party buckets respecting party quotas
-    let partyIdx = 0;
-    for (const yr of years) {
-      const yrLearners = learnersByYear[yr];
-      for (const learner of yrLearners) {
-        // Find next party that still has quota remaining
-        let attempts = 0;
-        while (partyBuckets[partyIdx].length >= partyQuotas[partyIdx] && attempts < numParties) {
-          partyIdx = (partyIdx + 1) % numParties;
-          attempts++;
-        }
-        partyBuckets[partyIdx].push(learner);
+  // Interleave years from senior to junior into party buckets respecting party quotas
+  let partyIdx = 0;
+  for (const yr of years) {
+    const yrLearners = learnersByYear[yr];
+    for (const learner of yrLearners) {
+      let attempts = 0;
+      while (partyBuckets[partyIdx].length >= partyQuotas[partyIdx] && attempts < numParties) {
         partyIdx = (partyIdx + 1) % numParties;
+        attempts++;
       }
+      partyBuckets[partyIdx].push(learner);
+      partyIdx = (partyIdx + 1) % numParties;
     }
-
-    // Assign party, bench, and default role to each learner
-    activeParties.forEach((party, pIdx) => {
-      partyBuckets[pIdx].forEach(l => {
-        l.party_name = party.name;
-        l.party_id = party.id;
-        l.bench = party.bench || 'Independent';
-        l.role = 'Member of Legislative Assembly (MLA)';
-
-        if (party.bench === 'Ruling') {
-          rulingLearners.push(l);
-        } else if (party.bench === 'Opposition') {
-          oppLearners.push(l);
-        } else {
-          indLearners.push(l);
-        }
-      });
-    });
-
-  } else {
-    // 2-party allocation: support configured rulingRatio (e.g. 55% / 45%)
-    const targetTotalRuling = Math.min(
-      totalLearners,
-      Math.max(
-        totalLearners >= 2 ? Math.ceil(totalLearners * 0.5) : 1,
-        Math.round(totalLearners * rulingRatio)
-      )
-    );
-
-    years.forEach(yr => {
-      const yrLearners = learnersByYear[yr];
-      if (yrLearners.length === 0) return;
-
-      const yrRulingTarget = Math.min(
-        yrLearners.length,
-        Math.max(
-          yrLearners.length >= 2 ? 1 : 0,
-          Math.round(yrLearners.length * rulingRatio)
-        )
-      );
-
-      for (let i = 0; i < yrLearners.length; i++) {
-        if (i < yrRulingTarget) {
-          rulingLearners.push(yrLearners[i]);
-        } else {
-          oppLearners.push(yrLearners[i]);
-        }
-      }
-    });
-
-    while (rulingLearners.length < targetTotalRuling && oppLearners.length > 0) {
-      rulingLearners.push(oppLearners.pop()!);
-    }
-    while (rulingLearners.length > targetTotalRuling && rulingLearners.length > 1) {
-      oppLearners.push(rulingLearners.pop()!);
-    }
-
-    rulingLearners.forEach((l, i) => {
-      const party = rulingParties[i % rulingParties.length];
-      l.party_name = party.name;
-      l.party_id = party.id;
-      l.bench = 'Ruling';
-      l.role = 'Member of Legislative Assembly (MLA)';
-    });
-
-    oppLearners.forEach((l, i) => {
-      const party = oppParties[i % oppParties.length];
-      l.party_name = party.name;
-      l.party_id = party.id;
-      l.bench = 'Opposition';
-      l.role = 'Member of Legislative Assembly (MLA)';
-    });
   }
 
-  // 5. Senior Role Assignments (Chief Minister, Speaker, Opposition Leader, Ministers)
+  // Assign party, bench, and default role to each learner
+  activeParties.forEach((party, pIdx) => {
+    partyBuckets[pIdx].forEach(l => {
+      l.party_name = party.name;
+      l.party_id = party.id;
+      l.bench = party.bench || 'Independent';
+      l.role = 'Member of Legislative Assembly (MLA)';
+
+      if (party.bench === 'Ruling') {
+        rulingLearners.push(l);
+      } else if (party.bench === 'Opposition') {
+        oppLearners.push(l);
+      } else {
+        indLearners.push(l);
+      }
+    });
+  });
+
+  // 4. Senior Role Assignments (Chief Minister, Speaker, Opposition Leader, Ministers)
   // Senior years (4th/3rd) receive top cabinet roles
   const yrOrder: Record<string, number> = { '4th Year': 4, '3rd Year': 3, '2nd Year': 2, '1st Year': 1 };
   const sortedRuling = [...rulingLearners].sort((a, b) => {
@@ -232,8 +185,8 @@ export function runAutoAllocation(
   });
 
   // Chief Minister & Ruling Leaders
-  if (sortedRuling.length > 0) sortedRuling[0].role = 'Chief Minister';
-  if (sortedRuling.length > 1) sortedRuling[1].role = 'Speaker of the Assembly';
+  if (sortedRuling.length > 0) sortedRuling[0].role = 'Chief Minister (Leader of the House)';
+  if (sortedRuling.length > 1) sortedRuling[1].role = 'Speaker of Legislative Assembly';
   if (sortedRuling.length > 2) sortedRuling[2].role = 'Deputy Speaker';
   for (let i = 3; i < sortedRuling.length && (i - 3) < CABINET_PORTFOLIOS.length; i++) {
     sortedRuling[i].role = CABINET_PORTFOLIOS[i - 3];
@@ -334,6 +287,7 @@ export function runAutoAllocation(
 
   return {
     updatedLearners,
+    updatedParties: activeParties,
     stats: {
       totalAllocated: updatedLearners.length,
       constituenciesUsed: Math.min(updatedLearners.length, 234),

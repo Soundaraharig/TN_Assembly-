@@ -487,6 +487,11 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           }}
           onUpdateLearner={props.handleUpdateLearner}
           onOpenImportCsv={() => props.setIsImportCsvOpen(true)}
+          onUpdatePartyBench={(partyId, bench) => {
+            storageService.setPartyBench(partyId, bench, activeEvent.id);
+            props.setParties(storageService.getParties(activeEvent.id));
+            props.setLearners(storageService.getLearners(activeEvent.id));
+          }}
           onShowToast={props.addToast}
         />
       )}

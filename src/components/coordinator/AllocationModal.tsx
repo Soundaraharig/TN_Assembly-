@@ -117,11 +117,15 @@ export const AllocationModal: React.FC<AllocationModalProps> = ({
             <ul className="space-y-1.5 text-xs text-slate-600 dark:text-slate-400">
               <li className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <span>Distributes delegates equally across all {parties.length} parties (~{parties.length > 0 ? Math.round(totalLearners / parties.length) : 0} seats each).</span>
+              </li>
+              <li className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                 <span>Maps official TN Assembly Constituency numbers (1-234) and names with zero duplicates.</span>
               </li>
               <li className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                <span>Stratifies 1st through 4th-year students evenly across Ruling & Opposition parties.</span>
+                <span>Stratifies 1st through 4th-year students evenly across all political parties.</span>
               </li>
               <li className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />

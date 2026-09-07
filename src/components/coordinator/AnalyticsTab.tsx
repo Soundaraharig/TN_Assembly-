@@ -22,16 +22,16 @@ export const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ learners, parties })
   const eventId = learners.length > 0 ? learners[0].event_id : undefined;
   const rulingCount = useMemo(() => {
     if (eventId) {
-      const assigned = storageService.getAssignedPartyCounts(eventId);
-      return assigned['Ruling'] || 0;
+      const assigned = storageService.getAssignedBenchCounts(eventId);
+      return assigned['Ruling'] ?? learners.filter(l => l.bench === 'Ruling').length;
     }
     return learners.filter(l => l.bench === 'Ruling').length;
   }, [eventId, learners]);
 
   const oppCount = useMemo(() => {
     if (eventId) {
-      const assigned = storageService.getAssignedPartyCounts(eventId);
-      return assigned['Opposition'] || 0;
+      const assigned = storageService.getAssignedBenchCounts(eventId);
+      return assigned['Opposition'] ?? learners.filter(l => l.bench === 'Opposition').length;
     }
     return learners.filter(l => l.bench === 'Opposition').length;
   }, [eventId, learners]);
