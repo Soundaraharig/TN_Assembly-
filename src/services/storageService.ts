@@ -1293,12 +1293,22 @@ class StorageService {
     }
 
     try {
-      // 1. Identify authoritative database UUID
-      let targetUuid: string | null = isValidUuid(coord.id) ? coord.id : null;
+      // 1. Verify if this coordinator already exists remotely in Supabase (by UUID or by unique email)
+      let existingDbRecord: { id: string; email: string } | null = null;
 
-      if (!targetUuid) {
-        // Query Supabase directly by email to locate existing coordinator's real UUID
-        const { data: dbCoord, error: lookupErr } = await supabase
+      if (isValidUuid(coord.id)) {
+        const { data: byId } = await supabase
+          .from('coordinators')
+          .select('id, email')
+          .eq('id', coord.id)
+          .maybeSingle();
+        if (byId && isValidUuid(byId.id)) {
+          existingDbRecord = byId;
+        }
+      }
+
+      if (!existingDbRecord && emailLower) {
+        const { data: byEmail, error: lookupErr } = await supabase
           .from('coordinators')
           .select('id, email')
           .eq('email', emailLower)
@@ -1307,23 +1317,15 @@ class StorageService {
         if (lookupErr) {
           console.warn('[Supabase] Coordinator email lookup warning:', lookupErr.message);
         }
-        if (dbCoord && dbCoord.id && isValidUuid(dbCoord.id)) {
-          targetUuid = dbCoord.id;
-        }
-      }
-
-      // If still no remote UUID, check local cache for an existing valid UUID
-      if (!targetUuid) {
-        const local = this.getCoordinators().find(c => c.email.trim().toLowerCase() === emailLower && isValidUuid(c.id));
-        if (local) {
-          targetUuid = local.id;
+        if (byEmail && isValidUuid(byEmail.id)) {
+          existingDbRecord = byEmail;
         }
       }
 
       let savedRecord: Coordinator;
 
-      if (targetUuid) {
-        // 2. Existing coordinator -> explicit UPDATE on target UUID
+      if (existingDbRecord) {
+        // 2. Verified existing coordinator -> explicit UPDATE on existing database UUID
         const updatePayload: Record<string, unknown> = {
           event_id: sanitizeEventId(coord.event_id),
           name: (coord.name || 'Coordinator').trim(),
@@ -1333,18 +1335,18 @@ class StorageService {
           updated_at: new Date().toISOString()
         };
 
-        console.log(`[Supabase Update Coordinator] Target UUID: "${targetUuid}" Payload:`, updatePayload);
+        console.log(`[Supabase Update Coordinator] Target UUID: "${existingDbRecord.id}" Payload:`, updatePayload);
         const { data, error, status } = await supabase
           .from('coordinators')
           .update(updatePayload)
-          .eq('id', targetUuid)
+          .eq('id', existingDbRecord.id)
           .select()
-          .single();
+          .maybeSingle();
 
-        if (error) {
+        if (error || !data) {
           console.error(`❌ [Supabase Coordinator Update Error] (HTTP ${status}):`, error);
-          this.notifyWriteError('coordinators', 'update', error);
-          return { success: false, error };
+          this.notifyWriteError('coordinators', 'update', error || new Error('No data returned from update'));
+          return { success: false, error: error || new Error('Update returned no rows') };
         }
 
         savedRecord = {
@@ -1356,7 +1358,7 @@ class StorageService {
           raw_temp_password: data.raw_temp_password || data.password_hash
         };
       } else {
-        // 3. New coordinator -> explicit INSERT (omits non-UUID IDs so Postgres generates UUID)
+        // 3. Coordinator not yet in Supabase -> explicit INSERT (omits non-UUID IDs so Postgres generates UUID)
         const insertPayload: Record<string, unknown> = {
           event_id: sanitizeEventId(coord.event_id),
           name: (coord.name || 'Coordinator').trim(),
@@ -1372,16 +1374,30 @@ class StorageService {
         }
 
         console.log('[Supabase Insert Coordinator] Payload:', insertPayload);
-        const { data, error, status } = await supabase
+        let { data, error, status } = await supabase
           .from('coordinators')
           .insert(insertPayload)
           .select()
-          .single();
+          .maybeSingle();
 
-        if (error) {
+        // If email already exists (race condition), fallback to update by email
+        if (error && (error.code === '23505' || error.message?.includes('duplicate key'))) {
+          console.log('[Supabase Coordinator Insert Conflict] Email exists, falling back to update by email.');
+          const updateRes = await supabase
+            .from('coordinators')
+            .update(insertPayload)
+            .eq('email', emailLower)
+            .select()
+            .maybeSingle();
+          data = updateRes.data;
+          error = updateRes.error;
+          status = updateRes.status;
+        }
+
+        if (error || !data) {
           console.error(`❌ [Supabase Coordinator Insert Error] (HTTP ${status}):`, error);
-          this.notifyWriteError('coordinators', 'insert', error);
-          return { success: false, error };
+          this.notifyWriteError('coordinators', 'insert', error || new Error('No data returned from insert'));
+          return { success: false, error: error || new Error('Insert returned no rows') };
         }
 
         savedRecord = {

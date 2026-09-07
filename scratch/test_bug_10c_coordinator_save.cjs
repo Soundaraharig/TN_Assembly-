@@ -24,7 +24,7 @@ console.log('\n[2/5] Verifying updateCoordinator explicit logic and removal of l
 // Check that updateCoordinator does NOT write to localStorage before awaiting Supabase
 assert(storageServiceSrc.includes('const { data, error, status } = await supabase'), 'updateCoordinator must await supabase write');
 assert(storageServiceSrc.includes('// 4. ONLY ON SUCCESS: update local storage and notify listeners'), 'updateCoordinator must only update local storage on success');
-assert(storageServiceSrc.includes('this.notifyWriteError(\'coordinators\', \'update\', error);'), 'updateCoordinator must notify on update error');
+assert(storageServiceSrc.includes("this.notifyWriteError('coordinators', 'update'"), 'updateCoordinator must notify on update error');
 console.log('✅ updateCoordinator only mutates localStorage and notifies listeners on confirmed database success.');
 
 console.log('\n[3/5] Verifying App.tsx for removal of "Saved Locally" and non-UUID coordinator generation...');
