@@ -16,7 +16,7 @@ interface MyEventsDashboardProps {
   onCreateEvent: (collegeName: string, coordName: string, coordEmail: string, password: string) => void;
   onUpdateEvent?: (updatedEvent: CollegeEvent) => void;
   onDeleteEvent?: (eventId: string) => void;
-  onUpdateCoordinator?: (coordinator: Coordinator) => void;
+  onUpdateCoordinator?: (coordinator: Coordinator) => Promise<{ success: boolean; error?: any; data?: any }> | void;
   onSelectEvent: (event: CollegeEvent) => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
   learners?: Learner[];
@@ -62,11 +62,12 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
     if (coord) {
       setEditingCoordinator({
         ...coord,
+        id: (coord.id && !coord.id.startsWith('coord_')) ? coord.id : '',
         event_id: event.id
       });
     } else {
       setEditingCoordinator({
-        id: `coord_${event.id}`,
+        id: '',
         event_id: event.id,
         name: event.assigned_coordinator_name || 'Coordinator',
         email: event.assigned_coordinator_email || 'coordinator@college.edu',
@@ -286,11 +287,15 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
         coordinator={editingCoordinator}
         eventName={editingEventName}
         onClose={() => setEditingCoordinator(null)}
-        onSave={(updated) => {
+        onSave={async (updated) => {
           if (onUpdateCoordinator) {
-            onUpdateCoordinator(updated);
-            onShowToast('Coordinator Credentials Updated', `Updated access for ${updated.name} (${updated.email})`, 'success');
+            const res = await onUpdateCoordinator(updated);
+            if (res && typeof res === 'object' && 'success' in res) {
+              return res;
+            }
+            return { success: true };
           }
+          return { success: false, error: new Error('No update coordinator handler registered') };
         }}
       />
 

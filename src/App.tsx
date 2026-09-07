@@ -1245,7 +1245,7 @@ export function App() {
     }
   };
 
-  const handleCreateEvent = (collegeName: string, coordName: string, coordEmail: string, password: string) => {
+  const handleCreateEvent = async (collegeName: string, coordName: string, coordEmail: string, password: string) => {
     const newEv = storageService.addEvent({
       college_name: collegeName,
       assigned_coordinator_name: coordName,
@@ -1256,30 +1256,32 @@ export function App() {
       participant_count: 0
     });
 
-    const newCoord: Coordinator = {
-      id: `coord_${newEv.id}`,
+    const newCoord: Partial<Coordinator> = {
       event_id: newEv.id,
       name: coordName,
       email: coordEmail,
       password_hash: password || 'coord123',
       raw_temp_password: password || 'coord123'
     };
-    storageService.addCoordinator(newCoord);
+    await storageService.addCoordinator(newCoord);
 
     setCurrentEvent(newEv);
     saveSession({ currentEventId: newEv.id });
     addToast('Event Created', `Created ${newEv.college_name}`, 'success');
   };
 
-  const handleUpdateCoordinator = async (coord: Coordinator) => {
+  const handleUpdateCoordinator = async (coord: Coordinator): Promise<{ success: boolean; error?: any; data?: any }> => {
     const res = await storageService.updateCoordinator(coord);
-    setCoordinators(storageService.getCoordinators());
-    setCurrentCoordinator(coord);
-    if (res && !res.success && res.error) {
-      addToast('Saved Locally (Cloud Warning)', `Credentials updated locally, but Supabase rejected write: ${res.error.message || 'Check RLS permissions'}`, 'error');
-    } else {
-      addToast('Coordinator Updated', `Updated credentials for ${coord.name} (synced to cloud)`, 'success');
+    if (!res.success) {
+      addToast('Coordinator Update Failed', `Database rejected write: ${res.error?.message || 'Check database connection'}`, 'error');
+      return res;
     }
+    setCoordinators(storageService.getCoordinators());
+    if (res.data) {
+      setCurrentCoordinator(res.data);
+    }
+    addToast('Coordinator Updated', `Updated credentials for ${coord.name} (persisted to Supabase)`, 'success');
+    return res;
   };
 
   const handleAddLearner = (l: Partial<Learner>) => {

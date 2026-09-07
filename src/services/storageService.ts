@@ -879,10 +879,14 @@ class StorageService {
       if (typeof evId === 'string' && isValidUuid(evId)) return evId;
       return null;
     };
+    const sanitizeId = (id: unknown) => {
+      if (typeof id === 'string' && isValidUuid(id)) return id;
+      return undefined;
+    };
+    const validId = sanitizeId(raw.id);
 
     if (table === 'coordinators') {
-      return {
-        id: raw.id,
+      const sanitized: Record<string, unknown> = {
         event_id: sanitizeEventId(raw.event_id),
         name: raw.name || 'Coordinator',
         email: (raw.email as string || '').trim().toLowerCase(),
@@ -891,10 +895,11 @@ class StorageService {
         created_at: raw.created_at || new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
+      if (validId) sanitized.id = validId;
+      return sanitized;
     }
     if (table === 'volunteers') {
-      return {
-        id: raw.id,
+      const sanitized: Record<string, unknown> = {
         event_id: sanitizeEventId(raw.event_id),
         access_code: raw.access_code || null,
         name: raw.name || 'Volunteer',
@@ -907,10 +912,11 @@ class StorageService {
         role: raw.role || 'Volunteer',
         created_at: raw.created_at || new Date().toISOString()
       };
+      if (validId) sanitized.id = validId;
+      return sanitized;
     }
     if (table === 'jury_members') {
-      return {
-        id: raw.id,
+      const sanitized: Record<string, unknown> = {
         event_id: sanitizeEventId(raw.event_id),
         access_code: raw.access_code || null,
         name: raw.name || 'Jury Member',
@@ -921,10 +927,11 @@ class StorageService {
         status: raw.status || 'Active',
         created_at: raw.created_at || new Date().toISOString()
       };
+      if (validId) sanitized.id = validId;
+      return sanitized;
     }
     if (table === 'learners') {
-      return {
-        id: raw.id,
+      const sanitized: Record<string, unknown> = {
         event_id: sanitizeEventId(raw.event_id),
         access_code: raw.access_code,
         full_name: raw.full_name,
@@ -946,11 +953,12 @@ class StorageService {
         created_at: raw.created_at || new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
+      if (validId) sanitized.id = validId;
+      return sanitized;
     }
     if (table === 'college_events') {
       const { cabinet_ministries: _cm, ...clean } = raw;
-      return {
-        id: clean.id,
+      const sanitized: Record<string, unknown> = {
         college_name: clean.college_name || 'New Assembly',
         event_stage: clean.event_stage || 'College Round',
         status: clean.status || 'Pre-Event',
@@ -971,10 +979,11 @@ class StorageService {
         created_at: clean.created_at || new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
+      if (validId) sanitized.id = validId;
+      return sanitized;
     }
     if (table === 'session_agenda') {
-      return {
-        id: raw.id,
+      const sanitized: Record<string, unknown> = {
         event_id: sanitizeEventId(raw.event_id),
         day: raw.day || 'Day 1',
         time: raw.time || '09:00 AM',
@@ -984,10 +993,11 @@ class StorageService {
         is_current: !!raw.is_current,
         created_at: raw.created_at || new Date().toISOString()
       };
+      if (validId) sanitized.id = validId;
+      return sanitized;
     }
     if (table === 'political_parties') {
-      return {
-        id: raw.id,
+      const sanitized: Record<string, unknown> = {
         event_id: sanitizeEventId(raw.event_id),
         name: raw.name,
         bench: raw.bench || 'Ruling',
@@ -997,10 +1007,11 @@ class StorageService {
         whatsapp_group_link: raw.whatsapp_group_link || null,
         created_at: raw.created_at || new Date().toISOString()
       };
+      if (validId) sanitized.id = validId;
+      return sanitized;
     }
     if (table === 'committees') {
-      return {
-        id: raw.id,
+      const sanitized: Record<string, unknown> = {
         event_id: sanitizeEventId(raw.event_id),
         name: raw.name,
         topic: raw.topic || 'Deliberations',
@@ -1008,6 +1019,8 @@ class StorageService {
         max_capacity: raw.max_capacity || 50,
         created_at: raw.created_at || new Date().toISOString()
       };
+      if (validId) sanitized.id = validId;
+      return sanitized;
     }
     return raw;
   }
@@ -1036,7 +1049,15 @@ class StorageService {
     this.inFlightWrites.add(writeKey);
     try {
       console.log(`[Supabase Write Attempt] Table: "${table}" Payload:`, sanitized);
-      const { data, error, status } = await supabase.from(table).upsert(sanitized, { onConflict: 'id' }).select();
+      let query;
+      if (sanitized.id && isValidUuid(sanitized.id as string)) {
+        query = supabase.from(table).upsert(sanitized, { onConflict: 'id' }).select();
+      } else {
+        const { id, ...insertPayload } = sanitized;
+        query = supabase.from(table).insert(insertPayload).select();
+      }
+
+      const { data, error, status } = await query;
       if (error) {
         this.failedWriteSignatures.set(writeKey, Date.now());
         console.error(`❌ [Supabase Write Error] Table: "${table}" (HTTP ${status}) Code: ${error.code} — ${error.message}. Details:`, error.details || error.hint);
@@ -1045,7 +1066,7 @@ class StorageService {
       }
       this.failedWriteSignatures.delete(writeKey);
       console.log(`✅ [Supabase Write Success] Table: "${table}" (HTTP ${status}) Data:`, data);
-      return { success: true, error: null, data };
+      return { success: true, error: null, data: Array.isArray(data) ? data[0] : data };
     } catch (e: any) {
       this.failedWriteSignatures.set(writeKey, Date.now());
       console.error(`❌ [Supabase Write Exception] Table: "${table}":`, e);
@@ -1230,80 +1251,181 @@ class StorageService {
     return this.getItem<Coordinator[]>(STORAGE_KEYS.COORDINATORS, INITIAL_COORDINATORS);
   }
 
-  public addCoordinator(coord: Partial<Coordinator>): Coordinator {
-    const all = this.getCoordinators();
+  public async addCoordinator(coord: Partial<Coordinator>): Promise<{ success: boolean; error?: any; data?: Coordinator }> {
     const emailLower = coord.email?.trim().toLowerCase();
-    const existingIndex = emailLower ? all.findIndex(c => c.email.trim().toLowerCase() === emailLower) : -1;
-
-    if (existingIndex >= 0) {
-      const updated: Coordinator = {
-        ...all[existingIndex],
-        ...coord,
-        event_id: coord.event_id || all[existingIndex].event_id,
-        name: coord.name || all[existingIndex].name,
-        email: coord.email || all[existingIndex].email,
-        password_hash: coord.password_hash || all[existingIndex].password_hash,
-        raw_temp_password: coord.raw_temp_password || coord.password_hash || all[existingIndex].raw_temp_password
-      };
-      // Overwrite the existing record and purge any secondary duplicates for this email
-      const cleaned = all.filter((c, idx) => idx === existingIndex || c.email.trim().toLowerCase() !== emailLower);
-      const targetIdx = cleaned.findIndex(c => c.id === updated.id || (emailLower && c.email.trim().toLowerCase() === emailLower));
-      if (targetIdx >= 0) {
-        cleaned[targetIdx] = updated;
-      } else {
-        cleaned.push(updated);
-      }
-      this.setItem(STORAGE_KEYS.COORDINATORS, cleaned);
-      this.sbUpsert('coordinators', updated as unknown as Record<string, unknown>);
-      this.notify();
-      return updated;
+    if (!emailLower) {
+      return { success: false, error: new Error('Coordinator email is required') };
     }
-
-    const newCoord: Coordinator = {
-      id: coord.id || uid('coord'),
+    const fullCoord: Coordinator = {
+      id: (coord.id && isValidUuid(coord.id)) ? coord.id : genUuid(),
       event_id: coord.event_id || '',
       name: coord.name || 'Coordinator',
-      email: coord.email || '',
+      email: emailLower,
       password_hash: coord.password_hash || 'coord123',
       raw_temp_password: coord.raw_temp_password || coord.password_hash || 'coord123'
     };
-    all.push(newCoord);
-    this.setItem(STORAGE_KEYS.COORDINATORS, all);
-    this.sbUpsert('coordinators', newCoord as unknown as Record<string, unknown>);
-    this.notify();
-    return newCoord;
+    return await this.updateCoordinator(fullCoord);
   }
 
-  public async updateCoordinator(coord: Coordinator): Promise<{ success: boolean; error: any; data?: any }> {
-    const all = this.getCoordinators();
+  public async updateCoordinator(coord: Coordinator): Promise<{ success: boolean; error: any; data?: Coordinator }> {
     const emailLower = coord.email?.trim().toLowerCase();
-    let found = false;
-
-    const updated = all.map(c => {
-      const match = c.id === coord.id || (emailLower && c.email.trim().toLowerCase() === emailLower);
-      if (match) {
-        found = true;
-        return { ...c, ...coord };
-      }
-      return c;
-    });
-
-    const candidateList = found ? updated : [...updated, coord];
-    // Enforce strict uniqueness by email
-    const unique: Coordinator[] = [];
-    const seen = new Set<string>();
-    for (const c of candidateList) {
-      const key = c.email ? c.email.trim().toLowerCase() : c.id;
-      if (!seen.has(key)) {
-        seen.add(key);
-        unique.push(c);
-      }
+    if (!emailLower) {
+      return { success: false, error: new Error('Coordinator email is required') };
     }
 
-    this.setItem(STORAGE_KEYS.COORDINATORS, unique);
-    const result = await this.sbUpsert('coordinators', coord as unknown as Record<string, unknown>);
-    this.notify();
-    return result;
+    const sanitizeEventId = (evId: unknown) => {
+      if (typeof evId === 'string' && isValidUuid(evId)) return evId;
+      return null;
+    };
+
+    if (!supabase) {
+      const all = this.getCoordinators();
+      const updated = all.map(c => {
+        const match = c.id === coord.id || (emailLower && c.email.trim().toLowerCase() === emailLower);
+        return match ? { ...c, ...coord } : c;
+      });
+      const candidateList = updated.some(c => c.id === coord.id || c.email.trim().toLowerCase() === emailLower)
+        ? updated
+        : [...updated, coord];
+      this.setItem(STORAGE_KEYS.COORDINATORS, candidateList);
+      this.notify();
+      return { success: true, data: coord, error: null };
+    }
+
+    try {
+      // 1. Identify authoritative database UUID
+      let targetUuid: string | null = isValidUuid(coord.id) ? coord.id : null;
+
+      if (!targetUuid) {
+        // Query Supabase directly by email to locate existing coordinator's real UUID
+        const { data: dbCoord, error: lookupErr } = await supabase
+          .from('coordinators')
+          .select('id, email')
+          .eq('email', emailLower)
+          .maybeSingle();
+
+        if (lookupErr) {
+          console.warn('[Supabase] Coordinator email lookup warning:', lookupErr.message);
+        }
+        if (dbCoord && dbCoord.id && isValidUuid(dbCoord.id)) {
+          targetUuid = dbCoord.id;
+        }
+      }
+
+      // If still no remote UUID, check local cache for an existing valid UUID
+      if (!targetUuid) {
+        const local = this.getCoordinators().find(c => c.email.trim().toLowerCase() === emailLower && isValidUuid(c.id));
+        if (local) {
+          targetUuid = local.id;
+        }
+      }
+
+      let savedRecord: Coordinator;
+
+      if (targetUuid) {
+        // 2. Existing coordinator -> explicit UPDATE on target UUID
+        const updatePayload: Record<string, unknown> = {
+          event_id: sanitizeEventId(coord.event_id),
+          name: (coord.name || 'Coordinator').trim(),
+          email: emailLower,
+          password_hash: coord.password_hash || 'coord123',
+          raw_temp_password: coord.raw_temp_password || coord.password_hash || 'coord123',
+          updated_at: new Date().toISOString()
+        };
+
+        console.log(`[Supabase Update Coordinator] Target UUID: "${targetUuid}" Payload:`, updatePayload);
+        const { data, error, status } = await supabase
+          .from('coordinators')
+          .update(updatePayload)
+          .eq('id', targetUuid)
+          .select()
+          .single();
+
+        if (error) {
+          console.error(`❌ [Supabase Coordinator Update Error] (HTTP ${status}):`, error);
+          this.notifyWriteError('coordinators', 'update', error);
+          return { success: false, error };
+        }
+
+        savedRecord = {
+          id: data.id,
+          event_id: data.event_id || coord.event_id || '',
+          name: data.name,
+          email: data.email,
+          password_hash: data.password_hash,
+          raw_temp_password: data.raw_temp_password || data.password_hash
+        };
+      } else {
+        // 3. New coordinator -> explicit INSERT (omits non-UUID IDs so Postgres generates UUID)
+        const insertPayload: Record<string, unknown> = {
+          event_id: sanitizeEventId(coord.event_id),
+          name: (coord.name || 'Coordinator').trim(),
+          email: emailLower,
+          password_hash: coord.password_hash || 'coord123',
+          raw_temp_password: coord.raw_temp_password || coord.password_hash || 'coord123',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+
+        if (coord.id && isValidUuid(coord.id)) {
+          insertPayload.id = coord.id;
+        }
+
+        console.log('[Supabase Insert Coordinator] Payload:', insertPayload);
+        const { data, error, status } = await supabase
+          .from('coordinators')
+          .insert(insertPayload)
+          .select()
+          .single();
+
+        if (error) {
+          console.error(`❌ [Supabase Coordinator Insert Error] (HTTP ${status}):`, error);
+          this.notifyWriteError('coordinators', 'insert', error);
+          return { success: false, error };
+        }
+
+        savedRecord = {
+          id: data.id,
+          event_id: data.event_id || coord.event_id || '',
+          name: data.name,
+          email: data.email,
+          password_hash: data.password_hash,
+          raw_temp_password: data.raw_temp_password || data.password_hash
+        };
+      }
+
+      // 4. ONLY ON SUCCESS: update local storage and notify listeners
+      const currentList = this.getCoordinators();
+      let matched = false;
+      const updatedList = currentList.map(c => {
+        if (c.id === savedRecord.id || c.email.trim().toLowerCase() === emailLower) {
+          matched = true;
+          return savedRecord;
+        }
+        return c;
+      });
+      const finalList = matched ? updatedList : [...updatedList, savedRecord];
+
+      // Enforce strict uniqueness by email
+      const uniqueCoords: Coordinator[] = [];
+      const seenEmails = new Set<string>();
+      for (const c of finalList) {
+        const key = c.email ? c.email.trim().toLowerCase() : c.id;
+        if (!seenEmails.has(key)) {
+          seenEmails.add(key);
+          uniqueCoords.push(c);
+        }
+      }
+
+      this.setItem(STORAGE_KEYS.COORDINATORS, uniqueCoords);
+      this.notify();
+      console.log('✅ [Coordinator Persisted Successfully to Supabase]:', savedRecord);
+      return { success: true, data: savedRecord, error: null };
+    } catch (e: any) {
+      console.error('❌ [Coordinator Persistence Exception]:', e);
+      this.notifyWriteError('coordinators', 'save', e);
+      return { success: false, error: e };
+    }
   }
 
   // ── LEARNERS ──────────────────────────────────────────────────────────────

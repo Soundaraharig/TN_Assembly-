@@ -195,7 +195,7 @@ const appPath = path.resolve(__dirname, '../src/App.tsx');
 const appContent = fs.readFileSync(appPath, 'utf8');
 
 assert(appContent.includes('handleUpdateCoordinator = async'), 'handleUpdateCoordinator should be async');
-assert(appContent.includes('Saved Locally (Cloud Warning)'), 'App.tsx missing warning toast when cloud sync fails');
+assert(appContent.includes('Coordinator Update Failed'), 'App.tsx missing error toast when cloud sync fails');
 assert(appContent.includes('storageService.setWriteErrorHandler'), 'App.tsx should register setWriteErrorHandler');
 
 console.log('✅ App.tsx registers write error handler and warns users if Supabase write fails');
