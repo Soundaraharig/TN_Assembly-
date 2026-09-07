@@ -954,6 +954,16 @@ export function App() {
       loadState();
     });
 
+    storageService.setWriteErrorHandler((table, action, error) => {
+      const friendlyTable = table.replace(/_/g, ' ');
+      const msg = error?.message || (typeof error === 'string' ? error : 'Database rejected write');
+      addToast(
+        'Save Failed',
+        `Supabase rejected ${action} on ${friendlyTable}: ${msg}`,
+        'error'
+      );
+    });
+
     // Check current browser path and restore authenticated session on refresh
     const checkPathAndRestore = () => {
       try {
@@ -1169,6 +1179,7 @@ export function App() {
 
     return () => {
       unsubscribe();
+      storageService.setWriteErrorHandler(null);
       window.removeEventListener('popstate', checkPathAndRestore);
     };
   }, []);

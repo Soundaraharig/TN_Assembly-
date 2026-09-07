@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { CollegeEvent, Coordinator, Learner, UserRole } from '../../types';
 import { getEventSlug } from '../../utils/slug';
+import { storageService } from '../../services/storageService';
 import { CreateEventModal } from './CreateEventModal';
 import { EditCoordinatorModal } from './EditCoordinatorModal';
 import { EditEventModal } from './EditEventModal';
@@ -111,13 +112,29 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
           </button>
 
           {isSuperAdmin && (
-            <button
-              onClick={() => setIsModalOpen(true)}
-              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-xs shadow-md shadow-amber-500/20 flex items-center gap-1.5 transition-all cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Create New Event</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  if (window.confirm('Wipe local browser cache and re-sync freshly from Supabase? This cleans all local mock/demo data and re-pulls from the live database.')) {
+                    storageService.wipeAllLocalCache();
+                    onShowToast('Local Cache Purged', 'Local browser cache wiped. Re-syncing clean state from Supabase...', 'success');
+                    setTimeout(() => window.location.reload(), 600);
+                  }
+                }}
+                className="px-3.5 py-2.5 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/50 text-rose-700 dark:text-rose-300 font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+                title="Wipe local browser cache and re-sync from Supabase"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Purge Local Cache</span>
+              </button>
+              <button
+                onClick={() => setIsModalOpen(true)}
+                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-xs shadow-md shadow-amber-500/20 flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Create New Event</span>
+              </button>
+            </div>
           )}
         </div>
       </div>

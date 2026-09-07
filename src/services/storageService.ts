@@ -133,6 +133,8 @@ function sortLearnersStably(list: Learner[]): Learner[] {
 // ---------------------------------------------------------------------------
 // StorageService — hybrid localStorage + Supabase with pub/sub
 // ---------------------------------------------------------------------------
+export type WriteErrorHandler = (table: string, action: string, error: any) => void;
+
 class StorageService {
   private listeners: Listener[] = [];
   private realtimeChannel: any = null;
@@ -142,6 +144,23 @@ class StorageService {
   private isSyncing: boolean = false;
   private syncError: string | null = null;
   private syncVersion: number = 0;
+  private writeErrorHandler: WriteErrorHandler | null = null;
+  private inFlightWrites = new Set<string>();
+  private failedWriteSignatures = new Map<string, number>();
+
+  public setWriteErrorHandler(handler: WriteErrorHandler | null) {
+    this.writeErrorHandler = handler;
+  }
+
+  private notifyWriteError(table: string, action: string, error: any) {
+    if (this.writeErrorHandler) {
+      try {
+        this.writeErrorHandler(table, action, error);
+      } catch (err) {
+        console.error('[StorageService] Error executing writeErrorHandler:', err);
+      }
+    }
+  }
 
   constructor() {
     this.initDefaults();
@@ -196,6 +215,25 @@ class StorageService {
     } catch (e) {
       console.warn('Error clearing user cache:', e);
     }
+  }
+
+  public wipeAllLocalCache() {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && (k.startsWith('tn_assembly_') || k.includes('auth_session') || k.includes('user_session'))) {
+            keysToRemove.push(k);
+          }
+        }
+        keysToRemove.forEach(k => localStorage.removeItem(k));
+      }
+    } catch (e) {
+      console.warn('Error wiping local cache:', e);
+    }
+    this.initDefaults();
+    this.notify();
   }
 
   // ── Pub/Sub ──────────────────────────────────────────────────────────────
@@ -533,170 +571,158 @@ class StorageService {
           }
         });
 
-        // Merge local and remote events
-        const localEvents = this.getItem<CollegeEvent[]>(STORAGE_KEYS.EVENTS, []);
-        const eventMap = new Map<string, CollegeEvent>();
-        localEvents.forEach(e => eventMap.set(e.id, e));
-        events.forEach(remoteEv => {
-          if (deletedIds.has(remoteEv.id)) return;
-          const local = eventMap.get(remoteEv.id);
-          if (local) {
-            eventMap.set(remoteEv.id, { ...remoteEv, ...local });
-          } else {
-            eventMap.set(remoteEv.id, remoteEv as unknown as CollegeEvent);
-          }
-        });
+        if (events.length === 0) {
+          this.setItem(STORAGE_KEYS.EVENTS, []);
+          this.setItem(STORAGE_KEYS.OPEN_NOMINATIONS, {});
+          this.setItem(STORAGE_KEYS.NOMINATIONS, []);
+          this.setItem(STORAGE_KEYS.ELECTIONS, []);
+          this.setItem(STORAGE_KEYS.FLASH_VOTES, []);
+          this.setItem(STORAGE_KEYS.PROCEEDINGS, []);
+          this.setItem(STORAGE_KEYS.QUESTIONS, []);
+          this.setItem(STORAGE_KEYS.SCORES, []);
+        } else {
+          // Merge local and remote events — remote list is authoritative
+          const localEvents = this.getItem<CollegeEvent[]>(STORAGE_KEYS.EVENTS, []);
+          const localEventMap = new Map<string, CollegeEvent>();
+          localEvents.forEach(e => localEventMap.set(e.id, e));
 
-        this.setItem(STORAGE_KEYS.EVENTS, Array.from(eventMap.values()));
-        this.setItem(STORAGE_KEYS.OPEN_NOMINATIONS, openNomMap);
-        this.setItem(STORAGE_KEYS.NOMINATIONS, allNoms);
-        this.setItem(STORAGE_KEYS.ELECTIONS, allElecs);
-        this.setItem(STORAGE_KEYS.FLASH_VOTES, allFVotes);
-        this.setItem(STORAGE_KEYS.PROCEEDINGS, allProcs);
-        this.setItem(STORAGE_KEYS.QUESTIONS, allQs);
+          const eventMap = new Map<string, CollegeEvent>();
+          events.forEach(remoteEv => {
+            if (deletedIds.has(remoteEv.id)) return;
+            const local = localEventMap.get(remoteEv.id);
+            eventMap.set(remoteEv.id, local ? { ...remoteEv, ...local } : (remoteEv as unknown as CollegeEvent));
+          });
 
-        // Smart merge local and remote scores by learner_id & timestamp
-        const localScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
-        const scoreMap = new Map<string, ScoreRecord>();
-        localScores.forEach(s => {
-          const key = `${s.learner_id}:::${s.event_id || ''}`;
-          scoreMap.set(key, s);
-        });
-        allScores.forEach(s => {
-          const key = `${s.learner_id}:::${s.event_id || ''}`;
-          const existing = scoreMap.get(key);
-          if (!existing) {
+          this.setItem(STORAGE_KEYS.EVENTS, Array.from(eventMap.values()));
+          this.setItem(STORAGE_KEYS.OPEN_NOMINATIONS, openNomMap);
+          this.setItem(STORAGE_KEYS.NOMINATIONS, allNoms);
+          this.setItem(STORAGE_KEYS.ELECTIONS, allElecs);
+          this.setItem(STORAGE_KEYS.FLASH_VOTES, allFVotes);
+          this.setItem(STORAGE_KEYS.PROCEEDINGS, allProcs);
+          this.setItem(STORAGE_KEYS.QUESTIONS, allQs);
+
+          // Smart merge local and remote scores by learner_id & timestamp
+          const localScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
+          const scoreMap = new Map<string, ScoreRecord>();
+          localScores.forEach(s => {
+            const key = `${s.learner_id}:::${s.event_id || ''}`;
             scoreMap.set(key, s);
-          } else {
-            const localTime = new Date(existing.updated_at || 0).getTime();
-            const remoteTime = new Date(s.updated_at || 0).getTime();
-            if (remoteTime > localTime) {
+          });
+          allScores.forEach(s => {
+            const key = `${s.learner_id}:::${s.event_id || ''}`;
+            const existing = scoreMap.get(key);
+            if (!existing) {
               scoreMap.set(key, s);
+            } else {
+              const localTime = new Date(existing.updated_at || 0).getTime();
+              const remoteTime = new Date(s.updated_at || 0).getTime();
+              if (remoteTime > localTime) {
+                scoreMap.set(key, s);
+              }
             }
-          }
-        });
-        this.setItem(STORAGE_KEYS.SCORES, Array.from(scoreMap.values()));
+          });
+          this.setItem(STORAGE_KEYS.SCORES, Array.from(scoreMap.values()));
+        }
       }
 
       if (coordErr) {
         console.error("Supabase Error [coordinators]:", coordErr);
         hasQueryError = true;
       } else if (coordinators !== null) {
-        const localCoords = this.getItem<Coordinator[]>(STORAGE_KEYS.COORDINATORS, []);
-        const coordMap = new Map<string, Coordinator>();
-        localCoords.forEach(c => {
-          if (c.email) coordMap.set(c.email.trim().toLowerCase(), c);
-          coordMap.set(c.id, c);
-        });
-        coordinators.forEach(remoteC => {
-          if (deletedIds.has(remoteC.id)) return;
-          const emailKey = remoteC.email ? remoteC.email.trim().toLowerCase() : '';
-          const existing = (emailKey && coordMap.get(emailKey)) || coordMap.get(remoteC.id);
-          if (existing) {
-            // Remote password and event updates take precedence
-            const merged = { ...existing, ...remoteC };
-            coordMap.set(existing.id, merged);
+        if (coordinators.length === 0) {
+          this.setItem(STORAGE_KEYS.COORDINATORS, []);
+        } else {
+          const localCoords = this.getItem<Coordinator[]>(STORAGE_KEYS.COORDINATORS, []);
+          const localCoordMap = new Map<string, Coordinator>();
+          localCoords.forEach(c => {
+            if (c.email) localCoordMap.set(c.email.trim().toLowerCase(), c);
+            localCoordMap.set(c.id, c);
+          });
+
+          const coordMap = new Map<string, Coordinator>();
+          coordinators.forEach(remoteC => {
+            if (deletedIds.has(remoteC.id)) return;
+            const emailKey = remoteC.email ? remoteC.email.trim().toLowerCase() : '';
+            const local = (emailKey && localCoordMap.get(emailKey)) || localCoordMap.get(remoteC.id);
+            const merged = local ? { ...local, ...remoteC } : (remoteC as unknown as Coordinator);
+            coordMap.set(remoteC.id, merged);
             if (emailKey) coordMap.set(emailKey, merged);
-          } else {
-            coordMap.set(remoteC.id, remoteC as unknown as Coordinator);
-            if (emailKey) coordMap.set(emailKey, remoteC as unknown as Coordinator);
+          });
+
+          const uniqueCoords: Coordinator[] = [];
+          const seenEmails = new Set<string>();
+          for (const c of coordMap.values()) {
+            const emailKey = c.email ? c.email.trim().toLowerCase() : c.id;
+            if (!seenEmails.has(emailKey)) {
+              seenEmails.add(emailKey);
+              uniqueCoords.push(c);
+            }
           }
-        });
-        const uniqueCoords: Coordinator[] = [];
-        const seenEmails = new Set<string>();
-        for (const c of coordMap.values()) {
-          const emailKey = c.email ? c.email.trim().toLowerCase() : c.id;
-          if (!seenEmails.has(emailKey)) {
-            seenEmails.add(emailKey);
-            uniqueCoords.push(c);
-          }
+          this.setItem(STORAGE_KEYS.COORDINATORS, uniqueCoords);
         }
-        this.setItem(STORAGE_KEYS.COORDINATORS, uniqueCoords);
       }
 
       if (learnersErr) {
         console.error("Supabase Error [learners]:", learnersErr);
         hasQueryError = true;
       } else if (learners !== null) {
-        const localLearners = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, []);
-        const learnerMap = new Map<string, Learner>();
-        const codeMap = new Map<string, string>(); // accessCode -> learnerId
-        const nameMap = new Map<string, string>(); // name + constNo -> learnerId
+        if (learners.length === 0) {
+          this.setItem(STORAGE_KEYS.LEARNERS, []);
+        } else {
+          const localLearners = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, []);
+          const localLearnerMap = new Map<string, Learner>();
+          localLearners.forEach(l => localLearnerMap.set(l.id, l));
 
-        localLearners.forEach(l => {
-          learnerMap.set(l.id, l);
-          if (l.access_code && l.access_code.trim()) {
-            codeMap.set(`${l.event_id || ''}:::${l.access_code.trim().toUpperCase()}`, l.id);
-          }
-          if (l.full_name && l.full_name.trim()) {
-            nameMap.set(`${l.event_id || ''}:::${l.full_name.trim().toLowerCase()}:::${l.constituency_number || ''}`, l.id);
-          }
-        });
-
-        learners.forEach(r => {
-          if (deletedIds.has(r.id)) return;
-          const codeKey = r.access_code && r.access_code.trim() ? `${r.event_id || ''}:::${r.access_code.trim().toUpperCase()}` : null;
-          const nameKey = r.full_name && r.full_name.trim() ? `${r.event_id || ''}:::${r.full_name.trim().toLowerCase()}:::${r.constituency_number || ''}` : null;
-
-          // Identify if learner is already present by ID or access code or name+constituency
-          let matchId: string | undefined = learnerMap.has(r.id) ? r.id : undefined;
-          if (!matchId && codeKey && codeMap.has(codeKey)) {
-            matchId = codeMap.get(codeKey);
-          }
-          if (!matchId && nameKey && nameMap.has(nameKey)) {
-            matchId = nameMap.get(nameKey);
-          }
-
-          const local = matchId ? learnerMap.get(matchId) : undefined;
-          if (!local) {
-            learnerMap.set(r.id, r as Learner);
-            if (codeKey) codeMap.set(codeKey, r.id);
-            if (nameKey) nameMap.set(nameKey, r.id);
-          } else {
-            // Local user changes take precedence; merge remote non-conflicting fields
-            learnerMap.set(local.id, { ...(r as Learner), ...local });
-          }
-        });
-        this.setItem(STORAGE_KEYS.LEARNERS, sortLearnersStably(Array.from(learnerMap.values())));
+          const learnerMap = new Map<string, Learner>();
+          learners.forEach(r => {
+            if (deletedIds.has(r.id)) return;
+            const local = localLearnerMap.get(r.id);
+            learnerMap.set(r.id, local ? { ...(r as Learner), ...local } : (r as Learner));
+          });
+          this.setItem(STORAGE_KEYS.LEARNERS, sortLearnersStably(Array.from(learnerMap.values())));
+        }
       }
 
       if (partiesErr) {
         console.error("Supabase Error [political_parties]:", partiesErr);
         hasQueryError = true;
-      } else if (parties !== null && parties.length > 0) {
-        const localParties = this.getItem<Party[]>(STORAGE_KEYS.PARTIES, []);
-        const partyMap = new Map<string, Party>();
-        localParties.forEach(p => partyMap.set(p.id, p));
-        parties.forEach(remote => {
-          if (deletedIds.has(remote.id)) return;
-          const local = partyMap.get(remote.id);
-          if (local) {
-            // Local party state takes precedence for user edits (bench, name, leader, etc.)
-            partyMap.set(remote.id, { ...remote, ...local });
-          } else {
-            partyMap.set(remote.id, remote as unknown as Party);
-          }
-        });
-        this.setItem(STORAGE_KEYS.PARTIES, Array.from(partyMap.values()));
+      } else if (parties !== null) {
+        if (parties.length === 0) {
+          this.setItem(STORAGE_KEYS.PARTIES, []);
+        } else {
+          const localParties = this.getItem<Party[]>(STORAGE_KEYS.PARTIES, []);
+          const localPartyMap = new Map<string, Party>();
+          localParties.forEach(p => localPartyMap.set(p.id, p));
+
+          const partyMap = new Map<string, Party>();
+          parties.forEach(remote => {
+            if (deletedIds.has(remote.id)) return;
+            const local = localPartyMap.get(remote.id);
+            partyMap.set(remote.id, local ? { ...remote, ...local } : (remote as unknown as Party));
+          });
+          this.setItem(STORAGE_KEYS.PARTIES, Array.from(partyMap.values()));
+        }
       }
 
       if (commErr) {
         console.error("Supabase Error [committees]:", commErr);
         hasQueryError = true;
-      } else if (committees !== null && committees.length > 0) {
-        const localComms = this.getItem<Committee[]>(STORAGE_KEYS.COMMITTEES, []);
-        const commMap = new Map<string, Committee>();
-        localComms.forEach(c => commMap.set(c.id, c));
-        committees.forEach(remote => {
-          if (deletedIds.has(remote.id)) return;
-          const local = commMap.get(remote.id);
-          if (local) {
-            commMap.set(remote.id, { ...remote, ...local });
-          } else {
-            commMap.set(remote.id, remote as unknown as Committee);
-          }
-        });
-        this.setItem(STORAGE_KEYS.COMMITTEES, Array.from(commMap.values()));
+      } else if (committees !== null) {
+        if (committees.length === 0) {
+          this.setItem(STORAGE_KEYS.COMMITTEES, []);
+        } else {
+          const localComms = this.getItem<Committee[]>(STORAGE_KEYS.COMMITTEES, []);
+          const localCommMap = new Map<string, Committee>();
+          localComms.forEach(c => localCommMap.set(c.id, c));
+
+          const commMap = new Map<string, Committee>();
+          committees.forEach(remote => {
+            if (deletedIds.has(remote.id)) return;
+            const local = localCommMap.get(remote.id);
+            commMap.set(remote.id, local ? { ...remote, ...local } : (remote as unknown as Committee));
+          });
+          this.setItem(STORAGE_KEYS.COMMITTEES, Array.from(commMap.values()));
+        }
       }
 
       if (agendaErr) {
@@ -710,40 +736,42 @@ class StorageService {
         console.error("Supabase Error [jury_members]:", juryErr);
         hasQueryError = true;
       } else if (juryMembers !== null) {
-        const localJury = this.getItem<JuryMember[]>(STORAGE_KEYS.JURY, []);
-        const juryMap = new Map<string, JuryMember>();
-        localJury.forEach(j => juryMap.set(j.id, j));
-        juryMembers.forEach(r => {
-          const local = juryMap.get(r.id);
-          juryMap.set(r.id, {
-            ...local,
-            ...r,
-            access_code: r.access_code || local?.access_code || `JURY${String(r.id).slice(-2)}`
+        if (juryMembers.length === 0) {
+          this.setItem(STORAGE_KEYS.JURY, []);
+        } else {
+          const localJury = this.getItem<JuryMember[]>(STORAGE_KEYS.JURY, []);
+          const localJuryMap = new Map<string, JuryMember>();
+          localJury.forEach(j => localJuryMap.set(j.id, j));
+
+          const juryMap = new Map<string, JuryMember>();
+          juryMembers.forEach(r => {
+            if (deletedIds.has(r.id)) return;
+            const local = localJuryMap.get(r.id);
+            juryMap.set(r.id, local ? { ...local, ...r } : (r as unknown as JuryMember));
           });
-        });
-        this.setItem(STORAGE_KEYS.JURY, Array.from(juryMap.values()));
+          this.setItem(STORAGE_KEYS.JURY, Array.from(juryMap.values()));
+        }
       }
 
       if (volErr) {
         console.error("Supabase Error [volunteers]:", volErr);
         hasQueryError = true;
       } else if (volunteers !== null) {
-        const localVolunteers = this.getItem<Volunteer[]>(STORAGE_KEYS.VOLUNTEERS, []);
-        const volMap = new Map<string, Volunteer>();
-        localVolunteers.forEach(v => volMap.set(v.id, v));
-        volunteers.forEach(r => {
-          const local = volMap.get(r.id);
-          if (!local) {
-            volMap.set(r.id, r as Volunteer);
-          } else {
-            const localTime = new Date(local.created_at || 0).getTime();
-            const remoteTime = new Date((r as any).created_at || 0).getTime();
-            if (remoteTime >= localTime) {
-              volMap.set(r.id, { ...local, ...(r as Volunteer) });
-            }
-          }
-        });
-        this.setItem(STORAGE_KEYS.VOLUNTEERS, Array.from(volMap.values()));
+        if (volunteers.length === 0) {
+          this.setItem(STORAGE_KEYS.VOLUNTEERS, []);
+        } else {
+          const localVolunteers = this.getItem<Volunteer[]>(STORAGE_KEYS.VOLUNTEERS, []);
+          const localVolMap = new Map<string, Volunteer>();
+          localVolunteers.forEach(v => localVolMap.set(v.id, v));
+
+          const volMap = new Map<string, Volunteer>();
+          volunteers.forEach(r => {
+            if (deletedIds.has(r.id)) return;
+            const local = localVolMap.get(r.id);
+            volMap.set(r.id, local ? { ...local, ...(r as Volunteer) } : (r as unknown as Volunteer));
+          });
+          this.setItem(STORAGE_KEYS.VOLUNTEERS, Array.from(volMap.values()));
+        }
       }
 
       this.isSyncing = false;
@@ -989,19 +1017,85 @@ class StorageService {
       console.warn(`[Supabase Write Skipped] Table: "${table}" — Supabase is not configured (running in localStorage-only mode).`);
       return { success: false, error: new Error('Supabase not configured') };
     }
+    const sanitized = this.sanitizeRecordForTable(table, record);
+    const writeKey = `${table}:::${sanitized.id || JSON.stringify(sanitized)}`;
+
+    // Prevent duplicate in-flight requests for the exact same entity
+    if (this.inFlightWrites.has(writeKey)) {
+      console.log(`[Supabase Write Throttled] Table: "${table}" Key: "${writeKey}" — already in flight.`);
+      return { success: true, error: null };
+    }
+
+    // Check if identical request failed very recently (within 4s) to prevent infinite error spamming
+    const lastFail = this.failedWriteSignatures.get(writeKey);
+    if (lastFail && Date.now() - lastFail < 4000) {
+      console.warn(`[Supabase Write Skipped] Table: "${table}" Key: "${writeKey}" — recent write failed. Throttling re-trigger.`);
+      return { success: false, error: new Error('Throttled duplicate failed write') };
+    }
+
+    this.inFlightWrites.add(writeKey);
     try {
-      const sanitized = this.sanitizeRecordForTable(table, record);
       console.log(`[Supabase Write Attempt] Table: "${table}" Payload:`, sanitized);
       const { data, error, status } = await supabase.from(table).upsert(sanitized, { onConflict: 'id' }).select();
       if (error) {
+        this.failedWriteSignatures.set(writeKey, Date.now());
         console.error(`❌ [Supabase Write Error] Table: "${table}" (HTTP ${status}) Code: ${error.code} — ${error.message}. Details:`, error.details || error.hint);
+        this.notifyWriteError(table, 'save', error);
         return { success: false, error };
       }
+      this.failedWriteSignatures.delete(writeKey);
       console.log(`✅ [Supabase Write Success] Table: "${table}" (HTTP ${status}) Data:`, data);
       return { success: true, error: null, data };
     } catch (e: any) {
+      this.failedWriteSignatures.set(writeKey, Date.now());
       console.error(`❌ [Supabase Write Exception] Table: "${table}":`, e);
+      this.notifyWriteError(table, 'save', e);
       return { success: false, error: e };
+    } finally {
+      this.inFlightWrites.delete(writeKey);
+    }
+  }
+
+  public async sbUpsertBatch(table: string, records: Record<string, unknown>[]): Promise<{ success: boolean; error: any; data?: any }> {
+    if (!supabase) {
+      return { success: false, error: new Error('Supabase not configured') };
+    }
+    if (records.length === 0) return { success: true, error: null };
+
+    const sanitizedBatch = records.map(r => this.sanitizeRecordForTable(table, r));
+    const batchKey = `${table}:::batch:::${sanitizedBatch.map(r => r.id).sort().join(',')}`;
+
+    if (this.inFlightWrites.has(batchKey)) {
+      console.log(`[Supabase Batch Throttled] Table: "${table}" — batch write already in flight.`);
+      return { success: true, error: null };
+    }
+
+    const lastFail = this.failedWriteSignatures.get(batchKey);
+    if (lastFail && Date.now() - lastFail < 4000) {
+      console.warn(`[Supabase Batch Skipped] Table: "${table}" — recent batch write failed. Throttling re-trigger.`);
+      return { success: false, error: new Error('Throttled duplicate failed batch write') };
+    }
+
+    this.inFlightWrites.add(batchKey);
+    try {
+      console.log(`[Supabase Write Batch Attempt] Table: "${table}" Count: ${sanitizedBatch.length}`);
+      const { data, error, status } = await supabase.from(table).upsert(sanitizedBatch, { onConflict: 'id' }).select();
+      if (error) {
+        this.failedWriteSignatures.set(batchKey, Date.now());
+        console.error(`❌ [Supabase Write Batch Error] Table: "${table}" (HTTP ${status}) Code: ${error.code} — ${error.message}. Details:`, error.details || error.hint);
+        this.notifyWriteError(table, 'save batch', error);
+        return { success: false, error };
+      }
+      this.failedWriteSignatures.delete(batchKey);
+      console.log(`✅ [Supabase Write Batch Success] Table: "${table}" (HTTP ${status}) Count: ${data?.length || sanitizedBatch.length}`);
+      return { success: true, error: null, data };
+    } catch (e: any) {
+      this.failedWriteSignatures.set(batchKey, Date.now());
+      console.error(`❌ [Supabase Write Batch Exception] Table: "${table}":`, e);
+      this.notifyWriteError(table, 'save batch', e);
+      return { success: false, error: e };
+    } finally {
+      this.inFlightWrites.delete(batchKey);
     }
   }
 
@@ -1012,12 +1106,14 @@ class StorageService {
       const { error, status } = await supabase.from(table).delete().eq('id', id);
       if (error) {
         console.error(`❌ [Supabase Delete Error] Table: "${table}" (HTTP ${status}) Code: ${error.code} — ${error.message}`);
+        this.notifyWriteError(table, 'delete', error);
         return { success: false, error };
       }
       console.log(`✅ [Supabase Delete Success] Table: "${table}" ID: "${id}"`);
       return { success: true, error: null };
     } catch (e: any) {
       console.error(`❌ [Supabase Delete Exception] Table: "${table}":`, e);
+      this.notifyWriteError(table, 'delete', e);
       return { success: false, error: e };
     }
   }
@@ -1709,6 +1805,7 @@ class StorageService {
     const updatedEventParties: Party[] = [];
     const colors = ['#059669', '#dc2626', '#2563eb', '#d97706', '#7c3aed', '#0891b2', '#ea580c', '#4f46e5'];
 
+    const newPartiesToInsert: Party[] = [];
     for (let i = 0; i < validCount; i++) {
       if (i < eventParties.length) {
         const existing = eventParties[i];
@@ -1734,8 +1831,12 @@ class StorageService {
           manifesto: ''
         };
         updatedEventParties.push(newParty);
-        this.sbUpsert('political_parties', newParty as unknown as Record<string, unknown>);
+        newPartiesToInsert.push(newParty);
       }
+    }
+
+    if (newPartiesToInsert.length > 0) {
+      this.sbUpsertBatch('political_parties', newPartiesToInsert as unknown as Record<string, unknown>[]);
     }
 
     if (validCount < eventParties.length) {
@@ -1821,6 +1922,7 @@ class StorageService {
     ];
 
     const updatedEventComms: Committee[] = [];
+    const newCommsToInsert: Committee[] = [];
     for (let i = 0; i < validCount; i++) {
       if (i < eventComms.length) {
         updatedEventComms.push({
@@ -1839,8 +1941,12 @@ class StorageService {
         };
         updatedEventComms.push(newComm);
         this.removeDeletedId(newComm.id);
-        this.sbUpsert('committees', newComm as unknown as Record<string, unknown>);
+        newCommsToInsert.push(newComm);
       }
+    }
+
+    if (newCommsToInsert.length > 0) {
+      this.sbUpsertBatch('committees', newCommsToInsert as unknown as Record<string, unknown>[]);
     }
 
     if (validCount < eventComms.length) {
@@ -3967,6 +4073,11 @@ class StorageService {
 }
 
 export const storageService = new StorageService();
+
+if (typeof window !== 'undefined') {
+  (window as any).storageService = storageService;
+  (window as any).wipeTNAssemblyCache = () => storageService.wipeAllLocalCache();
+}
 
 /**
  * Dynamically resolves a learner's active party name using the active parties list.

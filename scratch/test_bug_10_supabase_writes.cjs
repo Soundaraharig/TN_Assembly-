@@ -56,8 +56,12 @@ for (const pol of requiredWritePolicies) {
 }
 console.log('✅ All 8 operational tables have universal FOR ALL RLS policies for anon, authenticated');
 
+assert(schemaContent.includes('PRIMARY KEY & UNIQUE CONSTRAINTS ENFORCEMENT (BUG 10 ROOT CAUSE FIX)'), 'Missing PRIMARY KEY enforcement block');
+assert(schemaContent.includes('ADD PRIMARY KEY (id)'), 'Missing ADD PRIMARY KEY (id) statement');
+console.log('✅ Primary Key & Unique constraints enforcement migration present in supabase_schema.sql');
+
 // 2. Check storageService.ts sanitization and logging
-console.log('\n[2/4] Checking storageService.ts for sanitization, UUID safety, and verbose logging...');
+console.log('\n[2/4] Checking storageService.ts for sanitization, UUID safety, batching, and error handling...');
 const storagePath = path.resolve(__dirname, '../src/services/storageService.ts');
 const storageContent = fs.readFileSync(storagePath, 'utf8');
 
@@ -67,8 +71,11 @@ assert(storageContent.includes('✅ [Supabase Write Success]'), 'Missing [Supaba
 assert(storageContent.includes('❌ [Supabase Write Error]'), 'Missing [Supabase Write Error] log');
 assert(storageContent.includes('[Supabase Delete Attempt]'), 'Missing [Supabase Delete Attempt] log');
 assert(storageContent.includes('checkSupabaseHealth()'), 'Missing checkSupabaseHealth()');
+assert(storageContent.includes('sbUpsertBatch'), 'Missing sbUpsertBatch method');
+assert(storageContent.includes('setWriteErrorHandler'), 'Missing setWriteErrorHandler method');
+assert(storageContent.includes('inFlightWrites'), 'Missing inFlightWrites deduplication');
 
-console.log('✅ storageService.ts has full UUID validation, verbose logging, and health check');
+console.log('✅ storageService.ts has full UUID validation, batching, deduplication, error handler, and health check');
 
 // Simulate isValidUuid logic
 function isValidUuid(val) {
@@ -189,7 +196,8 @@ const appContent = fs.readFileSync(appPath, 'utf8');
 
 assert(appContent.includes('handleUpdateCoordinator = async'), 'handleUpdateCoordinator should be async');
 assert(appContent.includes('Saved Locally (Cloud Warning)'), 'App.tsx missing warning toast when cloud sync fails');
+assert(appContent.includes('storageService.setWriteErrorHandler'), 'App.tsx should register setWriteErrorHandler');
 
-console.log('✅ App.tsx warns users if Supabase write fails during coordinator updates');
+console.log('✅ App.tsx registers write error handler and warns users if Supabase write fails');
 
 console.log('\n🎉 ALL BUG 10 VERIFICATION CHECKS PASSED SUCCESSFULLY!');

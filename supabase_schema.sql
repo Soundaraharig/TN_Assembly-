@@ -300,5 +300,198 @@ CREATE POLICY "Allow write access proceedings_motions" ON public.proceedings_mot
 GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, postgres, service_role;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, postgres, service_role;
 
+-- ====================================================================
+-- PRIMARY KEY & UNIQUE CONSTRAINTS ENFORCEMENT (BUG 10 ROOT CAUSE FIX)
+-- Fixes PostgreSQL Error 42P10 on upsert:
+-- "there is no unique or exclusion constraint matching the ON CONFLICT specification"
+-- ====================================================================
+
+DO $$
+DECLARE
+    tbl text;
+    tables_list text[] := ARRAY[
+        'college_events',
+        'coordinators',
+        'political_parties',
+        'committees',
+        'learners',
+        'session_agenda',
+        'jury_members',
+        'volunteers',
+        'event_deadlines',
+        'proceedings_questions',
+        'proceedings_motions',
+        'event_participants'
+    ];
+BEGIN
+    FOREACH tbl IN ARRAY tables_list
+    LOOP
+        -- Check if table exists in public schema
+        IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = tbl) THEN
+            -- 1. Deduplicate rows by id if duplicates exist before enforcing primary key
+            EXECUTE format('
+                DELETE FROM public.%I a USING public.%I b 
+                WHERE a.ctid < b.ctid AND a.id = b.id;
+            ', tbl, tbl);
+
+            -- 2. Ensure id column is NOT NULL
+            EXECUTE format('ALTER TABLE public.%I ALTER COLUMN id SET NOT NULL;', tbl);
+
+            -- 3. Check if a PRIMARY KEY or UNIQUE constraint on id already exists
+            IF NOT EXISTS (
+                SELECT 1 
+                FROM pg_constraint c
+                JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+                WHERE c.conrelid = format('public.%I', tbl)::regclass
+                  AND (c.contype = 'p' OR c.contype = 'u')
+                  AND a.attname = 'id'
+            ) THEN
+                -- If table already has another column as primary key, add UNIQUE constraint, otherwise ADD PRIMARY KEY
+                IF EXISTS (
+                    SELECT 1 FROM pg_constraint 
+                    WHERE conrelid = format('public.%I', tbl)::regclass AND contype = 'p'
+                ) THEN
+                    EXECUTE format('ALTER TABLE public.%I ADD CONSTRAINT %I UNIQUE (id);', tbl, tbl || '_id_unique');
+                ELSE
+                    EXECUTE format('ALTER TABLE public.%I ADD PRIMARY KEY (id);', tbl);
+                END IF;
+            END IF;
+        END IF;
+    END LOOP;
+END $$;
+
+-- ====================================================================
+-- STEP 2 VERIFICATION: INSPECT TABLE CONSTRAINTS (\d equivalent)
+-- Run this query to confirm EVERY table has PRIMARY KEY or UNIQUE on 'id'
+-- ====================================================================
+/*
+SELECT 
+    c.table_name,
+    c.column_name,
+    tc.constraint_type,
+    tc.constraint_name
+FROM information_schema.table_constraints tc
+JOIN information_schema.constraint_column_usage AS ccu USING (constraint_schema, constraint_name)
+JOIN information_schema.columns AS c ON c.table_schema = tc.constraint_schema
+  AND tc.table_name = c.table_name AND ccu.column_name = c.column_name
+WHERE tc.constraint_schema = 'public'
+  AND c.column_name = 'id'
+  AND tc.constraint_type IN ('PRIMARY KEY', 'UNIQUE')
+ORDER BY c.table_name;
+*/
+
+-- ====================================================================
+-- STEP 3: PRE-LIVE DATABASE WIPE (CHOOSE OPTION A OR OPTION B)
+-- Fully guarded with table existence checks so missing optional tables
+-- will never trigger ERROR 42P01 (relation does not exist)
+-- ====================================================================
+
+-- --------------------------------------------------------------------
+-- OPTION A: WIPE EVERYTHING TO 0 EVENTS (Super Admin creates fresh event)
+-- --------------------------------------------------------------------
+/*
+DO $$
+DECLARE
+    tbl text;
+    tables_to_wipe text[] := ARRAY[
+        'event_deadlines',
+        'proceedings_questions',
+        'proceedings_motions',
+        'session_agenda',
+        'jury_members',
+        'volunteers',
+        'learners',
+        'political_parties',
+        'committees',
+        'event_participants'
+    ];
+    seq RECORD;
+BEGIN
+    -- 1. Wipe all existing child tables dynamically (safe if table doesn't exist)
+    FOREACH tbl IN ARRAY tables_to_wipe
+    LOOP
+        IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = tbl) THEN
+            EXECUTE format('DELETE FROM public.%I;', tbl);
+        END IF;
+    END LOOP;
+
+    -- 2. Remove all coordinator accounts except the Super Admin
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'coordinators') THEN
+        DELETE FROM public.coordinators
+        WHERE LOWER(email) NOT IN ('admin@tnassembly.gov.in');
+    END IF;
+
+    -- 3. Delete all event records (Clean 0 Events slate)
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'college_events') THEN
+        DELETE FROM public.college_events;
+    END IF;
+
+    -- 4. Reset all sequence counters to 1
+    FOR seq IN (SELECT sequence_name FROM information_schema.sequences WHERE sequence_schema = 'public') LOOP
+        EXECUTE format('ALTER SEQUENCE public.%I RESTART WITH 1;', seq.sequence_name);
+    END LOOP;
+END $$;
+*/
+
+-- --------------------------------------------------------------------
+-- OPTION B: KEEP 1 EVENT RECORD (Reset to 0 Delegates / 0 Parties / 0 Committees)
+-- --------------------------------------------------------------------
+/*
+DO $$
+DECLARE
+    tbl text;
+    tables_to_wipe text[] := ARRAY[
+        'event_deadlines',
+        'proceedings_questions',
+        'proceedings_motions',
+        'session_agenda',
+        'jury_members',
+        'volunteers',
+        'learners',
+        'political_parties',
+        'committees',
+        'event_participants'
+    ];
+    seq RECORD;
+BEGIN
+    -- 1. Wipe all existing child tables dynamically (safe if table doesn't exist)
+    FOREACH tbl IN ARRAY tables_to_wipe
+    LOOP
+        IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = tbl) THEN
+            EXECUTE format('DELETE FROM public.%I;', tbl);
+        END IF;
+    END LOOP;
+
+    -- 2. Remove all coordinator accounts except the Super Admin
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'coordinators') THEN
+        DELETE FROM public.coordinators
+        WHERE LOWER(email) NOT IN ('admin@tnassembly.gov.in');
+    END IF;
+
+    -- 3. Keep exactly 1 primary event record and reset its counters to 0
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'college_events') THEN
+        DELETE FROM public.college_events
+        WHERE id NOT IN (
+            SELECT id FROM public.college_events ORDER BY created_at ASC LIMIT 1
+        );
+
+        UPDATE public.college_events
+        SET 
+          registered_learners = 0,
+          parties_count = 0,
+          committees_count = 0,
+          status = 'Upcoming',
+          event_stage = 'Pre-Event Preparation';
+    END IF;
+
+    -- 4. Reset all sequence counters to 1
+    FOR seq IN (SELECT sequence_name FROM information_schema.sequences WHERE sequence_schema = 'public') LOOP
+        EXECUTE format('ALTER SEQUENCE public.%I RESTART WITH 1;', seq.sequence_name);
+    END LOOP;
+END $$;
+*/
+
+
+
 
 
