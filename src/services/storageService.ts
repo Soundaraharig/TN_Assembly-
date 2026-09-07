@@ -1034,7 +1034,7 @@ class StorageService {
 
   public getParties(eventId?: string): Party[] {
     const all = this.getItem<Party[]>(STORAGE_KEYS.PARTIES, INITIAL_PARTIES);
-    if (eventId) return all.filter(p => p.event_id === eventId);
+    if (eventId) return all.filter(p => p.event_id === eventId || !p.event_id);
     return all;
   }
 
@@ -1171,21 +1171,32 @@ class StorageService {
   public setPartyCount(eventId: string, targetCount: number): Party[] {
     const validCount = Math.max(1, Math.min(20, targetCount));
     const all = this.getParties();
-    const eventParties = all.filter(p => p.event_id === eventId);
-    const otherParties = all.filter(p => p.event_id !== eventId);
+    const eventParties = all.filter(p => p.event_id === eventId || (!p.event_id && !!eventId));
+    const otherParties = all.filter(p => p.event_id !== eventId && !!p.event_id);
 
     const updatedEventParties: Party[] = [];
-    const colors = ['#059669', '#2563eb', '#dc2626', '#d97706', '#7c3aed', '#0891b2', '#ea580c', '#4f46e5'];
+    const colors = ['#059669', '#dc2626', '#2563eb', '#d97706', '#7c3aed', '#0891b2', '#ea580c', '#4f46e5'];
 
     for (let i = 0; i < validCount; i++) {
       if (i < eventParties.length) {
-        updatedEventParties.push(eventParties[i]);
+        const existing = eventParties[i];
+        let bench = existing.bench;
+        if (i === 0 && bench === 'Independent') bench = 'Ruling';
+        else if (i === 1 && bench === 'Independent') bench = 'Opposition';
+        updatedEventParties.push({
+          ...existing,
+          event_id: eventId,
+          bench
+        });
       } else {
+        let bench: BenchType = 'Independent';
+        if (i === 0) bench = 'Ruling';
+        else if (i === 1) bench = 'Opposition';
         const newParty: Party = {
           id: uid('pty'),
           event_id: eventId,
           name: `Party ${i + 1}`,
-          bench: 'Independent',
+          bench,
           color: colors[i % colors.length],
           leader: '',
           manifesto: ''
@@ -1197,12 +1208,31 @@ class StorageService {
 
     if (validCount < eventParties.length) {
       const removed = eventParties.slice(validCount);
+      const removedIds = new Set(removed.map(r => r.id));
+      const removedNames = new Set(removed.map(r => r.name));
       removed.forEach(r => this.sbDelete('political_parties', r.id));
+
+      const allLearners = this.getLearners();
+      let learnersChanged = false;
+      const updatedLearners = allLearners.map(l => {
+        if ((l.party_id && removedIds.has(l.party_id)) || (l.party_name && removedNames.has(l.party_name))) {
+          learnersChanged = true;
+          return {
+            ...l,
+            party_id: undefined,
+            party_name: undefined,
+            bench: 'Independent' as const
+          };
+        }
+        return l;
+      });
+      if (learnersChanged) {
+        this.setItem(STORAGE_KEYS.LEARNERS, updatedLearners);
+      }
     }
 
     const merged = [...otherParties, ...updatedEventParties];
     this.setItem(STORAGE_KEYS.PARTIES, merged);
-    this.notify();
     return updatedEventParties;
   }
 
@@ -1232,15 +1262,15 @@ class StorageService {
 
   public getCommittees(eventId?: string): Committee[] {
     const all = this.getItem<Committee[]>(STORAGE_KEYS.COMMITTEES, INITIAL_COMMITTEES);
-    if (eventId) return all.filter(c => c.event_id === eventId);
+    if (eventId) return all.filter(c => c.event_id === eventId || !c.event_id);
     return all;
   }
 
   public setCommitteeCount(eventId: string, targetCount: number): Committee[] {
     const validCount = Math.max(1, Math.min(20, targetCount));
     const all = this.getCommittees();
-    const eventComms = all.filter(c => c.event_id === eventId);
-    const otherComms = all.filter(c => c.event_id !== eventId);
+    const eventComms = all.filter(c => c.event_id === eventId || (!c.event_id && !!eventId));
+    const otherComms = all.filter(c => c.event_id !== eventId && !!c.event_id);
 
     const defaultTopics = [
       "Public Accounts & Financial Estimates",
@@ -1256,7 +1286,10 @@ class StorageService {
     const updatedEventComms: Committee[] = [];
     for (let i = 0; i < validCount; i++) {
       if (i < eventComms.length) {
-        updatedEventComms.push(eventComms[i]);
+        updatedEventComms.push({
+          ...eventComms[i],
+          event_id: eventId
+        });
       } else {
         const topicName = defaultTopics[i % defaultTopics.length];
         const newComm: Committee = {
@@ -1274,12 +1307,30 @@ class StorageService {
 
     if (validCount < eventComms.length) {
       const removed = eventComms.slice(validCount);
+      const removedIds = new Set(removed.map(r => r.id));
+      const removedNames = new Set(removed.map(r => r.name));
       removed.forEach(r => this.sbDelete('committees', r.id));
+
+      const allLearners = this.getLearners();
+      let learnersChanged = false;
+      const updatedLearners = allLearners.map(l => {
+        if ((l.committee_id && removedIds.has(l.committee_id)) || (l.committee_name && removedNames.has(l.committee_name))) {
+          learnersChanged = true;
+          return {
+            ...l,
+            committee_id: undefined,
+            committee_name: undefined
+          };
+        }
+        return l;
+      });
+      if (learnersChanged) {
+        this.setItem(STORAGE_KEYS.LEARNERS, updatedLearners);
+      }
     }
 
     const merged = [...otherComms, ...updatedEventComms];
     this.setItem(STORAGE_KEYS.COMMITTEES, merged);
-    this.notify();
     return updatedEventComms;
   }
 
@@ -2788,19 +2839,19 @@ class StorageService {
     const nextLearners = allLearners.map(l => updatedMap.get(l.id) || l);
     this.setItem(STORAGE_KEYS.LEARNERS, nextLearners);
 
-    // Sync updated learners to Supabase
+    // Sync updated learners to Supabase (sanitized to prevent rejection on schema mismatches)
     if (supabase && result.updatedLearners.length > 0) {
+      const sanitized = result.updatedLearners.map(l =>
+        this.sanitizeRecordForTable('learners', l as unknown as Record<string, unknown>)
+      );
       supabase
         .from('learners')
-        .upsert(result.updatedLearners as unknown as Record<string, unknown>[], {
-          onConflict: 'id'
-        })
+        .upsert(sanitized, { onConflict: 'id' })
         .then(({ error }) => {
           if (error) console.warn('[Supabase] allocation sync:', error.message);
         });
     }
 
-    this.notify();
     return result;
   }
 
@@ -2810,7 +2861,7 @@ class StorageService {
     }
 
     const all = this.getLearners().map(l => {
-      if (l.event_id === eventId) {
+      if (l.event_id === eventId || !l.event_id) {
         return {
           ...l,
           bench: undefined,
@@ -2818,6 +2869,7 @@ class StorageService {
           party_name: undefined,
           constituency_number: undefined,
           constituency_name: undefined,
+          district: undefined,
           role: 'Member of Legislative Assembly (MLA)',
           committee_id: undefined,
           committee_name: undefined
@@ -2826,7 +2878,6 @@ class StorageService {
       return l;
     });
     this.setItem(STORAGE_KEYS.LEARNERS, all);
-    this.notify();
   }
 
   public rebalanceCommittees(eventId: string) {

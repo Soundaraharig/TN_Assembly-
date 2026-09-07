@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { Committee, Learner, UserRole } from '../../types';
 import { canDelete } from '../../utils/permissions';
 import { Plus, BookOpen, Users, Edit, Trash2, X, Eye, Layers, UserCheck } from 'lucide-react';
@@ -32,6 +32,13 @@ export const CommitteesTab: React.FC<CommitteesTabProps> = ({
 
   const [committeeCountInput, setCommitteeCountInput] = useState<number>(committees.length || 4);
 
+  // Keep input in sync with actual committees length
+  useEffect(() => {
+    if (committees.length > 0) {
+      setCommitteeCountInput(committees.length);
+    }
+  }, [committees.length]);
+
   const [name, setName] = useState('');
   const [topic, setTopic] = useState('');
   const [chairperson, setChairperson] = useState('');
@@ -57,11 +64,8 @@ export const CommitteesTab: React.FC<CommitteesTabProps> = ({
 
   const handleApplyCommitteeCount = (e: React.FormEvent) => {
     e.preventDefault();
-    const count = Number(committeeCountInput);
-    if (isNaN(count) || count < 1) {
-      onShowToast('Invalid Count', 'Please enter a valid number of committees (minimum 1)', 'error');
-      return;
-    }
+    const count = Math.max(1, Math.min(20, Number(committeeCountInput) || 1));
+    setCommitteeCountInput(count);
     if (onSetCommitteeCount) {
       onSetCommitteeCount(count);
       onShowToast('Committees Configured', `Configured ${count} committees (Committee 1 to Committee ${count})`, 'success');
@@ -130,8 +134,11 @@ export const CommitteesTab: React.FC<CommitteesTabProps> = ({
                 type="number"
                 min={1}
                 max={20}
-                value={committeeCountInput}
-                onChange={(e) => setCommitteeCountInput(Number(e.target.value))}
+                value={committeeCountInput === 0 ? '' : committeeCountInput}
+                onChange={(e) => {
+                  const val = e.target.value === '' ? ('' as any) : Number(e.target.value);
+                  setCommitteeCountInput(val);
+                }}
                 className="w-12 text-center font-bold text-xs bg-transparent focus:outline-none"
                 style={{ color: 'var(--text-primary)' }}
                 title="Number of committees"
@@ -142,7 +149,7 @@ export const CommitteesTab: React.FC<CommitteesTabProps> = ({
               className="px-3 py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer"
               style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
             >
-              Set Count (1 to {committeeCountInput})
+              Set Count (1 to {committeeCountInput || 1})
             </button>
           </form>
 

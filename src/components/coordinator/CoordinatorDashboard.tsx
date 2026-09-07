@@ -25,9 +25,11 @@ interface CoordinatorDashboardProps {
   onAddParty: (party: Partial<Party>) => void;
   onUpdateParty: (party: Party) => void;
   onDeleteParty: (partyId: string) => void;
+  onSetPartyCount?: (count: number) => void;
   onAddCommittee: (committee: Partial<Committee>) => void;
   onUpdateCommittee: (committee: Committee) => void;
   onDeleteCommittee: (committeeId: string) => void;
+  onSetCommitteeCount?: (count: number) => void;
   onAddAgendaItem: (item: Partial<AgendaItem>) => void;
   onUpdateAgendaItem?: (item: AgendaItem) => void;
   onDeleteAgendaItem?: (itemId: string) => void;
@@ -55,9 +57,11 @@ export const CoordinatorDashboard: React.FC<CoordinatorDashboardProps> = ({
   onAddParty,
   onUpdateParty,
   onDeleteParty,
+  onSetPartyCount,
   onAddCommittee,
   onUpdateCommittee,
   onDeleteCommittee,
+  onSetCommitteeCount,
   onAddAgendaItem,
   onUpdateAgendaItem,
   onDeleteAgendaItem,
@@ -202,6 +206,7 @@ export const CoordinatorDashboard: React.FC<CoordinatorDashboardProps> = ({
           onAddParty={onAddParty}
           onUpdateParty={onUpdateParty}
           onDeleteParty={onDeleteParty}
+          onSetPartyCount={onSetPartyCount}
           onShowToast={onShowToast}
         />
       )}
@@ -214,6 +219,7 @@ export const CoordinatorDashboard: React.FC<CoordinatorDashboardProps> = ({
           onAddCommittee={onAddCommittee}
           onUpdateCommittee={onUpdateCommittee}
           onDeleteCommittee={onDeleteCommittee}
+          onSetCommitteeCount={onSetCommitteeCount}
           onShowToast={onShowToast}
         />
       )}

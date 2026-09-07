@@ -191,8 +191,8 @@ interface EventTabRouteHandlerProps {
   handleUpdateParty: (party: Party) => void;
   handleDeleteParty: (id: string) => void;
   setParties: (parties: Party[]) => void;
-  handleExecuteAllocation: (ratio: any) => void;
-  handleResetAllocation: () => void;
+  handleExecuteAllocation: (ratio: any, targetEventId?: string) => void;
+  handleResetAllocation: (targetEventId?: string) => void;
   setCurrentEvent: React.Dispatch<React.SetStateAction<CollegeEvent | null>>;
   setEvents?: React.Dispatch<React.SetStateAction<CollegeEvent[]>>;
   handleAssignCabinetRole: (learnerId: string, role: string) => void;
@@ -459,8 +459,12 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           parties={props.parties}
           committees={props.committees}
           eventId={activeEvent.id}
-          onExecuteAllocation={props.handleExecuteAllocation}
-          onResetAllocation={props.handleResetAllocation}
+          onExecuteAllocation={(rulingRatio) => {
+            props.handleExecuteAllocation(rulingRatio, activeEvent.id);
+          }}
+          onResetAllocation={() => {
+            props.handleResetAllocation(activeEvent.id);
+          }}
           onUpdateLearner={props.handleUpdateLearner}
           onOpenImportCsv={() => props.setIsImportCsvOpen(true)}
           onShowToast={props.addToast}
@@ -837,12 +841,14 @@ export function App() {
       }
     } catch {}
 
-    const activeId = targetEventId || currentEventRef.current?.id || savedEventId;
-    let activeEv = evs.find(e => e.id === activeId) || evs[0];
+    const urlEvent = extractEventFromUrl(evs);
+    const activeId = targetEventId || urlEvent?.id || currentEventRef.current?.id || savedEventId;
+    let activeEv = evs.find(e => e.id === activeId) || urlEvent || evs[0];
 
     if (activeEv) {
       setCurrentEvent(activeEv);
       currentEventRef.current = activeEv;
+      saveSession({ currentEventId: activeEv.id });
 
       const eventLearners = storageService.getLearners(activeEv.id);
       setLearners(eventLearners);
@@ -1224,6 +1230,12 @@ export function App() {
 
   const handleUpdateLearner = (l: Learner) => {
     storageService.updateLearner(l);
+    const activeEv = extractEventFromUrl(events) || currentEvent;
+    if (activeEv) {
+      setLearners(storageService.getLearners(activeEv.id));
+    } else {
+      setLearners(storageService.getLearners());
+    }
   };
 
   const handleDeleteLearner = (id: string) => {
@@ -1344,31 +1356,40 @@ export function App() {
   };
 
   // Auto Allocation Execution
-  const handleExecuteAllocation = (rulingRatio: number) => {
-    if (currentEvent) {
-      if (storageService.getAllocationLock(currentEvent.id)) {
+  const handleExecuteAllocation = (rulingRatio: number, targetEventId?: string) => {
+    const activeEv = targetEventId
+      ? events.find(e => e.id === targetEventId) || currentEvent
+      : extractEventFromUrl(events) || currentEvent;
+
+    if (activeEv) {
+      if (storageService.getAllocationLock(activeEv.id)) {
         addToast('Allocation Locked', 'Allocation lock is active. Unlock in Control Panel to run allocation.', 'error');
         return;
       }
       try {
-        storageService.executeAllocationForEvent(currentEvent.id, rulingRatio);
-        setLearners(storageService.getLearners(currentEvent.id));
-        setParties(storageService.getParties(currentEvent.id));
+        storageService.executeAllocationForEvent(activeEv.id, rulingRatio);
+        setLearners(storageService.getLearners(activeEv.id));
+        setParties(storageService.getParties(activeEv.id));
+        setCommittees(storageService.getCommittees(activeEv.id));
       } catch (err: any) {
         addToast('Allocation Locked', err?.message || 'Cannot execute allocation while lock is enabled.', 'error');
       }
     }
   };
 
-  const handleResetAllocation = () => {
-    if (currentEvent) {
-      if (storageService.getAllocationLock(currentEvent.id)) {
+  const handleResetAllocation = (targetEventId?: string) => {
+    const activeEv = targetEventId
+      ? events.find(e => e.id === targetEventId) || currentEvent
+      : extractEventFromUrl(events) || currentEvent;
+
+    if (activeEv) {
+      if (storageService.getAllocationLock(activeEv.id)) {
         addToast('Allocation Locked', 'Allocation lock is active. Unlock in Control Panel to reset allocation.', 'error');
         return;
       }
       try {
-        storageService.resetAllocationsForEvent(currentEvent.id);
-        setLearners(storageService.getLearners(currentEvent.id));
+        storageService.resetAllocationsForEvent(activeEv.id);
+        setLearners(storageService.getLearners(activeEv.id));
       } catch (err: any) {
         addToast('Allocation Locked', err?.message || 'Cannot reset allocation while lock is enabled.', 'error');
       }
@@ -2032,47 +2053,51 @@ export function App() {
       </div>
 
       {/* Shared Modals */}
-      {currentEvent && (
-        <>
-          <AddLearnerModal
-            isOpen={isAddWalkInOpen}
-            onClose={() => setIsAddWalkInOpen(false)}
-            eventId={currentEvent.id}
-            existingCodes={existingCodesSet}
-            onAddLearner={(l) => {
-              handleAddLearner(l);
-              addToast('Walk-in Added', `Registered ${l.full_name} with access code ${l.access_code}`, 'success');
-            }}
-          />
+      {(() => {
+        const activeEvModal = extractEventFromUrl(events) || currentEvent;
+        if (!activeEvModal) return null;
+        return (
+          <>
+            <AddLearnerModal
+              isOpen={isAddWalkInOpen}
+              onClose={() => setIsAddWalkInOpen(false)}
+              eventId={activeEvModal.id}
+              existingCodes={existingCodesSet}
+              onAddLearner={(l) => {
+                handleAddLearner(l);
+                addToast('Walk-in Added', `Registered ${l.full_name} with access code ${l.access_code}`, 'success');
+              }}
+            />
 
-          <CsvImportModal
-            isOpen={isImportCsvOpen}
-            onClose={() => setIsImportCsvOpen(false)}
-            eventId={currentEvent.id}
-            existingCodes={existingCodesSet}
-            onImportSuccess={(imported: Partial<Learner>[]) => {
-              storageService.importLearners(imported, currentEvent.id);
-              setLearners(storageService.getLearners(currentEvent.id));
-              setParties(storageService.getParties(currentEvent.id));
-              setCommittees(storageService.getCommittees(currentEvent.id));
-              addToast('Import Successful', `Processed ${imported.length} delegate participants`, 'success');
-            }}
-            onShowToast={addToast}
-          />
+            <CsvImportModal
+              isOpen={isImportCsvOpen}
+              onClose={() => setIsImportCsvOpen(false)}
+              eventId={activeEvModal.id}
+              existingCodes={existingCodesSet}
+              onImportSuccess={(imported: Partial<Learner>[]) => {
+                storageService.importLearners(imported, activeEvModal.id);
+                setLearners(storageService.getLearners(activeEvModal.id));
+                setParties(storageService.getParties(activeEvModal.id));
+                setCommittees(storageService.getCommittees(activeEvModal.id));
+                addToast('Import Successful', `Processed ${imported.length} delegate participants`, 'success');
+              }}
+              onShowToast={addToast}
+            />
 
-          <AllocationModal
-            isOpen={isAllocationModalOpen}
-            onClose={() => setIsAllocationModalOpen(false)}
-            learners={learners}
-            parties={parties}
-            committees={committees}
-            eventId={currentEvent.id}
-            onExecuteAllocation={(ratio) => {
-              handleExecuteAllocation(ratio);
-            }}
-          />
-        </>
-      )}
+            <AllocationModal
+              isOpen={isAllocationModalOpen}
+              onClose={() => setIsAllocationModalOpen(false)}
+              learners={learners}
+              parties={parties}
+              committees={committees}
+              eventId={activeEvModal.id}
+              onExecuteAllocation={(ratio) => {
+                handleExecuteAllocation(ratio, activeEvModal.id);
+              }}
+            />
+          </>
+        );
+      })()}
 
       {/* Toast Notification Container */}
       <ToastContainer toasts={toasts} onDismiss={removeToast} />

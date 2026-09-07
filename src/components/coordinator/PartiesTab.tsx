@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { Party, BenchType, Learner, UserRole } from '../../types';
 import { canDelete } from '../../utils/permissions';
 import {
@@ -46,6 +46,13 @@ export const PartiesTab: React.FC<PartiesTabProps> = ({
   // Dynamic Party Count Setup (Party 1 to Party N)
   const [partyCountInput, setPartyCountInput] = useState<number>(parties.length || 4);
 
+  // Keep input in sync with actual parties length
+  useEffect(() => {
+    if (parties.length > 0) {
+      setPartyCountInput(parties.length);
+    }
+  }, [parties.length]);
+
   const [name, setName] = useState('');
   const [bench, setBench] = useState<BenchType>('Independent');
   const [color, setColor] = useState('#059669');
@@ -74,11 +81,8 @@ export const PartiesTab: React.FC<PartiesTabProps> = ({
 
   const handleApplyPartyCount = (e: React.FormEvent) => {
     e.preventDefault();
-    const count = Number(partyCountInput);
-    if (isNaN(count) || count < 1) {
-      onShowToast('Invalid Count', 'Please enter a valid number of parties (minimum 1)', 'error');
-      return;
-    }
+    const count = Math.max(1, Math.min(20, Number(partyCountInput) || 1));
+    setPartyCountInput(count);
     if (onSetPartyCount) {
       onSetPartyCount(count);
       onShowToast('Parties Configured', `Configured ${count} parties (Party 1 to Party ${count})`, 'success');
@@ -158,8 +162,11 @@ export const PartiesTab: React.FC<PartiesTabProps> = ({
                 type="number"
                 min={1}
                 max={20}
-                value={partyCountInput}
-                onChange={(e) => setPartyCountInput(Number(e.target.value))}
+                value={partyCountInput === 0 ? '' : partyCountInput}
+                onChange={(e) => {
+                  const val = e.target.value === '' ? ('' as any) : Number(e.target.value);
+                  setPartyCountInput(val);
+                }}
                 className="w-12 text-center font-bold text-xs bg-transparent focus:outline-none"
                 style={{ color: 'var(--text-primary)' }}
                 title="Number of political parties"
@@ -170,7 +177,7 @@ export const PartiesTab: React.FC<PartiesTabProps> = ({
               className="px-3 py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer"
               style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
             >
-              Set Count (1 to {partyCountInput})
+              Set Count (1 to {partyCountInput || 1})
             </button>
           </form>
 
