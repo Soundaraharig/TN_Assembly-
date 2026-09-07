@@ -150,6 +150,7 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
               type="file"
               accept=".csv,.xlsx,.xls"
               id="csv-file-input"
+              onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
               onChange={handleFileChange}
               className="hidden"
             />

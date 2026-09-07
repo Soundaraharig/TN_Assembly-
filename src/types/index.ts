@@ -74,6 +74,7 @@ export interface Learner {
   day1_checked_in: boolean;
   day2_checked_in: boolean;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface Party {
