@@ -1618,6 +1618,78 @@ export function App() {
     ? committees.find(c => c.id === currentStudent.committee_id) || null
     : null;
 
+  // Handle successful access code authentication (volunteer, jury, student)
+  const handleAccessCodeLogin = (authResult: {
+    role: 'volunteer' | 'jury' | 'student';
+    user: Learner | Volunteer | JuryMember;
+    eventId: string;
+  }) => {
+    const targetEv = events.find(e => e.id === authResult.eventId) || currentEvent || events[0];
+    if (targetEv) {
+      setCurrentEvent(targetEv);
+      currentEventRef.current = targetEv;
+      setLearners(storageService.getLearners(targetEv.id));
+      setParties(storageService.getParties(targetEv.id));
+      setCommittees(storageService.getCommittees(targetEv.id));
+      setAgenda(storageService.getAgenda(targetEv.id));
+      setOpenNominationPositions(storageService.getOpenNominationPositions(targetEv.id));
+      setNominations(storageService.getNominations(targetEv.id));
+      setElections(storageService.getElections(targetEv.id));
+      setFlashVotes(storageService.getFlashVotes(targetEv.id));
+      setVolunteers(storageService.getVolunteers(targetEv.id));
+    }
+
+    setIsAuthenticated(true);
+
+    if (authResult.role === 'volunteer') {
+      const vol = authResult.user as Volunteer;
+      setRole('volunteer');
+      setCurrentVolunteer(vol);
+      setUserSession({ role: 'volunteer', name: vol.name });
+      saveSession({
+        role: 'volunteer',
+        volunteerCode: vol.access_code,
+        name: vol.name,
+        currentEventId: targetEv?.id || vol.event_id
+      });
+      if (typeof window !== 'undefined') navigate('/volunteer');
+      addToast('Volunteer Operations Access', `Authenticated Volunteer ${vol.name}`, 'success');
+      return { id: vol.id, name: vol.name, full_name: vol.name, role: 'volunteer', access_code: vol.access_code };
+    }
+
+    if (authResult.role === 'jury') {
+      const jury = authResult.user as JuryMember;
+      setRole('jury');
+      setCurrentJury(jury);
+      setUserSession({ role: 'jury', name: jury.name });
+      saveSession({
+        role: 'jury',
+        juryCode: jury.access_code,
+        name: jury.name,
+        currentEventId: targetEv?.id || jury.event_id
+      });
+      if (typeof window !== 'undefined') navigate('/jury');
+      addToast('Jury Portal Access', `Authenticated Jury Member ${jury.name}`, 'success');
+      return { id: jury.id, name: jury.name, full_name: jury.name, role: 'jury', access_code: jury.access_code };
+    }
+
+    // Role is student / delegate
+    const student = authResult.user as Learner;
+    setRole('student');
+    setCurrentStudent(student);
+    setUserSession({ role: 'student', name: student.full_name });
+    saveSession({
+      role: 'student',
+      studentCode: student.access_code,
+      student,
+      currentEventId: targetEv?.id || student.event_id
+    });
+    const slug = targetEv ? getEventSlug(targetEv) : 'jkkncet-tn-assembly-2026';
+    if (typeof window !== 'undefined') navigate(`/events/${slug}/dashboard`);
+    addToast('Delegate Access Verified', `Welcome, ${student.full_name}`, 'success');
+    return { ...student, role: 'student' };
+  };
+
   // Standalone Projector Screen render check (strictly for standalone display paths like /display or /events/*/display, NOT /events/*/projector)
   const isStandaloneProjectorView = (typeof window !== 'undefined') && (
     window.location.pathname.toLowerCase().endsWith('/display') ||
@@ -1760,121 +1832,12 @@ export function App() {
 
             return null;
           }}
-          onLoginAccessCode={(code: string): Learner | null => {
+          onLoginAccessCode={(code: string): any => {
             const cleanCode = code.trim().toUpperCase();
-            // 1. Check Learner / Student
-            const allLearners = storageService.getLearners();
-            let foundLearner = allLearners.find(l => (l.access_code || '').toUpperCase() === cleanCode);
-            if (!foundLearner && allLearners.length > 0) {
-              foundLearner = { ...allLearners[0], access_code: cleanCode };
-            }
-            if (foundLearner) {
-              setCurrentStudent(foundLearner);
-              setIsAuthenticated(true);
-              setRole('student');
-              const targetEv = events.find(e => e.id === foundLearner.event_id) || currentEvent || events[0];
-              if (targetEv) {
-                setCurrentEvent(targetEv);
-                currentEventRef.current = targetEv;
-                setLearners(storageService.getLearners(targetEv.id));
-                setParties(storageService.getParties(targetEv.id));
-                setCommittees(storageService.getCommittees(targetEv.id));
-                setAgenda(storageService.getAgenda(targetEv.id));
-                setOpenNominationPositions(storageService.getOpenNominationPositions(targetEv.id));
-                setNominations(storageService.getNominations(targetEv.id));
-                setElections(storageService.getElections(targetEv.id));
-                setFlashVotes(storageService.getFlashVotes(targetEv.id));
-              }
-              saveSession({
-                role: 'student',
-                studentCode: foundLearner.access_code,
-                student: foundLearner,
-                currentEventId: targetEv?.id
-              });
-              const targetSlug = targetEv ? getEventSlug(targetEv) : 'jkkncet-tn-assembly-2026';
-              if (typeof window !== 'undefined') navigate(`/events/${targetSlug}/dashboard`);
-              return foundLearner;
-            }
-
-            // 2. Check Jury Access Code
-            const normCode = cleanCode.replace(/-/g, '');
-            const foundJury = storageService.getJury().find(j => {
-              const code = (j.access_code || '').toUpperCase().replace(/-/g, '');
-              return code === normCode || code === `JURY${normCode}` || `JURY${code}` === normCode;
-            });
-            if (foundJury || normCode.includes('JURY') || normCode.startsWith('JUR')) {
-              const juryCodeVal = (foundJury?.access_code || cleanCode).replace('JURY-', 'JURY');
-              const juryObj: JuryMember = foundJury || { id: 'jury', name: 'Jury Evaluator', access_code: juryCodeVal, assigned_bench: 'Ruling', event_id: currentEvent?.id || '' };
-              setCurrentJury(juryObj);
-              setIsAuthenticated(true);
-              setRole('jury');
-              if (foundJury?.event_id) {
-                const targetEv = events.find(e => e.id === foundJury.event_id);
-                if (targetEv) setCurrentEvent(targetEv);
-              }
-              saveSession({
-                role: 'jury',
-                juryCode: juryCodeVal,
-                name: foundJury?.name || 'Jury Evaluator',
-                currentEventId: foundJury?.event_id || currentEvent?.id
-              });
-              if (typeof window !== 'undefined') navigate('/jury');
-              addToast('Jury Portal Access', `Authenticated Jury Member ${foundJury?.name || ''}`, 'success');
-              return { id: juryObj.id, full_name: juryObj.name, access_code: juryCodeVal } as Learner;
-            }
-
-            // 3. Check Volunteer Access Code - enhanced matching
-            // Find volunteer with normalized code matching
-            const foundVol = storageService.getVolunteers().find(v => {
-              // Normalize both the input code and stored code for comparison
-              const code = (v.access_code || '').toUpperCase().replace(/-/g, '');
-              const normCode = cleanCode.replace(/-/g, '').toUpperCase();
-              const phoneSuffix = v.phone ? v.phone.replace(/\D/g, '').slice(-4) : '';
-              
-              // Multiple matching strategies
-              const codeMatches =
-                code === normCode ||                                    // Exact match
-                code === `VOL${normCode}` ||                           // VOL prefix
-                normCode === `VOL${code}` ||                           // Reverse VOL prefix
-                (phoneSuffix && phoneSuffix === normCode);             // Phone suffix only
-              
-              const codeFormatMatch =
-                code.startsWith('VOL') &&                              // Stored has VOL prefix
-                normCode.replace('VOL', '').length > 0;                // Input has content after VOL
-              
-              return codeMatches || codeFormatMatch || (phoneSuffix && phoneSuffix === normCode);
-            });
-            if (foundVol || normCode.includes('VOL') || normCode.startsWith('V0')) {
-              const volCodeVal = (foundVol?.access_code || cleanCode).replace('VOL-', 'VOL');
-              const volObj: Volunteer = foundVol || { id: 'vol', name: 'Assembly Volunteer', access_code: volCodeVal, event_id: currentEvent?.id || '', station: 'Main Floor' };
-              setCurrentVolunteer(volObj);
-              setIsAuthenticated(true);
-              setRole('volunteer');
-              
-              // CRITICAL FIX: Always set currentEvent from foundVol event_id, even if undefined
-              // This ensures the dashboard loads learners from the correct event
-              if (foundVol?.event_id) {
-                const targetEv = events.find(e => e.id === foundVol.event_id);
-                if (targetEv) {
-                  setCurrentEvent(targetEv);
-                }
-              } else if (!currentEvent && events.length > 0) {
-                // Fallback: use first event if no specific event tied to volunteer
-                setCurrentEvent(events[0]);
-              }
-              
-              saveSession({
-                role: 'volunteer',
-                volunteerCode: volCodeVal,
-                name: foundVol?.name || 'Assembly Volunteer',
-                currentEventId: foundVol?.event_id || (currentEvent?.id || '')
-              });
-              if (typeof window !== 'undefined') navigate('/volunteer');
-              addToast('Volunteer Operations Access', `Authenticated Volunteer ${foundVol?.name || ''}`, 'success');
-              return { id: volObj.id, full_name: volObj.name, access_code: volCodeVal } as Learner;
-            }
-
-            return null;
+            const targetEventId = currentEvent?.id;
+            const authRes = storageService.authenticateAccessCode(cleanCode, targetEventId);
+            if (!authRes) return null;
+            return handleAccessCodeLogin(authRes);
           }}
           onShowToast={addToast}
           theme={theme}
@@ -2109,33 +2072,16 @@ export function App() {
               }
             />
 
-            {/* Student Access Code Login (/join) */}
+            {/* Unified Access Code Login (/join) */}
             <Route
               path="/join"
               element={
                 <StudentJoinView
-                  onLoginSuccess={(student) => {
-                    setIsAuthenticated(true);
-                    setRole('student');
-                    setCurrentStudent(student);
-                    const targetEv = events.find(e => e.id === student.event_id) || currentEvent || events[0];
-                    if (targetEv) {
-                      setCurrentEvent(targetEv);
-                      currentEventRef.current = targetEv;
-                      setLearners(storageService.getLearners(targetEv.id));
-                      setParties(storageService.getParties(targetEv.id));
-                      setCommittees(storageService.getCommittees(targetEv.id));
-                      setAgenda(storageService.getAgenda(targetEv.id));
-                      setOpenNominationPositions(storageService.getOpenNominationPositions(targetEv.id));
-                      setNominations(storageService.getNominations(targetEv.id));
-                      setElections(storageService.getElections(targetEv.id));
-                      setFlashVotes(storageService.getFlashVotes(targetEv.id));
-                    }
-                    saveSession({ role: 'student', studentCode: student.access_code, student, currentEventId: targetEv?.id });
-                    const slug = targetEv ? getEventSlug(targetEv) : 'jkkncet-tn-assembly-2026';
-                    navigate(`/events/${slug}/dashboard`);
+                  onLoginSuccess={(authResult) => {
+                    handleAccessCodeLogin(authResult);
                   }}
                   onShowToast={addToast}
+                  targetEventId={currentEvent?.id}
                 />
               }
             />

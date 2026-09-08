@@ -1,14 +1,21 @@
 import React, { useState } from 'react';
 import { Landmark, KeyRound, ArrowRight, ShieldCheck, HelpCircle } from 'lucide-react';
-import type { Learner } from '../../types';
+import type { Learner, Volunteer, JuryMember } from '../../types';
 import { storageService } from '../../services/storageService';
 
-interface StudentJoinViewProps {
-  onLoginSuccess: (student: Learner) => void;
-  onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
+export interface AccessCodeAuthResult {
+  role: 'volunteer' | 'jury' | 'student';
+  user: Learner | Volunteer | JuryMember;
+  eventId: string;
 }
 
-export const StudentJoinView: React.FC<StudentJoinViewProps> = ({ onLoginSuccess, onShowToast }) => {
+interface StudentJoinViewProps {
+  onLoginSuccess: (result: AccessCodeAuthResult) => void;
+  onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
+  targetEventId?: string;
+}
+
+export const StudentJoinView: React.FC<StudentJoinViewProps> = ({ onLoginSuccess, onShowToast, targetEventId }) => {
   const [accessCode, setAccessCode] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -17,7 +24,7 @@ export const StudentJoinView: React.FC<StudentJoinViewProps> = ({ onLoginSuccess
     e.preventDefault();
     const cleanCode = accessCode.trim().toUpperCase();
     if (!cleanCode) {
-      setError('Please enter your 6-character access code.');
+      setError('Please enter your access code.');
       return;
     }
 
@@ -25,14 +32,16 @@ export const StudentJoinView: React.FC<StudentJoinViewProps> = ({ onLoginSuccess
     setError('');
 
     setTimeout(() => {
-      const student = storageService.authenticateStudent(cleanCode);
+      const authResult = storageService.authenticateAccessCode(cleanCode, targetEventId);
       setIsSubmitting(false);
 
-      if (student) {
-        onShowToast('Welcome Delegate', `Logged in as ${student.full_name}`, 'success');
-        onLoginSuccess(student);
+      if (authResult) {
+        const displayName = ('full_name' in authResult.user ? authResult.user.full_name : authResult.user.name) || 'User';
+        const roleLabel = authResult.role === 'volunteer' ? 'Volunteer' : authResult.role === 'jury' ? 'Jury Member' : 'Delegate';
+        onShowToast(`Welcome ${roleLabel}`, `Authenticated as ${displayName}`, 'success');
+        onLoginSuccess(authResult);
       } else {
-        setError('Invalid access code. Please check your delegate pass or code.');
+        setError('Invalid access code. Please check your delegate pass, volunteer code, or jury pass.');
         onShowToast('Authentication Failed', 'Access code not found.', 'error');
       }
     }, 400);
@@ -56,10 +65,10 @@ export const StudentJoinView: React.FC<StudentJoinViewProps> = ({ onLoginSuccess
               TN LEGISLATIVE ASSEMBLY
             </span>
             <h1 className="text-2xl font-black tracking-tight text-white mt-1">
-              Participant Portal Login
+              Assembly Access Portal
             </h1>
             <p className="text-xs text-slate-400 mt-1">
-              Enter your 6-character participant Access Code to access the Legislative House
+              Enter your access code to enter your Delegate Dashboard, Volunteer Kiosk, or Jury Portal
             </p>
           </div>
         </div>
@@ -68,17 +77,17 @@ export const StudentJoinView: React.FC<StudentJoinViewProps> = ({ onLoginSuccess
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
             <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-              <KeyRound className="w-3.5 h-3.5 text-amber-400" /> Participant Access Code
+              <KeyRound className="w-3.5 h-3.5 text-amber-400" /> Access Code
             </label>
             <input
               type="text"
-              maxLength={10}
+              maxLength={16}
               value={accessCode}
               onChange={(e) => {
                 setAccessCode(e.target.value.toUpperCase());
                 setError('');
               }}
-              placeholder="e.g. 89F2A1"
+              placeholder="e.g. 89F2A1 or VOL4770"
               className="w-full text-center tracking-widest font-mono text-xl font-black py-3.5 px-4 rounded-2xl bg-slate-950 border border-slate-800 text-amber-400 placeholder:text-slate-700 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-all uppercase"
             />
           </div>
@@ -94,7 +103,7 @@ export const StudentJoinView: React.FC<StudentJoinViewProps> = ({ onLoginSuccess
             disabled={isSubmitting || !accessCode.trim()}
             className="w-full py-3.5 rounded-2xl font-extrabold text-sm bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 shadow-lg shadow-amber-500/25 flex items-center justify-center gap-2 cursor-pointer transition-all disabled:opacity-50"
           >
-            <span>{isSubmitting ? 'Verifying Code...' : 'Join Session'}</span>
+            <span>{isSubmitting ? 'Verifying Code...' : 'Enter Session'}</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>
@@ -103,10 +112,10 @@ export const StudentJoinView: React.FC<StudentJoinViewProps> = ({ onLoginSuccess
         <div className="pt-4 border-t border-slate-800/80 text-center space-y-2 text-[11px] text-slate-500">
           <div className="flex items-center justify-center gap-1.5">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Official Delegate Authentication Portal</span>
+            <span>Official Assembly Session Authentication</span>
           </div>
           <p className="flex items-center justify-center gap-1">
-            <HelpCircle className="w-3 h-3" /> Need help? Ask your Floor Volunteer for your Access Code.
+            <HelpCircle className="w-3 h-3" /> Need help? Ask your Assembly Floor Volunteer for your Access Code.
           </p>
         </div>
 

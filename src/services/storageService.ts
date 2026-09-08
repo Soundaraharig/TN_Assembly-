@@ -1206,27 +1206,97 @@ class StorageService {
     const clean = accessCode.trim().toUpperCase();
     if (!clean) return null;
     const learners = this.getLearners();
-    const match = learners.find(l => (l.access_code || '').toUpperCase() === clean);
-    if (match) return match;
-    // Fallback: If clean code is passed and we have participants, return first participant so login succeeds
-    if (learners.length > 0) {
-      return { ...learners[0], access_code: clean };
-    }
-    return null;
+    return learners.find(l => (l.access_code || '').toUpperCase() === clean) || null;
   }
 
   public authenticateJury(accessCode: string): JuryMember | null {
     const clean = accessCode.trim().toUpperCase();
     if (!clean) return null;
+    const normClean = clean.replace(/-/g, '');
     const jury = this.getJury();
-    return jury.find(j => (j.access_code || '').toUpperCase() === clean) || null;
+    return jury.find(j => {
+      const jCode = (j.access_code || '').toUpperCase().replace(/-/g, '');
+      return jCode === normClean ||
+             (!normClean.startsWith('JURY') && jCode === `JURY${normClean}`) ||
+             (normClean.startsWith('JURY') && jCode === normClean);
+    }) || null;
   }
 
   public authenticateVolunteer(accessCode: string): Volunteer | null {
     const clean = accessCode.trim().toUpperCase();
     if (!clean) return null;
     const volunteers = this.getVolunteers();
-    return volunteers.find(v => (v.access_code || '').toUpperCase() === clean) || null;
+    const normClean = clean.replace(/-/g, '');
+    return volunteers.find(v => {
+      const vCode = (v.access_code || '').toUpperCase().replace(/-/g, '');
+      const phoneSuffix = v.phone ? v.phone.replace(/\D/g, '').slice(-4) : '';
+      return vCode === normClean ||
+             (normClean.startsWith('VOL') && vCode === normClean) ||
+             (!normClean.startsWith('VOL') && vCode === `VOL${normClean}`) ||
+             (phoneSuffix && (phoneSuffix === normClean || `VOL${phoneSuffix}` === normClean));
+    }) || null;
+  }
+
+  public authenticateAccessCode(
+    accessCode: string,
+    targetEventId?: string
+  ): { role: 'volunteer' | 'jury' | 'student'; user: Volunteer | JuryMember | Learner; eventId: string } | null {
+    const clean = accessCode.trim().toUpperCase();
+    if (!clean) return null;
+    const normClean = clean.replace(/-/g, '');
+
+    // 1. Volunteer Check (VOL prefix or phone/number suffix)
+    const allVolunteers = this.getVolunteers();
+    const candidateVolunteers = targetEventId
+      ? allVolunteers.filter(v => v.event_id === targetEventId).concat(allVolunteers.filter(v => v.event_id !== targetEventId))
+      : allVolunteers;
+
+    const matchedVol = candidateVolunteers.find(v => {
+      const vCode = (v.access_code || '').toUpperCase().replace(/-/g, '');
+      const phoneSuffix = v.phone ? v.phone.replace(/\D/g, '').slice(-4) : '';
+      return vCode === normClean ||
+             (normClean.startsWith('VOL') && vCode === normClean) ||
+             (!normClean.startsWith('VOL') && vCode === `VOL${normClean}`) ||
+             (phoneSuffix && (phoneSuffix === normClean || `VOL${phoneSuffix}` === normClean));
+    });
+
+    if (matchedVol) {
+      console.log(`[Auth Trace] Code: "${accessCode}" -> Matched Record ID: "${matchedVol.id}" -> Event ID: "${matchedVol.event_id}" -> Role: "volunteer" (Name: ${matchedVol.name})`);
+      return { role: 'volunteer', user: matchedVol, eventId: matchedVol.event_id };
+    }
+
+    // 2. Jury Check (JURY prefix or jury member match)
+    const allJury = this.getJury();
+    const candidateJury = targetEventId
+      ? allJury.filter(j => j.event_id === targetEventId).concat(allJury.filter(j => j.event_id !== targetEventId))
+      : allJury;
+
+    const matchedJury = candidateJury.find(j => {
+      const jCode = (j.access_code || '').toUpperCase().replace(/-/g, '');
+      return jCode === normClean ||
+             (!normClean.startsWith('JURY') && jCode === `JURY${normClean}`) ||
+             (normClean.startsWith('JURY') && jCode === normClean);
+    });
+
+    if (matchedJury) {
+      console.log(`[Auth Trace] Code: "${accessCode}" -> Matched Record ID: "${matchedJury.id}" -> Event ID: "${matchedJury.event_id}" -> Role: "jury" (Name: ${matchedJury.name})`);
+      return { role: 'jury', user: matchedJury, eventId: matchedJury.event_id };
+    }
+
+    // 3. Delegate / Student Check
+    const allLearners = this.getLearners();
+    const candidateLearners = targetEventId
+      ? allLearners.filter(l => l.event_id === targetEventId).concat(allLearners.filter(l => l.event_id !== targetEventId))
+      : allLearners;
+
+    const matchedStudent = candidateLearners.find(l => (l.access_code || '').toUpperCase() === clean);
+    if (matchedStudent) {
+      console.log(`[Auth Trace] Code: "${accessCode}" -> Matched Record ID: "${matchedStudent.id}" -> Event ID: "${matchedStudent.event_id}" -> Role: "student" (Name: ${matchedStudent.full_name})`);
+      return { role: 'student', user: matchedStudent, eventId: matchedStudent.event_id };
+    }
+
+    console.warn(`[Auth Trace] Code: "${accessCode}" -> No matching record found in volunteers, jury, or learners.`);
+    return null;
   }
 
   // ── EVENTS ────────────────────────────────────────────────────────────────

@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Landmark, LogIn, KeyRound, ArrowRight, Sun, Moon } from 'lucide-react';
-import type { UserSession, Learner } from '../../types';
+import type { UserSession } from '../../types';
 import type { Theme } from '../../lib/theme';
 
 interface UnifiedLoginPageProps {
   onLoginCredentials: (email: string, pass: string) => UserSession | null;
-  onLoginAccessCode: (code: string) => Learner | null;
+  onLoginAccessCode: (code: string) => any;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
   theme: Theme;
   onToggleTheme: () => void;
@@ -85,13 +85,15 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
     if (!accessCode.trim()) return;
     setIsCodeLoading(true);
     await new Promise(r => setTimeout(r, 400));
-    const learner = onLoginAccessCode(accessCode);
+    const res = onLoginAccessCode(accessCode);
     setIsCodeLoading(false);
-    if (!learner) {
-      setCodeError('Invalid access code. Please check your delegate badge and try again.');
+    if (!res) {
+      setCodeError('Invalid access code. Please check your delegate pass, volunteer code, or jury pass.');
     } else {
       setCodeError('');
-      onShowToast('Delegate Access Verified', `Welcome, ${learner.full_name}`, 'success');
+      const name = (res as any).full_name || (res as any).name || 'User';
+      const roleStr = (res as any).role === 'volunteer' ? 'Volunteer' : (res as any).role === 'jury' ? 'Jury' : 'Delegate';
+      onShowToast(`${roleStr} Access Verified`, `Welcome, ${name}`, 'success');
     }
   };
 
