@@ -130,9 +130,7 @@ function getInitialRouteInfo(initialSession: SavedAuthSession | null) {
         return { role: 'volunteer' as UserRole, isAuthenticated: true };
       }
     } else if (initialSession.role === 'student' && initialSession.studentCode) {
-      if (pathname.includes('/join') || pathname.includes('/dashboard') || pathname.includes('/me') || pathname.includes('/student') || !pathname.includes('/events/')) {
-        return { role: 'student' as UserRole, isAuthenticated: true };
-      }
+      return { role: 'student' as UserRole, isAuthenticated: true };
     }
   }
 
@@ -156,13 +154,17 @@ function getInitialRouteInfo(initialSession: SavedAuthSession | null) {
   return { role: initialSession.role, isAuthenticated: true };
 }
 
-function EventSlugOnlyRedirector({ events }: { events: CollegeEvent[] }) {
+function EventSlugOnlyRedirector({ events, role }: { events: CollegeEvent[]; role?: UserRole }) {
   const { eventSlug } = useParams<{ eventSlug: string }>();
   const matched = findEventBySlug(events, eventSlug);
   if (!matched && events.length > 0) {
+    if (role === 'student') return <Navigate to="/dashboard" replace />;
     return <Navigate to="/events" replace />;
   }
   const slug = matched ? getEventSlug(matched) : (eventSlug || 'jkkncet-tn-assembly-2026');
+  if (role === 'student') {
+    return <Navigate to={`/events/${slug}/dashboard`} replace />;
+  }
   return <Navigate to={`/events/${slug}/overview`} replace />;
 }
 
@@ -252,6 +254,10 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
 
   useEffect(() => {
     if (props.events.length > 0 && !matchedEvent) {
+      if (props.role === 'student') {
+        props.navigate('/dashboard', { replace: true });
+        return;
+      }
       props.navigate('/events', { replace: true });
       return;
     }
@@ -272,6 +278,9 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
   const activeEvent = matchedEvent || props.currentEvent || props.events[0];
   if (!activeEvent) {
     if (props.events.length > 0) {
+      if (props.role === 'student') {
+        return <Navigate to="/dashboard" replace />;
+      }
       return <Navigate to="/events" replace />;
     }
     return (
@@ -1107,6 +1116,13 @@ export function App() {
           setRole('student');
           setCurrentStudent(targetStudent);
           setUserSession({ role: 'student', name: targetStudent.full_name });
+
+          // If student is on / or /events, redirect to their dashboard
+          if (pathname === '/' || pathname === '/events' || pathname === '/events/') {
+            const targetEv = evs.find(e => e.id === targetStudent.event_id) || evs[0];
+            const targetSlug = targetEv ? getEventSlug(targetEv) : 'jkkncet-tn-assembly-2026';
+            navigate(`/events/${targetSlug}/dashboard`, { replace: true });
+          }
           return;
         }
 
@@ -1759,8 +1775,15 @@ export function App() {
               const targetEv = events.find(e => e.id === foundLearner.event_id) || currentEvent || events[0];
               if (targetEv) {
                 setCurrentEvent(targetEv);
+                currentEventRef.current = targetEv;
+                setLearners(storageService.getLearners(targetEv.id));
+                setParties(storageService.getParties(targetEv.id));
+                setCommittees(storageService.getCommittees(targetEv.id));
+                setAgenda(storageService.getAgenda(targetEv.id));
                 setOpenNominationPositions(storageService.getOpenNominationPositions(targetEv.id));
                 setNominations(storageService.getNominations(targetEv.id));
+                setElections(storageService.getElections(targetEv.id));
+                setFlashVotes(storageService.getFlashVotes(targetEv.id));
               }
               saveSession({
                 role: 'student',
@@ -1768,7 +1791,8 @@ export function App() {
                 student: foundLearner,
                 currentEventId: targetEv?.id
               });
-              if (typeof window !== 'undefined') navigate('/dashboard');
+              const targetSlug = targetEv ? getEventSlug(targetEv) : 'jkkncet-tn-assembly-2026';
+              if (typeof window !== 'undefined') navigate(`/events/${targetSlug}/dashboard`);
               return foundLearner;
             }
 
@@ -2002,7 +2026,8 @@ export function App() {
         }}
         onGoHome={() => {
           if (role === 'student') {
-            navigate('/me');
+            const slug = currentEvent ? getEventSlug(currentEvent) : 'jkkncet-tn-assembly-2026';
+            navigate(`/events/${slug}/dashboard`);
             return;
           }
           navigate('/events');
@@ -2072,8 +2097,17 @@ export function App() {
               )}
 
               <Routes>
-            {/* Root path -> redirect to /events */}
-            <Route path="/" element={<Navigate to="/events" replace />} />
+            {/* Root path -> role-based intelligent redirect */}
+            <Route
+              path="/"
+              element={
+                role === 'student' ? (
+                  <Navigate to={currentEvent ? `/events/${getEventSlug(currentEvent)}/dashboard` : '/dashboard'} replace />
+                ) : (
+                  <Navigate to="/events" replace />
+                )
+              }
+            />
 
             {/* Student Access Code Login (/join) */}
             <Route
@@ -2087,20 +2121,29 @@ export function App() {
                     const targetEv = events.find(e => e.id === student.event_id) || currentEvent || events[0];
                     if (targetEv) {
                       setCurrentEvent(targetEv);
+                      currentEventRef.current = targetEv;
+                      setLearners(storageService.getLearners(targetEv.id));
+                      setParties(storageService.getParties(targetEv.id));
+                      setCommittees(storageService.getCommittees(targetEv.id));
+                      setAgenda(storageService.getAgenda(targetEv.id));
                       setOpenNominationPositions(storageService.getOpenNominationPositions(targetEv.id));
                       setNominations(storageService.getNominations(targetEv.id));
+                      setElections(storageService.getElections(targetEv.id));
+                      setFlashVotes(storageService.getFlashVotes(targetEv.id));
                     }
                     saveSession({ role: 'student', studentCode: student.access_code, student, currentEventId: targetEv?.id });
-                    navigate('/dashboard');
+                    const slug = targetEv ? getEventSlug(targetEv) : 'jkkncet-tn-assembly-2026';
+                    navigate(`/events/${slug}/dashboard`);
                   }}
                   onShowToast={addToast}
                 />
               }
             />
 
-            {/* Redirect /me to /dashboard */}
+            {/* Redirect /me, /student, and /delegate to /dashboard */}
             <Route path="/me" element={<Navigate to="/dashboard" replace />} />
             <Route path="/student" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/delegate/:delegateId" element={<Navigate to="/dashboard" replace />} />
 
             {/* Student Dashboard Direct Route (/dashboard) */}
             <Route
@@ -2150,24 +2193,28 @@ export function App() {
             <Route
               path="/events"
               element={
-                <MyEventsDashboard
-                  events={events}
-                  coordinators={coordinators}
-                  role={role}
-                  userEmail={userSession?.email}
-                  onCreateEvent={handleCreateEvent}
-                  onUpdateEvent={(upd) => storageService.updateEvent(upd)}
-                  onDeleteEvent={(evId) => storageService.deleteEvent(evId)}
-                  onUpdateCoordinator={handleUpdateCoordinator}
-                  onSelectEvent={(ev) => {
-                    handleEventChange(ev);
-                    const slug = getEventSlug(ev);
-                    navigate(`/events/${slug}/overview`);
-                    addToast('Event Selected', `Opened ${ev.college_name}`, 'info');
-                  }}
-                  onShowToast={addToast}
-                  learners={learners}
-                />
+                role === 'student' ? (
+                  <Navigate to={currentEvent ? `/events/${getEventSlug(currentEvent)}/dashboard` : '/dashboard'} replace />
+                ) : (
+                  <MyEventsDashboard
+                    events={events}
+                    coordinators={coordinators}
+                    role={role}
+                    userEmail={userSession?.email}
+                    onCreateEvent={handleCreateEvent}
+                    onUpdateEvent={(upd) => storageService.updateEvent(upd)}
+                    onDeleteEvent={(evId) => storageService.deleteEvent(evId)}
+                    onUpdateCoordinator={handleUpdateCoordinator}
+                    onSelectEvent={(ev) => {
+                      handleEventChange(ev);
+                      const slug = getEventSlug(ev);
+                      navigate(`/events/${slug}/overview`);
+                      addToast('Event Selected', `Opened ${ev.college_name}`, 'info');
+                    }}
+                    onShowToast={addToast}
+                    learners={learners}
+                  />
+                )
               }
             />
 
@@ -2175,7 +2222,92 @@ export function App() {
             <Route
               path="/events/:eventSlug"
               element={
-                <EventSlugOnlyRedirector events={events} />
+                <EventSlugOnlyRedirector events={events} role={role} />
+              }
+            />
+
+            {/* Event-specific Student/Delegate Dashboard Route */}
+            <Route
+              path="/events/:eventSlug/dashboard"
+              element={
+                <EventTabRouteHandler
+                  events={events}
+                  coordinators={coordinators}
+                  currentEvent={currentEvent}
+                  onEventChange={handleEventChange}
+                  activeNavTab={activeNavTab}
+                  setActiveNavTab={setActiveNavTab}
+                  saveSession={saveSession}
+                  learners={learners}
+                  parties={parties}
+                  committees={committees}
+                  agenda={agenda}
+                  jury={jury}
+                  volunteers={volunteers}
+                  nominations={nominations}
+                  elections={elections}
+                  flashVotes={flashVotes}
+                  checklist={checklist}
+                  questions={questions}
+                  proceedings={proceedings}
+                  scores={scores}
+                  chatMessages={chatMessages}
+                  feedback={feedback}
+                  team={team}
+                  openNominationPositions={openNominationPositions}
+                  role={role}
+                  userSession={userSession}
+                  addToast={addToast}
+                  handleToggleCheckIn={handleToggleCheckIn}
+                  handleCheckInAll={handleCheckInAll}
+                  handleUpdateLearner={handleUpdateLearner}
+                  handleDeleteLearner={handleDeleteLearner}
+                  handleDeleteMultipleLearners={handleDeleteMultipleLearners}
+                  handleClearAllLearners={handleClearAllLearners}
+                  handleToggleOpenNominationPosition={handleToggleOpenNominationPosition}
+                  handleSetAllOpenNominationPositions={handleSetAllOpenNominationPositions}
+                  handleAddCommittee={handleAddCommittee}
+                  handleUpdateCommittee={handleUpdateCommittee}
+                  handleDeleteCommittee={handleDeleteCommittee}
+                  setCommittees={setCommittees}
+                  handleAddParty={handleAddParty}
+                  handleUpdateParty={handleUpdateParty}
+                  handleDeleteParty={handleDeleteParty}
+                  setParties={setParties}
+                  handleExecuteAllocation={handleExecuteAllocation}
+                  handleAllocateParties={handleAllocateParties}
+                  handleAllocateCommittees={handleAllocateCommittees}
+                  handleAllocateConstituencies={handleAllocateConstituencies}
+                  handleResetAllocation={handleResetAllocation}
+                  setCurrentEvent={setCurrentEvent}
+                  setEvents={setEvents}
+                  handleAssignCabinetRole={handleAssignCabinetRole}
+                  handleAddJury={handleAddJury}
+                  handleDeleteJury={handleDeleteJury}
+                  handleAddVolunteer={handleAddVolunteer}
+                  handleDeleteVolunteer={handleDeleteVolunteer}
+                  setVolunteers={setVolunteers}
+                  setLearners={setLearners}
+                  handleSetCurrentAgendaItem={handleSetCurrentAgendaItem}
+                  setElections={setElections}
+                  setFlashVotes={setFlashVotes}
+                  setNominations={setNominations}
+                  setScores={setScores}
+                  setIsAddWalkInOpen={setIsAddWalkInOpen}
+                  setIsImportCsvOpen={setIsImportCsvOpen}
+                  setIsAllocationModalOpen={setIsAllocationModalOpen}
+                  handleAddAgendaItem={handleAddAgendaItem}
+                  handleUpdateAgendaItem={handleUpdateAgendaItem}
+                  handleDeleteAgendaItem={handleDeleteAgendaItem}
+                  handleDuplicateAgendaItem={handleDuplicateAgendaItem}
+                  handleReorderAgendaItems={handleReorderAgendaItems}
+                  handleToggleEnableAgendaItem={handleToggleEnableAgendaItem}
+                  handleSetAgendaStatus={handleSetAgendaStatus}
+                  activeParty={activeParty}
+                  activeCommittee={activeCommittee}
+                  currentStudent={currentStudent}
+                  navigate={navigate}
+                />
               }
             />
 
@@ -2265,7 +2397,16 @@ export function App() {
             />
 
             {/* Fallback wildcard */}
-            <Route path="*" element={<Navigate to="/events" replace />} />
+            <Route
+              path="*"
+              element={
+                role === 'student' ? (
+                  <Navigate to={currentEvent ? `/events/${getEventSlug(currentEvent)}/dashboard` : '/dashboard'} replace />
+                ) : (
+                  <Navigate to="/events" replace />
+                )
+              }
+            />
           </Routes>
 
         </main>
