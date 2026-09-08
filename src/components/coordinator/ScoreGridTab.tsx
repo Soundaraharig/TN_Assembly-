@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import type { ScoreRecord, Learner } from '../../types';
+import React, { useState, useMemo } from 'react';
+import type { ScoreRecord, Learner, BenchType } from '../../types';
 import {
   Grid,
   Plus,
@@ -32,8 +32,60 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   const [debate, setDebate] = useState(23);
   const [remarks, setRemarks] = useState('');
 
-  // Sorted Leaderboard
-  const leaderboard = [...scores].sort((a, b) => b.total - a.total);
+  // Sorted Leaderboard with multi-juror aggregation
+  const leaderboard = useMemo(() => {
+    const map = new Map<string, {
+      learner_id: string;
+      learner_name: string;
+      party_name: string;
+      bench: BenchType;
+      oratory: number;
+      policy_knowledge: number;
+      parliamentary_conduct: number;
+      rebuttal_debate: number;
+      total: number;
+      evalCount: number;
+    }>();
+
+    scores.forEach(s => {
+      const existing = map.get(s.learner_id);
+      if (!existing) {
+        map.set(s.learner_id, {
+          learner_id: s.learner_id,
+          learner_name: s.learner_name,
+          party_name: s.party_name,
+          bench: s.bench,
+          oratory: s.oratory,
+          policy_knowledge: s.policy_knowledge,
+          parliamentary_conduct: s.parliamentary_conduct,
+          rebuttal_debate: s.rebuttal_debate,
+          total: s.total,
+          evalCount: 1
+        });
+      } else {
+        existing.oratory += s.oratory;
+        existing.policy_knowledge += s.policy_knowledge;
+        existing.parliamentary_conduct += s.parliamentary_conduct;
+        existing.rebuttal_debate += s.rebuttal_debate;
+        existing.total += s.total;
+        existing.evalCount += 1;
+      }
+    });
+
+    return Array.from(map.values()).map(item => ({
+      id: item.learner_id,
+      learner_id: item.learner_id,
+      learner_name: item.learner_name,
+      party_name: item.party_name,
+      bench: item.bench,
+      oratory: Math.round(item.oratory / item.evalCount),
+      policy_knowledge: Math.round(item.policy_knowledge / item.evalCount),
+      parliamentary_conduct: Math.round(item.parliamentary_conduct / item.evalCount),
+      rebuttal_debate: Math.round(item.rebuttal_debate / item.evalCount),
+      total: Math.round(item.total / item.evalCount),
+      evalCount: item.evalCount
+    })).sort((a, b) => b.total - a.total);
+  }, [scores]);
 
   const handleResetScores = () => {
     if (window.confirm('⚠️ Are you sure you want to RESET ALL jury evaluation scores? All recorded delegate marks and leaderboard rankings will be permanently cleared.')) {
@@ -218,6 +270,7 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
               <tr>
                 <th className="p-3.5 pl-4">Rank</th>
                 <th className="p-3.5">Delegate Participant</th>
+                <th className="p-3.5">Juror Evaluator</th>
                 <th className="p-3.5">Party & Bench</th>
                 <th className="p-3.5 text-center">Oratory (25)</th>
                 <th className="p-3.5 text-center">Policy (25)</th>
@@ -227,10 +280,15 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y" style={{ borderColor: 'var(--border-soft)' }}>
-              {leaderboard.map((sc, idx) => (
+              {scores.map((sc, idx) => (
                 <tr key={sc.id} className="hover:bg-slate-500/5 transition-colors">
                   <td className="p-3.5 pl-4 font-mono font-bold text-slate-400">#{idx + 1}</td>
                   <td className="p-3.5 font-bold" style={{ color: 'var(--text-primary)' }}>{sc.learner_name}</td>
+                  <td className="p-3.5">
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                      {sc.juror_name || 'Juror'}
+                    </span>
+                  </td>
                   <td className="p-3.5" style={{ color: 'var(--text-secondary)' }}>
                     {sc.party_name} • <span className={sc.bench === 'Ruling' ? 'text-emerald-500 font-bold' : 'text-rose-500 font-bold'}>{sc.bench}</span>
                   </td>

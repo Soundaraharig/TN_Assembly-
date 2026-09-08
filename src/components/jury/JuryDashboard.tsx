@@ -90,7 +90,11 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     if (!selectedLearnerId) return;
     if (loadedLearnerId === selectedLearnerId) return;
 
-    const existing = scores.find(s => s.learner_id === selectedLearnerId && (!event || !s.event_id || s.event_id === event.id));
+    const existing = scores.find(s =>
+      s.learner_id === selectedLearnerId &&
+      (!event || !s.event_id || s.event_id === event.id) &&
+      ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))
+    );
     if (existing) {
       setResearchScore(existing.research_constituency ?? existing.policy_knowledge ?? 2);
       setRelevanceScore(existing.relevance_agenda ?? existing.rebuttal_debate ?? 2);
@@ -141,14 +145,19 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
 
     const currentTotal = rScore + relScore + cScore + condScore + origScore + tScore;
 
-    const existing = scores.find(s => s.learner_id === selectedLearner.id && (!event || !s.event_id || s.event_id === event.id));
+    const existing = scores.find(s =>
+      s.learner_id === selectedLearner.id &&
+      (!event || !s.event_id || s.event_id === event.id) &&
+      ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))
+    );
     const record: ScoreRecord = {
-      id: existing?.id || `score_${selectedLearner.id}_${Date.now()}`,
+      id: existing?.id || `score_${selectedLearner.id}_${jury?.id || 'jury'}_${Date.now()}`,
       event_id: event?.id || selectedLearner.event_id || '',
       learner_id: selectedLearner.id,
       learner_name: selectedLearner.full_name,
       party_name: selectedLearner.party_name || 'Independent',
       bench: selectedLearner.bench || 'Ruling',
+      jury_id: jury?.id,
       
       // 6 Rubric Breakdown (Exact 100 Total)
       research_constituency: rScore,
@@ -351,7 +360,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                 color: activeTab === 'history' ? '#fff' : 'var(--text-primary)'
               }}
             >
-              <History className="w-3.5 h-3.5" /> Score History ({scores.length})
+              <History className="w-3.5 h-3.5" /> Score History ({scores.filter(s => (!event || !s.event_id || s.event_id === event.id) && ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))).length})
             </button>
             <button
               onClick={() => setActiveTab('agenda')}
@@ -886,7 +895,11 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                   ) : (
                     filteredLearners.map(learner => {
                       const isSelected = learner.id === selectedLearnerId;
-                      const existingScore = scores.find(s => s.learner_id === learner.id && (!event || s.event_id === event.id));
+                      const existingScore = scores.find(s =>
+                        s.learner_id === learner.id &&
+                        (!event || s.event_id === event.id) &&
+                        ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))
+                      );
 
                       return (
                         <button
@@ -938,61 +951,63 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
         )}
 
         {/* History Tab */}
-        {activeTab === 'history' && (
-          <div className="rounded-2xl p-6 border shadow-sm" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
-            <h2 className="text-base font-extrabold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
-              <History className="w-4 h-4" style={{ color: 'var(--accent)' }} /> Completed Evaluations ({scores.length})
-            </h2>
-            {scores.length === 0 ? (
-              <div className="text-center py-12 text-xs" style={{ color: 'var(--text-muted)' }}>
-                No score records submitted yet.
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="border-b" style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
-                    <tr>
-                      <th className="py-2.5 px-3">Delegate</th>
-                      <th className="py-2.5 px-3">Party & Bench</th>
-                      <th className="py-2.5 px-3 text-center">Research (30)</th>
-                      <th className="py-2.5 px-3 text-center">Agenda (20)</th>
-                      <th className="py-2.5 px-3 text-center">Comm. (20)</th>
-                      <th className="py-2.5 px-3 text-center">Conduct (12)</th>
-                      <th className="py-2.5 px-3 text-center">Orig. (12)</th>
-                      <th className="py-2.5 px-3 text-center">Time (6)</th>
-                      <th className="py-2.5 px-3 text-center font-bold">Total (100)</th>
-                      <th className="py-2.5 px-3">Juror Remarks</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                    {scores.map(s => (
-                      <tr key={s.id} className="hover:opacity-80">
-                        <td className="py-3 px-3 font-bold" style={{ color: 'var(--text-primary)' }}>
-                          {s.learner_name}
-                        </td>
-                        <td className="py-3 px-3" style={{ color: 'var(--text-secondary)' }}>
-                          {s.party_name} ({s.bench})
-                        </td>
-                        <td className="py-3 px-3 text-center font-mono">{s.research_constituency ?? s.policy_knowledge ?? '-'}</td>
-                        <td className="py-3 px-3 text-center font-mono">{s.relevance_agenda ?? s.rebuttal_debate ?? '-'}</td>
-                        <td className="py-3 px-3 text-center font-mono">{s.communication_delivery ?? s.oratory ?? '-'}</td>
-                        <td className="py-3 px-3 text-center font-mono">{s.parliamentary_conduct}</td>
-                        <td className="py-3 px-3 text-center font-mono">{s.originality_preparation ?? '-'}</td>
-                        <td className="py-3 px-3 text-center font-mono">{s.time_management ?? '-'}</td>
-                        <td className="py-3 px-3 text-center font-mono font-black" style={{ color: 'var(--amber)' }}>
-                          {s.total}
-                        </td>
-                        <td className="py-3 px-3 italic" style={{ color: 'var(--text-muted)' }}>
-                          {s.feedback || '—'}
-                        </td>
+        {activeTab === 'history' && (() => {
+          const myScores = scores.filter(s =>
+            (!event || !s.event_id || s.event_id === event.id) &&
+            ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))
+          );
+          return (
+            <div className="rounded-2xl p-6 border shadow-sm" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+              <h2 className="text-base font-extrabold mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+                <History className="w-4 h-4" style={{ color: 'var(--accent)' }} /> Completed Evaluations ({myScores.length})
+              </h2>
+              {myScores.length === 0 ? (
+                <div className="text-center py-12 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  No score records submitted by you yet. Select a delegate from the Evaluation tab to start scoring.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="border-b" style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
+                      <tr>
+                        <th className="py-2.5 px-3">Delegate</th>
+                        <th className="py-2.5 px-3">Party & Bench</th>
+                        <th className="py-2.5 px-3 text-center">Research (30)</th>
+                        <th className="py-2.5 px-3 text-center">Agenda (20)</th>
+                        <th className="py-2.5 px-3 text-center">Comm. (20)</th>
+                        <th className="py-2.5 px-3 text-center">Conduct (12)</th>
+                        <th className="py-2.5 px-3 text-center">Orig. (12)</th>
+                        <th className="py-2.5 px-3 text-center">Time (6)</th>
+                        <th className="py-2.5 px-3 text-center font-bold">Total (100)</th>
+                        <th className="py-2.5 px-3">Juror Remarks</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
+                    </thead>
+                    <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                      {myScores.map(s => (
+                        <tr key={s.id} className="hover:opacity-80">
+                          <td className="py-3 px-3 font-bold" style={{ color: 'var(--text-primary)' }}>
+                            {s.learner_name}
+                          </td>
+                          <td className="py-3 px-3" style={{ color: 'var(--text-secondary)' }}>
+                            {s.party_name} ({s.bench})
+                          </td>
+                          <td className="py-3 px-3 text-center font-mono">{s.research_constituency ?? s.policy_knowledge ?? 0}</td>
+                          <td className="py-3 px-3 text-center font-mono">{s.relevance_agenda ?? s.rebuttal_debate ?? 0}</td>
+                          <td className="py-3 px-3 text-center font-mono">{s.communication_delivery ?? s.oratory ?? 0}</td>
+                          <td className="py-3 px-3 text-center font-mono">{s.parliamentary_conduct ?? 0}</td>
+                          <td className="py-3 px-3 text-center font-mono">{s.originality_preparation ?? 0}</td>
+                          <td className="py-3 px-3 text-center font-mono">{s.time_management ?? 0}</td>
+                          <td className="py-3 px-3 text-center font-black font-mono text-amber-500">{s.total}</td>
+                          <td className="py-3 px-3 text-slate-500 italic max-w-xs truncate">{s.feedback || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Agenda Tab */}
         {activeTab === 'agenda' && (

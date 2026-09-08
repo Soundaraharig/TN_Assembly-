@@ -26,7 +26,9 @@ import type {
   FlashVoteAudience,
   EventDeadline,
   ProceedingsQuestion,
-  ProceedingsMotion
+  ProceedingsMotion,
+  SecurityAuditLog,
+  ProjectorStudioSettings
 } from '../types';
 import {
   INITIAL_EVENTS,
@@ -93,7 +95,8 @@ const STORAGE_KEYS = {
   DEADLINES: 'tn_assembly_deadlines_v6',
   PROCEEDINGS_QUESTIONS: 'tn_assembly_proceedings_questions_v6',
   PROCEEDINGS_MOTIONS: 'tn_assembly_proceedings_motions_v6',
-  DELETED_IDS: 'tn_assembly_deleted_ids_v6'
+  DELETED_IDS: 'tn_assembly_deleted_ids_v6',
+  AUDIT_LOGS: 'tn_assembly_audit_logs_v1'
 };
 
 type Listener = () => void;
@@ -586,6 +589,13 @@ class StorageService {
           if (typeof sc.scores_locked === 'boolean') {
             this.setItem(`${STORAGE_KEYS.SCORES_LOCKED}_${ev.id}`, sc.scores_locked);
           }
+          if (sc.projector_settings) {
+            this.setItem(`tn_assembly_projector_studio_${ev.id}`, sc.projector_settings);
+            this.setItem('tn_assembly_projector_studio_v1', sc.projector_settings);
+          }
+          if (sc.last_bell_ring) {
+            this.setItem(`tn_assembly_last_bell_${ev.id}`, sc.last_bell_ring);
+          }
         });
 
         if (events.length === 0) {
@@ -811,6 +821,19 @@ class StorageService {
     if (!supabase || this.realtimeChannel) return;
     try {
       this.realtimeChannel = supabase.channel('tn_assembly_live_sync')
+        .on('broadcast', { event: 'projector_update' }, (msg: any) => {
+          if (msg?.payload?.eventId && msg?.payload?.settings) {
+            this.setItem(`tn_assembly_projector_studio_${msg.payload.eventId}`, msg.payload.settings);
+            this.setItem('tn_assembly_projector_studio_v1', msg.payload.settings);
+            this.notify();
+            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+          }
+        })
+        .on('broadcast', { event: 'speaker_bell' }, (msg: any) => {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('tn_assembly_speaker_bell', { detail: msg?.payload }));
+          }
+        })
         .on('postgres_changes', { event: '*', schema: 'public', table: 'college_events' }, () => {
           this.syncFromSupabase();
         })
@@ -867,9 +890,13 @@ class StorageService {
       const allocLock = this.getItem<boolean>(`${STORAGE_KEYS.ALLOCATION_LOCK}_${eventId}`, false);
       const regFrozen = this.getItem<boolean>(`${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${eventId}`, false);
       const scLocked = this.getItem<boolean>(`${STORAGE_KEYS.SCORES_LOCKED}_${eventId}`, false);
+      const projSettings = existingSC.projector_settings || this.getItem<ProjectorStudioSettings | null>(`tn_assembly_projector_studio_${eventId}`, null);
+      const lastBell = existingSC.last_bell_ring || this.getItem<number | null>(`tn_assembly_last_bell_${eventId}`, null);
 
       const payload = {
         ...existingSC,
+        projector_settings: projSettings || existingSC.projector_settings,
+        last_bell_ring: lastBell || existingSC.last_bell_ring,
         open_nominations: openNoms,
         nominations: noms,
         elections: elecs,
@@ -1266,6 +1293,13 @@ class StorageService {
     });
 
     if (matchedVol) {
+      this.logAudit({
+        event_id: matchedVol.event_id,
+        action: 'ACCESS_CODE_LOGIN_SUCCESS',
+        actor_role: 'volunteer',
+        actor_name: matchedVol.name,
+        details: `Volunteer login: ${matchedVol.name} (${matchedVol.access_code})`
+      });
       console.log(`[Auth Trace] Code: "${accessCode}" -> Matched Record ID: "${matchedVol.id}" -> Event ID: "${matchedVol.event_id}" -> Role: "volunteer" (Name: ${matchedVol.name})`);
       return { role: 'volunteer', user: matchedVol, eventId: matchedVol.event_id };
     }
@@ -1284,6 +1318,13 @@ class StorageService {
     });
 
     if (matchedJury) {
+      this.logAudit({
+        event_id: matchedJury.event_id,
+        action: 'ACCESS_CODE_LOGIN_SUCCESS',
+        actor_role: 'jury',
+        actor_name: matchedJury.name,
+        details: `Jury login: ${matchedJury.name} (${matchedJury.access_code})`
+      });
       console.log(`[Auth Trace] Code: "${accessCode}" -> Matched Record ID: "${matchedJury.id}" -> Event ID: "${matchedJury.event_id}" -> Role: "jury" (Name: ${matchedJury.name})`);
       return { role: 'jury', user: matchedJury, eventId: matchedJury.event_id };
     }
@@ -1296,12 +1337,46 @@ class StorageService {
 
     const matchedStudent = candidateLearners.find(l => (l.access_code || '').toUpperCase() === clean);
     if (matchedStudent) {
+      this.logAudit({
+        event_id: matchedStudent.event_id,
+        action: 'ACCESS_CODE_LOGIN_SUCCESS',
+        actor_role: 'student',
+        actor_name: matchedStudent.full_name,
+        details: `Delegate login: ${matchedStudent.full_name} (${matchedStudent.access_code})`
+      });
       console.log(`[Auth Trace] Code: "${accessCode}" -> Matched Record ID: "${matchedStudent.id}" -> Event ID: "${matchedStudent.event_id}" -> Role: "student" (Name: ${matchedStudent.full_name})`);
       return { role: 'student', user: matchedStudent, eventId: matchedStudent.event_id };
     }
 
+    this.logAudit({
+      event_id: targetEventId,
+      action: 'ACCESS_CODE_LOGIN_FAILED',
+      details: `Failed access code attempt: ${accessCode}`
+    });
     console.warn(`[Auth Trace] Code: "${accessCode}" -> No matching record found in volunteers, jury, or learners.`);
     return null;
+  }
+
+  // ── AUDIT LOGS ────────────────────────────────────────────────────────────
+
+  public logAudit(log: Omit<SecurityAuditLog, 'id' | 'timestamp'>): SecurityAuditLog {
+    const logs = this.getItem<SecurityAuditLog[]>(STORAGE_KEYS.AUDIT_LOGS, []);
+    const entry: SecurityAuditLog = {
+      id: genUuid(),
+      timestamp: new Date().toISOString(),
+      ...log
+    };
+    logs.unshift(entry);
+    if (logs.length > 200) logs.pop();
+    this.setItem(STORAGE_KEYS.AUDIT_LOGS, logs);
+    console.log(`🔒 [Security Audit] ${entry.action}:`, entry.details || '', entry);
+    return entry;
+  }
+
+  public getAuditLogs(eventId?: string): SecurityAuditLog[] {
+    const logs = this.getItem<SecurityAuditLog[]>(STORAGE_KEYS.AUDIT_LOGS, []);
+    if (eventId) return logs.filter(l => !l.event_id || l.event_id === eventId);
+    return logs;
   }
 
   // ── EVENTS ────────────────────────────────────────────────────────────────
@@ -2726,10 +2801,18 @@ class StorageService {
     return sanitized;
   }
 
+  private generateSecureJuryCode(): string {
+    const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+    let code = 'JURY';
+    for (let i = 0; i < 4; i++) {
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
+  }
+
   public async addJuryMember(member: Partial<JuryMember>): Promise<JuryMember> {
     const all = this.getItem<JuryMember[]>(STORAGE_KEYS.JURY, INITIAL_JURY);
-    const codeNum = String(all.length + 1).padStart(2, '0');
-    const defaultCode = `JURY${codeNum}`;
+    const defaultCode = this.generateSecureJuryCode();
     const realId = (member.id && isValidUuid(member.id)) ? member.id : genUuid();
     const newMember: JuryMember = {
       id: realId,
@@ -3004,10 +3087,13 @@ class StorageService {
     return positions;
   }
 
-  public getNominations(eventId?: string): Nomination[] {
+  public getNominations(eventId?: string, role?: string, studentId?: string): Nomination[] {
     const all = this.getItem<Nomination[]>(STORAGE_KEYS.NOMINATIONS, INITIAL_NOMINATIONS);
-    if (eventId) return all.filter(n => n.event_id === eventId);
-    return all;
+    const list = eventId ? all.filter(n => n.event_id === eventId) : all;
+    if (role === 'student') {
+      return studentId ? list.filter(n => n.candidate_learner_id === studentId) : [];
+    }
+    return list;
   }
 
   public addNomination(nom: Partial<Nomination>): Nomination {
@@ -3120,25 +3206,36 @@ class StorageService {
 
   // ── ELECTIONS ─────────────────────────────────────────────────────────────
 
-  public getElections(eventId?: string): Election[] {
+  public getElections(eventId?: string, role?: string, studentId?: string): Election[] {
     const all = this.getItem<Election[]>(STORAGE_KEYS.ELECTIONS, INITIAL_ELECTIONS);
-    if (eventId) return all.filter(e => e.event_id === eventId);
-    return all;
+    const list = eventId ? all.filter(e => e.event_id === eventId) : all;
+    if (role === 'student') {
+      return list.map(e => ({
+        ...e,
+        total_votes: undefined as any,
+        voted_delegate_ids: studentId && e.voted_delegate_ids?.includes(studentId) ? [studentId] : [],
+        candidates: (e.candidates || []).map(c => ({
+          ...c,
+          votes: undefined as any
+        }))
+      }));
+    }
+    return list;
   }
 
   public addElection(elec: Partial<Election>): Election {
     const all = this.getElectionAll();
     const newElec: Election = {
-      id: uid('elec'),
+      id: elec.id || uid('elec'),
       event_id: elec.event_id || '',
       title: elec.title || 'New Election',
       position: elec.position || 'Assembly Role',
       type: elec.type || 'LEADERSHIP',
       status: elec.status || 'Live',
       candidates: elec.candidates || [],
-      total_votes: 0,
-      voted_delegate_ids: [],
-      created_at: new Date().toISOString()
+      total_votes: elec.total_votes ?? 0,
+      voted_delegate_ids: elec.voted_delegate_ids || [],
+      created_at: elec.created_at || new Date().toISOString()
     };
     all.unshift(newElec);
     this.setItem(STORAGE_KEYS.ELECTIONS, all);
@@ -3364,10 +3461,23 @@ class StorageService {
 
   // ── LIVE FLASH VOTES (Instant Yes/No Division Polls) ──────────────────────
 
-  public getFlashVotes(eventId?: string): LiveFlashVote[] {
+  public getFlashVotes(eventId?: string, role?: string, studentId?: string): LiveFlashVote[] {
     const all = this.getItem<LiveFlashVote[]>(STORAGE_KEYS.FLASH_VOTES, INITIAL_FLASH_VOTES);
-    if (eventId) return all.filter(f => f.event_id === eventId);
-    return all;
+    const list = eventId ? all.filter(f => f.event_id === eventId) : all;
+    if (role === 'student') {
+      return list.map(v => {
+        const studentVote = studentId && v.votes ? v.votes.find(vt => vt.learner_id === studentId) : undefined;
+        return {
+          ...v,
+          ayes_count: 0,
+          noes_count: 0,
+          abstain_count: 0,
+          voter_ids: studentId && v.voter_ids?.includes(studentId) ? [studentId] : [],
+          votes: studentVote ? [studentVote] : []
+        };
+      });
+    }
+    return list;
   }
 
   private getFlashVoteAll(): LiveFlashVote[] {
@@ -3599,7 +3709,10 @@ class StorageService {
     const all = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, INITIAL_SCORES);
     const idx = all.findIndex(s =>
       (s.id && score.id && s.id === score.id) ||
-      (s.learner_id === score.learner_id && s.event_id === score.event_id)
+      (s.learner_id === score.learner_id && s.event_id === score.event_id && (
+        (score.jury_id && s.jury_id === score.jury_id) ||
+        (score.juror_name && s.juror_name === score.juror_name)
+      ))
     );
     if (idx >= 0) {
       all[idx] = { ...all[idx], ...score };
@@ -3621,6 +3734,93 @@ class StorageService {
       this.syncEventStateToSupabase(eventId);
     } else {
       this.setItem(STORAGE_KEYS.SCORES, []);
+    }
+  }
+
+  // ── PROJECTOR DISPLAY STUDIO ──────────────────────────────────────────────
+
+  public getProjectorSettings(eventId?: string): ProjectorStudioSettings {
+    const defaultSettings: ProjectorStudioSettings = {
+      displayScene: 'auto',
+      tickerMessage: 'Welcome Delegates to the Legislative Assembly 2026',
+      isTickerActive: true,
+      tickerStyle: 'marquee',
+      showTricolorHeader: true,
+      showClock: true,
+      showSpeakerBadge: true,
+      customWelcomeTitle: 'TN Legislative Assembly'
+    };
+
+    if (eventId) {
+      const ev = this.getEvents().find(e => e.id === eventId);
+      const sc = (ev?.social_coverage || {}) as Record<string, any>;
+      if (sc.projector_settings) return sc.projector_settings;
+      const local = this.getItem<ProjectorStudioSettings | null>(`tn_assembly_projector_studio_${eventId}`, null);
+      if (local) return local;
+    }
+    const fallback = this.getItem<ProjectorStudioSettings | null>('tn_assembly_projector_studio_v1', null);
+    return fallback || defaultSettings;
+  }
+
+  public async saveProjectorSettings(eventId: string, settings: ProjectorStudioSettings): Promise<void> {
+    const key = eventId ? `tn_assembly_projector_studio_${eventId}` : 'tn_assembly_projector_studio_v1';
+    this.setItem(key, settings);
+    this.setItem('tn_assembly_projector_studio_v1', settings);
+
+    const events = this.getEvents();
+    const ev = events.find(e => e.id === eventId);
+    if (ev) {
+      const sc = (ev.social_coverage || {}) as Record<string, any>;
+      ev.social_coverage = { ...sc, projector_settings: settings };
+      this.setItem(STORAGE_KEYS.EVENTS, events);
+    }
+    this.notify();
+
+    if (supabase && this.realtimeChannel) {
+      try {
+        await this.realtimeChannel.send({
+          type: 'broadcast',
+          event: 'projector_update',
+          payload: { eventId, settings }
+        });
+      } catch (e) {
+        console.warn('Realtime broadcast projector_update failed:', e);
+      }
+    }
+
+    if (eventId) {
+      await this.syncEventStateToSupabase(eventId);
+    }
+  }
+
+  public async triggerSpeakerBell(eventId?: string): Promise<void> {
+    const now = Date.now();
+    if (eventId) {
+      this.setItem(`tn_assembly_last_bell_${eventId}`, now);
+      const events = this.getEvents();
+      const ev = events.find(e => e.id === eventId);
+      if (ev) {
+        const sc = (ev.social_coverage || {}) as Record<string, any>;
+        ev.social_coverage = { ...sc, last_bell_ring: now };
+        this.setItem(STORAGE_KEYS.EVENTS, events);
+        await this.syncEventStateToSupabase(eventId);
+      }
+    }
+
+    if (supabase && this.realtimeChannel) {
+      try {
+        await this.realtimeChannel.send({
+          type: 'broadcast',
+          event: 'speaker_bell',
+          payload: { eventId, timestamp: now }
+        });
+      } catch (e) {
+        console.warn('Realtime broadcast speaker_bell failed:', e);
+      }
+    }
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_speaker_bell', { detail: { eventId, timestamp: now } }));
     }
   }
 

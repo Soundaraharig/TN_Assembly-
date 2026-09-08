@@ -269,6 +269,7 @@ export interface ScoreRecord {
   learner_name: string;
   party_name: string;
   bench: BenchType;
+  jury_id?: string;
   research_constituency?: number;       // Max 30
   relevance_agenda?: number;            // Max 20
   communication_delivery?: number;      // Max 20
@@ -283,6 +284,29 @@ export interface ScoreRecord {
   juror_name?: string;
   is_locked?: boolean;
   updated_at: string;
+}
+
+export interface SecurityAuditLog {
+  id: string;
+  timestamp: string;
+  event_id?: string;
+  action: 'JURY_CODE_COPIED' | 'JURY_LINK_COPIED' | 'ACCESS_CODE_LOGIN_SUCCESS' | 'ACCESS_CODE_LOGIN_FAILED' | 'LOCKOUT_TRIGGERED';
+  actor_role?: string;
+  actor_name?: string;
+  details?: string;
+}
+
+export interface ProjectorStudioSettings {
+  displayScene: 'auto' | 'welcome' | 'agenda' | 'flash_vote' | 'election' | 'election_result' | 'break';
+  revealedElectionId?: string;
+  tickerMessage: string;
+  isTickerActive: boolean;
+  tickerStyle: 'marquee' | 'pulse' | 'static';
+  showTricolorHeader: boolean;
+  showClock: boolean;
+  showSpeakerBadge: boolean;
+  selectedAgendaId?: string;
+  customWelcomeTitle?: string;
 }
 
 export interface EventDeadline {

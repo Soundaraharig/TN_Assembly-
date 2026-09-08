@@ -26,6 +26,47 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
   const [codeError, setCodeError]   = useState('');
   const [isOrganizerLoading, setIsOrganizerLoading] = useState(false);
   const [isCodeLoading, setIsCodeLoading]           = useState(false);
+
+  // Security Lockout / Rate Limiting (5 attempts -> 3 min lockout)
+  const LOCKOUT_KEY = 'tn_assembly_join_lockout';
+  const FAILED_COUNT_KEY = 'tn_assembly_join_failed_count';
+
+  const [failedAttempts, setFailedAttempts] = useState<number>(() => {
+    try {
+      return parseInt(sessionStorage.getItem(FAILED_COUNT_KEY) || '0', 10) || 0;
+    } catch { return 0; }
+  });
+
+  const [lockoutUntil, setLockoutUntil] = useState<number | null>(() => {
+    try {
+      const until = parseInt(sessionStorage.getItem(LOCKOUT_KEY) || '0', 10);
+      return until && until > Date.now() ? until : null;
+    } catch { return null; }
+  });
+
+  const [lockoutRemaining, setLockoutRemaining] = useState<number>(0);
+
+  useEffect(() => {
+    if (!lockoutUntil) {
+      setLockoutRemaining(0);
+      return;
+    }
+    const updateCountdown = () => {
+      const remaining = Math.max(0, Math.ceil((lockoutUntil - Date.now()) / 1000));
+      setLockoutRemaining(remaining);
+      if (remaining <= 0) {
+        setLockoutUntil(null);
+        setFailedAttempts(0);
+        try {
+          sessionStorage.removeItem(LOCKOUT_KEY);
+          sessionStorage.removeItem(FAILED_COUNT_KEY);
+        } catch {}
+      }
+    };
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(interval);
+  }, [lockoutUntil]);
   
   const isJoinUrl = () => {
     if (typeof window === 'undefined') return false;
@@ -82,14 +123,41 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
 
   const handleAccessCodeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (lockoutUntil && Date.now() < lockoutUntil) {
+      setCodeError(`Too many failed attempts. Code verification temporarily locked. Try again in ${lockoutRemaining}s.`);
+      return;
+    }
     if (!accessCode.trim()) return;
     setIsCodeLoading(true);
     await new Promise(r => setTimeout(r, 400));
     const res = onLoginAccessCode(accessCode);
     setIsCodeLoading(false);
     if (!res) {
-      setCodeError('Invalid access code. Please check your delegate pass, volunteer code, or jury pass.');
+      const nextFailed = failedAttempts + 1;
+      setFailedAttempts(nextFailed);
+      try {
+        sessionStorage.setItem(FAILED_COUNT_KEY, String(nextFailed));
+      } catch {}
+
+      if (nextFailed >= 5) {
+        const lockDuration = 180000; // 3 minutes lockout
+        const lockExpiry = Date.now() + lockDuration;
+        setLockoutUntil(lockExpiry);
+        setLockoutRemaining(180);
+        try {
+          sessionStorage.setItem(LOCKOUT_KEY, String(lockExpiry));
+        } catch {}
+        setCodeError('Security Lockout: 5 failed attempts reached. Access code verification suspended for 3 minutes.');
+        return;
+      }
+      setCodeError(`Invalid access code. (${5 - nextFailed} attempt${5 - nextFailed === 1 ? '' : 's'} remaining before temporary security lockout)`);
     } else {
+      setFailedAttempts(0);
+      setLockoutUntil(null);
+      try {
+        sessionStorage.removeItem(FAILED_COUNT_KEY);
+        sessionStorage.removeItem(LOCKOUT_KEY);
+      } catch {}
       setCodeError('');
       const name = (res as any).full_name || (res as any).name || 'User';
       const roleStr = (res as any).role === 'volunteer' ? 'Volunteer' : (res as any).role === 'jury' ? 'Jury' : 'Delegate';
@@ -314,11 +382,12 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
                 <form onSubmit={handleAccessCodeSubmit} className="space-y-3">
                   <input
                     type="text"
-                    placeholder="e.g. 89F2A1"
-                    maxLength={8}
+                    placeholder={lockoutUntil ? `LOCKED (${lockoutRemaining}s)` : "e.g. 89F2A1"}
+                    maxLength={10}
+                    disabled={Boolean(lockoutUntil && Date.now() < lockoutUntil)}
                     value={accessCode}
                     onChange={e => { setAccessCode(e.target.value.toUpperCase()); setCodeError(''); }}
-                    className="input-theme text-center font-mono font-black text-lg tracking-widest uppercase"
+                    className="input-theme text-center font-mono font-black text-lg tracking-widest uppercase disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{ letterSpacing: '0.25em' }}
                   />
 
@@ -331,12 +400,12 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
                   <div className="flex gap-2">
                     <button
                       type="submit"
-                      disabled={isCodeLoading}
-                      className="w-full py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer hover:scale-102"
+                      disabled={isCodeLoading || Boolean(lockoutUntil && Date.now() < lockoutUntil)}
+                      className="w-full py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer hover:scale-102 disabled:opacity-50 disabled:cursor-not-allowed"
                       style={{
                         background: 'var(--amber)',
                         color: '#fff',
-                        opacity: isCodeLoading ? 0.7 : 1,
+                        opacity: (isCodeLoading || (lockoutUntil && Date.now() < lockoutUntil)) ? 0.6 : 1,
                         boxShadow: '0 4px 12px var(--amber-soft)'
                       }}
                     >
@@ -344,7 +413,7 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
                         ? <span className="animate-spin-once inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full" />
                         : <ArrowRight className="w-3.5 h-3.5" />
                       }
-                      <span>Join Session</span>
+                      <span>{lockoutUntil ? `Locked (${lockoutRemaining}s)` : 'Join Session'}</span>
                     </button>
                   </div>
                 </form>

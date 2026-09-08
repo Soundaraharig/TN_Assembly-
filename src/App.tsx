@@ -294,6 +294,10 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
   }
 
   if (props.role === 'student') {
+    const studentElections = storageService.getElections(activeEvent.id, 'student', props.currentStudent?.id);
+    const studentFlashVotes = storageService.getFlashVotes(activeEvent.id, 'student', props.currentStudent?.id);
+    const studentNominations = storageService.getNominations(activeEvent.id, 'student', props.currentStudent?.id);
+
     return props.currentStudent ? (
       <StudentDashboard
         student={props.currentStudent}
@@ -301,26 +305,26 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
         agenda={props.agenda}
         party={props.activeParty || null}
         committee={props.activeCommittee || null}
-        nominations={props.nominations}
+        nominations={studentNominations}
         openNominationPositions={props.openNominationPositions}
-        elections={props.elections}
-        flashVotes={props.flashVotes}
+        elections={studentElections}
+        flashVotes={studentFlashVotes}
         onFileNomination={(nom) => {
           storageService.addNomination(nom);
           if (activeEvent) {
-            props.setNominations(storageService.getNominations(activeEvent.id));
+            props.setNominations(storageService.getNominations(activeEvent.id, 'student', props.currentStudent!.id));
           }
         }}
         onCastVote={(elecId, candId, delId) => {
           storageService.castVoteInElection(elecId, candId, delId || props.currentStudent!.id);
           if (activeEvent) {
-            props.setElections(storageService.getElections(activeEvent.id));
+            props.setElections(storageService.getElections(activeEvent.id, 'student', props.currentStudent!.id));
           }
         }}
         onCastFlashVote={(vId, l, dec) => {
           storageService.castFlashVote(vId, l, dec);
           if (activeEvent) {
-            props.setFlashVotes(storageService.getFlashVotes(activeEvent.id));
+            props.setFlashVotes(storageService.getFlashVotes(activeEvent.id, 'student', props.currentStudent!.id));
           }
         }}
         onShowToast={props.addToast}
@@ -2102,29 +2106,29 @@ export function App() {
                     agenda={agenda}
                     party={activeParty || null}
                     committee={activeCommittee || null}
-                    nominations={nominations}
+                    nominations={storageService.getNominations(currentEvent?.id || events[0]?.id, 'student', currentStudent.id)}
                     openNominationPositions={openNominationPositions}
-                    elections={elections}
-                    flashVotes={flashVotes}
+                    elections={storageService.getElections(currentEvent?.id || events[0]?.id, 'student', currentStudent.id)}
+                    flashVotes={storageService.getFlashVotes(currentEvent?.id || events[0]?.id, 'student', currentStudent.id)}
                     onFileNomination={(nom) => {
                       storageService.addNomination(nom);
                       const targetId = currentEvent?.id || events[0]?.id;
                       if (targetId) {
-                        setNominations(storageService.getNominations(targetId));
+                        setNominations(storageService.getNominations(targetId, 'student', currentStudent.id));
                       }
                     }}
                     onCastVote={(elecId, candId, delId) => {
                       storageService.castVoteInElection(elecId, candId, delId || currentStudent.id);
                       const targetId = currentEvent?.id || events[0]?.id;
                       if (targetId) {
-                        setElections(storageService.getElections(targetId));
+                        setElections(storageService.getElections(targetId, 'student', currentStudent.id));
                       }
                     }}
                     onCastFlashVote={(vId, l, dec) => {
                       storageService.castFlashVote(vId, l, dec);
                       const targetId = currentEvent?.id || events[0]?.id;
                       if (targetId) {
-                        setFlashVotes(storageService.getFlashVotes(targetId));
+                        setFlashVotes(storageService.getFlashVotes(targetId, 'student', currentStudent.id));
                       }
                     }}
                     onShowToast={addToast}

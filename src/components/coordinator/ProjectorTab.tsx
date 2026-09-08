@@ -7,48 +7,26 @@ import {
 
 import { getEventSlug } from '../../utils/slug';
 import { StandaloneProjectorDisplay } from '../common/StandaloneProjectorDisplay';
-
-export interface ProjectorStudioSettings {
-  displayScene: 'auto' | 'welcome' | 'agenda' | 'flash_vote' | 'election' | 'election_result' | 'break';
-  revealedElectionId?: string;
-  tickerMessage: string;
-  isTickerActive: boolean;
-  tickerStyle: 'marquee' | 'pulse' | 'static';
-  showTricolorHeader: boolean;
-  showClock: boolean;
-  showSpeakerBadge: boolean;
-  selectedAgendaId?: string;
-  customWelcomeTitle?: string;
-}
+import { storageService } from '../../services/storageService';
+import type { ProjectorStudioSettings } from '../../types';
+export type { ProjectorStudioSettings };
 
 const SETTINGS_KEY = 'tn_assembly_projector_studio_v1';
 
 export function getProjectorSettings(eventId?: string): ProjectorStudioSettings {
-  try {
-    const key = eventId ? `tn_assembly_projector_studio_${eventId}` : SETTINGS_KEY;
-    const saved = localStorage.getItem(key) || localStorage.getItem(SETTINGS_KEY);
-    if (saved) return JSON.parse(saved);
-  } catch {}
-  return {
-    displayScene: 'auto',
-    tickerMessage: 'Welcome Delegates to the Legislative Assembly 2026',
-    isTickerActive: true,
-    tickerStyle: 'marquee',
-    showTricolorHeader: true,
-    showClock: true,
-    showSpeakerBadge: true,
-    customWelcomeTitle: 'TN Legislative Assembly'
-  };
+  return storageService.getProjectorSettings(eventId);
 }
 
 export function saveProjectorSettings(settings: ProjectorStudioSettings, eventId?: string) {
-  try {
-    const key = eventId ? `tn_assembly_projector_studio_${eventId}` : SETTINGS_KEY;
-    localStorage.setItem(key, JSON.stringify(settings));
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-    window.dispatchEvent(new Event('storage'));
-  } catch (e) {
-    console.error('Failed to save projector settings:', e);
+  if (eventId) {
+    storageService.saveProjectorSettings(eventId, settings);
+  } else {
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+      window.dispatchEvent(new Event('storage'));
+    } catch (e) {
+      console.error('Failed to save projector settings:', e);
+    }
   }
 }
 
@@ -107,8 +85,14 @@ export const ProjectorTab: React.FC<ProjectorTabProps> = ({
       gain.connect(ctx.destination);
       osc.start();
       osc.stop(ctx.currentTime + 0.6);
-      onShowToast('Speaker Bell Sounded', 'Audio cue transmitted to live auditorium stage', 'info');
+      if (currentEvent?.id) {
+        storageService.triggerSpeakerBell(currentEvent.id);
+      }
+      onShowToast('Speaker Bell Sounded', 'Audio cue transmitted to live auditorium stage & projector', 'info');
     } catch {
+      if (currentEvent?.id) {
+        storageService.triggerSpeakerBell(currentEvent.id);
+      }
       onShowToast('Audio Cue', 'Gavel chime sound triggered', 'info');
     }
   };

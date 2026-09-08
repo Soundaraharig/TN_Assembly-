@@ -39,6 +39,16 @@ export const JuryTab: React.FC<JuryTabProps> = ({
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
 
+  // Role Protection Guard
+  if (userRole && userRole !== 'super_admin' && userRole !== 'coordinator' && userRole !== 'organiser') {
+    return (
+      <div className="p-8 text-center rounded-2xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400">
+        <h3 className="text-base font-bold">Access Restricted</h3>
+        <p className="text-xs text-slate-500 mt-1">Only authorized administrators and coordinators can view and manage jury access passes.</p>
+      </div>
+    );
+  }
+
   const effectiveJuryUrl = juryAccessUrl || (typeof window !== 'undefined' ? `${window.location.origin}/join` : 'https://tnassembly.vercel.app/join');
 
   // Form State
@@ -50,6 +60,12 @@ export const JuryTab: React.FC<JuryTabProps> = ({
   const handleCopyLink = () => {
     navigator.clipboard.writeText(effectiveJuryUrl);
     setCopiedLink(true);
+    storageService.logAudit({
+      event_id: eventId,
+      action: 'JURY_LINK_COPIED',
+      actor_role: userRole,
+      details: `Jury access link copied (${effectiveJuryUrl})`
+    });
     onShowToast('Link Copied', 'Jury access link copied to clipboard', 'info');
     setTimeout(() => setCopiedLink(false), 2000);
   };
@@ -57,6 +73,12 @@ export const JuryTab: React.FC<JuryTabProps> = ({
   const handleCopyCode = (code: string) => {
     navigator.clipboard.writeText(code);
     setCopiedCode(code);
+    storageService.logAudit({
+      event_id: eventId,
+      action: 'JURY_CODE_COPIED',
+      actor_role: userRole,
+      details: `Jury access code copied: ${code}`
+    });
     onShowToast('Code Copied', `Access code ${code} copied to clipboard`, 'info');
     setTimeout(() => setCopiedCode(null), 2000);
   };
@@ -168,8 +190,8 @@ export const JuryTab: React.FC<JuryTabProps> = ({
                   </td>
                 </tr>
               ) : (
-                jury.map((j, idx) => {
-                  const displayCode = (j.access_code && j.access_code.trim() ? j.access_code : `JURY${String(idx + 1).padStart(2, '0')}`).replace('JURY-', 'JURY');
+                jury.map((j) => {
+                  const displayCode = j.access_code && j.access_code.trim() ? j.access_code.trim() : '—';
 
                   return (
                     <tr key={j.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">

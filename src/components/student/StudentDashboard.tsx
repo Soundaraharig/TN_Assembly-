@@ -433,7 +433,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         <h4 className="text-base font-bold text-slate-900 dark:text-white">{elec.title}</h4>
                       </div>
                       <p className="text-xs text-slate-500 dark:text-slate-400">
-                        Total Ballots Cast in House: <strong>{elec.total_votes || 0}</strong>
+                        Official Floor Ballot • Cast your vote below
                       </p>
                     </div>
 
@@ -486,9 +486,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                                 {cand.party} • <span className={cand.bench === 'Ruling' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>{cand.bench} Bench</span>
                               </p>
                             </div>
-                            <span className="text-xs font-mono font-bold text-slate-500 dark:text-slate-400">
-                              {cand.votes || 0} votes
-                            </span>
                           </div>
 
                           {eligibleCheck.eligible && !hasVoted && (
@@ -563,7 +560,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
                       }`}
                     >
-                      AYE ({fv.ayes_count || 0})
+                      AYE {myVote === 'AYE' && '✓'}
                     </button>
                     <button
                       onClick={() => {
@@ -576,7 +573,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30 hover:bg-rose-500/20'
                       }`}
                     >
-                      NO ({fv.noes_count || 0})
+                      NO {myVote === 'NO' && '✓'}
                     </button>
                     <button
                       onClick={() => {
@@ -589,7 +586,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           : 'bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/30 hover:bg-slate-500/20'
                       }`}
                     >
-                      ABSTAIN ({fv.abstain_count || 0})
+                      ABSTAIN {myVote === 'ABSTAIN' && '✓'}
                     </button>
                   </div>
                 </div>
@@ -704,46 +701,32 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
       )}
 
-      {/* Filed Nominations Tracker */}
-      {nominations.length > 0 && (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xl space-y-3 transition-colors">
-          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
-            <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <UserCheck className="w-4 h-4 text-emerald-500" /> Active Candidate Nominations ({nominations.length})
-            </h4>
-            <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400">Live Roster</span>
+      {/* Student's Own Filed Nomination Status */}
+      {(() => {
+        const myNom = nominations.find(n => n.candidate_learner_id === student.id);
+        if (!myNom) return null;
+        return (
+          <div className="bg-white dark:bg-slate-900 border border-emerald-500/40 rounded-2xl p-5 shadow-xl space-y-3 transition-colors">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
+              <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <UserCheck className="w-4 h-4 text-emerald-500" /> Your Filed Nomination
+              </h4>
+              <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
+                {myNom.status || 'Submitted'}
+              </span>
+            </div>
+            <div className="p-3.5 rounded-xl border border-emerald-500/20 bg-emerald-50/50 dark:bg-emerald-950/20 space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-900 dark:text-white">{myNom.position}</span>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">{myNom.party_name} • {myNom.bench} Bench</span>
+              </div>
+              {myNom.manifesto && (
+                <p className="text-xs text-slate-600 dark:text-slate-300 italic">"{myNom.manifesto}"</p>
+              )}
+            </div>
           </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-            {nominations.map(nom => {
-              const isMe = nom.candidate_learner_id === student.id;
-              return (
-                <div
-                  key={nom.id}
-                  className={`p-3 rounded-xl border text-xs space-y-1.5 transition-all ${
-                    isMe
-                      ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-500/40 text-slate-900 dark:text-white'
-                      : 'bg-slate-50 dark:bg-slate-950/60 border-slate-200 dark:border-slate-800/80 text-slate-700 dark:text-slate-300'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-                      {nom.position}
-                    </span>
-                    {isMe && (
-                      <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-emerald-500 text-white">
-                        Your Nomination
-                      </span>
-                    )}
-                  </div>
-                  <div className="font-bold text-slate-900 dark:text-white text-xs">{nom.candidate_name}</div>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">{nom.party_name} • {nom.bench} Bench</p>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Interactive Assembly Floor Request */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4 transition-colors">

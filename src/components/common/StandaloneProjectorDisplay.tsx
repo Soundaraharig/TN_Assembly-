@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import type { CollegeEvent, AgendaItem, Election, LiveFlashVote, Learner } from '../../types';
 import { Radio, Volume2, VolumeX, Maximize2, Minimize2, Clock, Sparkles, Trophy, Crown, Shield } from 'lucide-react';
-import { getProjectorSettings, type ProjectorStudioSettings } from '../coordinator/ProjectorTab';
+import type { ProjectorStudioSettings } from '../../types';
 import { storageService } from '../../services/storageService';
 import { extractEventFromUrl } from '../../utils/slug';
 
@@ -32,21 +32,54 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
   const [learners, setLearners] = useState<Learner[]>(initialLearners);
 
   // Read real-time studio settings pushed from ProjectorTab / ElectionsTab
-  const [settings, setSettings] = useState<ProjectorStudioSettings>(() => getProjectorSettings(initialEvent?.id));
+  const [settings, setSettings] = useState<ProjectorStudioSettings>(() => storageService.getProjectorSettings(initialEvent?.id));
+  const [lastBellTime, setLastBellTime] = useState<number>(0);
+
+  const playBellSound = () => {
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.5);
+      gain.gain.setValueAtTime(0.4, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.6);
+    } catch {}
+  };
 
   // Sync state from storage & events
   useEffect(() => {
+    const onBell = () => {
+      if (isSoundEnabled) {
+        playBellSound();
+      }
+    };
+    window.addEventListener('tn_assembly_speaker_bell', onBell);
+
     const syncState = () => {
       const evs = storageService.getEvents();
       const urlEv = extractEventFromUrl(evs);
       const ev = urlEv || (currentEvent?.id ? evs.find(e => e.id === currentEvent.id) : null) || initialEvent || evs[0];
       if (ev) {
         setCurrentEvent(ev);
-        setSettings(getProjectorSettings(ev.id));
+        setSettings(storageService.getProjectorSettings(ev.id));
         setAgenda(storageService.getAgenda(ev.id));
         setElections(storageService.getElections(ev.id));
         setFlashVotes(storageService.getFlashVotes(ev.id));
         setLearners(storageService.getLearners(ev.id));
+
+        const sc = (ev.social_coverage || {}) as Record<string, any>;
+        if (sc.last_bell_ring && sc.last_bell_ring > lastBellTime) {
+          setLastBellTime(sc.last_bell_ring);
+          if (lastBellTime > 0 && isSoundEnabled) {
+            playBellSound();
+          }
+        }
       }
     };
 
@@ -57,10 +90,11 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
 
     return () => {
       window.removeEventListener('storage', syncState);
+      window.removeEventListener('tn_assembly_speaker_bell', onBell);
       unsubscribe();
       clearInterval(interval);
     };
-  }, [currentEvent?.id, initialEvent?.id]);
+  }, [currentEvent?.id, initialEvent?.id, isSoundEnabled, lastBellTime]);
 
   // Selected or active agenda item
   const selectedAgenda = agenda.find(a => a.id === settings.selectedAgendaId) || agenda.find(a => a.is_current) || agenda[0] || {
