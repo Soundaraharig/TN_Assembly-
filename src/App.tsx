@@ -2040,7 +2040,7 @@ export function App() {
       <div className="flex">
             
             {/* Left Vertical Sidebar (Desktop + Mobile Slide-Out Drawer) */}
-            {isTabRoute && (
+            {isTabRoute && role !== 'student' && (
               <Sidebar
                 activeTab={activeNavTab}
                 onSelectTab={(tab) => handleSelectTab(tab)}
@@ -2061,7 +2061,7 @@ export function App() {
             <main className="flex-1 p-3 sm:p-5 lg:p-6 overflow-x-hidden min-w-0">
               
               {/* Mobile Quick-Navigation Pill Bar */}
-              {isTabRoute && currentEvent && (
+              {isTabRoute && currentEvent && role !== 'student' && (
                 <div className="lg:hidden mb-4 overflow-x-auto pb-1 flex items-center gap-1.5 scrollbar-none">
                   {mobileQuickTabs.map(qTab => {
                     const isActive = activeNavTab === qTab.id;
