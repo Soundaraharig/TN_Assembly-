@@ -3346,7 +3346,7 @@ class StorageService {
   }
 
   public getPartyLeaderElectionParty(election: Election): Party | null {
-    const parties = this.getParties();
+    const parties = this.getParties(election.event_id);
     if (election.party_id) {
       const match = parties.find(p => p.id === election.party_id);
       if (match) return match;
@@ -3354,41 +3354,56 @@ class StorageService {
     const title = (election.title || '').toLowerCase();
     const pos = (election.position || '').toLowerCase();
     if ((pos === 'party leader' || title.includes('party leader')) && !title.includes('ruling') && !title.includes('opposition')) {
-      const match = parties.find(p => title.includes(p.name.toLowerCase()) || p.name.toLowerCase().includes(title.replace('leader election', '').trim()));
+      const match = parties.find(p => p.name && (title.includes(p.name.toLowerCase()) || p.name.toLowerCase().includes(title.replace('leader election', '').trim())));
       if (match) return match;
+
+      // Fallback: extract party name from title e.g. "Party 1 Leader Election" -> "Party 1"
+      const extracted = (election.title || '').replace(/\s+leader election$/i, '').trim();
+      if (extracted && extracted.toLowerCase() !== 'party') {
+        return {
+          id: election.party_id || '',
+          event_id: election.event_id,
+          name: extracted,
+          bench: 'Independent',
+          color: '#059669'
+        };
+      }
     }
     return null;
   }
 
-  public addCandidateToElection(electionId: string, candidate: Partial<ElectionCandidate>): boolean {
+  public addCandidateToElection(electionId: string, candidate: Partial<ElectionCandidate>): { success: boolean; reason?: string } {
     const all = this.getElectionAll();
     const election = all.find(e => e.id === electionId);
-    if (!election) return false;
+    if (!election) return { success: false, reason: 'Election not found.' };
 
     // Enforce Backend Nomination Locking while Live or Closed
     if (election.status === 'Live' || election.status === 'Closed') {
-      console.warn('[StorageService] Rejected candidate addition: Nominations are locked while voting is live or closed.');
-      return false;
+      const reason = 'Nominations are locked while voting is live or closed.';
+      console.warn(`[StorageService] Rejected candidate addition: ${reason}`);
+      return { success: false, reason };
     }
 
     // Server-Side Validation: Restrict Party Leader Election to members of that specific party
     const partyLeaderParty = this.getPartyLeaderElectionParty(election);
     if (partyLeaderParty) {
-      const learners = this.getLearners();
+      const learners = this.getLearners(election.event_id);
       const candidateLearner = learners.find(
         l => (candidate.learner_id && l.id === candidate.learner_id) || l.full_name?.toLowerCase() === candidate.name?.toLowerCase()
       );
 
       const candidatePartyId = candidateLearner?.party_id;
-      const candidatePartyName = candidateLearner?.party_name || candidate.party;
+      const candidatePartyName = (candidateLearner ? getResolvedPartyName(candidateLearner, this.getParties(election.event_id)) : '') || candidateLearner?.party_name || candidate.party;
 
-      const isPartyMatch = candidatePartyId
-        ? candidatePartyId === partyLeaderParty.id
-        : candidatePartyName?.toLowerCase() === partyLeaderParty.name.toLowerCase();
+      const isPartyMatch = Boolean(
+        (partyLeaderParty.id && candidatePartyId && candidatePartyId === partyLeaderParty.id) ||
+        (partyLeaderParty.name && candidatePartyName && candidatePartyName.trim().toLowerCase() === partyLeaderParty.name.trim().toLowerCase())
+      );
 
       if (!isPartyMatch) {
-        console.warn(`[StorageService] Rejected candidate addition: Candidate ${candidate.name} is not a member of party ${partyLeaderParty.name} (${partyLeaderParty.id}). Candidate must be a member of the party holding this election.`);
-        return false;
+        const reason = `${candidate.name || 'Candidate'} cannot be added — not a registered member of ${partyLeaderParty.name}. Candidate must be a member of the party holding this election.`;
+        console.warn(`[StorageService] Rejected candidate addition: ${reason}`);
+        return { success: false, reason };
       }
     }
 
@@ -3396,7 +3411,7 @@ class StorageService {
     const existing = election.candidates.find(
       c => (candidate.learner_id && c.learner_id === candidate.learner_id) || c.name.toLowerCase() === candidate.name?.toLowerCase()
     );
-    if (existing) return false;
+    if (existing) return { success: false, reason: `${candidate.name || 'Candidate'} is already nominated on this ballot.` };
 
     const newCandidate: ElectionCandidate = {
       id: candidate.id || uid('cand'),
@@ -3410,7 +3425,7 @@ class StorageService {
     election.candidates.push(newCandidate);
     this.setItem(STORAGE_KEYS.ELECTIONS, all);
     if (election.event_id) this.syncEventStateToSupabase(election.event_id);
-    return true;
+    return { success: true };
   }
 
   public removeCandidateFromElection(electionId: string, candidateId: string): boolean {

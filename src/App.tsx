@@ -629,8 +629,11 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
             props.setElections(storageService.getElections(activeEvent.id));
           }}
           onAddCandidate={(elecId, cand) => {
-            storageService.addCandidateToElection(elecId, cand);
-            props.setElections(storageService.getElections(activeEvent.id));
+            const result = storageService.addCandidateToElection(elecId, cand);
+            if (result.success) {
+              props.setElections(storageService.getElections(activeEvent.id));
+            }
+            return result;
           }}
           onRemoveCandidate={(elecId, candId) => {
             storageService.removeCandidateFromElection(elecId, candId);
