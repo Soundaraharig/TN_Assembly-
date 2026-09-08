@@ -182,9 +182,14 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   const [scoresLocked, setScoresLocked] = useState(() => storageService.getScoresLocked(currentEvent?.id));
 
   useEffect(() => {
-    setAllocationLock(storageService.getAllocationLock(currentEvent?.id));
-    setRegistrationsFrozen(storageService.getRegistrationsFrozen(currentEvent?.id));
-    setScoresLocked(storageService.getScoresLocked(currentEvent?.id));
+    const updateLocks = () => {
+      setAllocationLock(storageService.getAllocationLock(currentEvent?.id));
+      setRegistrationsFrozen(storageService.getRegistrationsFrozen(currentEvent?.id));
+      setScoresLocked(storageService.getScoresLocked(currentEvent?.id));
+    };
+    updateLocks();
+    const unsub = storageService.subscribe(updateLocks);
+    return unsub;
   }, [currentEvent?.id]);
 
 
@@ -838,10 +843,15 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   <input
                     type="checkbox"
                     checked={allocationLock}
-                    onChange={(e) => {
+                    onChange={async (e) => {
                       const val = e.target.checked;
                       setAllocationLock(val);
-                      storageService.setAllocationLock(val, currentEvent?.id);
+                      const res = await storageService.setAllocationLock(val, currentEvent?.id);
+                      if (!res.success) {
+                        setAllocationLock(!val);
+                        onShowToast('Lock Failed', res.error?.message || 'Database update failed', 'error');
+                        return;
+                      }
                       onShowToast(val ? '🔒 Allocation Locked' : '🔓 Allocation Unlocked', val ? 'Role & party allocations locked' : 'Allocations unlocked', 'info');
                     }}
                     className="sr-only peer"
@@ -860,10 +870,15 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   <input
                     type="checkbox"
                     checked={registrationsFrozen}
-                    onChange={(e) => {
+                    onChange={async (e) => {
                       const val = e.target.checked;
                       setRegistrationsFrozen(val);
-                      storageService.setRegistrationsFrozen(val, currentEvent?.id);
+                      const res = await storageService.setRegistrationsFrozen(val, currentEvent?.id);
+                      if (!res.success) {
+                        setRegistrationsFrozen(!val);
+                        onShowToast('Freeze Failed', res.error?.message || 'Database update failed', 'error');
+                        return;
+                      }
                       onShowToast(val ? '❄️ Registrations Frozen' : '🔓 Registrations Open', val ? 'Walk-in & CSV additions blocked' : 'Registrations open', 'info');
                     }}
                     className="sr-only peer"
@@ -882,10 +897,15 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   <input
                     type="checkbox"
                     checked={scoresLocked}
-                    onChange={(e) => {
+                    onChange={async (e) => {
                       const val = e.target.checked;
                       setScoresLocked(val);
-                      storageService.setScoresLocked(val, currentEvent?.id);
+                      const res = await storageService.setScoresLocked(val, currentEvent?.id);
+                      if (!res.success) {
+                        setScoresLocked(!val);
+                        onShowToast('Lock Failed', res.error?.message || 'Database update failed', 'error');
+                        return;
+                      }
                       onShowToast(val ? '🔒 Scores Locked' : '🔓 Scores Unlocked', val ? 'Jury evaluation scoring locked' : 'Scoring open', 'info');
                     }}
                     className="sr-only peer"

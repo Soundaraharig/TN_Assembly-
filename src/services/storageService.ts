@@ -51,12 +51,14 @@ import {
 import {
   runAutoAllocation,
   allocateParties,
-  allocateCommittees
+  allocateCommittees,
+  allocateConstituencies
 } from '../utils/allocationEngine';
 import type {
   AllocationResult,
   PartyAllocationOptions,
-  CommitteeAllocationOptions
+  CommitteeAllocationOptions,
+  ConstituencyAllocationOptions
 } from '../utils/allocationEngine';
 import { supabase, isSupabaseEnabled } from '../lib/supabase';
 import { getEventSlug } from '../utils/slug';
@@ -145,7 +147,7 @@ class StorageService {
   private syncError: string | null = null;
   private syncVersion: number = 0;
   private writeErrorHandler: WriteErrorHandler | null = null;
-  private inFlightWrites = new Set<string>();
+  private inFlightPromises = new Map<string, Promise<{ success: boolean; error: any; data?: any }>>();
   private failedWriteSignatures = new Map<string, number>();
 
   public setWriteErrorHandler(handler: WriteErrorHandler | null) {
@@ -569,6 +571,16 @@ class StorageService {
             this.setItem(key, sc.yuva_assignments);
             this.setItem(STORAGE_KEYS.YUVA_ASSIGNMENTS, sc.yuva_assignments);
           }
+
+          if (typeof sc.allocation_lock === 'boolean') {
+            this.setItem(`${STORAGE_KEYS.ALLOCATION_LOCK}_${ev.id}`, sc.allocation_lock);
+          }
+          if (typeof sc.registrations_frozen === 'boolean') {
+            this.setItem(`${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${ev.id}`, sc.registrations_frozen);
+          }
+          if (typeof sc.scores_locked === 'boolean') {
+            this.setItem(`${STORAGE_KEYS.SCORES_LOCKED}_${ev.id}`, sc.scores_locked);
+          }
         });
 
         if (events.length === 0) {
@@ -590,7 +602,7 @@ class StorageService {
           events.forEach(remoteEv => {
             if (deletedIds.has(remoteEv.id)) return;
             const local = localEventMap.get(remoteEv.id);
-            eventMap.set(remoteEv.id, local ? { ...remoteEv, ...local } : (remoteEv as unknown as CollegeEvent));
+            eventMap.set(remoteEv.id, local ? { ...local, ...remoteEv } : (remoteEv as unknown as CollegeEvent));
           });
 
           this.setItem(STORAGE_KEYS.EVENTS, Array.from(eventMap.values()));
@@ -677,7 +689,7 @@ class StorageService {
           learners.forEach(r => {
             if (deletedIds.has(r.id)) return;
             const local = localLearnerMap.get(r.id);
-            learnerMap.set(r.id, local ? { ...(r as Learner), ...local } : (r as Learner));
+            learnerMap.set(r.id, local ? { ...local, ...(r as Learner) } : (r as Learner));
           });
           this.setItem(STORAGE_KEYS.LEARNERS, sortLearnersStably(Array.from(learnerMap.values())));
         }
@@ -698,7 +710,7 @@ class StorageService {
           parties.forEach(remote => {
             if (deletedIds.has(remote.id)) return;
             const local = localPartyMap.get(remote.id);
-            partyMap.set(remote.id, local ? { ...remote, ...local } : (remote as unknown as Party));
+            partyMap.set(remote.id, local ? { ...local, ...remote } : (remote as unknown as Party));
           });
           this.setItem(STORAGE_KEYS.PARTIES, Array.from(partyMap.values()));
         }
@@ -719,7 +731,7 @@ class StorageService {
           committees.forEach(remote => {
             if (deletedIds.has(remote.id)) return;
             const local = localCommMap.get(remote.id);
-            commMap.set(remote.id, local ? { ...remote, ...local } : (remote as unknown as Committee));
+            commMap.set(remote.id, local ? { ...local, ...remote } : (remote as unknown as Committee));
           });
           this.setItem(STORAGE_KEYS.COMMITTEES, Array.from(commMap.values()));
         }
@@ -847,6 +859,10 @@ class StorageService {
       const currentEv = events.find(e => e.id === eventId);
       const existingSC = (currentEv?.social_coverage || {}) as Record<string, any>;
 
+      const allocLock = this.getItem<boolean>(`${STORAGE_KEYS.ALLOCATION_LOCK}_${eventId}`, false);
+      const regFrozen = this.getItem<boolean>(`${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${eventId}`, false);
+      const scLocked = this.getItem<boolean>(`${STORAGE_KEYS.SCORES_LOCKED}_${eventId}`, false);
+
       const payload = {
         ...existingSC,
         open_nominations: openNoms,
@@ -858,6 +874,9 @@ class StorageService {
         scores: scs,
         yuva_assignments: yuvaAssignments,
         cabinet_ministries: currentEv?.cabinet_ministries || [],
+        allocation_lock: existingSC.allocation_lock !== undefined ? existingSC.allocation_lock : allocLock,
+        registrations_frozen: existingSC.registrations_frozen !== undefined ? existingSC.registrations_frozen : regFrozen,
+        scores_locked: existingSC.scores_locked !== undefined ? existingSC.scores_locked : scLocked,
         updated_at: new Date().toISOString()
       };
 
@@ -1022,101 +1041,120 @@ class StorageService {
       if (validId) sanitized.id = validId;
       return sanitized;
     }
-    return raw;
+    const sanitizedAny = { ...raw };
+    if (raw.id !== undefined) {
+      if (validId) {
+        sanitizedAny.id = validId;
+      } else {
+        delete sanitizedAny.id;
+      }
+    }
+    return sanitizedAny;
   }
 
   public async sbUpsert(table: string, record: Record<string, unknown>): Promise<{ success: boolean; error: any; data?: any }> {
-    if (!supabase) {
+    const sb = supabase;
+    if (!sb) {
       console.warn(`[Supabase Write Skipped] Table: "${table}" — Supabase is not configured (running in localStorage-only mode).`);
       return { success: false, error: new Error('Supabase not configured') };
     }
     const sanitized = this.sanitizeRecordForTable(table, record);
     const writeKey = `${table}:::${sanitized.id || JSON.stringify(sanitized)}`;
 
-    // Prevent duplicate in-flight requests for the exact same entity
-    if (this.inFlightWrites.has(writeKey)) {
-      console.log(`[Supabase Write Throttled] Table: "${table}" Key: "${writeKey}" — already in flight.`);
-      return { success: true, error: null };
+    // Await any existing in-flight request for this exact write key
+    const inFlight = this.inFlightPromises.get(writeKey);
+    if (inFlight) {
+      console.log(`[Supabase Write Awaiting In-Flight] Table: "${table}" Key: "${writeKey}"`);
+      return await inFlight;
     }
 
-    // Check if identical request failed very recently (within 4s) to prevent infinite error spamming
-    const lastFail = this.failedWriteSignatures.get(writeKey);
-    if (lastFail && Date.now() - lastFail < 4000) {
-      console.warn(`[Supabase Write Skipped] Table: "${table}" Key: "${writeKey}" — recent write failed. Throttling re-trigger.`);
-      return { success: false, error: new Error('Throttled duplicate failed write') };
-    }
+    const runWrite = async () => {
+      try {
+        console.log(`[Supabase Write Attempt] Table: "${table}" Payload:`, sanitized);
+        let query;
+        if (sanitized.id && isValidUuid(sanitized.id as string)) {
+          query = sb.from(table).upsert(sanitized, { onConflict: 'id' }).select();
+        } else {
+          const { id, ...insertPayload } = sanitized;
+          query = sb.from(table).insert(insertPayload).select();
+        }
 
-    this.inFlightWrites.add(writeKey);
-    try {
-      console.log(`[Supabase Write Attempt] Table: "${table}" Payload:`, sanitized);
-      let query;
-      if (sanitized.id && isValidUuid(sanitized.id as string)) {
-        query = supabase.from(table).upsert(sanitized, { onConflict: 'id' }).select();
-      } else {
-        const { id, ...insertPayload } = sanitized;
-        query = supabase.from(table).insert(insertPayload).select();
-      }
-
-      const { data, error, status } = await query;
-      if (error) {
+        const { data, error, status } = await query;
+        if (error || (status && status >= 400)) {
+          this.failedWriteSignatures.set(writeKey, Date.now());
+          console.error(`❌ [Supabase Write Error] Table: "${table}" (HTTP ${status}) Code: ${error?.code} — ${error?.message}. Details:`, error?.details || error?.hint);
+          this.notifyWriteError(table, 'save', error || new Error(`Write failed with status ${status}`));
+          return { success: false, error: error || new Error(`HTTP ${status}`) };
+        }
+        this.failedWriteSignatures.delete(writeKey);
+        console.log(`✅ [Supabase Write Success] Table: "${table}" (HTTP ${status}) Data:`, data);
+        return { success: true, error: null, data: Array.isArray(data) ? data[0] : data };
+      } catch (e: any) {
         this.failedWriteSignatures.set(writeKey, Date.now());
-        console.error(`❌ [Supabase Write Error] Table: "${table}" (HTTP ${status}) Code: ${error.code} — ${error.message}. Details:`, error.details || error.hint);
-        this.notifyWriteError(table, 'save', error);
-        return { success: false, error };
+        console.error(`❌ [Supabase Write Exception] Table: "${table}":`, e);
+        this.notifyWriteError(table, 'save', e);
+        return { success: false, error: e };
       }
-      this.failedWriteSignatures.delete(writeKey);
-      console.log(`✅ [Supabase Write Success] Table: "${table}" (HTTP ${status}) Data:`, data);
-      return { success: true, error: null, data: Array.isArray(data) ? data[0] : data };
-    } catch (e: any) {
-      this.failedWriteSignatures.set(writeKey, Date.now());
-      console.error(`❌ [Supabase Write Exception] Table: "${table}":`, e);
-      this.notifyWriteError(table, 'save', e);
-      return { success: false, error: e };
+    };
+
+    const promise = runWrite();
+    this.inFlightPromises.set(writeKey, promise);
+    try {
+      return await promise;
     } finally {
-      this.inFlightWrites.delete(writeKey);
+      this.inFlightPromises.delete(writeKey);
     }
   }
 
   public async sbUpsertBatch(table: string, records: Record<string, unknown>[]): Promise<{ success: boolean; error: any; data?: any }> {
-    if (!supabase) {
+    const sb = supabase;
+    if (!sb) {
       return { success: false, error: new Error('Supabase not configured') };
     }
     if (records.length === 0) return { success: true, error: null };
 
-    const sanitizedBatch = records.map(r => this.sanitizeRecordForTable(table, r));
-    const batchKey = `${table}:::batch:::${sanitizedBatch.map(r => r.id).sort().join(',')}`;
-
-    if (this.inFlightWrites.has(batchKey)) {
-      console.log(`[Supabase Batch Throttled] Table: "${table}" — batch write already in flight.`);
-      return { success: true, error: null };
-    }
-
-    const lastFail = this.failedWriteSignatures.get(batchKey);
-    if (lastFail && Date.now() - lastFail < 4000) {
-      console.warn(`[Supabase Batch Skipped] Table: "${table}" — recent batch write failed. Throttling re-trigger.`);
-      return { success: false, error: new Error('Throttled duplicate failed batch write') };
-    }
-
-    this.inFlightWrites.add(batchKey);
-    try {
-      console.log(`[Supabase Write Batch Attempt] Table: "${table}" Count: ${sanitizedBatch.length}`);
-      const { data, error, status } = await supabase.from(table).upsert(sanitizedBatch, { onConflict: 'id' }).select();
-      if (error) {
-        this.failedWriteSignatures.set(batchKey, Date.now());
-        console.error(`❌ [Supabase Write Batch Error] Table: "${table}" (HTTP ${status}) Code: ${error.code} — ${error.message}. Details:`, error.details || error.hint);
-        this.notifyWriteError(table, 'save batch', error);
-        return { success: false, error };
+    // Guarantee EVERY record in batch has a genuine UUID before PostgREST onConflict: 'id'
+    const sanitizedBatch = records.map(r => {
+      const sanitized = this.sanitizeRecordForTable(table, r);
+      if (!sanitized.id || !isValidUuid(sanitized.id as string)) {
+        sanitized.id = genUuid();
       }
-      this.failedWriteSignatures.delete(batchKey);
-      console.log(`✅ [Supabase Write Batch Success] Table: "${table}" (HTTP ${status}) Count: ${data?.length || sanitizedBatch.length}`);
-      return { success: true, error: null, data };
-    } catch (e: any) {
-      this.failedWriteSignatures.set(batchKey, Date.now());
-      console.error(`❌ [Supabase Write Batch Exception] Table: "${table}":`, e);
-      this.notifyWriteError(table, 'save batch', e);
-      return { success: false, error: e };
+      return sanitized;
+    });
+
+    const batchKey = `${table}:::batch:::${sanitizedBatch.map(r => r.id).sort().join(',')}`;
+    const inFlight = this.inFlightPromises.get(batchKey);
+    if (inFlight) {
+      return await inFlight;
+    }
+
+    const runBatch = async () => {
+      try {
+        console.log(`[Supabase Write Batch Attempt] Table: "${table}" Count: ${sanitizedBatch.length}`);
+        const { data, error, status } = await sb.from(table).upsert(sanitizedBatch, { onConflict: 'id' }).select();
+        if (error || (status && status >= 400)) {
+          this.failedWriteSignatures.set(batchKey, Date.now());
+          console.error(`❌ [Supabase Write Batch Error] Table: "${table}" (HTTP ${status}) Code: ${error?.code} — ${error?.message}. Details:`, error?.details || error?.hint);
+          this.notifyWriteError(table, 'save batch', error || new Error(`Batch write failed with status ${status}`));
+          return { success: false, error: error || new Error(`HTTP ${status}`) };
+        }
+        this.failedWriteSignatures.delete(batchKey);
+        console.log(`✅ [Supabase Write Batch Success] Table: "${table}" (HTTP ${status}) Count: ${data?.length || sanitizedBatch.length}`);
+        return { success: true, error: null, data };
+      } catch (e: any) {
+        this.failedWriteSignatures.set(batchKey, Date.now());
+        console.error(`❌ [Supabase Write Batch Exception] Table: "${table}":`, e);
+        this.notifyWriteError(table, 'save batch', e);
+        return { success: false, error: e };
+      }
+    };
+
+    const promise = runBatch();
+    this.inFlightPromises.set(batchKey, promise);
+    try {
+      return await promise;
     } finally {
-      this.inFlightWrites.delete(batchKey);
+      this.inFlightPromises.delete(batchKey);
     }
   }
 
@@ -1335,7 +1373,8 @@ class StorageService {
           updated_at: new Date().toISOString()
         };
 
-        console.log(`[Supabase Update Coordinator] Target UUID: "${existingDbRecord.id}" Payload:`, updatePayload);
+        const maskedUpdatePayload = { ...updatePayload, password_hash: '***', raw_temp_password: '***' };
+        console.log(`[Supabase Update Coordinator] Target UUID: "${existingDbRecord.id}" Payload:`, maskedUpdatePayload);
         const { data, error, status } = await supabase
           .from('coordinators')
           .update(updatePayload)
@@ -1373,7 +1412,8 @@ class StorageService {
           insertPayload.id = coord.id;
         }
 
-        console.log('[Supabase Insert Coordinator] Payload:', insertPayload);
+        const maskedInsertPayload = { ...insertPayload, password_hash: '***', raw_temp_password: '***' };
+        console.log('[Supabase Insert Coordinator] Payload:', maskedInsertPayload);
         let { data, error, status } = await supabase
           .from('coordinators')
           .insert(insertPayload)
@@ -1471,10 +1511,10 @@ class StorageService {
     return sortedAll;
   }
 
-  public addLearner(learner: Partial<Learner>): Learner {
+  public async addLearner(learner: Partial<Learner>): Promise<Learner> {
     const all = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, INITIAL_LEARNERS);
     const newLearner: Learner = {
-      id: uid('lrn'),
+      id: (learner.id && isValidUuid(learner.id)) ? learner.id : genUuid(),
       event_id: learner.event_id || '',
       access_code: learner.access_code || Math.random().toString(36).substring(2, 8).toUpperCase(),
       full_name: learner.full_name || 'Participant',
@@ -1507,11 +1547,26 @@ class StorageService {
       this.setItem(STORAGE_KEYS.EVENTS, events);
     }
 
-    this.sbUpsert('learners', newLearner as unknown as Record<string, unknown>);
+    await this.sbUpsert('learners', newLearner as unknown as Record<string, unknown>);
     return newLearner;
   }
 
-  public importLearners(learnersList: Partial<Learner>[], eventId: string) {
+  public async importLearners(
+    learnersList: Partial<Learner>[],
+    eventId: string
+  ): Promise<{
+    success: boolean;
+    count: number;
+    error?: any;
+    report?: {
+      totalRows: number;
+      partiesMatched: number;
+      partiesCreated: number;
+      committeesMatched: number;
+      committeesCreated: number;
+      constituenciesMatched: number;
+    };
+  }> {
     const allLearners = this.getLearners();
     const eventLearners = allLearners.filter(l => l.event_id === eventId);
     const existingParties = this.getParties(eventId);
@@ -1520,60 +1575,99 @@ class StorageService {
     const partyNameMap = new Map<string, Party>();
     existingParties.forEach(p => {
       partyNameMap.set(p.name.trim().toLowerCase(), p);
+      partyNameMap.set(p.id.toLowerCase(), p);
     });
 
     const commNameMap = new Map<string, Committee>();
     existingCommittees.forEach(c => {
       commNameMap.set(c.name.trim().toLowerCase(), c);
+      commNameMap.set(c.id.toLowerCase(), c);
     });
 
     const colors = ['#059669', '#dc2626', '#2563eb', '#d97706', '#7c3aed', '#0891b2', '#ea580c', '#4f46e5'];
 
+    const findParty = (val?: string): Party | undefined => {
+      if (!val) return undefined;
+      const clean = val.trim().toLowerCase();
+      if (partyNameMap.has(clean)) return partyNameMap.get(clean);
+      const normInput = clean.replace(/[^a-z0-9]/g, '');
+      const byNorm = existingParties.find(p => p.name.toLowerCase().replace(/[^a-z0-9]/g, '') === normInput);
+      if (byNorm) return byNorm;
+      const byPrefix = existingParties.find(p => {
+        const pNorm = p.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        return normInput.startsWith(pNorm) || pNorm.startsWith(normInput);
+      });
+      return byPrefix;
+    };
+
+    const findCommittee = (val?: string): Committee | undefined => {
+      if (!val) return undefined;
+      const clean = val.trim().toLowerCase();
+      if (commNameMap.has(clean)) return commNameMap.get(clean);
+      const normInput = clean.replace(/[^a-z0-9]/g, '');
+      const byNorm = existingCommittees.find(c => c.name.toLowerCase().replace(/[^a-z0-9]/g, '') === normInput);
+      if (byNorm) return byNorm;
+      const numMatch = clean.match(/\d+/);
+      if (numMatch) {
+        const targetNum = parseInt(numMatch[0], 10);
+        const byNum = existingCommittees.find(c => {
+          const cNum = c.name.match(/\d+/);
+          return cNum && parseInt(cNum[0], 10) === targetNum;
+        });
+        if (byNum) return byNum;
+      }
+      return undefined;
+    };
+
+    let partiesCreatedCount = 0;
+    let committeesCreatedCount = 0;
+
     // 1. Auto-register any missing parties referenced in the imported roster
-    learnersList.forEach(l => {
+    for (const l of learnersList) {
       if (l.party_name && l.party_name.trim()) {
-        const key = l.party_name.trim().toLowerCase();
-        if (!partyNameMap.has(key)) {
-          const newParty = this.addParty({
+        const matched = findParty(l.party_name);
+        if (!matched) {
+          const newParty = await this.addParty({
             event_id: eventId,
             name: l.party_name.trim(),
             bench: 'Independent',
             color: colors[existingParties.length % colors.length]
           });
           existingParties.push(newParty);
-          partyNameMap.set(key, newParty);
-          partyNameMap.set(newParty.id, newParty);
+          partyNameMap.set(newParty.name.trim().toLowerCase(), newParty);
+          partyNameMap.set(newParty.id.toLowerCase(), newParty);
+          partiesCreatedCount++;
         }
       }
-    });
+    }
 
-    // 2. Auto-register any missing committees referenced in the imported roster (only if committee data is in the sheet)
-    learnersList.forEach(l => {
+    // 2. Auto-register any missing committees referenced in the imported roster
+    for (const l of learnersList) {
       if (l.committee_name && l.committee_name.trim()) {
-        const cleanName = /^\d+$/.test(l.committee_name.trim())
-          ? `Committee ${l.committee_name.trim()}`
-          : l.committee_name.trim();
-        const key = cleanName.toLowerCase();
-        if (!commNameMap.has(key)) {
-          const newComm = this.addCommittee({
+        const matched = findCommittee(l.committee_name);
+        if (!matched) {
+          const cleanName = /^\d+$/.test(l.committee_name.trim())
+            ? `Committee ${l.committee_name.trim()}`
+            : l.committee_name.trim();
+          const newComm = await this.addCommittee({
             event_id: eventId,
             name: cleanName,
             topic: `${cleanName} Deliberations`,
             max_capacity: 50
           });
           existingCommittees.push(newComm);
-          commNameMap.set(key, newComm);
-          commNameMap.set(newComm.id, newComm);
+          commNameMap.set(cleanName.toLowerCase(), newComm);
+          commNameMap.set(newComm.id.toLowerCase(), newComm);
+          committeesCreatedCount++;
         }
       }
-    });
+    }
 
     // 3. Smart Merge or Insert Delegates
     const updatedItems: Learner[] = [];
     const newItems: Learner[] = [];
     const updatedEventLearnersMap = new Map<string, Learner>(eventLearners.map(l => [l.id, l]));
 
-    // Helper to find matching existing delegate
     const findExisting = (item: Partial<Learner>): Learner | undefined => {
       if (item.access_code && item.access_code.trim()) {
         const cleanCode = item.access_code.trim().toUpperCase();
@@ -1593,53 +1687,62 @@ class StorageService {
       return undefined;
     };
 
+    let partiesMatchedCount = 0;
+    let committeesMatchedCount = 0;
+    let constituenciesMatchedCount = 0;
+
     learnersList.forEach((l, index) => {
       const partyMatch = l.party_id
-        ? partyNameMap.get(l.party_id)
-        : (l.party_name ? partyNameMap.get(l.party_name.trim().toLowerCase()) : undefined);
+        ? findParty(l.party_id)
+        : (l.party_name ? findParty(l.party_name) : undefined);
+
+      if (partyMatch) partiesMatchedCount++;
 
       const commCleanName = l.committee_name && /^\d+$/.test(l.committee_name.trim())
         ? `Committee ${l.committee_name.trim()}`
         : l.committee_name?.trim();
 
       const commMatch = l.committee_id
-        ? commNameMap.get(l.committee_id)
-        : (commCleanName ? commNameMap.get(commCleanName.toLowerCase()) : undefined);
+        ? findCommittee(l.committee_id)
+        : (commCleanName ? findCommittee(commCleanName) : undefined);
+
+      if (commMatch) committeesMatchedCount++;
+
+      if (l.constituency_number !== undefined || l.constituency_name) {
+        constituenciesMatchedCount++;
+      }
 
       const resolvedPartyName = partyMatch ? partyMatch.name : (l.party_name || undefined);
       const resolvedPartyId = partyMatch ? partyMatch.id : (l.party_id || undefined);
-      // Strictly column-driven: bench ONLY if explicit bench in CSV; never infer from party!
-      const resolvedBench: BenchType | undefined = l.bench || undefined;
+      const resolvedBench: BenchType | undefined = l.bench || (partyMatch ? partyMatch.bench : undefined);
       const resolvedCommName = commMatch ? commMatch.name : (commCleanName || undefined);
       const resolvedCommId = commMatch ? commMatch.id : (l.committee_id || undefined);
 
       const existingMatch = findExisting(l);
 
       if (existingMatch) {
-        // Smart update existing delegate
         const updated: Learner = {
           ...existingMatch,
           full_name: (l.full_name && l.full_name.trim()) ? l.full_name : existingMatch.full_name,
           email: (l.email && l.email.trim()) ? l.email : existingMatch.email,
           phone: (l.phone && l.phone.trim()) ? l.phone : existingMatch.phone,
-          department: l.department !== undefined ? l.department : existingMatch.department,
+          department: (l.department !== undefined && l.department !== null && l.department !== '') ? l.department : existingMatch.department,
           academic_year: l.academic_year || existingMatch.academic_year,
           constituency_number: l.constituency_number !== undefined ? l.constituency_number : existingMatch.constituency_number,
-          constituency_name: l.constituency_name !== undefined ? l.constituency_name : existingMatch.constituency_name,
-          district: l.district !== undefined ? l.district : existingMatch.district,
-          party_name: resolvedPartyName,
-          party_id: resolvedPartyId,
+          constituency_name: (l.constituency_name !== undefined && l.constituency_name !== null && l.constituency_name !== '') ? l.constituency_name : existingMatch.constituency_name,
+          district: (l.district !== undefined && l.district !== null && l.district !== '') ? l.district : existingMatch.district,
+          party_name: resolvedPartyName !== undefined ? resolvedPartyName : existingMatch.party_name,
+          party_id: resolvedPartyId !== undefined ? resolvedPartyId : existingMatch.party_id,
           bench: resolvedBench !== undefined ? resolvedBench : existingMatch.bench,
-          role: l.role !== undefined ? l.role : existingMatch.role,
-          committee_name: resolvedCommName,
-          committee_id: resolvedCommId
+          role: (l.role !== undefined && l.role !== null && l.role !== '') ? l.role : existingMatch.role,
+          committee_name: resolvedCommName !== undefined ? resolvedCommName : existingMatch.committee_name,
+          committee_id: resolvedCommId !== undefined ? resolvedCommId : existingMatch.committee_id
         };
         updatedItems.push(updated);
         updatedEventLearnersMap.set(existingMatch.id, updated);
       } else {
-        // Create new delegate
         const newLearner: Learner = {
-          id: uid('lrn'),
+          id: (l.id && isValidUuid(l.id)) ? l.id : genUuid(),
           event_id: eventId,
           access_code: l.access_code || `${Math.random().toString(36).substring(2, 6)}${index}`.toUpperCase().substring(0, 6),
           full_name: l.full_name || 'Delegate',
@@ -1665,7 +1768,18 @@ class StorageService {
       }
     });
 
-    // Reconstruct full master list
+    const allToSync = [...newItems, ...updatedItems];
+
+    // Sync to Supabase first — if database write fails, do not corrupt local cache
+    if (supabase && allToSync.length > 0) {
+      const syncRes = await this.sbUpsertBatch('learners', allToSync as unknown as Record<string, unknown>[]);
+      if (!syncRes.success) {
+        console.error('❌ [Supabase importLearners error]:', syncRes.error);
+        return { success: false, count: 0, error: syncRes.error };
+      }
+    }
+
+    // Reconstruct full master list only after database confirms success
     const otherEventLearners = allLearners.filter(l => l.event_id !== eventId);
     const finalEventLearners = Array.from(updatedEventLearnersMap.values());
     const finalAllLearners = [...finalEventLearners, ...otherEventLearners];
@@ -1678,34 +1792,32 @@ class StorageService {
     );
     this.setItem(STORAGE_KEYS.EVENTS, events);
 
-    // Sync to Supabase
-    if (supabase) {
-      const allToSync = [...newItems, ...updatedItems];
-      if (allToSync.length > 0) {
-        const sanitizedBatch = allToSync.map(item => this.sanitizeRecordForTable('learners', item as unknown as Record<string, unknown>));
-        supabase
-          .from('learners')
-          .upsert(sanitizedBatch, { onConflict: 'id' })
-          .then(({ error }) => {
-            if (error) console.warn('[Supabase] import sync error:', error.message);
-          });
-      }
-    }
-
     this.notify();
+    return {
+      success: true,
+      count: allToSync.length,
+      report: {
+        totalRows: allToSync.length,
+        partiesMatched: partiesMatchedCount,
+        partiesCreated: partiesCreatedCount,
+        committeesMatched: committeesMatchedCount,
+        committeesCreated: committeesCreatedCount,
+        constituenciesMatched: constituenciesMatchedCount
+      }
+    };
   }
 
-  public updateLearner(learner: Learner) {
+  public async updateLearner(learner: Learner): Promise<void> {
     const withUpdated: Learner = {
       ...learner,
       updated_at: new Date().toISOString()
     };
     const all = this.getLearners().map(l => (l.id === learner.id ? withUpdated : l));
     this.setItem(STORAGE_KEYS.LEARNERS, all);
-    this.sbUpsert('learners', withUpdated as unknown as Record<string, unknown>);
+    await this.sbUpsert('learners', withUpdated as unknown as Record<string, unknown>);
   }
 
-  public deleteLearner(learnerId: string) {
+  public async deleteLearner(learnerId: string): Promise<void> {
     const target = this.getLearners().find(l => l.id === learnerId);
     const all = this.getLearners().filter(l => l.id !== learnerId);
     this.setItem(STORAGE_KEYS.LEARNERS, all);
@@ -1716,10 +1828,10 @@ class StorageService {
       this.setItem(STORAGE_KEYS.EVENTS, events);
     }
     this.addDeletedIds([learnerId]);
-    this.sbDelete('learners', learnerId);
+    await this.sbDelete('learners', learnerId);
   }
 
-  public deleteLearners(learnerIds: string[], eventId?: string) {
+  public async deleteLearners(learnerIds: string[], eventId?: string): Promise<void> {
     if (!learnerIds || learnerIds.length === 0) return;
     this.addDeletedIds(learnerIds);
     const idSet = new Set(learnerIds);
@@ -1735,13 +1847,12 @@ class StorageService {
     }
 
     if (supabase) {
-      supabase.from('learners').delete().in('id', learnerIds).then(({ error }) => {
-        if (error) console.warn('[Supabase] bulk delete error:', error.message);
-      });
+      const { error } = await supabase.from('learners').delete().in('id', learnerIds);
+      if (error) console.warn('[Supabase] bulk delete error:', error.message);
     }
   }
 
-  public clearAllLearners(eventId: string) {
+  public async clearAllLearners(eventId: string): Promise<void> {
     if (!eventId) return;
     const all = this.getLearners().filter(l => l.event_id !== eventId);
     this.setItem(STORAGE_KEYS.LEARNERS, all);
@@ -1752,9 +1863,8 @@ class StorageService {
     this.setItem(STORAGE_KEYS.EVENTS, events);
 
     if (supabase) {
-      supabase.from('learners').delete().eq('event_id', eventId).then(({ error }) => {
-        if (error) console.warn('[Supabase] clear all learners error:', error.message);
-      });
+      const { error } = await supabase.from('learners').delete().eq('event_id', eventId);
+      if (error) console.warn('[Supabase] clear all learners error:', error.message);
     }
   }
 
@@ -1803,10 +1913,10 @@ class StorageService {
     return all;
   }
 
-  public addParty(party: Partial<Party>): Party {
+  public async addParty(party: Partial<Party>): Promise<Party> {
     const all = this.getParties();
     const newParty: Party = {
-      id: uid('pty'),
+      id: (party.id && isValidUuid(party.id)) ? party.id : genUuid(),
       event_id: party.event_id || '',
       name: party.name || 'Party Name',
       bench: party.bench || 'Ruling',
@@ -1817,18 +1927,18 @@ class StorageService {
     all.push(newParty);
     this.removeDeletedId(newParty.id);
     this.setItem(STORAGE_KEYS.PARTIES, all);
-    this.sbUpsert('political_parties', newParty as unknown as Record<string, unknown>);
+    await this.sbUpsert('political_parties', newParty as unknown as Record<string, unknown>);
     return newParty;
   }
 
-  public updateParty(party: Party) {
+  public async updateParty(party: Party): Promise<void> {
     const existingParties = this.getParties();
     const oldParty = existingParties.find(p => p.id === party.id);
     const oldName = oldParty?.name;
 
     const all = existingParties.map(p => (p.id === party.id ? party : p));
     this.setItem(STORAGE_KEYS.PARTIES, all);
-    this.sbUpsert('political_parties', party as unknown as Record<string, unknown>);
+    await this.sbUpsert('political_parties', party as unknown as Record<string, unknown>);
 
     // Cascade update to all learners who belong to this party
     const allLearners = this.getLearners();
@@ -1848,14 +1958,9 @@ class StorageService {
 
     if (learnersChanged) {
       this.setItem(STORAGE_KEYS.LEARNERS, updatedLearners);
-      if (supabase) {
-        const learnersToUpdate = updatedLearners.filter(l => l.party_id === party.id || (oldName && l.party_name === oldName));
-        if (learnersToUpdate.length > 0) {
-          const sanitized = learnersToUpdate.map(item => this.sanitizeRecordForTable('learners', item as unknown as Record<string, unknown>));
-          supabase.from('learners').upsert(sanitized, { onConflict: 'id' }).then(({ error }) => {
-            if (error) console.warn('[Supabase] bulk party cascade update error:', error.message);
-          });
-        }
+      const learnersToUpdate = updatedLearners.filter(l => l.party_id === party.id || (oldName && l.party_name === oldName));
+      if (learnersToUpdate.length > 0) {
+        await this.sbUpsertBatch('learners', learnersToUpdate as unknown as Record<string, unknown>[]);
       }
     }
 
@@ -1897,7 +2002,7 @@ class StorageService {
     this.notify();
   }
 
-  public setPartyBench(partyId: string, bench: 'Ruling' | 'Opposition' | 'Independent', _eventId?: string) {
+  public async setPartyBench(partyId: string, bench: 'Ruling' | 'Opposition' | 'Independent', _eventId?: string): Promise<void> {
     const parties = this.getParties().map(p => {
       if (p.id === partyId) {
         return { ...p, bench };
@@ -1908,7 +2013,7 @@ class StorageService {
 
     const targetParty = parties.find(p => p.id === partyId);
     if (targetParty) {
-      this.sbUpsert('political_parties', targetParty as unknown as Record<string, unknown>);
+      await this.sbUpsert('political_parties', targetParty as unknown as Record<string, unknown>);
 
       // Automatically update all learners belonging to this party to follow the manual bench switch
       const allLearners = this.getLearners();
@@ -1921,20 +2026,15 @@ class StorageService {
       this.setItem(STORAGE_KEYS.LEARNERS, updatedLearners);
 
       // Sync updated learners to Supabase
-      if (supabase) {
-        const learnersToUpdate = updatedLearners.filter(l => l.party_id === partyId || l.party_name === targetParty.name);
-        if (learnersToUpdate.length > 0) {
-          const sanitized = learnersToUpdate.map(item => this.sanitizeRecordForTable('learners', item as unknown as Record<string, unknown>));
-          supabase.from('learners').upsert(sanitized, { onConflict: 'id' }).then(({ error }) => {
-            if (error) console.warn('[Supabase] bulk bench update error:', error.message);
-          });
-        }
+      const learnersToUpdate = updatedLearners.filter(l => l.party_id === partyId || l.party_name === targetParty.name);
+      if (learnersToUpdate.length > 0) {
+        await this.sbUpsertBatch('learners', learnersToUpdate as unknown as Record<string, unknown>[]);
       }
     }
     this.notify();
   }
 
-  public setPartyCount(eventId: string, targetCount: number): Party[] {
+  public async setPartyCount(eventId: string, targetCount: number): Promise<Party[]> {
     const validCount = Math.max(1, Math.min(20, targetCount));
     const all = this.getParties();
     const eventParties = all.filter(p => p.event_id === eventId);
@@ -1974,7 +2074,11 @@ class StorageService {
     }
 
     if (newPartiesToInsert.length > 0) {
-      this.sbUpsertBatch('political_parties', newPartiesToInsert as unknown as Record<string, unknown>[]);
+      const res = await this.sbUpsertBatch('political_parties', newPartiesToInsert as unknown as Record<string, unknown>[]);
+      if (!res.success) {
+        console.error('❌ [Supabase setPartyCount Error]:', res.error);
+        throw new Error(`Failed to save parties to database: ${res.error?.message || 'Database error'}`);
+      }
     }
 
     if (validCount < eventParties.length) {
@@ -1982,24 +2086,30 @@ class StorageService {
       const removedIds = new Set(removed.map(r => r.id));
       const removedNames = new Set(removed.map(r => r.name));
       this.addDeletedIds(Array.from(removedIds));
-      removed.forEach(r => this.sbDelete('political_parties', r.id));
+      await Promise.all(removed.map(r => this.sbDelete('political_parties', r.id)));
 
       const allLearners = this.getLearners();
       let learnersChanged = false;
+      const changedLearners: Learner[] = [];
       const updatedLearners = allLearners.map(l => {
         if ((l.party_id && removedIds.has(l.party_id)) || (l.party_name && removedNames.has(l.party_name))) {
           learnersChanged = true;
-          return {
+          const mod = {
             ...l,
             party_id: undefined,
             party_name: undefined,
             bench: undefined
           };
+          changedLearners.push(mod);
+          return mod;
         }
         return l;
       });
       if (learnersChanged) {
         this.setItem(STORAGE_KEYS.LEARNERS, updatedLearners);
+        if (changedLearners.length > 0) {
+          await this.sbUpsertBatch('learners', changedLearners as unknown as Record<string, unknown>[]);
+        }
       }
     }
 
@@ -2009,26 +2119,32 @@ class StorageService {
     return updatedEventParties;
   }
 
-  public deleteParty(partyId: string) {
+  public async deleteParty(partyId: string): Promise<void> {
     const targetParty = this.getParties().find(p => p.id === partyId);
     this.addDeletedIds([partyId]);
     this.setItem(STORAGE_KEYS.PARTIES, this.getParties().filter(p => p.id !== partyId));
-    this.sbDelete('political_parties', partyId);
+    await this.sbDelete('political_parties', partyId);
 
     // Unassign learners from deleted party
     const allLearners = this.getLearners();
+    const changedLearners: Learner[] = [];
     const updatedLearners = allLearners.map(l => {
       if (l.party_id === partyId || (targetParty && l.party_name === targetParty.name)) {
-        return {
+        const mod = {
           ...l,
           party_id: undefined,
           party_name: undefined,
           bench: undefined
         };
+        changedLearners.push(mod);
+        return mod;
       }
       return l;
     });
     this.setItem(STORAGE_KEYS.LEARNERS, updatedLearners);
+    if (changedLearners.length > 0) {
+      await this.sbUpsertBatch('learners', changedLearners as unknown as Record<string, unknown>[]);
+    }
     this.notify();
   }
 
@@ -2042,7 +2158,7 @@ class StorageService {
     return all;
   }
 
-  public setCommitteeCount(eventId: string, targetCount: number): Committee[] {
+  public async setCommitteeCount(eventId: string, targetCount: number): Promise<Committee[]> {
     const validCount = Math.max(1, Math.min(20, targetCount));
     const all = this.getCommittees();
     const eventComms = all.filter(c => c.event_id === eventId);
@@ -2084,7 +2200,11 @@ class StorageService {
     }
 
     if (newCommsToInsert.length > 0) {
-      this.sbUpsertBatch('committees', newCommsToInsert as unknown as Record<string, unknown>[]);
+      const res = await this.sbUpsertBatch('committees', newCommsToInsert as unknown as Record<string, unknown>[]);
+      if (!res.success) {
+        console.error('❌ [Supabase setCommitteeCount Error]:', res.error);
+        throw new Error(`Failed to save committees to database: ${res.error?.message || 'Database error'}`);
+      }
     }
 
     if (validCount < eventComms.length) {
@@ -2092,23 +2212,29 @@ class StorageService {
       const removedIds = new Set(removed.map(r => r.id));
       const removedNames = new Set(removed.map(r => r.name));
       this.addDeletedIds(Array.from(removedIds));
-      removed.forEach(r => this.sbDelete('committees', r.id));
+      await Promise.all(removed.map(r => this.sbDelete('committees', r.id)));
 
       const allLearners = this.getLearners();
       let learnersChanged = false;
+      const changedLearners: Learner[] = [];
       const updatedLearners = allLearners.map(l => {
         if ((l.committee_id && removedIds.has(l.committee_id)) || (l.committee_name && removedNames.has(l.committee_name))) {
           learnersChanged = true;
-          return {
+          const mod = {
             ...l,
             committee_id: undefined,
             committee_name: undefined
           };
+          changedLearners.push(mod);
+          return mod;
         }
         return l;
       });
       if (learnersChanged) {
         this.setItem(STORAGE_KEYS.LEARNERS, updatedLearners);
+        if (changedLearners.length > 0) {
+          await this.sbUpsertBatch('learners', changedLearners as unknown as Record<string, unknown>[]);
+        }
       }
     }
 
@@ -2118,31 +2244,38 @@ class StorageService {
     return updatedEventComms;
   }
 
-  public addCommittee(committee: Partial<Committee>): Committee {
+  public async addCommittee(committee: Partial<Committee>): Promise<Committee> {
     const all = this.getCommittees();
     const newComm: Committee = {
-      id: uid('cmt'),
+      id: (committee.id && isValidUuid(committee.id)) ? committee.id : uid('cmt'),
       event_id: committee.event_id || '',
       name: committee.name || 'Committee Name',
       topic: committee.topic || 'General Assembly Topic',
       chairperson: committee.chairperson || '',
       max_capacity: committee.max_capacity || 50
     };
+    if (supabase) {
+      const res = await this.sbUpsert('committees', newComm as unknown as Record<string, unknown>);
+      if (!res.success) {
+        console.error('❌ [Supabase addCommittee Error]:', res.error);
+        throw new Error(`Failed to save committee to database: ${res.error?.message || 'Database error'}`);
+      }
+    }
     all.push(newComm);
     this.removeDeletedId(newComm.id);
     this.setItem(STORAGE_KEYS.COMMITTEES, all);
-    this.sbUpsert('committees', newComm as unknown as Record<string, unknown>);
+    this.notify();
     return newComm;
   }
 
-  public updateCommittee(com: Committee) {
+  public async updateCommittee(com: Committee): Promise<void> {
     const existingComms = this.getCommittees();
     const oldCom = existingComms.find(c => c.id === com.id);
     const oldName = oldCom?.name;
 
     const all = existingComms.map(c => (c.id === com.id ? com : c));
     this.setItem(STORAGE_KEYS.COMMITTEES, all);
-    this.sbUpsert('committees', com as unknown as Record<string, unknown>);
+    await this.sbUpsert('committees', com as unknown as Record<string, unknown>);
 
     // Cascade update to all learners belonging to this committee
     const allLearners = this.getLearners();
@@ -2161,38 +2294,39 @@ class StorageService {
 
     if (learnersChanged) {
       this.setItem(STORAGE_KEYS.LEARNERS, updatedLearners);
-      if (supabase) {
-        const learnersToUpdate = updatedLearners.filter(l => l.committee_id === com.id || (oldName && l.committee_name === oldName));
-        if (learnersToUpdate.length > 0) {
-          const sanitized = learnersToUpdate.map(item => this.sanitizeRecordForTable('learners', item as unknown as Record<string, unknown>));
-          supabase.from('learners').upsert(sanitized, { onConflict: 'id' }).then(({ error }) => {
-            if (error) console.warn('[Supabase] bulk committee cascade update error:', error.message);
-          });
-        }
+      const learnersToUpdate = updatedLearners.filter(l => l.committee_id === com.id || (oldName && l.committee_name === oldName));
+      if (learnersToUpdate.length > 0) {
+        await this.sbUpsertBatch('learners', learnersToUpdate as unknown as Record<string, unknown>[]);
       }
     }
     this.notify();
   }
 
-  public deleteCommittee(comId: string) {
+  public async deleteCommittee(comId: string): Promise<void> {
     const targetCom = this.getCommittees().find(c => c.id === comId);
     this.addDeletedIds([comId]);
     this.setItem(STORAGE_KEYS.COMMITTEES, this.getCommittees().filter(c => c.id !== comId));
-    this.sbDelete('committees', comId);
+    await this.sbDelete('committees', comId);
 
     // Unassign learners from deleted committee
     const allLearners = this.getLearners();
+    const changedLearners: Learner[] = [];
     const updatedLearners = allLearners.map(l => {
       if (l.committee_id === comId || (targetCom && l.committee_name === targetCom.name)) {
-        return {
+        const mod = {
           ...l,
           committee_id: undefined,
           committee_name: undefined
         };
+        changedLearners.push(mod);
+        return mod;
       }
       return l;
     });
     this.setItem(STORAGE_KEYS.LEARNERS, updatedLearners);
+    if (changedLearners.length > 0) {
+      await this.sbUpsertBatch('learners', changedLearners as unknown as Record<string, unknown>[]);
+    }
     this.notify();
   }
 
@@ -2517,12 +2651,13 @@ class StorageService {
     return sanitized;
   }
 
-  public addJuryMember(member: Partial<JuryMember>): JuryMember {
+  public async addJuryMember(member: Partial<JuryMember>): Promise<JuryMember> {
     const all = this.getItem<JuryMember[]>(STORAGE_KEYS.JURY, INITIAL_JURY);
     const codeNum = String(all.length + 1).padStart(2, '0');
     const defaultCode = `JURY${codeNum}`;
+    const realId = (member.id && isValidUuid(member.id)) ? member.id : genUuid();
     const newMember: JuryMember = {
-      id: member.id || uid('jury'),
+      id: realId,
       event_id: member.event_id || '',
       access_code: (member.access_code || defaultCode).replace('JURY-', 'JURY'),
       name: member.name || 'Jury Member',
@@ -2532,15 +2667,29 @@ class StorageService {
       assigned_bench: member.assigned_bench || 'Ruling',
       status: member.status || 'Active'
     };
+    if (supabase) {
+      const res = await this.sbUpsert('jury_members', newMember as unknown as Record<string, unknown>);
+      if (!res.success) {
+        console.error('❌ [Supabase addJuryMember Error]:', res.error);
+        throw new Error(`Failed to save jury member to database: ${res.error?.message || 'Database error'}`);
+      }
+    }
     all.push(newMember);
     this.setItem(STORAGE_KEYS.JURY, all);
-    this.sbUpsert('jury_members', newMember as unknown as Record<string, unknown>);
+    this.notify();
     return newMember;
   }
 
-  public deleteJuryMember(memberId: string) {
+  public async deleteJuryMember(memberId: string): Promise<void> {
+    if (supabase) {
+      const res = await this.sbDelete('jury_members', memberId);
+      if (!res.success) {
+        console.error('❌ [Supabase deleteJuryMember Error]:', res.error);
+        throw new Error(`Failed to delete jury member from database: ${res.error?.message || 'Database error'}`);
+      }
+    }
     this.setItem(STORAGE_KEYS.JURY, this.getJury().filter(j => j.id !== memberId));
-    this.sbDelete('jury_members', memberId);
+    this.notify();
   }
 
   // ── VOLUNTEERS ────────────────────────────────────────────────────────────
@@ -2570,12 +2719,13 @@ class StorageService {
     return sanitized;
   }
 
-  public addVolunteer(volunteer: Partial<Volunteer>): Volunteer {
+  public async addVolunteer(volunteer: Partial<Volunteer>): Promise<Volunteer> {
     const all = this.getVolunteers();
     const codeNum = volunteer.phone ? volunteer.phone.replace(/\D/g, '').slice(-4) : Math.floor(100 + Math.random() * 900).toString();
     const defaultCode = `VOL${codeNum}`;
+    const realId = (volunteer.id && isValidUuid(volunteer.id)) ? volunteer.id : genUuid();
     const newVol: Volunteer = {
-      id: volunteer.id || uid('vol'),
+      id: realId,
       event_id: volunteer.event_id || '',
       access_code: (volunteer.access_code || defaultCode).replace('VOL-', 'VOL'),
       name: volunteer.name || '',
@@ -2588,9 +2738,16 @@ class StorageService {
       role: volunteer.role || (volunteer.is_yuva ? 'YUVA Volunteer' : 'Volunteer'),
       created_at: new Date().toISOString()
     };
+    if (supabase) {
+      const res = await this.sbUpsert('volunteers', newVol as unknown as Record<string, unknown>);
+      if (!res.success) {
+        console.error('❌ [Supabase addVolunteer Error]:', res.error);
+        throw new Error(`Failed to save volunteer to database: ${res.error?.message || 'Database error'}`);
+      }
+    }
     all.push(newVol);
     this.setItem(STORAGE_KEYS.VOLUNTEERS, all);
-    this.sbUpsert('volunteers', newVol as unknown as Record<string, unknown>);
+    this.notify();
     return newVol;
   }
 
@@ -2607,15 +2764,16 @@ class StorageService {
     if (updatedVol) {
       this.sbUpsert('volunteers', updatedVol as unknown as Record<string, unknown>);
     }
+    this.notify();
   }
 
-  public bulkImportVolunteers(volunteersList: Partial<Volunteer>[], eventId: string) {
+  public async bulkImportVolunteers(volunteersList: Partial<Volunteer>[], eventId: string): Promise<{ success: boolean; count: number; error?: any }> {
     const existing = this.getVolunteers();
     const newItems: Volunteer[] = volunteersList.map((v, idx) => {
       const codeNum = v.phone ? v.phone.replace(/\D/g, '').slice(-4) : (101 + idx).toString();
       const defaultCode = `VOL${codeNum}`;
       return {
-        id: v.id || uid('vol'),
+        id: (v.id && isValidUuid(v.id)) ? v.id : genUuid(),
         event_id: eventId,
         access_code: (v.access_code || defaultCode).replace('VOL-', 'VOL'),
         name: v.name || 'Volunteer',
@@ -2629,18 +2787,28 @@ class StorageService {
         created_at: new Date().toISOString()
       };
     });
-    this.setItem(STORAGE_KEYS.VOLUNTEERS, [...existing, ...newItems]);
     if (supabase && newItems.length > 0) {
-      const sanitizedBatch = newItems.map(item => this.sanitizeRecordForTable('volunteers', item as unknown as Record<string, unknown>));
-      supabase.from('volunteers').upsert(sanitizedBatch, { onConflict: 'id' }).then(({ error }) => {
-        if (error) console.warn('[Supabase] bulk volunteers sync error:', error.message);
-      });
+      const res = await this.sbUpsertBatch('volunteers', newItems as unknown as Record<string, unknown>[]);
+      if (!res.success) {
+        console.error('❌ [Supabase bulkImportVolunteers Error]:', res.error);
+        return { success: false, count: 0, error: res.error };
+      }
     }
+    this.setItem(STORAGE_KEYS.VOLUNTEERS, [...existing, ...newItems]);
+    this.notify();
+    return { success: true, count: newItems.length };
   }
 
-  public deleteVolunteer(volunteerId: string) {
+  public async deleteVolunteer(volunteerId: string): Promise<void> {
+    if (supabase) {
+      const res = await this.sbDelete('volunteers', volunteerId);
+      if (!res.success) {
+        console.error('❌ [Supabase deleteVolunteer Error]:', res.error);
+        throw new Error(`Failed to delete volunteer from database: ${res.error?.message || 'Database error'}`);
+      }
+    }
     this.setItem(STORAGE_KEYS.VOLUNTEERS, this.getVolunteers().filter(v => v.id !== volunteerId));
-    this.sbDelete('volunteers', volunteerId);
+    this.notify();
   }
 
   public saveCabinetMinistries(eventId: string, ministries: string[]) {
@@ -3601,10 +3769,10 @@ class StorageService {
 
   // ── AUTO-ALLOCATION & RESET ───────────────────────────────────────────────
 
-  public allocatePartiesForEvent(
+  public async allocatePartiesForEvent(
     eventId: string,
     options: PartyAllocationOptions = {}
-  ): AllocationResult {
+  ): Promise<AllocationResult> {
     if (this.getAllocationLock(eventId)) {
       throw new Error('Allocation is currently locked by Assembly Coordinator.');
     }
@@ -3614,45 +3782,37 @@ class StorageService {
 
     const result = allocateParties(eventLearners, eventParties, options);
 
-    const allLearners = this.getLearners();
-    const updatedMap = new Map(result.updatedLearners.map(l => [l.id, l]));
-    const nextLearners = allLearners.map(l => updatedMap.get(l.id) || l);
-    this.setItem(STORAGE_KEYS.LEARNERS, nextLearners);
-
-    // If updated parties, persist updated parties
+    // Sync updated parties to Supabase
     if (result.updatedParties && result.updatedParties.length > 0) {
       const allParties = this.getParties();
       const partyMap = new Map(result.updatedParties.map(p => [p.id, p]));
       const nextParties = allParties.map(p => partyMap.get(p.id) || p);
       this.setItem(STORAGE_KEYS.PARTIES, nextParties);
-      if (supabase) {
-        result.updatedParties.forEach(p => {
-          this.sbUpsert('political_parties', p as unknown as Record<string, unknown>);
-        });
-      }
+      await this.sbUpsertBatch('political_parties', result.updatedParties as unknown as Record<string, unknown>[]);
     }
 
     // Sync updated learners to Supabase
-    if (supabase && result.updatedLearners.length > 0) {
-      const sanitized = result.updatedLearners.map(l =>
-        this.sanitizeRecordForTable('learners', l as unknown as Record<string, unknown>)
-      );
-      supabase
-        .from('learners')
-        .upsert(sanitized, { onConflict: 'id' })
-        .then(({ error }) => {
-          if (error) console.warn('[Supabase] party allocation sync:', error.message);
-        });
+    if (result.updatedLearners.length > 0) {
+      const res = await this.sbUpsertBatch('learners', result.updatedLearners as unknown as Record<string, unknown>[]);
+      if (!res.success) {
+        console.error('❌ [Supabase allocatePartiesForEvent Error]:', res.error);
+        throw new Error(`Failed to save party allocations to database: ${res.error?.message || 'Database error'}`);
+      }
     }
+
+    const allLearners = this.getLearners();
+    const updatedMap = new Map(result.updatedLearners.map(l => [l.id, l]));
+    const nextLearners = allLearners.map(l => updatedMap.get(l.id) || l);
+    this.setItem(STORAGE_KEYS.LEARNERS, nextLearners);
 
     this.notify();
     return result;
   }
 
-  public allocateCommitteesForEvent(
+  public async allocateCommitteesForEvent(
     eventId: string,
     options: CommitteeAllocationOptions = {}
-  ): { updatedLearners: Learner[]; stats: Record<string, number> } {
+  ): Promise<{ updatedLearners: Learner[]; stats: Record<string, number> }> {
     if (this.getAllocationLock(eventId)) {
       throw new Error('Allocation is currently locked by Assembly Coordinator.');
     }
@@ -3662,29 +3822,54 @@ class StorageService {
 
     const result = allocateCommittees(eventLearners, eventCommittees, options);
 
+    // Sync updated learners to Supabase
+    if (result.updatedLearners.length > 0) {
+      const res = await this.sbUpsertBatch('learners', result.updatedLearners as unknown as Record<string, unknown>[]);
+      if (!res.success) {
+        console.error('❌ [Supabase allocateCommitteesForEvent Error]:', res.error);
+        throw new Error(`Failed to save committee allocations to database: ${res.error?.message || 'Database error'}`);
+      }
+    }
+
     const allLearners = this.getLearners();
     const updatedMap = new Map(result.updatedLearners.map(l => [l.id, l]));
     const nextLearners = allLearners.map(l => updatedMap.get(l.id) || l);
     this.setItem(STORAGE_KEYS.LEARNERS, nextLearners);
 
-    // Sync updated learners to Supabase
-    if (supabase && result.updatedLearners.length > 0) {
-      const sanitized = result.updatedLearners.map(l =>
-        this.sanitizeRecordForTable('learners', l as unknown as Record<string, unknown>)
-      );
-      supabase
-        .from('learners')
-        .upsert(sanitized, { onConflict: 'id' })
-        .then(({ error }) => {
-          if (error) console.warn('[Supabase] committee allocation sync:', error.message);
-        });
+    this.notify();
+    return result;
+  }
+
+  public async allocateConstituenciesForEvent(
+    eventId: string,
+    options: ConstituencyAllocationOptions = {}
+  ): Promise<{ updatedLearners: Learner[]; stats: { totalAllocated: number; constituenciesUsed: number } }> {
+    if (this.getAllocationLock(eventId)) {
+      throw new Error('Allocation is currently locked by Assembly Coordinator.');
     }
+
+    const eventLearners = this.getLearners(eventId);
+    const result = allocateConstituencies(eventLearners, options);
+
+    // Sync updated learners to Supabase
+    if (result.updatedLearners.length > 0) {
+      const res = await this.sbUpsertBatch('learners', result.updatedLearners as unknown as Record<string, unknown>[]);
+      if (!res.success) {
+        console.error('❌ [Supabase allocateConstituenciesForEvent Error]:', res.error);
+        throw new Error(`Failed to save constituency allocations to database: ${res.error?.message || 'Database error'}`);
+      }
+    }
+
+    const allLearners = this.getLearners();
+    const updatedMap = new Map(result.updatedLearners.map(l => [l.id, l]));
+    const nextLearners = allLearners.map(l => updatedMap.get(l.id) || l);
+    this.setItem(STORAGE_KEYS.LEARNERS, nextLearners);
 
     this.notify();
     return result;
   }
 
-  public executeAllocationForEvent(eventId: string, rulingRatio = 0.55) {
+  public async executeAllocationForEvent(eventId: string, rulingRatio = 0.55) {
     if (this.getAllocationLock(eventId)) {
       throw new Error('Allocation is currently locked by Assembly Coordinator.');
     }
@@ -3695,44 +3880,58 @@ class StorageService {
 
     const result = runAutoAllocation(eventLearners, eventParties, eventCommittees, rulingRatio);
 
-    const allLearners = this.getLearners();
-    const updatedMap = new Map(result.updatedLearners.map(l => [l.id, l]));
-    const nextLearners = allLearners.map(l => updatedMap.get(l.id) || l);
-    this.setItem(STORAGE_KEYS.LEARNERS, nextLearners);
-
     // If auto-allocation assigned benches or updated parties, persist updated parties
     if (result.updatedParties && result.updatedParties.length > 0) {
       const allParties = this.getParties();
       const partyMap = new Map(result.updatedParties.map(p => [p.id, p]));
       const nextParties = allParties.map(p => partyMap.get(p.id) || p);
       this.setItem(STORAGE_KEYS.PARTIES, nextParties);
-      if (supabase) {
-        result.updatedParties.forEach(p => {
-          this.sbUpsert('political_parties', p as unknown as Record<string, unknown>);
-        });
+      await this.sbUpsertBatch('political_parties', result.updatedParties as unknown as Record<string, unknown>[]);
+    }
+
+    // Sync updated learners to Supabase
+    if (result.updatedLearners.length > 0) {
+      const res = await this.sbUpsertBatch('learners', result.updatedLearners as unknown as Record<string, unknown>[]);
+      if (!res.success) {
+        console.error('❌ [Supabase executeAllocationForEvent Error]:', res.error);
+        throw new Error(`Failed to save allocations to database: ${res.error?.message || 'Database error'}`);
       }
     }
 
-    // Sync updated learners to Supabase (sanitized to prevent rejection on schema mismatches)
-    if (supabase && result.updatedLearners.length > 0) {
-      const sanitized = result.updatedLearners.map(l =>
-        this.sanitizeRecordForTable('learners', l as unknown as Record<string, unknown>)
-      );
-      supabase
-        .from('learners')
-        .upsert(sanitized, { onConflict: 'id' })
-        .then(({ error }) => {
-          if (error) console.warn('[Supabase] allocation sync:', error.message);
-        });
-    }
+    const allLearners = this.getLearners();
+    const updatedMap = new Map(result.updatedLearners.map(l => [l.id, l]));
+    const nextLearners = allLearners.map(l => updatedMap.get(l.id) || l);
+    this.setItem(STORAGE_KEYS.LEARNERS, nextLearners);
 
     this.notify();
     return result;
   }
 
-  public resetAllocationsForEvent(eventId: string) {
+  public async resetAllocationsForEvent(eventId: string): Promise<void> {
     if (this.getAllocationLock(eventId)) {
       throw new Error('Allocation is currently locked by Assembly Coordinator.');
+    }
+
+    if (supabase) {
+      const { error } = await supabase
+        .from('learners')
+        .update({
+          bench: null,
+          party_id: null,
+          party_name: null,
+          constituency_number: null,
+          constituency_name: null,
+          district: null,
+          role: 'Member of Legislative Assembly (MLA)',
+          committee_id: null,
+          committee_name: null
+        })
+        .eq('event_id', eventId);
+
+      if (error) {
+        console.error('❌ [Supabase resetAllocationsForEvent Error]:', error);
+        throw new Error(`Failed to reset allocations in database: ${error.message}`);
+      }
     }
 
     const all = this.getLearners().map(l => {
@@ -3753,6 +3952,7 @@ class StorageService {
       return l;
     });
     this.setItem(STORAGE_KEYS.LEARNERS, all);
+    this.notify();
   }
 
   public rebalanceCommittees(eventId: string) {
@@ -3794,120 +3994,199 @@ class StorageService {
 
   // ── Security Locks (Allocation Lock, Registrations Frozen, Scores Locked) ──
   getAllocationLock(eventId?: string): boolean {
-    if (this.getItem<boolean>(STORAGE_KEYS.ALLOCATION_LOCK, false)) return true;
-    if (this.getItem<boolean>(`${STORAGE_KEYS.ALLOCATION_LOCK}_default`, false)) return true;
-    if (eventId && this.getItem<boolean>(`${STORAGE_KEYS.ALLOCATION_LOCK}_${eventId}`, false)) {
-      return true;
+    const targetId = eventId || this.getEvents()[0]?.id;
+    if (targetId) {
+      const ev = this.getEvents().find(e => e.id === targetId);
+      const sc = ev?.social_coverage as Record<string, any> | undefined;
+      if (sc && sc.allocation_lock !== undefined) return !!sc.allocation_lock;
+      if (ev && ev.is_locked !== undefined) return !!ev.is_locked;
+      const val = this.getItem<boolean>(`${STORAGE_KEYS.ALLOCATION_LOCK}_${targetId}`, false);
+      if (val) return true;
     }
-
-    try {
-      if (typeof window !== 'undefined') {
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (k && k.startsWith(STORAGE_KEYS.ALLOCATION_LOCK)) {
-            const parsed = JSON.parse(localStorage.getItem(k) || 'false');
-            if (parsed === true) return true;
-          }
-        }
-      }
-    } catch {}
-    return false;
+    return this.getItem<boolean>(STORAGE_KEYS.ALLOCATION_LOCK, false);
   }
 
-  setAllocationLock(locked: boolean, eventId?: string): void {
-    const key = `${STORAGE_KEYS.ALLOCATION_LOCK}_${eventId || 'default'}`;
+  async setAllocationLock(locked: boolean, eventId?: string): Promise<{ success: boolean; error?: any }> {
+    const targetId = eventId || this.getEvents()[0]?.id;
+    const key = `${STORAGE_KEYS.ALLOCATION_LOCK}_${targetId || 'default'}`;
+    const prevVal = this.getAllocationLock(targetId);
+
+    // Optimistic local update
     this.setItem(key, locked);
-    this.setItem(`${STORAGE_KEYS.ALLOCATION_LOCK}_default`, locked);
     this.setItem(STORAGE_KEYS.ALLOCATION_LOCK, locked);
-    if (typeof window !== 'undefined') {
-      try {
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (k && k.startsWith(STORAGE_KEYS.ALLOCATION_LOCK)) {
-            this.setItem(k, locked);
-          }
-        }
-      } catch {}
-    }
+    const events = this.getEvents().map(e => {
+      if (e.id === targetId) {
+        const sc = (e.social_coverage || {}) as Record<string, any>;
+        return { ...e, is_locked: locked, social_coverage: { ...sc, allocation_lock: locked } };
+      }
+      return e;
+    });
+    this.setItem(STORAGE_KEYS.EVENTS, events);
     this.notify();
+
+    if (supabase && targetId && isValidUuid(targetId)) {
+      try {
+        const ev = events.find(e => e.id === targetId);
+        const { error } = await supabase
+          .from('college_events')
+          .update({
+            is_locked: locked,
+            social_coverage: ev?.social_coverage || { allocation_lock: locked }
+          })
+          .eq('id', targetId);
+
+        if (error) {
+          console.error('❌ [Supabase Lock Allocation Error]:', error);
+          // Rollback on failure
+          this.setItem(key, prevVal);
+          this.setItem(STORAGE_KEYS.ALLOCATION_LOCK, prevVal);
+          const rollbackEvents = this.getEvents().map(e => {
+            if (e.id === targetId) {
+              const sc = (e.social_coverage || {}) as Record<string, any>;
+              return { ...e, is_locked: prevVal, social_coverage: { ...sc, allocation_lock: prevVal } };
+            }
+            return e;
+          });
+          this.setItem(STORAGE_KEYS.EVENTS, rollbackEvents);
+          this.notify();
+          return { success: false, error };
+        }
+      } catch (err: any) {
+        console.error('❌ [Supabase Lock Allocation Exception]:', err);
+        this.setItem(key, prevVal);
+        this.notify();
+        return { success: false, error: err };
+      }
+    }
+    return { success: true };
   }
 
   getRegistrationsFrozen(eventId?: string): boolean {
-    if (this.getItem<boolean>(STORAGE_KEYS.REGISTRATIONS_FROZEN, false)) return true;
-    if (this.getItem<boolean>(`${STORAGE_KEYS.REGISTRATIONS_FROZEN}_default`, false)) return true;
-    if (eventId && this.getItem<boolean>(`${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${eventId}`, false)) {
-      return true;
+    const targetId = eventId || this.getEvents()[0]?.id;
+    if (targetId) {
+      const ev = this.getEvents().find(e => e.id === targetId);
+      const sc = ev?.social_coverage as Record<string, any> | undefined;
+      if (sc && sc.registrations_frozen !== undefined) return !!sc.registrations_frozen;
+      const val = this.getItem<boolean>(`${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${targetId}`, false);
+      if (val) return true;
     }
-
-    try {
-      if (typeof window !== 'undefined') {
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (k && k.startsWith(STORAGE_KEYS.REGISTRATIONS_FROZEN)) {
-            const parsed = JSON.parse(localStorage.getItem(k) || 'false');
-            if (parsed === true) return true;
-          }
-        }
-      }
-    } catch {}
-    return false;
+    return this.getItem<boolean>(STORAGE_KEYS.REGISTRATIONS_FROZEN, false);
   }
 
-  setRegistrationsFrozen(frozen: boolean, eventId?: string): void {
-    const key = `${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${eventId || 'default'}`;
+  async setRegistrationsFrozen(frozen: boolean, eventId?: string): Promise<{ success: boolean; error?: any }> {
+    const targetId = eventId || this.getEvents()[0]?.id;
+    const key = `${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${targetId || 'default'}`;
+    const prevVal = this.getRegistrationsFrozen(targetId);
+
     this.setItem(key, frozen);
-    this.setItem(`${STORAGE_KEYS.REGISTRATIONS_FROZEN}_default`, frozen);
     this.setItem(STORAGE_KEYS.REGISTRATIONS_FROZEN, frozen);
-    if (typeof window !== 'undefined') {
-      try {
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (k && k.startsWith(STORAGE_KEYS.REGISTRATIONS_FROZEN)) {
-            this.setItem(k, frozen);
-          }
-        }
-      } catch {}
-    }
+    const events = this.getEvents().map(e => {
+      if (e.id === targetId) {
+        const sc = (e.social_coverage || {}) as Record<string, any>;
+        return { ...e, social_coverage: { ...sc, registrations_frozen: frozen } };
+      }
+      return e;
+    });
+    this.setItem(STORAGE_KEYS.EVENTS, events);
     this.notify();
+
+    if (supabase && targetId && isValidUuid(targetId)) {
+      try {
+        const ev = events.find(e => e.id === targetId);
+        const { error } = await supabase
+          .from('college_events')
+          .update({
+            social_coverage: ev?.social_coverage || { registrations_frozen: frozen }
+          })
+          .eq('id', targetId);
+
+        if (error) {
+          console.error('❌ [Supabase Freeze Registrations Error]:', error);
+          this.setItem(key, prevVal);
+          this.setItem(STORAGE_KEYS.REGISTRATIONS_FROZEN, prevVal);
+          const rollbackEvents = this.getEvents().map(e => {
+            if (e.id === targetId) {
+              const sc = (e.social_coverage || {}) as Record<string, any>;
+              return { ...e, social_coverage: { ...sc, registrations_frozen: prevVal } };
+            }
+            return e;
+          });
+          this.setItem(STORAGE_KEYS.EVENTS, rollbackEvents);
+          this.notify();
+          return { success: false, error };
+        }
+      } catch (err: any) {
+        console.error('❌ [Supabase Freeze Registrations Exception]:', err);
+        this.setItem(key, prevVal);
+        this.notify();
+        return { success: false, error: err };
+      }
+    }
+    return { success: true };
   }
 
   getScoresLocked(eventId?: string): boolean {
-    if (this.getItem<boolean>(STORAGE_KEYS.SCORES_LOCKED, false)) return true;
-    if (this.getItem<boolean>(`${STORAGE_KEYS.SCORES_LOCKED}_default`, false)) return true;
-    if (eventId && this.getItem<boolean>(`${STORAGE_KEYS.SCORES_LOCKED}_${eventId}`, false)) {
-      return true;
+    const targetId = eventId || this.getEvents()[0]?.id;
+    if (targetId) {
+      const ev = this.getEvents().find(e => e.id === targetId);
+      const sc = ev?.social_coverage as Record<string, any> | undefined;
+      if (sc && sc.scores_locked !== undefined) return !!sc.scores_locked;
+      const val = this.getItem<boolean>(`${STORAGE_KEYS.SCORES_LOCKED}_${targetId}`, false);
+      if (val) return true;
     }
-
-    try {
-      if (typeof window !== 'undefined') {
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (k && k.startsWith(STORAGE_KEYS.SCORES_LOCKED)) {
-            const parsed = JSON.parse(localStorage.getItem(k) || 'false');
-            if (parsed === true) return true;
-          }
-        }
-      }
-    } catch {}
-    return false;
+    return this.getItem<boolean>(STORAGE_KEYS.SCORES_LOCKED, false);
   }
 
-  setScoresLocked(locked: boolean, eventId?: string): void {
-    const key = `${STORAGE_KEYS.SCORES_LOCKED}_${eventId || 'default'}`;
+  async setScoresLocked(locked: boolean, eventId?: string): Promise<{ success: boolean; error?: any }> {
+    const targetId = eventId || this.getEvents()[0]?.id;
+    const key = `${STORAGE_KEYS.SCORES_LOCKED}_${targetId || 'default'}`;
+    const prevVal = this.getScoresLocked(targetId);
+
     this.setItem(key, locked);
-    this.setItem(`${STORAGE_KEYS.SCORES_LOCKED}_default`, locked);
     this.setItem(STORAGE_KEYS.SCORES_LOCKED, locked);
-    if (typeof window !== 'undefined') {
-      try {
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (k && k.startsWith(STORAGE_KEYS.SCORES_LOCKED)) {
-            this.setItem(k, locked);
-          }
-        }
-      } catch {}
-    }
+    const events = this.getEvents().map(e => {
+      if (e.id === targetId) {
+        const sc = (e.social_coverage || {}) as Record<string, any>;
+        return { ...e, social_coverage: { ...sc, scores_locked: locked } };
+      }
+      return e;
+    });
+    this.setItem(STORAGE_KEYS.EVENTS, events);
     this.notify();
+
+    if (supabase && targetId && isValidUuid(targetId)) {
+      try {
+        const ev = events.find(e => e.id === targetId);
+        const { error } = await supabase
+          .from('college_events')
+          .update({
+            social_coverage: ev?.social_coverage || { scores_locked: locked }
+          })
+          .eq('id', targetId);
+
+        if (error) {
+          console.error('❌ [Supabase Scores Lock Error]:', error);
+          this.setItem(key, prevVal);
+          this.setItem(STORAGE_KEYS.SCORES_LOCKED, prevVal);
+          const rollbackEvents = this.getEvents().map(e => {
+            if (e.id === targetId) {
+              const sc = (e.social_coverage || {}) as Record<string, any>;
+              return { ...e, social_coverage: { ...sc, scores_locked: prevVal } };
+            }
+            return e;
+          });
+          this.setItem(STORAGE_KEYS.EVENTS, rollbackEvents);
+          this.notify();
+          return { success: false, error };
+        }
+      } catch (err: any) {
+        console.error('❌ [Supabase Scores Lock Exception]:', err);
+        this.setItem(key, prevVal);
+        this.notify();
+        return { success: false, error: err };
+      }
+    }
+    return { success: true };
   }
 
   // ── YUVA Desk Assignments ───────────────────────────────────────────────

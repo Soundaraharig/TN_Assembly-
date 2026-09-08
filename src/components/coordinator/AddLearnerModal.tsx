@@ -9,7 +9,7 @@ interface AddLearnerModalProps {
   onClose: () => void;
   eventId: string;
   existingCodes: Set<string>;
-  onAddLearner: (learner: Partial<Learner>) => void;
+  onAddLearner: (learner: Partial<Learner>) => void | Promise<any>;
 }
 
 export const AddLearnerModal: React.FC<AddLearnerModalProps> = ({
@@ -29,14 +29,14 @@ export const AddLearnerModal: React.FC<AddLearnerModalProps> = ({
 
   const isFrozen = storageService.getRegistrationsFrozen(eventId);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isFrozen) return;
     if (!fullName.trim()) return;
 
     const accessCode = generateAccessCode(existingCodes);
 
-    onAddLearner({
+    await onAddLearner({
       event_id: eventId,
       access_code: accessCode,
       full_name: fullName.trim(),

@@ -213,6 +213,7 @@ interface EventTabRouteHandlerProps {
   handleExecuteAllocation: (ratio: any, targetEventId?: string) => void;
   handleAllocateParties?: (options?: any, targetEventId?: string) => void;
   handleAllocateCommittees?: (options?: any, targetEventId?: string) => void;
+  handleAllocateConstituencies?: (options?: any, targetEventId?: string) => void;
   handleResetAllocation: (targetEventId?: string) => void;
   setCurrentEvent: React.Dispatch<React.SetStateAction<CollegeEvent | null>>;
   setEvents?: React.Dispatch<React.SetStateAction<CollegeEvent[]>>;
@@ -450,8 +451,8 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           onAddCommittee={props.handleAddCommittee}
           onUpdateCommittee={props.handleUpdateCommittee}
           onDeleteCommittee={props.handleDeleteCommittee}
-          onSetCommitteeCount={(count) => {
-            const newComms = storageService.setCommitteeCount(activeEvent.id, count);
+          onSetCommitteeCount={async (count) => {
+            const newComms = await storageService.setCommitteeCount(activeEvent.id, count);
             props.setCommittees(newComms);
             props.setLearners(storageService.getLearners(activeEvent.id));
           }}
@@ -469,8 +470,8 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           onAddParty={props.handleAddParty}
           onUpdateParty={props.handleUpdateParty}
           onDeleteParty={props.handleDeleteParty}
-          onSetPartyCount={(count) => {
-            const newParties = storageService.setPartyCount(activeEvent.id, count);
+          onSetPartyCount={async (count) => {
+            const newParties = await storageService.setPartyCount(activeEvent.id, count);
             props.setParties(newParties);
             props.setLearners(storageService.getLearners(activeEvent.id));
           }}
@@ -485,21 +486,24 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           committees={props.committees}
           eventId={activeEvent.id}
           onExecuteAllocation={(rulingRatio) => {
-            props.handleExecuteAllocation(rulingRatio, activeEvent.id);
+            return props.handleExecuteAllocation(rulingRatio, activeEvent.id);
           }}
           onAllocateParties={(options) => {
-            props.handleAllocateParties?.(options, activeEvent.id);
+            return props.handleAllocateParties?.(options, activeEvent.id);
           }}
           onAllocateCommittees={(options) => {
-            props.handleAllocateCommittees?.(options, activeEvent.id);
+            return props.handleAllocateCommittees?.(options, activeEvent.id);
+          }}
+          onAllocateConstituencies={(options) => {
+            return props.handleAllocateConstituencies?.(options, activeEvent.id);
           }}
           onResetAllocation={() => {
-            props.handleResetAllocation(activeEvent.id);
+            return props.handleResetAllocation(activeEvent.id);
           }}
           onUpdateLearner={props.handleUpdateLearner}
           onOpenImportCsv={() => props.setIsImportCsvOpen(true)}
-          onUpdatePartyBench={(partyId, bench) => {
-            storageService.setPartyBench(partyId, bench, activeEvent.id);
+          onUpdatePartyBench={async (partyId, bench) => {
+            await storageService.setPartyBench(partyId, bench, activeEvent.id);
             props.setParties(storageService.getParties(activeEvent.id));
             props.setLearners(storageService.getLearners(activeEvent.id));
           }}
@@ -1284,10 +1288,10 @@ export function App() {
     return res;
   };
 
-  const handleAddLearner = (l: Partial<Learner>) => {
+  const handleAddLearner = async (l: Partial<Learner>) => {
     const activeEv = extractEventFromUrl(events) || currentEvent;
     const targetEventId = l.event_id || activeEv?.id || '';
-    storageService.addLearner({ ...l, event_id: targetEventId });
+    const newLearner = await storageService.addLearner({ ...l, event_id: targetEventId });
     if (targetEventId) {
       setLearners(storageService.getLearners(targetEventId));
       setCurrentEvent(prev => prev ? { ...prev, participant_count: (prev.participant_count || 0) + 1 } : prev);
@@ -1295,10 +1299,11 @@ export function App() {
     } else {
       setLearners(storageService.getLearners());
     }
+    return newLearner;
   };
 
-  const handleUpdateLearner = (l: Learner) => {
-    storageService.updateLearner(l);
+  const handleUpdateLearner = async (l: Learner) => {
+    await storageService.updateLearner(l);
     const activeEv = extractEventFromUrl(events) || currentEvent;
     if (activeEv) {
       setLearners(storageService.getLearners(activeEv.id));
@@ -1307,25 +1312,35 @@ export function App() {
     }
   };
 
-  const handleDeleteLearner = (id: string) => {
-    storageService.deleteLearner(id);
+  const handleDeleteLearner = async (id: string) => {
+    await storageService.deleteLearner(id);
+    const activeEv = extractEventFromUrl(events) || currentEvent;
+    if (activeEv) {
+      setLearners(storageService.getLearners(activeEv.id));
+      setCurrentEvent(prev => prev ? { ...prev, participant_count: Math.max(0, (prev.participant_count || 1) - 1) } : prev);
+      setEvents(storageService.getEvents());
+    } else {
+      setLearners(storageService.getLearners());
+    }
     addToast('Participant Deleted', 'Removed participant from event', 'info');
   };
 
-  const handleDeleteMultipleLearners = (ids: string[]) => {
+  const handleDeleteMultipleLearners = async (ids: string[]) => {
     if (currentEvent) {
-      storageService.deleteLearners(ids, currentEvent.id);
+      await storageService.deleteLearners(ids, currentEvent.id);
       setLearners(storageService.getLearners(currentEvent.id));
       setCurrentEvent(prev => prev ? { ...prev, participant_count: Math.max(0, (prev.participant_count || 0) - ids.length) } : prev);
+      setEvents(storageService.getEvents());
       addToast('Mass Delete', `Removed ${ids.length} participants`, 'info');
     }
   };
 
-  const handleClearAllLearners = () => {
+  const handleClearAllLearners = async () => {
     if (currentEvent) {
-      storageService.clearAllLearners(currentEvent.id);
+      await storageService.clearAllLearners(currentEvent.id);
       setLearners([]);
       setCurrentEvent(prev => prev ? { ...prev, participant_count: 0 } : prev);
+      setEvents(storageService.getEvents());
       addToast('Roster Cleared', 'All delegate participants have been removed', 'info');
     }
   };
@@ -1339,54 +1354,54 @@ export function App() {
     }
   };
 
-  const handleCheckInAll = (day: 1 | 2, state: boolean) => {
+  const handleCheckInAll = (day: 1 | 2, present: boolean) => {
     if (currentEvent) {
-      storageService.checkInAll(currentEvent.id, day, state);
+      storageService.checkInAll(currentEvent.id, day, present);
       setLearners(storageService.getLearners(currentEvent.id));
       addToast('Check-in Updated', `Day ${day} check-in updated for all delegates`, 'success');
     }
   };
 
-  const handleAddParty = (p: Partial<Party>) => {
-    storageService.addParty(p);
+  const handleAddParty = async (p: Partial<Party>) => {
+    await storageService.addParty(p);
     if (currentEventRef.current) {
       setParties(storageService.getParties(currentEventRef.current.id));
     }
   };
 
-  const handleUpdateParty = (p: Party) => {
-    storageService.updateParty(p);
-    if (currentEventRef.current) {
-      setParties(storageService.getParties(currentEventRef.current.id));
-      setLearners(storageService.getLearners(currentEventRef.current.id));
-    }
-  };
-
-  const handleDeleteParty = (id: string) => {
-    storageService.deleteParty(id);
+  const handleUpdateParty = async (p: Party) => {
+    await storageService.updateParty(p);
     if (currentEventRef.current) {
       setParties(storageService.getParties(currentEventRef.current.id));
       setLearners(storageService.getLearners(currentEventRef.current.id));
     }
   };
 
-  const handleAddCommittee = (c: Partial<Committee>) => {
-    storageService.addCommittee(c);
+  const handleDeleteParty = async (id: string) => {
+    await storageService.deleteParty(id);
+    if (currentEventRef.current) {
+      setParties(storageService.getParties(currentEventRef.current.id));
+      setLearners(storageService.getLearners(currentEventRef.current.id));
+    }
+  };
+
+  const handleAddCommittee = async (c: Partial<Committee>) => {
+    await storageService.addCommittee(c);
     if (currentEventRef.current) {
       setCommittees(storageService.getCommittees(currentEventRef.current.id));
     }
   };
 
-  const handleUpdateCommittee = (c: Committee) => {
-    storageService.updateCommittee(c);
+  const handleUpdateCommittee = async (c: Committee) => {
+    await storageService.updateCommittee(c);
     if (currentEventRef.current) {
       setCommittees(storageService.getCommittees(currentEventRef.current.id));
       setLearners(storageService.getLearners(currentEventRef.current.id));
     }
   };
 
-  const handleDeleteCommittee = (id: string) => {
-    storageService.deleteCommittee(id);
+  const handleDeleteCommittee = async (id: string) => {
+    await storageService.deleteCommittee(id);
     if (currentEventRef.current) {
       setCommittees(storageService.getCommittees(currentEventRef.current.id));
       setLearners(storageService.getLearners(currentEventRef.current.id));
@@ -1430,10 +1445,10 @@ export function App() {
     }
   };
 
-  const handleAddJury = (j: Partial<JuryMember>) => {
+  const handleAddJury = async (j: Partial<JuryMember>) => {
     const activeEv = extractEventFromUrl(events) || currentEvent;
     const targetEventId = j.event_id || activeEv?.id || '';
-    storageService.addJuryMember({ ...j, event_id: targetEventId });
+    await storageService.addJuryMember({ ...j, event_id: targetEventId });
     if (targetEventId) {
       setJury(storageService.getJury(targetEventId));
     } else {
@@ -1441,8 +1456,8 @@ export function App() {
     }
   };
 
-  const handleDeleteJury = (id: string) => {
-    storageService.deleteJuryMember(id);
+  const handleDeleteJury = async (id: string) => {
+    await storageService.deleteJuryMember(id);
     const activeEv = extractEventFromUrl(events) || currentEvent;
     if (activeEv) {
       setJury(storageService.getJury(activeEv.id));
@@ -1451,10 +1466,10 @@ export function App() {
     }
   };
 
-  const handleAddVolunteer = (v: Partial<Volunteer>) => {
+  const handleAddVolunteer = async (v: Partial<Volunteer>) => {
     const activeEv = extractEventFromUrl(events) || currentEvent;
     const targetEventId = v.event_id || activeEv?.id || '';
-    storageService.addVolunteer({ ...v, event_id: targetEventId });
+    await storageService.addVolunteer({ ...v, event_id: targetEventId });
     if (targetEventId) {
       setVolunteers(storageService.getVolunteers(targetEventId));
     } else {
@@ -1462,8 +1477,8 @@ export function App() {
     }
   };
 
-  const handleDeleteVolunteer = (id: string) => {
-    storageService.deleteVolunteer(id);
+  const handleDeleteVolunteer = async (id: string) => {
+    await storageService.deleteVolunteer(id);
     const activeEv = extractEventFromUrl(events) || currentEvent;
     if (activeEv) {
       setVolunteers(storageService.getVolunteers(activeEv.id));
@@ -1473,7 +1488,7 @@ export function App() {
   };
 
   // Auto Allocation Execution
-  const handleExecuteAllocation = (rulingRatio: number, targetEventId?: string) => {
+  const handleExecuteAllocation = async (rulingRatio: number, targetEventId?: string) => {
     const activeEv = targetEventId
       ? events.find(e => e.id === targetEventId) || currentEvent
       : extractEventFromUrl(events) || currentEvent;
@@ -1484,17 +1499,18 @@ export function App() {
         return;
       }
       try {
-        storageService.executeAllocationForEvent(activeEv.id, rulingRatio);
+        await storageService.executeAllocationForEvent(activeEv.id, rulingRatio);
         setLearners(storageService.getLearners(activeEv.id));
         setParties(storageService.getParties(activeEv.id));
         setCommittees(storageService.getCommittees(activeEv.id));
+        addToast('Allocation Complete', 'Party, bench, and committee seats allocated successfully.', 'success');
       } catch (err: any) {
-        addToast('Allocation Locked', err?.message || 'Cannot execute allocation while lock is enabled.', 'error');
+        addToast('Allocation Failed', err?.message || 'Cannot execute allocation while lock is enabled.', 'error');
       }
     }
   };
 
-  const handleAllocateParties = (options?: any, targetEventId?: string) => {
+  const handleAllocateParties = async (options?: any, targetEventId?: string) => {
     const activeEv = targetEventId
       ? events.find(e => e.id === targetEventId) || currentEvent
       : extractEventFromUrl(events) || currentEvent;
@@ -1505,16 +1521,17 @@ export function App() {
         return;
       }
       try {
-        storageService.allocatePartiesForEvent(activeEv.id, options);
+        await storageService.allocatePartiesForEvent(activeEv.id, options);
         setLearners(storageService.getLearners(activeEv.id));
         setParties(storageService.getParties(activeEv.id));
+        addToast('Parties Allocated', 'Parties and constituencies allocated successfully.', 'success');
       } catch (err: any) {
-        addToast('Allocation Locked', err?.message || 'Cannot execute party allocation while lock is enabled.', 'error');
+        addToast('Party Allocation Failed', err?.message || 'Cannot execute party allocation while lock is enabled.', 'error');
       }
     }
   };
 
-  const handleAllocateCommittees = (options?: any, targetEventId?: string) => {
+  const handleAllocateCommittees = async (options?: any, targetEventId?: string) => {
     const activeEv = targetEventId
       ? events.find(e => e.id === targetEventId) || currentEvent
       : extractEventFromUrl(events) || currentEvent;
@@ -1525,16 +1542,37 @@ export function App() {
         return;
       }
       try {
-        storageService.allocateCommitteesForEvent(activeEv.id, options);
+        await storageService.allocateCommitteesForEvent(activeEv.id, options);
         setLearners(storageService.getLearners(activeEv.id));
         setCommittees(storageService.getCommittees(activeEv.id));
+        addToast('Committees Allocated', 'Committees allocated successfully.', 'success');
       } catch (err: any) {
-        addToast('Allocation Locked', err?.message || 'Cannot execute committee allocation while lock is enabled.', 'error');
+        addToast('Committee Allocation Failed', err?.message || 'Cannot execute committee allocation while lock is enabled.', 'error');
       }
     }
   };
 
-  const handleResetAllocation = (targetEventId?: string) => {
+  const handleAllocateConstituencies = async (options?: any, targetEventId?: string) => {
+    const activeEv = targetEventId
+      ? events.find(e => e.id === targetEventId) || currentEvent
+      : extractEventFromUrl(events) || currentEvent;
+
+    if (activeEv) {
+      if (storageService.getAllocationLock(activeEv.id)) {
+        addToast('Allocation Locked', 'Allocation lock is active. Unlock in Control Panel to run allocation.', 'error');
+        return;
+      }
+      try {
+        await storageService.allocateConstituenciesForEvent(activeEv.id, options);
+        setLearners(storageService.getLearners(activeEv.id));
+        addToast('Constituencies Allocated', 'Tamil Nadu constituencies allocated successfully.', 'success');
+      } catch (err: any) {
+        addToast('Constituency Allocation Failed', err?.message || 'Cannot execute constituency allocation while lock is enabled.', 'error');
+      }
+    }
+  };
+
+  const handleResetAllocation = async (targetEventId?: string) => {
     const activeEv = targetEventId
       ? events.find(e => e.id === targetEventId) || currentEvent
       : extractEventFromUrl(events) || currentEvent;
@@ -1545,8 +1583,9 @@ export function App() {
         return;
       }
       try {
-        storageService.resetAllocationsForEvent(activeEv.id);
+        await storageService.resetAllocationsForEvent(activeEv.id);
         setLearners(storageService.getLearners(activeEv.id));
+        addToast('Allocation Reset', 'Party and committee allocations have been reset to blank.', 'info');
       } catch (err: any) {
         addToast('Allocation Locked', err?.message || 'Cannot reset allocation while lock is enabled.', 'error');
       }
@@ -2191,6 +2230,7 @@ export function App() {
                   handleExecuteAllocation={handleExecuteAllocation}
                   handleAllocateParties={handleAllocateParties}
                   handleAllocateCommittees={handleAllocateCommittees}
+                  handleAllocateConstituencies={handleAllocateConstituencies}
                   handleResetAllocation={handleResetAllocation}
                   setCurrentEvent={setCurrentEvent}
                   setEvents={setEvents}
@@ -2242,8 +2282,8 @@ export function App() {
               onClose={() => setIsAddWalkInOpen(false)}
               eventId={activeEvModal.id}
               existingCodes={existingCodesSet}
-              onAddLearner={(l) => {
-                handleAddLearner({ ...l, event_id: activeEvModal.id });
+              onAddLearner={async (l) => {
+                await handleAddLearner({ ...l, event_id: activeEvModal.id });
                 addToast('Walk-in Added', `Registered ${l.full_name} with access code ${l.access_code}`, 'success');
               }}
             />
@@ -2253,12 +2293,15 @@ export function App() {
               onClose={() => setIsImportCsvOpen(false)}
               eventId={activeEvModal.id}
               existingCodes={existingCodesSet}
-              onImportSuccess={(imported: Partial<Learner>[]) => {
-                storageService.importLearners(imported, activeEvModal.id);
+              onImportSuccess={async (imported: Partial<Learner>[]) => {
+                const res = await storageService.importLearners(imported, activeEvModal.id);
+                if (!res.success) {
+                  throw new Error(res.error?.message || 'Failed to save imported participants to database.');
+                }
                 setLearners(storageService.getLearners(activeEvModal.id));
                 setParties(storageService.getParties(activeEvModal.id));
                 setCommittees(storageService.getCommittees(activeEvModal.id));
-                addToast('Import Successful', `Processed ${imported.length} delegate participants`, 'success');
+                addToast('Import Successful', `Processed ${imported.length} delegate participants (saved to Supabase)`, 'success');
               }}
               onShowToast={addToast}
             />
@@ -2271,13 +2314,16 @@ export function App() {
               committees={committees}
               eventId={activeEvModal.id}
               onExecuteAllocation={(ratio) => {
-                handleExecuteAllocation(ratio, activeEvModal.id);
+                return handleExecuteAllocation(ratio, activeEvModal.id);
               }}
               onAllocateParties={(options) => {
-                handleAllocateParties(options, activeEvModal.id);
+                return handleAllocateParties(options, activeEvModal.id);
               }}
               onAllocateCommittees={(options) => {
-                handleAllocateCommittees(options, activeEvModal.id);
+                return handleAllocateCommittees(options, activeEvModal.id);
+              }}
+              onAllocateConstituencies={(options) => {
+                return handleAllocateConstituencies(options, activeEvModal.id);
               }}
             />
           </>

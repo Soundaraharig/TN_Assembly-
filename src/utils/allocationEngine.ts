@@ -66,6 +66,10 @@ export interface CommitteeAllocationOptions {
   mode?: AllocationMode;
 }
 
+export interface ConstituencyAllocationOptions {
+  mode?: AllocationMode;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // INDEPENDENT PARTY ALLOCATION
 // ─────────────────────────────────────────────────────────────────────────────
@@ -193,34 +197,6 @@ export function allocateParties(
     const allocatedMap = new Map(toAllocate.map(l => [l.id, l]));
     resultLearners = resultLearners.map(l => allocatedMap.get(l.id) || l);
   }
-
-  // Assign Constituency numbers to unassigned delegates
-  const usedConstituencies = new Set<number>();
-  resultLearners.forEach(l => {
-    if (l.constituency_number) usedConstituencies.add(Number(l.constituency_number));
-  });
-
-  const availableConstituencies = shuffleArray(
-    TN_CONSTITUENCIES.filter(c => !usedConstituencies.has(c.number))
-  );
-
-  let constIdx = 0;
-  resultLearners.forEach((learner) => {
-    if (mode === 'REALLOCATE_ALL' || !learner.constituency_number) {
-      if (constIdx < availableConstituencies.length) {
-        const c = availableConstituencies[constIdx++];
-        learner.constituency_number = c.number;
-        learner.constituency_name = c.name;
-        learner.district = c.district;
-      } else {
-        const extraIdx = constIdx - availableConstituencies.length + 1;
-        constIdx++;
-        learner.constituency_number = 234 + extraIdx;
-        learner.constituency_name = `Nominated Seat ${extraIdx}`;
-        learner.district = 'State Nominated';
-      }
-    }
-  });
 
   // Assign Senior Roles (Chief Minister, Opposition Leader, etc.) if not already set
   const rulingLearners = resultLearners.filter(l => l.bench === 'Ruling');
@@ -370,6 +346,77 @@ export function allocateCommittees(
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// INDEPENDENT CONSTITUENCY ALLOCATION (NEVER OVERWRITES PARTIES, BENCH, ROLE, OR COMMITTEES)
+// ─────────────────────────────────────────────────────────────────────────────
+export function allocateConstituencies(
+  learners: Learner[],
+  options: ConstituencyAllocationOptions = {}
+): { updatedLearners: Learner[]; stats: { totalAllocated: number; constituenciesUsed: number } } {
+  const mode = options.mode || 'UNASSIGNED_ONLY';
+
+  if (learners.length === 0) {
+    return {
+      updatedLearners: learners,
+      stats: { totalAllocated: 0, constituenciesUsed: 0 }
+    };
+  }
+
+  let resultLearners = learners.map(l => ({ ...l }));
+
+  let toAllocate: Learner[];
+  let preserved: Learner[] = [];
+
+  if (mode === 'UNASSIGNED_ONLY') {
+    toAllocate = resultLearners.filter(l => !l.constituency_number);
+    preserved = resultLearners.filter(l => Boolean(l.constituency_number));
+  } else {
+    toAllocate = [...resultLearners];
+    preserved = [];
+  }
+
+  if (toAllocate.length > 0) {
+    // Keep track of constituencies already used by preserved delegates
+    const usedConstituencies = new Set<number>();
+    preserved.forEach(l => {
+      if (l.constituency_number) {
+        usedConstituencies.add(Number(l.constituency_number));
+      }
+    });
+
+    const availableConstituencies = shuffleArray(
+      TN_CONSTITUENCIES.filter(c => !usedConstituencies.has(c.number))
+    );
+
+    let constIdx = 0;
+    toAllocate.forEach(learner => {
+      if (constIdx < availableConstituencies.length) {
+        const c = availableConstituencies[constIdx++];
+        learner.constituency_number = c.number;
+        learner.constituency_name = c.name;
+        learner.district = c.district;
+      } else {
+        const extraIdx = constIdx - availableConstituencies.length + 1;
+        constIdx++;
+        learner.constituency_number = 234 + extraIdx;
+        learner.constituency_name = `Nominated Seat ${extraIdx}`;
+        learner.district = 'State Nominated';
+      }
+    });
+
+    const allocatedMap = new Map(toAllocate.map(l => [l.id, l]));
+    resultLearners = resultLearners.map(l => allocatedMap.get(l.id) || l);
+  }
+
+  return {
+    updatedLearners: resultLearners,
+    stats: {
+      totalAllocated: resultLearners.filter(l => Boolean(l.constituency_number)).length,
+      constituenciesUsed: resultLearners.filter(l => Boolean(l.constituency_number)).length
+    }
+  };
+}
+
 // Helper to compute statistics across all learners
 function computeAllocationStats(learners: Learner[]) {
   const partyDist: Record<string, number> = {};
@@ -409,7 +456,7 @@ function computeAllocationStats(learners: Learner[]) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// COMPOSITE RUN AUTO ALLOCATION (Runs both in sequence for backwards compatibility)
+// COMPOSITE RUN AUTO ALLOCATION (Runs all 3 independent dimensions in sequence)
 // ─────────────────────────────────────────────────────────────────────────────
 export function runAutoAllocation(
   learners: Learner[],
@@ -419,11 +466,12 @@ export function runAutoAllocation(
 ): AllocationResult {
   const partyResult = allocateParties(learners, parties, { mode: 'REALLOCATE_ALL', rulingRatio });
   const committeeResult = allocateCommittees(partyResult.updatedLearners, committees, { mode: 'REALLOCATE_ALL' });
+  const constResult = allocateConstituencies(committeeResult.updatedLearners, { mode: 'REALLOCATE_ALL' });
 
   return {
-    updatedLearners: committeeResult.updatedLearners,
+    updatedLearners: constResult.updatedLearners,
     updatedParties: partyResult.updatedParties,
-    stats: computeAllocationStats(committeeResult.updatedLearners)
+    stats: computeAllocationStats(constResult.updatedLearners)
   };
 }
 

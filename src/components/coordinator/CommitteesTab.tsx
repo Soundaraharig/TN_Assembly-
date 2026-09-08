@@ -11,7 +11,7 @@ interface CommitteesTabProps {
   onAddCommittee: (committee: Partial<Committee>) => void;
   onUpdateCommittee: (committee: Committee) => void;
   onDeleteCommittee: (committeeId: string) => void;
-  onSetCommitteeCount?: (count: number) => void;
+  onSetCommitteeCount?: (count: number) => void | Promise<any>;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -62,13 +62,17 @@ export const CommitteesTab: React.FC<CommitteesTabProps> = ({
     setIsModalOpen(true);
   };
 
-  const handleApplyCommitteeCount = (e: React.FormEvent) => {
+  const handleApplyCommitteeCount = async (e: React.FormEvent) => {
     e.preventDefault();
     const count = Math.max(1, Math.min(20, Number(committeeCountInput) || 1));
     setCommitteeCountInput(count);
     if (onSetCommitteeCount) {
-      onSetCommitteeCount(count);
-      onShowToast('Committees Configured', `Configured ${count} committees (Committee 1 to Committee ${count})`, 'success');
+      try {
+        await onSetCommitteeCount(count);
+        onShowToast('Committees Configured', `Configured ${count} committees (Committee 1 to Committee ${count})`, 'success');
+      } catch (err: any) {
+        onShowToast('Configuration Error', err?.message || 'Failed to update committees in database', 'error');
+      }
     }
   };
 

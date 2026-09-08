@@ -24,7 +24,7 @@ interface PartiesTabProps {
   onAddParty: (party: Partial<Party>) => void;
   onUpdateParty: (party: Party) => void;
   onDeleteParty: (partyId: string) => void;
-  onSetPartyCount?: (count: number) => void;
+  onSetPartyCount?: (count: number) => void | Promise<any>;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -79,13 +79,17 @@ export const PartiesTab: React.FC<PartiesTabProps> = ({
     setIsModalOpen(true);
   };
 
-  const handleApplyPartyCount = (e: React.FormEvent) => {
+  const handleApplyPartyCount = async (e: React.FormEvent) => {
     e.preventDefault();
     const count = Math.max(1, Math.min(20, Number(partyCountInput) || 1));
     setPartyCountInput(count);
     if (onSetPartyCount) {
-      onSetPartyCount(count);
-      onShowToast('Parties Configured', `Configured ${count} parties (Party 1 to Party ${count})`, 'success');
+      try {
+        await onSetPartyCount(count);
+        onShowToast('Parties Configured', `Configured ${count} parties (Party 1 to Party ${count})`, 'success');
+      } catch (err: any) {
+        onShowToast('Configuration Error', err?.message || 'Failed to update parties in database', 'error');
+      }
     }
   };
 

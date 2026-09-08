@@ -16,7 +16,8 @@ import {
   Table as TableIcon,
   Lock,
   ChevronDown,
-  Building2
+  Building2,
+  MapPin
 } from 'lucide-react';
 
 interface AllocationTabProps {
@@ -24,10 +25,11 @@ interface AllocationTabProps {
   parties: Party[];
   committees: Committee[];
   eventId?: string;
-  onExecuteAllocation: (rulingRatio: number) => void;
-  onAllocateParties?: (options?: { mode?: 'UNASSIGNED_ONLY' | 'REALLOCATE_ALL'; rulingRatio?: number }) => void;
-  onAllocateCommittees?: (options?: { mode?: 'UNASSIGNED_ONLY' | 'REALLOCATE_ALL' }) => void;
-  onResetAllocation: () => void;
+  onExecuteAllocation: (rulingRatio: number) => void | Promise<any>;
+  onAllocateParties?: (options?: { mode?: 'UNASSIGNED_ONLY' | 'REALLOCATE_ALL'; rulingRatio?: number }) => void | Promise<any>;
+  onAllocateCommittees?: (options?: { mode?: 'UNASSIGNED_ONLY' | 'REALLOCATE_ALL' }) => void | Promise<any>;
+  onAllocateConstituencies?: (options?: { mode?: 'UNASSIGNED_ONLY' | 'REALLOCATE_ALL' }) => void | Promise<any>;
+  onResetAllocation: () => void | Promise<any>;
   onUpdateLearner: (learner: Learner) => void;
   onOpenImportCsv?: () => void;
   onUpdatePartyBench?: (partyId: string, bench: BenchType) => void;
@@ -42,6 +44,7 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
   onExecuteAllocation,
   onAllocateParties,
   onAllocateCommittees,
+  onAllocateConstituencies,
   onResetAllocation,
   onUpdateLearner,
   onOpenImportCsv,
@@ -121,13 +124,43 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
   // Unallocated counters
   const unassignedPartyCount = learners.filter(l => !l.party_id && !l.party_name).length;
   const unassignedCommitteeCount = learners.filter(l => !l.committee_id && !l.committee_name).length;
+  const unassignedConstituencyCount = learners.filter(l => !l.constituency_number).length;
 
   // Download & action dropdown states
   const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);
   const [partyDropdownOpen, setPartyDropdownOpen] = useState(false);
   const [committeeDropdownOpen, setCommitteeDropdownOpen] = useState(false);
+  const [constituencyDropdownOpen, setConstituencyDropdownOpen] = useState(false);
 
-  const handleAllocateParties = (mode: 'UNASSIGNED_ONLY' | 'REALLOCATE_ALL' = 'UNASSIGNED_ONLY') => {
+  const handleAllocateConstituencies = async (mode: 'UNASSIGNED_ONLY' | 'REALLOCATE_ALL' = 'UNASSIGNED_ONLY') => {
+    if (isAllocationLocked) {
+      onShowToast('Allocation Locked', 'Unlock allocation in Control Tab to run constituency allocation', 'error');
+      return;
+    }
+    if (totalLearners === 0) {
+      onShowToast('No Delegates Found', 'Please add or import delegates before running allocation', 'error');
+      return;
+    }
+    try {
+      if (onAllocateConstituencies) {
+        await onAllocateConstituencies({ mode });
+      } else if (eventId) {
+        await storageService.allocateConstituenciesForEvent(eventId, { mode });
+      }
+      onShowToast(
+        '📍 Constituency Allocation Completed',
+        mode === 'UNASSIGNED_ONLY'
+          ? `Allocated Tamil Nadu constituencies to unassigned delegates without changing parties or committees!`
+          : `Reallocated all delegates across Tamil Nadu constituencies without changing parties or committees!`,
+        'success'
+      );
+    } catch (err: any) {
+      onShowToast('Constituency Allocation Failed', err?.message || 'Database error occurred during constituency allocation', 'error');
+    }
+    setConstituencyDropdownOpen(false);
+  };
+
+  const handleAllocateParties = async (mode: 'UNASSIGNED_ONLY' | 'REALLOCATE_ALL' = 'UNASSIGNED_ONLY') => {
     if (isAllocationLocked) {
       onShowToast('Allocation Locked', 'Unlock allocation in Control Tab to run party allocation', 'error');
       return;
@@ -136,24 +169,28 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
       onShowToast('No Delegates Found', 'Please add or import delegates before running allocation', 'error');
       return;
     }
-    if (onAllocateParties) {
-      onAllocateParties({ mode, rulingRatio: 0.55 });
-    } else if (eventId) {
-      storageService.allocatePartiesForEvent(eventId, { mode, rulingRatio: 0.55 });
-    } else {
-      onExecuteAllocation(0.55);
+    try {
+      if (onAllocateParties) {
+        await onAllocateParties({ mode, rulingRatio: 0.55 });
+      } else if (eventId) {
+        await storageService.allocatePartiesForEvent(eventId, { mode, rulingRatio: 0.55 });
+      } else {
+        await onExecuteAllocation(0.55);
+      }
+      onShowToast(
+        '⚡ Party Allocation Completed',
+        mode === 'UNASSIGNED_ONLY'
+          ? `Allocated unassigned delegates across parties while preserving existing committees and benches!`
+          : `Reallocated all delegates across parties with TN Constituencies!`,
+        'success'
+      );
+    } catch (err: any) {
+      onShowToast('Allocation Failed', err?.message || 'Database error occurred during party allocation', 'error');
     }
-    onShowToast(
-      '⚡ Party Allocation Completed',
-      mode === 'UNASSIGNED_ONLY'
-        ? `Allocated unassigned delegates across parties while preserving existing committees and benches!`
-        : `Reallocated all delegates across parties with TN Constituencies!`,
-      'success'
-    );
     setPartyDropdownOpen(false);
   };
 
-  const handleAllocateCommittees = (mode: 'UNASSIGNED_ONLY' | 'REALLOCATE_ALL' = 'UNASSIGNED_ONLY') => {
+  const handleAllocateCommittees = async (mode: 'UNASSIGNED_ONLY' | 'REALLOCATE_ALL' = 'UNASSIGNED_ONLY') => {
     if (isAllocationLocked) {
       onShowToast('Allocation Locked', 'Unlock allocation in Control Tab to run committee allocation', 'error');
       return;
@@ -166,22 +203,26 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
       onShowToast('No Committees', 'Please add at least one committee in the Committees tab first', 'error');
       return;
     }
-    if (onAllocateCommittees) {
-      onAllocateCommittees({ mode });
-    } else if (eventId) {
-      storageService.allocateCommitteesForEvent(eventId, { mode });
+    try {
+      if (onAllocateCommittees) {
+        await onAllocateCommittees({ mode });
+      } else if (eventId) {
+        await storageService.allocateCommitteesForEvent(eventId, { mode });
+      }
+      onShowToast(
+        '🏛️ Committee Allocation Completed',
+        mode === 'UNASSIGNED_ONLY'
+          ? `Distributed unassigned delegates into committees while leaving parties, constituencies, and benches 100% intact!`
+          : `Reallocated all delegates across active committees!`,
+        'success'
+      );
+    } catch (err: any) {
+      onShowToast('Allocation Failed', err?.message || 'Database error occurred during committee allocation', 'error');
     }
-    onShowToast(
-      '🏛️ Committee Allocation Completed',
-      mode === 'UNASSIGNED_ONLY'
-        ? `Distributed unallocated delegates into committees while leaving parties, constituencies, and benches 100% intact!`
-        : `Reallocated all delegates across active committees!`,
-      'success'
-    );
     setCommitteeDropdownOpen(false);
   };
 
-  const handleRunAutoAllocation = () => {
+  const handleRunAutoAllocation = async () => {
     if (isAllocationLocked) {
       onShowToast('Allocation Locked', 'Unlock allocation in Control Tab to run auto-allocation', 'error');
       return;
@@ -190,13 +231,17 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
       onShowToast('No Learners Found', 'Please add or import delegates before running allocation', 'error');
       return;
     }
-    onExecuteAllocation(0.55);
-    const perParty = parties.length > 0 ? Math.round(totalLearners / parties.length) : 0;
-    onShowToast(
-      '⚡ Balanced Auto-Allocation Completed',
-      `Allocated ${totalLearners} delegates equally across ${parties.length} parties (~${perParty} seats each) with cross-year balance & TN Constituencies!`,
-      'success'
-    );
+    try {
+      await onExecuteAllocation(0.55);
+      const perParty = parties.length > 0 ? Math.round(totalLearners / parties.length) : 0;
+      onShowToast(
+        '⚡ Balanced Auto-Allocation Completed',
+        `Allocated ${totalLearners} delegates equally across ${parties.length} parties (~${perParty} seats each) with cross-year balance & TN Constituencies!`,
+        'success'
+      );
+    } catch (err: any) {
+      onShowToast('Allocation Failed', err?.message || 'Database error occurred during auto-allocation', 'error');
+    }
   };
 
 
@@ -292,6 +337,74 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
               <span>Import Allocation</span>
             </button>
           )}
+
+          {/* Action: Independent Constituency Allocation */}
+          <div className="relative">
+            <div className="inline-flex rounded-xl shadow-sm">
+              <button
+                onClick={() => handleAllocateConstituencies('UNASSIGNED_ONLY')}
+                disabled={learners.length === 0 || isAllocationLocked}
+                className="px-4 py-2 rounded-l-xl font-bold text-xs text-white flex items-center gap-1.5 transition-transform hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ backgroundColor: '#7c3aed' }}
+                title="Assign 1–234 TN Constituencies without changing party or committee assignments"
+              >
+                <MapPin className="w-3.5 h-3.5" />
+                <span>Allocate Constituencies</span>
+                {unassignedConstituencyCount > 0 && (
+                  <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-black bg-white/20 text-white">
+                    {unassignedConstituencyCount} unassigned
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConstituencyDropdownOpen(prev => !prev)}
+                disabled={learners.length === 0 || isAllocationLocked}
+                className="px-2 py-2 rounded-r-xl border-l border-white/20 font-bold text-xs text-white transition-opacity hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ backgroundColor: '#7c3aed' }}
+                title="Constituency allocation options"
+              >
+                <ChevronDown className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {constituencyDropdownOpen && (
+              <div
+                className="absolute right-0 top-full mt-1.5 w-64 border rounded-xl shadow-xl py-1.5 z-40 animate-scale-in"
+                style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+              >
+                <button
+                  type="button"
+                  onClick={() => handleAllocateConstituencies('UNASSIGNED_ONLY')}
+                  className="w-full text-left px-3.5 py-2 text-xs font-semibold hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer block"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  <div className="font-bold flex items-center justify-between">
+                    <span>Fill Unassigned Only</span>
+                    <span className="text-[10px] text-purple-600 dark:text-purple-400 font-extrabold">Default</span>
+                  </div>
+                  <p className="text-[11px] font-normal" style={{ color: 'var(--text-secondary)' }}>
+                    Assigns 1–234 TN constituencies to delegates without seats. Parties & committees remain untouched.
+                  </p>
+                </button>
+                <div className="my-1 border-t" style={{ borderColor: 'var(--border)' }} />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm('Reallocate all constituencies? This will redistribute 1–234 TN constituencies to all delegates without changing their parties or committees.')) {
+                      handleAllocateConstituencies('REALLOCATE_ALL');
+                    }
+                  }}
+                  className="w-full text-left px-3.5 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/20 cursor-pointer block"
+                >
+                  <div className="font-bold">Reallocate All Constituencies</div>
+                  <p className="text-[11px] font-normal text-rose-500/80">
+                    Overwrites all constituency numbers & names. Parties & committees remain intact.
+                  </p>
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* Action 1: Independent Party Allocation */}
           <div className="relative">
@@ -1224,10 +1337,14 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
                 Cancel
               </button>
               <button
-                onClick={() => {
-                  onResetAllocation();
-                  setIsConfirmResetOpen(false);
-                  onShowToast('Allocations Cleared', 'All delegate party & constituency assignments have been reset', 'info');
+                onClick={async () => {
+                  try {
+                    await onResetAllocation();
+                    setIsConfirmResetOpen(false);
+                    onShowToast('Allocations Cleared', 'All delegate party & constituency assignments have been reset', 'info');
+                  } catch (err: any) {
+                    onShowToast('Reset Failed', err?.message || 'Failed to reset allocations in database', 'error');
+                  }
                 }}
                 className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md cursor-pointer"
               >

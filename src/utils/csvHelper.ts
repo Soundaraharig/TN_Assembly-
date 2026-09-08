@@ -3,10 +3,23 @@ import * as XLSX from 'xlsx';
 import type { Learner, AcademicYear, BenchType, Party, Committee } from '../types';
 import { generateAccessCode } from './accessCodeGenerator';
 import { getResolvedPartyName, getResolvedCommitteeName } from '../services/storageService';
+import { TN_CONSTITUENCIES } from '../data/tnConstituencies';
+
+export interface CSVImportStats {
+  totalRows: number;
+  rowsWithParty: number;
+  rowsWithCommittee: number;
+  rowsWithConstituency: number;
+  rowsWithMissingOptional: number;
+}
 
 export interface CSVImportResult {
   learners: Partial<Learner>[];
   errors: string[];
+  detectedHeaders: string[];
+  mappedFields: string[];
+  unmappedHeaders: string[];
+  stats: CSVImportStats;
 }
 
 export function parseAcademicYear(val: any): AcademicYear {
@@ -74,22 +87,168 @@ function normalizeBench(val: string): BenchType | undefined {
   return undefined;
 }
 
-function processRows(rows: any[], eventId: string, existingCodes: Set<string>): CSVImportResult {
+export function processRows(rows: any[], eventId: string, existingCodes: Set<string>): CSVImportResult {
   const learners: Partial<Learner>[] = [];
   const errors: string[] = [];
 
   const normalizeHeader = (h: string) =>
     h ? h.replace(/^\uFEFF/, '').trim().toLowerCase().replace(/[^a-z0-9]/g, '') : '';
 
+  // 1. Detect all unique raw headers from rows
+  const rawHeadersSet = new Set<string>();
+  rows.forEach(r => {
+    if (r && typeof r === 'object') {
+      Object.keys(r).forEach(k => {
+        const trimmed = k.replace(/^\uFEFF/, '').trim();
+        if (trimmed && !trimmed.startsWith('__parsed_extra')) {
+          rawHeadersSet.add(trimmed);
+        }
+      });
+    }
+  });
+  const detectedHeaders = Array.from(rawHeadersSet);
+
+  // 2. Field definitions with full alias coverage
+  const FIELD_MAP: {
+    key: string;
+    label: string;
+    aliases: string[];
+    isIdentifier?: boolean;
+  }[] = [
+    {
+      key: 'name',
+      label: 'Student Name',
+      aliases: [
+        'studentname', 'name', 'delegatename', 'participantname', 'fullname', 'learnername',
+        'candidatename', 'firstname', 'nameofstudent', 'studentsname', 'nameofthestudent',
+        'student', 'participant', 'delegate', 'candidate', 'fullnameofstudent', 'nameofparticipant', 'nameofdelegate'
+      ],
+      isIdentifier: true
+    },
+    {
+      key: 'constituency_number',
+      label: 'Constituency Number',
+      aliases: [
+        'constituencynumber', 'constituencyno', 'constno', 'constnum', 'seatnumber', 'seatno',
+        'acno', 'acnumber', 'constituencyn', 'constituencyid'
+      ]
+    },
+    {
+      key: 'constituency_name',
+      label: 'Constituency Name',
+      aliases: [
+        'constituencyname', 'constituency', 'tnconstituencyname', 'constname',
+        'seatname', 'constituencyseat', 'constituencyseatname'
+      ]
+    },
+    {
+      key: 'party',
+      label: 'Allocated Party',
+      aliases: [
+        'allocatedparty', 'party', 'partyname', 'assignedparty', 'partyassignment',
+        'politicalparty', 'partyassigned', 'partyallocated'
+      ]
+    },
+    {
+      key: 'committee',
+      label: 'Allocated Committee',
+      aliases: [
+        'allocatedcommittee', 'committee', 'committeename', 'assignedcommittee',
+        'committeegroup', 'committeeassignment'
+      ]
+    },
+    {
+      key: 'access_code',
+      label: 'Access Code',
+      aliases: [
+        'accesscode', 'code', 'delegatecode', 'studentcode', 'passcode'
+      ]
+    },
+    {
+      key: 'bench',
+      label: 'Bench',
+      aliases: [
+        'bench', 'benchassignment', 'side', 'rulingopposition', 'benchtype'
+      ]
+    },
+    {
+      key: 'role',
+      label: 'Legislative Role',
+      aliases: [
+        'role', 'legislativerole', 'cabinetrole', 'designation', 'position', 'parliamentaryrole', 'cabinet'
+      ]
+    },
+    {
+      key: 'department',
+      label: 'Department',
+      aliases: [
+        'department', 'dept', 'branch', 'course', 'major', 'program', 'programme',
+        'specialization', 'stream', 'degree', 'branchdept', 'coursename'
+      ]
+    },
+    {
+      key: 'academic_year',
+      label: 'Academic Year',
+      aliases: [
+        'academicyear', 'year', 'yearofstudy', 'studyingyear', 'currentyear', 'class',
+        'batch', 'yr', 'std', 'semester', 'sem', 'classyear', 'yearsem'
+      ]
+    },
+    {
+      key: 'email',
+      label: 'Email ID',
+      aliases: [
+        'email', 'emailid', 'emailaddress', 'contactemail', 'mail', 'studentemail',
+        'studentsemail', 'mailid', 'useremail'
+      ]
+    },
+    {
+      key: 'phone',
+      label: 'Phone Number',
+      aliases: [
+        'phone', 'phonenumber', 'mobile', 'mobilenumber', 'contact', 'contactnumber',
+        'phoneno', 'mobileno', 'whatsapp', 'cell', 'whatsappnumber', 'whatsappno', 'cellnumber', 'contactno'
+      ]
+    },
+    {
+      key: 'district',
+      label: 'District',
+      aliases: ['district', 'tndistrict', 'districtname']
+    },
+    {
+      key: 'sno',
+      label: 'S.No',
+      aliases: ['sno', 'slno', 'serialno', 'serialnumber', 'no']
+    }
+  ];
+
+  // Determine mapped fields and unmapped headers across all detected headers
+  const mappedFieldsSet = new Set<string>();
+  const unmappedHeadersSet = new Set<string>();
+
+  detectedHeaders.forEach(rawH => {
+    const norm = normalizeHeader(rawH);
+    const matchedDef = FIELD_MAP.find(f => f.aliases.includes(norm));
+    if (matchedDef) {
+      if (matchedDef.key !== 'sno') {
+        mappedFieldsSet.add(matchedDef.label);
+      }
+    } else {
+      unmappedHeadersSet.add(rawH);
+    }
+  });
+
+  const mappedFields = Array.from(mappedFieldsSet);
+  const unmappedHeaders = Array.from(unmappedHeadersSet);
+
   rows.forEach((row: any, index: number) => {
+    if (!row || typeof row !== 'object') return;
     const rawHeaders = Object.keys(row);
     const headerMap = new Map(rawHeaders.map(h => [normalizeHeader(h), h]));
 
-    // Check if column exists in the uploaded sheet
     const hasField = (aliases: string[]): boolean =>
       aliases.some(a => headerMap.has(normalizeHeader(a)));
 
-    // Find Best Matching Column value
     const findField = (aliases: string[]): string => {
       for (const alias of aliases) {
         const norm = normalizeHeader(alias);
@@ -102,59 +261,45 @@ function processRows(rows: any[], eventId: string, existingCodes: Set<string>): 
       return '';
     };
 
-    const nameAliases = [
-      'fullname', 'name', 'studentname', 'learnername', 'participantname',
-      'delegatename', 'candidatename', 'firstname', 'nameofstudent',
-      'studentsname', 'nameofthestudent', 'student', 'participant', 'delegate',
-      'candidate', 'fullnameofstudent', 'nameofparticipant', 'nameofdelegate'
-    ];
-    const name = findField(nameAliases);
+    const nameDef = FIELD_MAP.find(f => f.key === 'name')!;
+    const name = findField(nameDef.aliases);
 
-    const emailAliases = [
-      'email', 'emailid', 'emailaddress', 'contactemail', 'mail', 'studentemail',
-      'studentsemail', 'mailid', 'useremail'
-    ];
-    const email = hasField(emailAliases) ? findField(emailAliases) : undefined;
-
-    const phoneAliases = [
-      'phone', 'phonenumber', 'mobile', 'mobilenumber', 'contact',
-      'contactnumber', 'phoneno', 'mobileno', 'whatsapp', 'cell',
-      'whatsappnumber', 'whatsappno', 'cellnumber', 'contactno'
-    ];
-    const phone = hasField(phoneAliases) ? findField(phoneAliases) : undefined;
-
-    const deptAliases = [
-      'department', 'dept', 'branch', 'course', 'major',
-      'program', 'programme', 'specialization', 'stream', 'degree',
-      'branchdept', 'coursename'
-    ];
-    const department = hasField(deptAliases) ? findField(deptAliases) : '';
-
-    const yearAliases = [
-      'academicyear', 'year', 'yearofstudy', 'studyingyear',
-      'currentyear', 'class', 'batch', 'yr', 'std', 'semester', 'sem',
-      'classyear', 'yearsem'
-    ];
-    const yearVal = hasField(yearAliases) ? findField(yearAliases) : '';
-    const academic_year = yearVal ? parseAcademicYear(yearVal) : ('' as AcademicYear);
-
+    // If an entire row is blank or lacks a name, skip or log error
     if (!name) {
-      errors.push(`Row ${index + 1}: Missing delegate name`);
+      const hasAnyValue = rawHeaders.some(k => row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== '');
+      if (hasAnyValue) {
+        errors.push(`Row ${index + 1}: Missing delegate name`);
+      }
       return;
     }
 
-    // Access code: use provided or generate
-    const rawCode = findField(['accesscode', 'code', 'delegatecode', 'studentcode', 'passcode']);
+    const email = hasField(FIELD_MAP.find(f => f.key === 'email')!.aliases)
+      ? findField(FIELD_MAP.find(f => f.key === 'email')!.aliases)
+      : undefined;
+
+    const phone = hasField(FIELD_MAP.find(f => f.key === 'phone')!.aliases)
+      ? findField(FIELD_MAP.find(f => f.key === 'phone')!.aliases)
+      : undefined;
+
+    const department = hasField(FIELD_MAP.find(f => f.key === 'department')!.aliases)
+      ? findField(FIELD_MAP.find(f => f.key === 'department')!.aliases)
+      : '';
+
+    const yearVal = hasField(FIELD_MAP.find(f => f.key === 'academic_year')!.aliases)
+      ? findField(FIELD_MAP.find(f => f.key === 'academic_year')!.aliases)
+      : '';
+    const academic_year = yearVal ? parseAcademicYear(yearVal) : ('' as AcademicYear);
+
+    // Access code
+    const rawCode = findField(FIELD_MAP.find(f => f.key === 'access_code')!.aliases);
     let code = rawCode ? rawCode.toUpperCase().trim() : '';
-    if (!code || existingCodes.has(code)) {
+    if (!code) {
       code = generateAccessCode(existingCodes);
     }
     existingCodes.add(code);
 
-    // Constituency parsing - strictly column-driven
-    const constNumAliases = [
-      'constituencynumber', 'constituencyno', 'constno', 'seatnumber', 'seatno', 'constnum', 'acno', 'acnumber', 'constituencyn'
-    ];
+    // Constituency parsing & validation
+    const constNumAliases = FIELD_MAP.find(f => f.key === 'constituency_number')!.aliases;
     let parsedConstNo: number | undefined = undefined;
     if (hasField(constNumAliases)) {
       const rawConstNum = findField(constNumAliases);
@@ -162,15 +307,11 @@ function processRows(rows: any[], eventId: string, existingCodes: Set<string>): 
       parsedConstNo = numDigits ? parseInt(numDigits[0], 10) : undefined;
     }
 
-    const constNameAliases = [
-      'constituencyname', 'constituency', 'tnconstituencyname', 'constname',
-      'seatname', 'constituencyseat', 'constituencyseatname'
-    ];
+    const constNameAliases = FIELD_MAP.find(f => f.key === 'constituency_name')!.aliases;
     let rawConstName: string | undefined = undefined;
     if (hasField(constNameAliases)) {
       const rawVal = findField(constNameAliases);
       if (rawVal) {
-        // If it starts with "1 - Gummidipoondi" and constituency number wasn't given
         const prefixMatch = rawVal.match(/^(\d+)\s*[-:]\s*(.+)$/);
         if (prefixMatch && parsedConstNo === undefined) {
           parsedConstNo = parseInt(prefixMatch[1], 10);
@@ -181,34 +322,70 @@ function processRows(rows: any[], eventId: string, existingCodes: Set<string>): 
       }
     }
 
-    // District parsing - only if column exists in uploaded sheet (never infer/default)
-    const districtAliases = ['district', 'tndistrict', 'districtname'];
-    const district = hasField(districtAliases) ? findField(districtAliases) : undefined;
+    const districtAliases = FIELD_MAP.find(f => f.key === 'district')!.aliases;
+    let district = hasField(districtAliases) ? findField(districtAliases) : undefined;
 
-    // Party parsing - strictly from sheet
-    const partyAliases = [
-      'partyassignment', 'party', 'politicalparty', 'partyname',
-      'assignedparty', 'partyassigned', 'partyallocated'
-    ];
+    // Validate constituency consistency against TN Assembly master data
+    let finalConstNo: number | undefined = parsedConstNo;
+    let finalConstName: string | undefined = rawConstName;
+    let finalDistrict: string | undefined = district;
+
+    if (parsedConstNo !== undefined && rawConstName) {
+      const matchByNo = TN_CONSTITUENCIES.find(c => c.number === parsedConstNo);
+      if (matchByNo) {
+        const normDbName = matchByNo.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const normRowName = rawConstName.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const namesMatch =
+          normDbName === normRowName ||
+          normDbName.includes(normRowName) ||
+          normRowName.includes(normDbName);
+
+        if (!namesMatch) {
+          errors.push(
+            `Row ${index + 1}: Constituency conflict — No. ${parsedConstNo} is "${matchByNo.name}" (${matchByNo.district}), but file specified "${rawConstName}".`
+          );
+          finalConstNo = undefined;
+          finalConstName = undefined;
+        } else {
+          finalConstName = matchByNo.name;
+          finalDistrict = finalDistrict || matchByNo.district;
+        }
+      }
+    } else if (parsedConstNo !== undefined && !rawConstName) {
+      const matchByNo = TN_CONSTITUENCIES.find(c => c.number === parsedConstNo);
+      if (matchByNo) {
+        finalConstName = matchByNo.name;
+        finalDistrict = finalDistrict || matchByNo.district;
+      }
+    } else if (parsedConstNo === undefined && rawConstName) {
+      const normRowName = rawConstName.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const matchByName = TN_CONSTITUENCIES.find(c => {
+        const normDb = c.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        return normDb === normRowName || normDb.includes(normRowName) || normRowName.includes(normDb);
+      });
+      if (matchByName) {
+        finalConstNo = matchByName.number;
+        finalConstName = matchByName.name;
+        finalDistrict = finalDistrict || matchByName.district;
+      }
+    }
+
+    // Party parsing
+    const partyAliases = FIELD_MAP.find(f => f.key === 'party')!.aliases;
     const rawParty = hasField(partyAliases) ? findField(partyAliases) : '';
     const party_name = rawParty || undefined;
 
-    // Bench parsing - STRICTLY column-driven. Never auto-guess or infer from party name.
-    const benchAliases = ['bench', 'benchassignment', 'side', 'rulingopposition', 'benchtype'];
+    // Bench parsing - STRICTLY column-driven
+    const benchAliases = FIELD_MAP.find(f => f.key === 'bench')!.aliases;
     const rawBench = hasField(benchAliases) ? findField(benchAliases) : '';
     const bench = rawBench ? normalizeBench(rawBench) : undefined;
 
-    // Legislative Role - only if explicit role column exists in sheet
-    const roleAliases = [
-      'role', 'legislativerole', 'cabinetrole', 'designation',
-      'position', 'parliamentaryrole', 'cabinet'
-    ];
+    // Role
+    const roleAliases = FIELD_MAP.find(f => f.key === 'role')!.aliases;
     const role = hasField(roleAliases) ? (findField(roleAliases) || undefined) : undefined;
 
-    // Committee - only if explicit committee column exists in sheet
-    const commAliases = [
-      'committee', 'committeename', 'assignedcommittee', 'committeegroup', 'committeeassignment'
-    ];
+    // Committee
+    const commAliases = FIELD_MAP.find(f => f.key === 'committee')!.aliases;
     let committee_name: string | undefined = undefined;
     if (hasField(commAliases)) {
       const rawComm = findField(commAliases);
@@ -226,9 +403,9 @@ function processRows(rows: any[], eventId: string, existingCodes: Set<string>): 
       phone: phone,
       department: department,
       academic_year,
-      constituency_number: parsedConstNo,
-      constituency_name: rawConstName || undefined,
-      district: district || undefined,
+      constituency_number: finalConstNo,
+      constituency_name: finalConstName || undefined,
+      district: finalDistrict || undefined,
       party_name: party_name || undefined,
       bench: bench || undefined,
       role: role,
@@ -239,7 +416,22 @@ function processRows(rows: any[], eventId: string, existingCodes: Set<string>): 
     });
   });
 
-  return { learners, errors };
+  const stats: CSVImportStats = {
+    totalRows: learners.length,
+    rowsWithParty: learners.filter(l => Boolean(l.party_name)).length,
+    rowsWithCommittee: learners.filter(l => Boolean(l.committee_name)).length,
+    rowsWithConstituency: learners.filter(l => Boolean(l.constituency_number || l.constituency_name)).length,
+    rowsWithMissingOptional: learners.filter(l => !l.party_name || !l.committee_name || !l.constituency_number).length
+  };
+
+  return {
+    learners,
+    errors,
+    detectedHeaders,
+    mappedFields,
+    unmappedHeaders,
+    stats
+  };
 }
 
 export function parseCSVFile(
@@ -247,6 +439,14 @@ export function parseCSVFile(
   eventId: string,
   existingCodes: Set<string>
 ): Promise<CSVImportResult> {
+  const emptyStats: CSVImportStats = {
+    totalRows: 0,
+    rowsWithParty: 0,
+    rowsWithCommittee: 0,
+    rowsWithConstituency: 0,
+    rowsWithMissingOptional: 0
+  };
+
   return new Promise((resolve) => {
     const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
 
@@ -262,10 +462,25 @@ export function parseCSVFile(
           const result = processRows(jsonData, eventId, existingCodes);
           resolve(result);
         } catch (err: any) {
-          resolve({ learners: [], errors: [`Excel parse error: ${err.message}`] });
+          resolve({
+            learners: [],
+            errors: [`Excel parse error: ${err.message}`],
+            detectedHeaders: [],
+            mappedFields: [],
+            unmappedHeaders: [],
+            stats: emptyStats
+          });
         }
       };
-      reader.onerror = () => resolve({ learners: [], errors: ['Failed to read Excel file'] });
+      reader.onerror = () =>
+        resolve({
+          learners: [],
+          errors: ['Failed to read Excel file'],
+          detectedHeaders: [],
+          mappedFields: [],
+          unmappedHeaders: [],
+          stats: emptyStats
+        });
       reader.readAsArrayBuffer(file);
     } else {
       Papa.parse(file, {
@@ -276,7 +491,14 @@ export function parseCSVFile(
           resolve(result);
         },
         error: (err) => {
-          resolve({ learners: [], errors: [err.message] });
+          resolve({
+            learners: [],
+            errors: [err.message],
+            detectedHeaders: [],
+            mappedFields: [],
+            unmappedHeaders: [],
+            stats: emptyStats
+          });
         }
       });
     }

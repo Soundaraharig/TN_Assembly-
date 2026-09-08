@@ -19,7 +19,7 @@ interface CoordinatorDashboardProps {
   onToggleCheckIn: (learnerId: string, day: 1 | 2) => void;
   onCheckInAll: (day: 1 | 2, state: boolean) => void;
   onAddLearner: (learner: Partial<Learner>) => void;
-  onBulkImportLearners: (newLearners: Partial<Learner>[]) => void;
+  onBulkImportLearners: (newLearners: Partial<Learner>[]) => Promise<any> | void;
   onUpdateLearner: (learner: Learner) => void;
   onDeleteLearner: (learnerId: string) => void;
   onAddParty: (party: Partial<Party>) => void;
@@ -272,6 +272,7 @@ export const CoordinatorDashboard: React.FC<CoordinatorDashboardProps> = ({
       <AllocationModal
         isOpen={isAllocationModalOpen}
         onClose={() => setIsAllocationModalOpen(false)}
+        eventId={currentEvent.id}
         learners={learners}
         parties={parties}
         committees={committees}
