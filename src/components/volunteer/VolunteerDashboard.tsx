@@ -241,12 +241,12 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   const [checkinScope, setCheckinScope] = useState<'ASSIGNED' | 'ALL'>('ASSIGNED');
 
   const [isRegistrationsFrozen, setIsRegistrationsFrozen] = useState<boolean>(() =>
-    storageService.getRegistrationsFrozen(eventId) || storageService.getRegistrationsFrozen()
+    storageService.getRegistrationsFrozen(eventId)
   );
 
   useEffect(() => {
     const checkFrozen = () => {
-      setIsRegistrationsFrozen(storageService.getRegistrationsFrozen(eventId) || storageService.getRegistrationsFrozen());
+      setIsRegistrationsFrozen(storageService.getRegistrationsFrozen(eventId));
     };
     checkFrozen();
     const unsubscribe = storageService.subscribe(checkFrozen);

@@ -315,6 +315,11 @@ class StorageService {
     if (!localStorage.getItem(STORAGE_KEYS.TEAM))
       this.setItem(STORAGE_KEYS.TEAM, INITIAL_TEAM);
 
+    // Purge any legacy global un-scoped registrations_frozen key so it never leaks across events
+    try {
+      localStorage.removeItem(STORAGE_KEYS.REGISTRATIONS_FROZEN);
+    } catch {}
+
     // Run systemic cleanup & deduplication on startup
     this.cleanupAndDeduplicateData();
   }
@@ -4062,28 +4067,50 @@ class StorageService {
     this.notify();
   }
 
+  // Helper to get active event ID if not explicitly passed
+  private getActiveEventId(eventId?: string): string | undefined {
+    if (eventId) return eventId;
+    try {
+      const saved = localStorage.getItem('tn_assembly_auth_session');
+      if (saved) {
+        const sess = JSON.parse(saved);
+        if (sess?.currentEventId) return sess.currentEventId;
+      }
+    } catch {}
+    const evs = this.getEvents();
+    return evs.length > 0 ? evs[0].id : undefined;
+  }
+
   // ── Security Locks (Allocation Lock, Registrations Frozen, Scores Locked) ──
   getAllocationLock(eventId?: string): boolean {
-    const targetId = eventId || this.getEvents()[0]?.id;
-    if (targetId) {
-      const ev = this.getEvents().find(e => e.id === targetId);
-      const sc = ev?.social_coverage as Record<string, any> | undefined;
-      if (sc && sc.allocation_lock !== undefined) return !!sc.allocation_lock;
-      if (ev && ev.is_locked !== undefined) return !!ev.is_locked;
-      const val = this.getItem<boolean>(`${STORAGE_KEYS.ALLOCATION_LOCK}_${targetId}`, false);
-      if (val) return true;
+    const targetId = this.getActiveEventId(eventId);
+    if (!targetId) return false;
+
+    const ev = this.getEvents().find(e => e.id === targetId);
+    const sc = ev?.social_coverage as Record<string, any> | undefined;
+    if (sc && typeof sc.allocation_lock === 'boolean') return sc.allocation_lock;
+    if (ev && typeof ev.is_locked === 'boolean') return ev.is_locked;
+
+    const raw = localStorage.getItem(`${STORAGE_KEYS.ALLOCATION_LOCK}_${targetId}`);
+    if (raw !== null) {
+      try {
+        return JSON.parse(raw) === true;
+      } catch {
+        return false;
+      }
     }
-    return this.getItem<boolean>(STORAGE_KEYS.ALLOCATION_LOCK, false);
+    return false;
   }
 
   async setAllocationLock(locked: boolean, eventId?: string): Promise<{ success: boolean; error?: any }> {
-    const targetId = eventId || this.getEvents()[0]?.id;
-    const key = `${STORAGE_KEYS.ALLOCATION_LOCK}_${targetId || 'default'}`;
+    const targetId = this.getActiveEventId(eventId);
+    if (!targetId) return { success: false, error: new Error('No target event found') };
+
+    const key = `${STORAGE_KEYS.ALLOCATION_LOCK}_${targetId}`;
     const prevVal = this.getAllocationLock(targetId);
 
-    // Optimistic local update
+    // Optimistic local update for target event only
     this.setItem(key, locked);
-    this.setItem(STORAGE_KEYS.ALLOCATION_LOCK, locked);
     const events = this.getEvents().map(e => {
       if (e.id === targetId) {
         const sc = (e.social_coverage || {}) as Record<string, any>;
@@ -4094,7 +4121,7 @@ class StorageService {
     this.setItem(STORAGE_KEYS.EVENTS, events);
     this.notify();
 
-    if (supabase && targetId && isValidUuid(targetId)) {
+    if (supabase && isValidUuid(targetId)) {
       try {
         const ev = events.find(e => e.id === targetId);
         const { error } = await supabase
@@ -4107,9 +4134,7 @@ class StorageService {
 
         if (error) {
           console.error('❌ [Supabase Lock Allocation Error]:', error);
-          // Rollback on failure
           this.setItem(key, prevVal);
-          this.setItem(STORAGE_KEYS.ALLOCATION_LOCK, prevVal);
           const rollbackEvents = this.getEvents().map(e => {
             if (e.id === targetId) {
               const sc = (e.social_coverage || {}) as Record<string, any>;
@@ -4132,24 +4157,35 @@ class StorageService {
   }
 
   getRegistrationsFrozen(eventId?: string): boolean {
-    const targetId = eventId || this.getEvents()[0]?.id;
-    if (targetId) {
-      const ev = this.getEvents().find(e => e.id === targetId);
-      const sc = ev?.social_coverage as Record<string, any> | undefined;
-      if (sc && sc.registrations_frozen !== undefined) return !!sc.registrations_frozen;
-      const val = this.getItem<boolean>(`${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${targetId}`, false);
-      if (val) return true;
+    const targetId = this.getActiveEventId(eventId);
+    if (!targetId) return false;
+
+    const ev = this.getEvents().find(e => e.id === targetId);
+    const sc = ev?.social_coverage as Record<string, any> | undefined;
+    if (sc && typeof sc.registrations_frozen === 'boolean') {
+      return sc.registrations_frozen;
     }
-    return this.getItem<boolean>(STORAGE_KEYS.REGISTRATIONS_FROZEN, false);
+
+    const raw = localStorage.getItem(`${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${targetId}`);
+    if (raw !== null) {
+      try {
+        return JSON.parse(raw) === true;
+      } catch {
+        return false;
+      }
+    }
+    return false;
   }
 
   async setRegistrationsFrozen(frozen: boolean, eventId?: string): Promise<{ success: boolean; error?: any }> {
-    const targetId = eventId || this.getEvents()[0]?.id;
-    const key = `${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${targetId || 'default'}`;
+    const targetId = this.getActiveEventId(eventId);
+    if (!targetId) return { success: false, error: new Error('No target event found') };
+
+    const key = `${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${targetId}`;
     const prevVal = this.getRegistrationsFrozen(targetId);
 
+    // Optimistic local update for target event only
     this.setItem(key, frozen);
-    this.setItem(STORAGE_KEYS.REGISTRATIONS_FROZEN, frozen);
     const events = this.getEvents().map(e => {
       if (e.id === targetId) {
         const sc = (e.social_coverage || {}) as Record<string, any>;
@@ -4160,7 +4196,7 @@ class StorageService {
     this.setItem(STORAGE_KEYS.EVENTS, events);
     this.notify();
 
-    if (supabase && targetId && isValidUuid(targetId)) {
+    if (supabase && isValidUuid(targetId)) {
       try {
         const ev = events.find(e => e.id === targetId);
         const { error } = await supabase
@@ -4173,7 +4209,6 @@ class StorageService {
         if (error) {
           console.error('❌ [Supabase Freeze Registrations Error]:', error);
           this.setItem(key, prevVal);
-          this.setItem(STORAGE_KEYS.REGISTRATIONS_FROZEN, prevVal);
           const rollbackEvents = this.getEvents().map(e => {
             if (e.id === targetId) {
               const sc = (e.social_coverage || {}) as Record<string, any>;
@@ -4196,24 +4231,33 @@ class StorageService {
   }
 
   getScoresLocked(eventId?: string): boolean {
-    const targetId = eventId || this.getEvents()[0]?.id;
-    if (targetId) {
-      const ev = this.getEvents().find(e => e.id === targetId);
-      const sc = ev?.social_coverage as Record<string, any> | undefined;
-      if (sc && sc.scores_locked !== undefined) return !!sc.scores_locked;
-      const val = this.getItem<boolean>(`${STORAGE_KEYS.SCORES_LOCKED}_${targetId}`, false);
-      if (val) return true;
+    const targetId = this.getActiveEventId(eventId);
+    if (!targetId) return false;
+
+    const ev = this.getEvents().find(e => e.id === targetId);
+    const sc = ev?.social_coverage as Record<string, any> | undefined;
+    if (sc && typeof sc.scores_locked === 'boolean') return sc.scores_locked;
+
+    const raw = localStorage.getItem(`${STORAGE_KEYS.SCORES_LOCKED}_${targetId}`);
+    if (raw !== null) {
+      try {
+        return JSON.parse(raw) === true;
+      } catch {
+        return false;
+      }
     }
-    return this.getItem<boolean>(STORAGE_KEYS.SCORES_LOCKED, false);
+    return false;
   }
 
   async setScoresLocked(locked: boolean, eventId?: string): Promise<{ success: boolean; error?: any }> {
-    const targetId = eventId || this.getEvents()[0]?.id;
-    const key = `${STORAGE_KEYS.SCORES_LOCKED}_${targetId || 'default'}`;
+    const targetId = this.getActiveEventId(eventId);
+    if (!targetId) return { success: false, error: new Error('No target event found') };
+
+    const key = `${STORAGE_KEYS.SCORES_LOCKED}_${targetId}`;
     const prevVal = this.getScoresLocked(targetId);
 
+    // Optimistic local update for target event only
     this.setItem(key, locked);
-    this.setItem(STORAGE_KEYS.SCORES_LOCKED, locked);
     const events = this.getEvents().map(e => {
       if (e.id === targetId) {
         const sc = (e.social_coverage || {}) as Record<string, any>;
@@ -4224,7 +4268,7 @@ class StorageService {
     this.setItem(STORAGE_KEYS.EVENTS, events);
     this.notify();
 
-    if (supabase && targetId && isValidUuid(targetId)) {
+    if (supabase && isValidUuid(targetId)) {
       try {
         const ev = events.find(e => e.id === targetId);
         const { error } = await supabase
@@ -4235,9 +4279,8 @@ class StorageService {
           .eq('id', targetId);
 
         if (error) {
-          console.error('❌ [Supabase Scores Lock Error]:', error);
+          console.error('❌ [Supabase Lock Scores Error]:', error);
           this.setItem(key, prevVal);
-          this.setItem(STORAGE_KEYS.SCORES_LOCKED, prevVal);
           const rollbackEvents = this.getEvents().map(e => {
             if (e.id === targetId) {
               const sc = (e.social_coverage || {}) as Record<string, any>;
@@ -4250,7 +4293,7 @@ class StorageService {
           return { success: false, error };
         }
       } catch (err: any) {
-        console.error('❌ [Supabase Scores Lock Exception]:', err);
+        console.error('❌ [Supabase Lock Scores Exception]:', err);
         this.setItem(key, prevVal);
         this.notify();
         return { success: false, error: err };

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import type { Learner, Party, Committee, UserRole } from '../../types';
 import { storageService, getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
 import { canDelete } from '../../utils/permissions';
@@ -61,7 +61,18 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
   onClearAllLearners,
   onShowToast
 }) => {
-  const isAllocationLocked = storageService.getAllocationLock(eventId);
+  const [isAllocationLocked, setIsAllocationLocked] = useState(() => storageService.getAllocationLock(eventId));
+  const [isRegistrationsFrozen, setIsRegistrationsFrozen] = useState(() => storageService.getRegistrationsFrozen(eventId));
+
+  useEffect(() => {
+    const updateLocks = () => {
+      setIsAllocationLocked(storageService.getAllocationLock(eventId));
+      setIsRegistrationsFrozen(storageService.getRegistrationsFrozen(eventId));
+    };
+    updateLocks();
+    const unsub = storageService.subscribe(updateLocks);
+    return unsub;
+  }, [eventId]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusPill, setStatusPill] = useState<'ALL' | 'CHECKED_IN' | 'NOT_CHECKED_IN'>('ALL');
   const [dayPill, setDayPill] = useState<'Day 1' | 'Day 2' | 'Either'>('Day 1');
@@ -343,7 +354,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
           <h3 className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
             Participants ({learners.length})
           </h3>
-          {storageService.getRegistrationsFrozen() && (
+          {isRegistrationsFrozen && (
             <span className="px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-amber-500/10 text-amber-600 border border-amber-500/30 flex items-center gap-1">
               <Lock className="w-3 h-3 text-amber-500" /> Registrations Frozen
             </span>
@@ -389,7 +400,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
 
           <button
             onClick={() => {
-              if (storageService.getRegistrationsFrozen()) {
+              if (isRegistrationsFrozen) {
                 onShowToast('Registrations Frozen', 'Registrations are currently frozen by Assembly Coordinator', 'error');
                 return;
               }
@@ -459,7 +470,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
 
           <button
             onClick={() => {
-              if (storageService.getRegistrationsFrozen()) {
+              if (isRegistrationsFrozen) {
                 onShowToast('Registrations Frozen', 'Registrations are currently frozen by Assembly Coordinator', 'error');
                 return;
               }
