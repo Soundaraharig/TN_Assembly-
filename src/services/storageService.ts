@@ -3098,6 +3098,34 @@ class StorageService {
 
   public addNomination(nom: Partial<Nomination>): Nomination {
     const all = this.getNominationAll();
+
+    // Guard 1: Assigned Speaker or Deputy Speaker cannot nominate
+    if (nom.candidate_learner_id || nom.candidate_name) {
+      const learners = this.getLearners(nom.event_id);
+      const matchLearner = learners.find(l => 
+        (nom.candidate_learner_id && l.id === nom.candidate_learner_id) ||
+        (nom.candidate_name && l.full_name?.toLowerCase() === nom.candidate_name.toLowerCase())
+      );
+      if (matchLearner?.role && matchLearner.role.toLowerCase().includes('speaker')) {
+        console.warn(`[storageService] Delegate ${matchLearner.full_name} is assigned as ${matchLearner.role} and cannot nominate.`);
+        throw new Error(`Assigned ${matchLearner.role} is ineligible to file candidacy nominations.`);
+      }
+    }
+
+    // Guard 2: A member is eligible only one time to nominate of a post
+    if ((nom.candidate_learner_id || nom.candidate_name) && nom.position) {
+      const existing = all.find(n =>
+        ((nom.candidate_learner_id && n.candidate_learner_id === nom.candidate_learner_id) ||
+         (nom.candidate_name && n.candidate_name?.toLowerCase() === nom.candidate_name.toLowerCase())) &&
+        n.position === nom.position &&
+        n.status !== 'Rejected'
+      );
+      if (existing) {
+        console.warn(`[storageService] Member ${nom.candidate_name || nom.candidate_learner_id} is already nominated for ${nom.position}`);
+        return existing;
+      }
+    }
+
     const newNom: Nomination = {
       id: uid('nom'),
       event_id: nom.event_id || '',

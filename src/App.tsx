@@ -310,9 +310,22 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
         elections={studentElections}
         flashVotes={studentFlashVotes}
         onFileNomination={(nom) => {
-          storageService.addNomination(nom);
-          if (activeEvent) {
-            props.setNominations(storageService.getNominations(activeEvent.id, 'student', props.currentStudent!.id));
+          if (props.currentStudent?.role?.toLowerCase().includes('speaker')) {
+            props.addToast('Nomination Ineligible', 'Assigned Speaker / Deputy Speaker delegates cannot file nominations.', 'error');
+            return;
+          }
+          const existingNoms = storageService.getNominations(activeEvent?.id, 'student', props.currentStudent!.id);
+          if (existingNoms.some(n => n.position === nom.position && n.status !== 'Rejected')) {
+            props.addToast('Already Nominated', `You have already filed a nomination for ${nom.position}. Each member is eligible only once per post.`, 'error');
+            return;
+          }
+          try {
+            storageService.addNomination(nom);
+            if (activeEvent) {
+              props.setNominations(storageService.getNominations(activeEvent.id, 'student', props.currentStudent!.id));
+            }
+          } catch (err: any) {
+            props.addToast('Nomination Error', err?.message || 'Failed to file nomination', 'error');
           }
         }}
         onCastVote={(elecId, candId, delId) => {
@@ -429,8 +442,12 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           onToggleOpenPosition={props.handleToggleOpenNominationPosition}
           onSetAllOpenPositions={props.handleSetAllOpenNominationPositions}
           onAddNomination={(nom) => {
-            storageService.addNomination(nom);
-            props.setNominations(storageService.getNominations(activeEvent.id));
+            try {
+              storageService.addNomination(nom);
+              props.setNominations(storageService.getNominations(activeEvent.id));
+            } catch (err: any) {
+              props.addToast('Nomination Error', err?.message || 'Unable to file nomination', 'error');
+            }
           }}
           onUpdateStatus={(id, status) => {
             storageService.updateNominationStatus(id, status);
@@ -2114,10 +2131,23 @@ export function App() {
                     elections={storageService.getElections(currentEvent?.id || events[0]?.id, 'student', currentStudent.id)}
                     flashVotes={storageService.getFlashVotes(currentEvent?.id || events[0]?.id, 'student', currentStudent.id)}
                     onFileNomination={(nom) => {
-                      storageService.addNomination(nom);
+                      if (currentStudent.role?.toLowerCase().includes('speaker')) {
+                        addToast('Nomination Ineligible', 'Assigned Speaker / Deputy Speaker delegates cannot file nominations.', 'error');
+                        return;
+                      }
                       const targetId = currentEvent?.id || events[0]?.id;
-                      if (targetId) {
-                        setNominations(storageService.getNominations(targetId, 'student', currentStudent.id));
+                      const existingNoms = storageService.getNominations(targetId, 'student', currentStudent.id);
+                      if (existingNoms.some(n => n.position === nom.position && n.status !== 'Rejected')) {
+                        addToast('Already Nominated', `You have already filed a nomination for ${nom.position}. Each member is eligible only once per post.`, 'error');
+                        return;
+                      }
+                      try {
+                        storageService.addNomination(nom);
+                        if (targetId) {
+                          setNominations(storageService.getNominations(targetId, 'student', currentStudent.id));
+                        }
+                      } catch (err: any) {
+                        addToast('Nomination Error', err?.message || 'Failed to file nomination', 'error');
                       }
                     }}
                     onCastVote={(elecId, candId, delId) => {

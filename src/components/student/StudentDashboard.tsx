@@ -149,14 +149,58 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     onShowToast('Question Submitted', 'Your question has been added to the parliamentary proceedings queue.', 'success');
   };
 
-  // Synchronize selected position whenever open positions list updates
+  // Check if current student is assigned as Speaker or Deputy Speaker
+  const isAssignedSpeakerOrDeputySpeaker = useMemo(() => {
+    const roleLower = (student.role || '').toLowerCase();
+    if (roleLower.includes('speaker')) return true;
+
+    // Also check if winner of an election for Speaker / Deputy Speaker
+    const isElectedPresiding = elections.some(e => {
+      const isPresidingType =
+        e.type === 'SPEAKER' ||
+        e.type === 'DEPUTY_SPEAKER' ||
+        (e.position && e.position.toLowerCase().includes('speaker'));
+      if (!isPresidingType || !e.winner) return false;
+      const winningCand = e.candidates?.find(
+        c => c.id === e.winner || c.learner_id === e.winner || c.name?.toLowerCase() === student.full_name?.toLowerCase()
+      );
+      if (winningCand && (winningCand.learner_id === student.id || winningCand.name?.toLowerCase() === student.full_name?.toLowerCase())) {
+        return true;
+      }
+      return e.winner === student.id || e.winner.toLowerCase() === student.full_name.toLowerCase();
+    });
+
+    return isElectedPresiding;
+  }, [student.role, student.id, student.full_name, elections]);
+
+  // Student's own filed nominations
+  const myNominations = useMemo(() => {
+    return nominations.filter(
+      n => n.candidate_learner_id === student.id || (n.candidate_name && n.candidate_name.toLowerCase() === student.full_name.toLowerCase())
+    );
+  }, [nominations, student.id, student.full_name]);
+
+  const myNominatedPositions = useMemo(() => {
+    return new Set(
+      myNominations
+        .filter(n => n.status !== 'Rejected')
+        .map(n => n.position)
+    );
+  }, [myNominations]);
+
+  // Open positions that this student has NOT yet nominated for (1 nomination per member per post)
+  const availableNominationPositions = useMemo(() => {
+    return openNominationPositions.filter(pos => !myNominatedPositions.has(pos as NominationPosition));
+  }, [openNominationPositions, myNominatedPositions]);
+
+  // Synchronize selected position whenever available positions list updates
   useEffect(() => {
-    if (openNominationPositions && openNominationPositions.length > 0) {
-      if (!openNominationPositions.includes(selectedNomPosition)) {
-        setSelectedNomPosition(openNominationPositions[0]);
+    if (availableNominationPositions && availableNominationPositions.length > 0) {
+      if (!availableNominationPositions.includes(selectedNomPosition)) {
+        setSelectedNomPosition(availableNominationPositions[0]);
       }
     }
-  }, [openNominationPositions, selectedNomPosition]);
+  }, [availableNominationPositions, selectedNomPosition]);
 
   const isRuling = student.bench === 'Ruling';
   const currentAgendaItem = agenda.find(a => a.is_current) || agenda[0];
@@ -207,6 +251,26 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const handleStudentNominationSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!onFileNomination) return;
+
+    // Guard 1: Assigned Speaker or Deputy Speaker cannot nominate
+    if (isAssignedSpeakerOrDeputySpeaker) {
+      onShowToast(
+        'Nomination Ineligible',
+        'Assigned Speaker or Deputy Speaker delegates cannot file candidacy nominations.',
+        'error'
+      );
+      return;
+    }
+
+    // Guard 2: Member eligible only one time to nominate of a post
+    if (myNominatedPositions.has(selectedNomPosition as NominationPosition)) {
+      onShowToast(
+        'Already Nominated',
+        `You have already filed a nomination for ${selectedNomPosition}. Each member is eligible to nominate only once per post.`,
+        'error'
+      );
+      return;
+    }
 
     onFileNomination({
       event_id: student.event_id || '',
@@ -597,93 +661,154 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       )}
 
       {/* Self-Nomination Filing Section */}
-      {openNominationPositions.length > 0 && onFileNomination ? (
-        <div className="bg-white dark:bg-slate-900 border border-emerald-500/30 rounded-2xl p-5 md:p-6 shadow-xl space-y-4 transition-colors">
-          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+      {isAssignedSpeakerOrDeputySpeaker ? (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-5 md:p-6 shadow-xl space-y-3 transition-colors">
+          <div className="flex items-center justify-between border-b border-amber-500/20 pb-3">
             <div className="flex items-center gap-2">
-              <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                <FileSpreadsheet className="w-5 h-5" />
+              <div className="p-2 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                <Crown className="w-5 h-5" />
               </div>
               <div>
                 <h4 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  Parliamentary Candidacy Nominations
-                  <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-500 text-white animate-pulse">
-                    OPEN NOW
+                  Presiding Officer Neutrality
+                  <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-amber-500 text-slate-950 font-mono">
+                    {student.role || 'Speaker / Deputy Speaker'}
                   </span>
                 </h4>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Open positions: <span className="text-emerald-600 dark:text-emerald-400 font-semibold">{openNominationPositions.join(', ')}</span>
+                  Assembly Presiding Officers maintain institutional neutrality
+                </p>
+              </div>
+            </div>
+            <span className="text-[10px] font-mono uppercase font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-lg border border-amber-500/20">
+              Presiding Role
+            </span>
+          </div>
+          <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+            As the designated <strong>Speaker / Deputy Speaker</strong> of the Assembly, you preside over the house. Under assembly constitutional convention, presiding officers maintain institutional neutrality and cannot file nominations for elected positions.
+          </p>
+        </div>
+      ) : openNominationPositions.length > 0 && onFileNomination ? (
+        availableNominationPositions.length > 0 ? (
+          <div className="bg-white dark:bg-slate-900 border border-emerald-500/30 rounded-2xl p-5 md:p-6 shadow-xl space-y-4 transition-colors">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                  <FileSpreadsheet className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    Parliamentary Candidacy Nominations
+                    <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-500 text-white animate-pulse">
+                      OPEN NOW
+                    </span>
+                  </h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Open positions: <span className="text-emerald-600 dark:text-emerald-400 font-semibold">{openNominationPositions.join(', ')}</span> • <span className="text-slate-400">1 nomination per member per post</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <form onSubmit={handleStudentNominationSubmit} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Select Open Position *
+                  </label>
+                  <select
+                    value={selectedNomPosition}
+                    onChange={(e) => setSelectedNomPosition(e.target.value)}
+                    className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white text-xs font-semibold focus:outline-none focus:border-emerald-500"
+                  >
+                    {availableNominationPositions.map(pos => (
+                      <option key={pos} value={pos}>{pos}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Candidate Name & Bench
+                  </label>
+                  <input
+                    type="text"
+                    readOnly
+                    value={`${student.full_name} (${student.party_name || 'Independent'} • ${student.bench || 'Delegate'})`}
+                    className="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 text-xs font-medium focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Manifesto / Candidacy Statement *
+                </label>
+                <textarea
+                  rows={3}
+                  value={nomManifesto}
+                  onChange={(e) => setNomManifesto(e.target.value)}
+                  placeholder="Share your goals, vision for the assembly, and proposed reforms..."
+                  className="w-full p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white text-xs placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-end">
+                <button
+                  type="submit"
+                  disabled={nomSubmitted}
+                  className={`px-5 py-2.5 rounded-xl font-bold text-xs shadow-lg transition-all flex items-center gap-2 cursor-pointer ${
+                    nomSubmitted
+                      ? 'bg-emerald-600 text-white shadow-emerald-950/50'
+                      : 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-emerald-950/50'
+                  }`}
+                >
+                  {nomSubmitted ? (
+                    <>
+                      <CheckCircle2 className="w-4 h-4" /> Nomination Filed!
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-4 h-4" /> Submit Nomination
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        ) : (
+          <div className="bg-white dark:bg-slate-900 border border-emerald-500/30 rounded-2xl p-5 md:p-6 shadow-xl space-y-3 transition-colors">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                  <CheckCircle2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    Parliamentary Candidacy Nominations
+                    <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-500 text-white">
+                      NOMINATED
+                    </span>
+                  </h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Open positions: <span className="text-emerald-600 dark:text-emerald-400 font-semibold">{openNominationPositions.join(', ')}</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="p-4 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-500/30 text-xs text-slate-700 dark:text-slate-300 flex items-start gap-3">
+              <UserCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-emerald-800 dark:text-emerald-300">
+                  You have filed your nomination for all currently open position(s).
+                </p>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1">
+                  Assembly rules permit each member to be eligible <strong>only one time</strong> to nominate for a post. Your filed nomination is active and displayed below.
                 </p>
               </div>
             </div>
           </div>
-
-          <form onSubmit={handleStudentNominationSubmit} className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Select Open Position *
-                </label>
-                <select
-                  value={selectedNomPosition}
-                  onChange={(e) => setSelectedNomPosition(e.target.value)}
-                  className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white text-xs font-semibold focus:outline-none focus:border-emerald-500"
-                >
-                  {openNominationPositions.map(pos => (
-                    <option key={pos} value={pos}>{pos}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Candidate Name & Bench
-                </label>
-                <input
-                  type="text"
-                  readOnly
-                  value={`${student.full_name} (${student.party_name || 'Independent'} • ${student.bench || 'Delegate'})`}
-                  className="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 text-xs font-medium focus:outline-none"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Manifesto / Candidacy Statement *
-              </label>
-              <textarea
-                rows={3}
-                value={nomManifesto}
-                onChange={(e) => setNomManifesto(e.target.value)}
-                placeholder="Share your goals, vision for the assembly, and proposed reforms..."
-                className="w-full p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white text-xs placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
-              />
-            </div>
-
-            <div className="flex items-center justify-end">
-              <button
-                type="submit"
-                disabled={nomSubmitted}
-                className={`px-5 py-2.5 rounded-xl font-bold text-xs shadow-lg transition-all flex items-center gap-2 cursor-pointer ${
-                  nomSubmitted
-                    ? 'bg-emerald-600 text-white shadow-emerald-950/50'
-                    : 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-emerald-950/50'
-                }`}
-              >
-                {nomSubmitted ? (
-                  <>
-                    <CheckCircle2 className="w-4 h-4" /> Nomination Filed!
-                  </>
-                ) : (
-                  <>
-                    <Send className="w-4 h-4" /> Submit Nomination
-                  </>
-                )}
-              </button>
-            </div>
-          </form>
-        </div>
+        )
       ) : (
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-md flex items-center justify-between gap-3 transition-colors">
           <div className="flex items-center gap-3">
@@ -702,31 +827,43 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       )}
 
       {/* Student's Own Filed Nomination Status */}
-      {(() => {
-        const myNom = nominations.find(n => n.candidate_learner_id === student.id);
-        if (!myNom) return null;
-        return (
-          <div className="bg-white dark:bg-slate-900 border border-emerald-500/40 rounded-2xl p-5 shadow-xl space-y-3 transition-colors">
-            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
-              <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <UserCheck className="w-4 h-4 text-emerald-500" /> Your Filed Nomination
-              </h4>
-              <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
-                {myNom.status || 'Submitted'}
-              </span>
-            </div>
-            <div className="p-3.5 rounded-xl border border-emerald-500/20 bg-emerald-50/50 dark:bg-emerald-950/20 space-y-1">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-900 dark:text-white">{myNom.position}</span>
-                <span className="text-[11px] text-slate-500 dark:text-slate-400">{myNom.party_name} • {myNom.bench} Bench</span>
-              </div>
-              {myNom.manifesto && (
-                <p className="text-xs text-slate-600 dark:text-slate-300 italic">"{myNom.manifesto}"</p>
-              )}
-            </div>
+      {myNominations.length > 0 && (
+        <div className="bg-white dark:bg-slate-900 border border-emerald-500/40 rounded-2xl p-5 shadow-xl space-y-3 transition-colors">
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
+            <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <UserCheck className="w-4 h-4 text-emerald-500" />
+              {myNominations.length > 1 ? 'Your Filed Nominations' : 'Your Filed Nomination'}
+            </h4>
+            <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
+              {myNominations.length} {myNominations.length > 1 ? 'Nominations Active' : 'Nomination Active'}
+            </span>
           </div>
-        );
-      })()}
+          <div className="space-y-2.5">
+            {myNominations.map(myNom => (
+              <div key={myNom.id} className="p-3.5 rounded-xl border border-emerald-500/20 bg-emerald-50/50 dark:bg-emerald-950/20 space-y-1">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-900 dark:text-white">{myNom.position}</span>
+                    <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${
+                      myNom.status === 'Approved'
+                        ? 'bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800'
+                        : myNom.status === 'Rejected'
+                        ? 'bg-rose-100 text-rose-700 border-rose-300 dark:bg-rose-950 dark:text-rose-300 dark:border-rose-800'
+                        : 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800'
+                    }`}>
+                      {myNom.status || 'Submitted'}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400">{myNom.party_name} • {myNom.bench} Bench</span>
+                </div>
+                {myNom.manifesto && (
+                  <p className="text-xs text-slate-600 dark:text-slate-300 italic">"{myNom.manifesto}"</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Interactive Assembly Floor Request */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4 transition-colors">

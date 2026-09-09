@@ -175,6 +175,29 @@ export const NominationsTab: React.FC<NominationsTabProps> = ({
       return;
     }
 
+    // Guard 1: Assigned Speaker or Deputy Speaker cannot nominate
+    if (learner.role?.toLowerCase().includes('speaker')) {
+      onShowToast(
+        'Ineligible Candidate',
+        `${learner.full_name} is assigned as ${learner.role} and cannot be nominated. Presiding officers must maintain institutional neutrality.`,
+        'error'
+      );
+      return;
+    }
+
+    // Guard 2: Each member is eligible only one time to nominate of a post
+    const alreadyNominated = nominations.some(
+      n => n.candidate_learner_id === learner.id && n.position === nomPosition && n.status !== 'Rejected'
+    );
+    if (alreadyNominated) {
+      onShowToast(
+        'Already Nominated',
+        `${learner.full_name} is already nominated for ${nomPosition}. Each member is eligible only once per post.`,
+        'error'
+      );
+      return;
+    }
+
     onAddNomination({
       event_id: eventId,
       position: nomPosition,
@@ -609,12 +632,20 @@ export const NominationsTab: React.FC<NominationsTabProps> = ({
                   style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
                 >
                   <option value="">-- Choose registered delegate --</option>
-                  {learners.map(l => (
-                    <option key={l.id} value={l.id}>
-                      {l.full_name} ({l.party_name || 'Independent'} • {l.bench || 'No bench'} • Code: {l.access_code})
-                      {l.full_name} ({l.party_name || 'Independent'} • {l.bench || 'Delegate'}{l.constituency_number !== undefined ? ` • #${l.constituency_number}` : ''})
-                    </option>
-                  ))}
+                  {learners.map(l => {
+                    const isSpeaker = Boolean(l.role && l.role.toLowerCase().includes('speaker'));
+                    const isAlreadyNom = nominations.some(
+                      n => n.candidate_learner_id === l.id && n.position === nomPosition && n.status !== 'Rejected'
+                    );
+                    let tag = '';
+                    if (isSpeaker) tag = ' [Presiding Officer - Ineligible]';
+                    else if (isAlreadyNom) tag = ` [Already Nominated for ${nomPosition}]`;
+                    return (
+                      <option key={l.id} value={l.id} disabled={isSpeaker || isAlreadyNom}>
+                        {l.full_name} ({l.party_name || 'Independent'} • {l.bench || 'Delegate'}{l.constituency_number !== undefined ? ` • #${l.constituency_number}` : ''}){tag}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
 
