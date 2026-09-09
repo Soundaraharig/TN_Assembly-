@@ -4,7 +4,7 @@ import { tabToPath } from '../../utils/slug';
 import {
   LayoutDashboard,
   Users,
-  
+  CalendarDays,
   Clock,
   UserCheck,
   FileSpreadsheet,
@@ -31,6 +31,7 @@ import {
 
 export type ActiveNavTab =
   | 'overview'
+  | 'days_activities'
   | 'team'
   | 'agenda'
   | 'participants'
@@ -86,6 +87,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const beforeEventItems = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+    { id: 'days_activities', label: 'Days & Activities', icon: CalendarDays },
     { id: 'team', label: 'Team', icon: Users },
     { id: 'agenda', label: 'Agenda', icon: Clock },
     { id: 'participants', label: 'Participants', icon: UserCheck },

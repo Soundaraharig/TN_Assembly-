@@ -491,7 +491,52 @@ BEGIN
 END $$;
 */
 
+-- ====================================================================
+-- 10. DYNAMIC EVENT DAYS & ATTENDANCE SCHEMA
+-- ====================================================================
 
+-- 10a. Event Days Table
+CREATE TABLE IF NOT EXISTS event_days (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_id UUID NOT NULL REFERENCES college_events(id) ON DELETE CASCADE,
+    day_number INT NOT NULL,
+    name TEXT NOT NULL,
+    date TEXT,
+    status TEXT NOT NULL DEFAULT 'Upcoming', -- 'Upcoming' | 'Active' | 'Completed'
+    activities JSONB NOT NULL DEFAULT '[]'::jsonb,
+    is_archived BOOLEAN NOT NULL DEFAULT FALSE,
+    order_index INT DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
 
+-- 10b. Day Activities Table (Normalized relation)
+CREATE TABLE IF NOT EXISTS day_activities (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_id UUID NOT NULL REFERENCES college_events(id) ON DELETE CASCADE,
+    day_id UUID NOT NULL REFERENCES event_days(id) ON DELETE CASCADE,
+    activity_name TEXT NOT NULL,
+    order_index INT DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
 
+-- 10c. Event Day Attendance Table
+CREATE TABLE IF NOT EXISTS event_day_attendance (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_id UUID NOT NULL REFERENCES college_events(id) ON DELETE CASCADE,
+    day_id UUID NOT NULL REFERENCES event_days(id) ON DELETE CASCADE,
+    student_id UUID NOT NULL REFERENCES learners(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'Present', -- 'Present' | 'Absent'
+    marked_by TEXT,
+    marked_by_role TEXT,
+    marked_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT unique_event_day_student UNIQUE (event_id, day_id, student_id)
+);
 
+-- Performance Indexes
+CREATE INDEX IF NOT EXISTS idx_event_days_event_id ON event_days(event_id);
+CREATE INDEX IF NOT EXISTS idx_day_activities_day_id ON day_activities(day_id);
+CREATE INDEX IF NOT EXISTS idx_event_day_att_event_day ON event_day_attendance(event_id, day_id);
+CREATE INDEX IF NOT EXISTS idx_event_day_att_student ON event_day_attendance(student_id);

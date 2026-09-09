@@ -89,6 +89,9 @@ export function extractEventFromUrl(events: CollegeEvent[], preferredEventId?: s
 // Map between route path parameter (:tab) and internal ActiveNavTab
 const TAB_PATH_MAP: Record<string, ActiveNavTab> = {
   'overview': 'overview',
+  'days-activities': 'days_activities',
+  'days_activities': 'days_activities',
+  'days': 'days_activities',
   'team': 'team',
   'agenda': 'agenda',
   'participants': 'participants',
@@ -118,6 +121,7 @@ const TAB_PATH_MAP: Record<string, ActiveNavTab> = {
 
 const PATH_TAB_MAP: Record<ActiveNavTab, string> = {
   'overview': 'overview',
+  'days_activities': 'days-activities',
   'team': 'team',
   'agenda': 'agenda',
   'participants': 'participants',

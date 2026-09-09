@@ -88,7 +88,7 @@ export const EventOverviewTab: React.FC<EventOverviewTabProps> = ({
       </div>
 
       {/* Summary Stat Cards Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         
         {/* Card 1: Registered Delegates */}
         <div
@@ -112,7 +112,29 @@ export const EventOverviewTab: React.FC<EventOverviewTabProps> = ({
           </div>
         </div>
 
-        {/* Card 2: Leadership Elections */}
+        {/* Card 2: Days & Activities */}
+        <div
+          onClick={() => onNavigateTab?.('days_activities')}
+          className="rounded-2xl p-5 border shadow-sm flex items-center justify-between transition-all hover:-translate-y-0.5 hover:border-amber-500/50 cursor-pointer group"
+          style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+        >
+          <div>
+            <p className="text-2xl sm:text-3xl font-black text-amber-500">
+              Days & Activities
+            </p>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
+              Schedule & Attendance
+            </p>
+            <span className="text-[10px] mt-1 inline-block font-semibold group-hover:underline" style={{ color: 'var(--accent)' }}>
+              Configure Days & Attendance →
+            </span>
+          </div>
+          <div className="p-3.5 rounded-2xl transition-transform group-hover:scale-105 bg-amber-500/15 text-amber-500 border border-amber-500/30">
+            <Calendar className="w-6 h-6" />
+          </div>
+        </div>
+
+        {/* Card 3: Leadership Elections */}
         <div
           onClick={() => onNavigateTab?.('elections')}
           className="rounded-2xl p-5 border shadow-sm flex items-center justify-between transition-all hover:-translate-y-0.5 hover:border-amber-500/50 cursor-pointer group"
@@ -134,7 +156,7 @@ export const EventOverviewTab: React.FC<EventOverviewTabProps> = ({
           </div>
         </div>
 
-        {/* Card 3: Allocations & Cabinet Roster */}
+        {/* Card 4: Allocations & Cabinet Roster */}
         <div
           onClick={() => onNavigateTab?.('cabinet')}
           className="rounded-2xl p-5 border shadow-sm flex items-center justify-between transition-all hover:-translate-y-0.5 hover:border-amber-500/50 cursor-pointer group"

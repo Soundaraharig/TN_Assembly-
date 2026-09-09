@@ -4,6 +4,7 @@ import {
   UserCheck,
   Search,
   CheckCircle,
+  CheckCircle2,
   XCircle,
   LogOut,
   Users,
@@ -20,9 +21,22 @@ import {
   Check,
   Flame,
   AlertCircle,
-  Loader2
+  Loader2,
+  Sparkles
 } from 'lucide-react';
-import type { Volunteer, Learner, CollegeEvent, ChecklistItem, Party, Committee, Election, LiveFlashVote } from '../../types';
+import type {
+  Volunteer,
+  Learner,
+  CollegeEvent,
+  ChecklistItem,
+  Party,
+  Committee,
+  Election,
+  LiveFlashVote,
+  EventDay,
+  DayAttendanceRecord,
+  DayAttendanceStatus
+} from '../../types';
 import { useTheme } from '../../lib/theme';
 import { storageService, getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
 
@@ -44,8 +58,22 @@ interface VolunteerDashboardProps {
   committees?: Committee[];
   elections?: Election[];
   flashVotes?: LiveFlashVote[];
+  eventDays?: EventDay[];
+  dayAttendance?: DayAttendanceRecord[];
   onToggleCheckIn: (id: string, day: 1 | 2) => void;
   onCheckInAll?: (day: 1 | 2, state: boolean) => void;
+  onSetStudentDayAttendance?: (
+    dayId: string,
+    studentId: string,
+    status: DayAttendanceStatus,
+    markedBy?: string
+  ) => Promise<DayAttendanceRecord> | void;
+  onBatchSetDayAttendance?: (
+    dayId: string,
+    studentIds: string[],
+    status: DayAttendanceStatus,
+    markedBy?: string
+  ) => Promise<void> | void;
   onAddWalkIn?: (learner: Partial<Learner>) => void;
   onCastVote?: (electionId: string, candidateId: string, delegateId?: string) => void;
   onCastFlashVote?: (voteId: string, learner: Learner, decision: 'AYE' | 'NO' | 'ABSTAIN') => void;
@@ -63,8 +91,12 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   committees: _committees = [],
   elections = [],
   flashVotes = [],
+  eventDays = [],
+  dayAttendance = [],
   onToggleCheckIn,
   onCheckInAll,
+  onSetStudentDayAttendance,
+  onBatchSetDayAttendance,
   onAddWalkIn,
   onCastVote,
   onCastFlashVote,
@@ -73,11 +105,15 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   onShowToast
 }) => {
   const { theme, toggleTheme } = useTheme();
-  const [selectedDay, setSelectedDay] = useState<1 | 2>(1);
+  const [selectedDay] = useState<1 | 2>(1);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PRESENT' | 'ABSENT'>('ALL');
   const [isOnDuty, setIsOnDuty] = useState(volunteer?.has_arrived ?? true);
-  const [activeTab, setActiveTab] = useState<'yuvadesk' | 'checkin' | 'walkin' | 'checklist'>('yuvadesk');
+  const [activeTab, setActiveTab] = useState<'attendance' | 'yuvadesk' | 'checkin' | 'walkin' | 'checklist'>('attendance');
+
+  // Attendance tab search & filter
+  const [attendanceSearch, setAttendanceSearch] = useState('');
+  const [attendanceStatusFilter, setAttendanceStatusFilter] = useState<'ALL' | 'PRESENT' | 'ABSENT'>('ALL');
 
   // Walk-in form state
   const [walkInName, setWalkInName] = useState('');
@@ -117,6 +153,94 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
 
   // YUVA Assignments State (Persisted via StorageService)
   const eventId = event?.id || volunteer?.event_id || 'ev_tn_assembly_2026';
+
+  // Active Event Day for Volunteer Attendance (automatically driven by Admin)
+  const activeDay = useMemo(() => {
+    if (eventDays && eventDays.length > 0) {
+      return eventDays.find(d => d.status === 'Active') || eventDays[0];
+    }
+    return storageService.getActiveEventDay(eventId);
+  }, [eventDays, eventId]);
+
+  // Current day attendance records
+  const activeDayAttendance = useMemo(() => {
+    if (!activeDay) return [];
+    if (dayAttendance && dayAttendance.length > 0) {
+      return dayAttendance.filter(a => a.day_id === activeDay.id);
+    }
+    return storageService.getDayAttendance(eventId, activeDay.id);
+  }, [activeDay, dayAttendance, eventId]);
+
+  const activeDayAttMap = useMemo(() => {
+    const map = new Map<string, DayAttendanceRecord>();
+    activeDayAttendance.forEach(a => map.set(a.student_id, a));
+    return map;
+  }, [activeDayAttendance]);
+
+  const activeDayPresentCount = useMemo(() => {
+    return activeDayAttendance.filter(a => a.status === 'Present').length;
+  }, [activeDayAttendance]);
+
+  const activeDayAbsentCount = Math.max(0, learners.length - activeDayPresentCount);
+  const activeDayPercentage = learners.length > 0 ? Math.round((activeDayPresentCount / learners.length) * 100) : 0;
+
+  // Active parties memo
+  const activeParties = useMemo(() => {
+    return _parties.length > 0 ? _parties : storageService.getParties(eventId);
+  }, [_parties, eventId]);
+
+  // Filtered learners for the Attendance terminal
+  const filteredAttendanceLearners = useMemo(() => {
+    return learners.filter(l => {
+      const pName = getResolvedPartyName(l, activeParties);
+      const cName = l.constituency_name || '';
+      const query = attendanceSearch.toLowerCase().trim();
+      const matchesSearch =
+        !query ||
+        l.full_name.toLowerCase().includes(query) ||
+        (l.access_code && l.access_code.toLowerCase().includes(query)) ||
+        (pName && pName.toLowerCase().includes(query)) ||
+        cName.toLowerCase().includes(query) ||
+        (l.department && l.department.toLowerCase().includes(query));
+
+      const att = activeDayAttMap.get(l.id);
+      const isPresent = att ? att.status === 'Present' : false;
+
+      const matchesStatus =
+        attendanceStatusFilter === 'ALL' ||
+        (attendanceStatusFilter === 'PRESENT' && isPresent) ||
+        (attendanceStatusFilter === 'ABSENT' && !isPresent);
+
+      return matchesSearch && matchesStatus;
+    });
+  }, [learners, activeParties, attendanceSearch, attendanceStatusFilter, activeDayAttMap]);
+
+  const handleMarkStudentAttendance = async (studentId: string, status: DayAttendanceStatus) => {
+    if (!activeDay) return;
+    const volunteerName = volunteer?.name ? `${volunteer.name} (Volunteer)` : 'Floor Volunteer';
+    if (onSetStudentDayAttendance) {
+      await onSetStudentDayAttendance(activeDay.id, studentId, status, volunteerName);
+    } else {
+      await storageService.setStudentDayAttendance(eventId, activeDay.id, studentId, status, volunteerName, 'volunteer');
+    }
+    onShowToast?.(
+      status === 'Present' ? 'Marked Present' : 'Marked Absent',
+      `Recorded for ${activeDay.name}`,
+      status === 'Present' ? 'success' : 'info'
+    );
+  };
+
+  const handleBatchMarkAttendance = async (status: DayAttendanceStatus) => {
+    if (!activeDay) return;
+    const volunteerName = volunteer?.name ? `${volunteer.name} (Volunteer)` : 'Floor Volunteer';
+    const studentIds = learners.map(l => l.id);
+    if (onBatchSetDayAttendance) {
+      await onBatchSetDayAttendance(activeDay.id, studentIds, status, volunteerName);
+    } else {
+      await storageService.batchSetDayAttendance(eventId, activeDay.id, studentIds, status, volunteerName, 'volunteer');
+    }
+    onShowToast?.('Attendance Updated', `Marked all delegates as ${status} on ${activeDay.name}`, 'success');
+  };
 
   const fetchVersionRef = useRef(0);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
@@ -302,10 +426,6 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     setWalkInDept('');
     setActiveTab('checkin');
   };
-
-  const activeParties = useMemo(() => {
-    return _parties.length > 0 ? _parties : storageService.getParties(eventId);
-  }, [_parties, eventId]);
 
   const activeCommittees = useMemo(() => {
     return _committees.length > 0 ? _committees : storageService.getCommittees(eventId);
@@ -689,36 +809,23 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
             </div>
           </div>
 
-          {/* Day Floor Switcher */}
-          <div className="p-2.5 rounded-2xl border flex flex-col justify-center gap-1.5" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
-            <p className="text-[10px] font-bold uppercase tracking-wider px-1" style={{ color: 'var(--text-muted)' }}>
-              Active Floor Day
-            </p>
-            <div className="flex rounded-xl p-1 border" style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
-              <button
-                onClick={() => setSelectedDay(1)}
-                className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                  selectedDay === 1 ? 'shadow-sm' : 'opacity-70 hover:opacity-100'
-                }`}
-                style={{
-                  background: selectedDay === 1 ? 'var(--emerald)' : 'transparent',
-                  color: selectedDay === 1 ? '#fff' : 'var(--text-primary)'
-                }}
-              >
-                Day 1 ({day1Present})
-              </button>
-              <button
-                onClick={() => setSelectedDay(2)}
-                className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                  selectedDay === 2 ? 'shadow-sm' : 'opacity-70 hover:opacity-100'
-                }`}
-                style={{
-                  background: selectedDay === 2 ? 'var(--emerald)' : 'transparent',
-                  color: selectedDay === 2 ? '#fff' : 'var(--text-primary)'
-                }}
-              >
-                Day 2 ({day2Present})
-              </button>
+          {/* Active Floor Day Info */}
+          <div className="p-3 rounded-2xl border flex flex-col justify-between gap-1" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Active Session Day
+              </p>
+              <span className="px-1.5 py-0.2 rounded text-[9px] font-black bg-emerald-500 text-white animate-pulse">
+                ACTIVE
+              </span>
+            </div>
+            <div>
+              <p className="text-base font-black text-emerald-500">
+                {activeDay?.name || 'Day 1'}
+              </p>
+              <p className="text-[11px] text-slate-400 truncate mt-0.5" title={activeDay?.activities?.join(', ')}>
+                {activeDay?.activities?.[0] || 'Assembly in Session'}
+              </p>
             </div>
           </div>
         </div>
@@ -726,6 +833,25 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
         {/* View Tabs */}
         <div className="flex items-center justify-between flex-wrap gap-3 border-b pb-3" style={{ borderColor: 'var(--border)' }}>
           <div className="flex rounded-xl p-1 border flex-wrap gap-1" style={{ background: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+            <button
+              onClick={() => setActiveTab('attendance')}
+              className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                activeTab === 'attendance' ? 'shadow-sm' : 'opacity-70 hover:opacity-100'
+              }`}
+              style={{
+                background: activeTab === 'attendance' ? 'var(--emerald)' : 'transparent',
+                color: activeTab === 'attendance' ? '#fff' : 'var(--text-primary)'
+              }}
+            >
+              <CheckSquare className="w-3.5 h-3.5" />
+              <span>Attendance</span>
+              {activeDay && (
+                <span className="px-1.5 py-0.2 rounded text-[10px] bg-black/20 text-white font-extrabold">
+                  {activeDay.name}
+                </span>
+              )}
+            </button>
+
             <button
               onClick={() => setActiveTab('yuvadesk')}
               className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
@@ -816,6 +942,285 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
             </div>
           )}
         </div>
+
+        {/* ───────────────────────────────────────────────────────────── */}
+        {/* TAB: VOLUNTEER ATTENDANCE TERMINAL                            */}
+        {/* ───────────────────────────────────────────────────────────── */}
+        {activeTab === 'attendance' && (
+          <div className="space-y-5 animate-fade-in">
+            {/* Active Day & Activities Banner */}
+            <div
+              className="rounded-2xl p-6 border shadow-sm space-y-4"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+            >
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-4" style={{ borderColor: 'var(--border)' }}>
+                <div>
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-500">
+                    VOLUNTEER ATTENDANCE TERMINAL
+                  </span>
+                  <div className="flex items-center gap-3 mt-1">
+                    <h2 className="text-xl sm:text-2xl font-black tracking-tight" style={{ color: 'var(--text-primary)' }}>
+                      {event?.college_name || 'TN Assembly Event'} — {activeDay?.name || 'Day 1'}
+                    </h2>
+                    <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-500 text-white animate-pulse">
+                      ACTIVE DAY
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Mark student delegate attendance for today's live assembly proceedings. Changes are automatically isolated to this day.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400 font-semibold">
+                    Volunteer Official: <strong style={{ color: 'var(--text-primary)' }}>{volunteer?.name || 'Floor Volunteer'}</strong>
+                  </span>
+                </div>
+              </div>
+
+              {/* Today's Activities Box */}
+              <div
+                className="p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+              >
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-amber-500">
+                      Today's Activities
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 mt-2">
+                    {activeDay?.activities && activeDay.activities.length > 0 ? (
+                      activeDay.activities.map((act, idx) => (
+                        <span
+                          key={idx}
+                          className="px-2.5 py-1 rounded-lg text-xs font-bold border border-amber-500/30 bg-amber-500/10 text-amber-400"
+                        >
+                          • {act}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-xs text-slate-400 italic">No specific activities assigned</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="text-right shrink-0">
+                  <span className="text-xs text-slate-400 block font-medium">Session Status</span>
+                  <span className="text-xs font-bold text-emerald-400">Attendance Window Open</span>
+                </div>
+              </div>
+
+              {/* Attendance Quick Stats */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+                <div className="p-3.5 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Delegates</p>
+                  <p className="text-xl font-black mt-1" style={{ color: 'var(--text-primary)' }}>
+                    {learners.length}
+                  </p>
+                </div>
+
+                <div className="p-3.5 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Present Count</p>
+                  <p className="text-xl font-black mt-1 text-emerald-500">
+                    {activeDayPresentCount}
+                  </p>
+                </div>
+
+                <div className="p-3.5 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Absent Count</p>
+                  <p className="text-xl font-black mt-1 text-rose-500">
+                    {activeDayAbsentCount}
+                  </p>
+                </div>
+
+                <div className="p-3.5 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Attendance Rate</p>
+                  <p className="text-xl font-black mt-1 text-amber-500">
+                    {activeDayPercentage}%
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Search, Filters & Quick Actions */}
+            <div
+              className="p-4 rounded-2xl border flex flex-col md:flex-row md:items-center justify-between gap-4"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-1">
+                <div className="relative flex-1 max-w-md">
+                  <input
+                    type="text"
+                    value={attendanceSearch}
+                    onChange={(e) => setAttendanceSearch(e.target.value)}
+                    placeholder="Search delegate by name, access code, party, constituency..."
+                    className="w-full pl-9 pr-4 py-2 rounded-xl text-xs font-semibold border outline-none"
+                    style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                  />
+                  <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+                </div>
+
+                <div className="flex rounded-xl p-1 border shrink-0" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
+                  {(['ALL', 'PRESENT', 'ABSENT'] as const).map((sf) => (
+                    <button
+                      key={sf}
+                      onClick={() => setAttendanceStatusFilter(sf)}
+                      className={`px-3 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
+                        attendanceStatusFilter === sf ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {sf}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => handleBatchMarkAttendance('Present')}
+                  className="px-3 py-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  <span>Mark All Present</span>
+                </button>
+                <button
+                  onClick={() => handleBatchMarkAttendance('Absent')}
+                  className="px-3 py-1.5 rounded-xl border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <XCircle className="w-3.5 h-3.5" />
+                  <span>Reset All Absent</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Student List */}
+            <div
+              className="rounded-2xl border overflow-hidden shadow-sm"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+            >
+              <div className="p-4 border-b flex items-center justify-between" style={{ borderColor: 'var(--border)' }}>
+                <span className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-primary)' }}>
+                  Delegate Attendance Roster ({filteredAttendanceLearners.length} displayed)
+                </span>
+                <span className="text-xs text-slate-400">
+                  Recording for <strong>{activeDay?.name || 'Day 1'}</strong>
+                </span>
+              </div>
+
+              {filteredAttendanceLearners.length === 0 ? (
+                <div className="p-12 text-center text-xs italic text-slate-400">
+                  No student delegates match your search or filter.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="border-b text-[11px] uppercase font-bold text-slate-400" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-elevated)' }}>
+                        <th className="py-3 px-4">Delegate Name</th>
+                        <th className="py-3 px-4">Access Code</th>
+                        <th className="py-3 px-4">Party & Bench</th>
+                        <th className="py-3 px-4">Constituency</th>
+                        <th className="py-3 px-4 text-center">Status</th>
+                        <th className="py-3 px-4 text-center">Action</th>
+                        <th className="py-3 px-4">Audit Record</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                      {filteredAttendanceLearners.map((learner) => {
+                        const att = activeDayAttMap.get(learner.id);
+                        const isPresent = att ? att.status === 'Present' : false;
+                        const pName = getResolvedPartyName(learner, activeParties);
+
+                        return (
+                          <tr key={learner.id} className="hover:bg-slate-500/5 transition">
+                            <td className="py-3 px-4">
+                              <div className="font-bold" style={{ color: 'var(--text-primary)' }}>
+                                {learner.full_name}
+                              </div>
+                              <div className="text-[11px] text-slate-400">
+                                {learner.department} • {learner.academic_year}
+                              </div>
+                            </td>
+
+                            <td className="py-3 px-4">
+                              <span className="font-mono font-bold px-2 py-0.5 rounded bg-slate-500/15 text-slate-300">
+                                {learner.access_code}
+                              </span>
+                            </td>
+
+                            <td className="py-3 px-4">
+                              <span className="font-bold text-amber-500">
+                                {pName || 'Independent'}
+                              </span>
+                              <span className="text-[11px] text-slate-400 block">
+                                {learner.bench || 'Ruling'}
+                              </span>
+                            </td>
+
+                            <td className="py-3 px-4">
+                              <span className="font-medium" style={{ color: 'var(--text-primary)' }}>
+                                {learner.constituency_name ? `#${learner.constituency_number || ''} ${learner.constituency_name}` : 'Floor Delegate'}
+                              </span>
+                            </td>
+
+                            <td className="py-3 px-4 text-center">
+                              <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${
+                                isPresent
+                                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/40'
+                                  : 'bg-rose-500/15 text-rose-400 border border-rose-500/40'
+                              }`}>
+                                {isPresent ? <CheckCircle2 className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
+                                <span>{isPresent ? 'Present' : 'Absent'}</span>
+                              </span>
+                            </td>
+
+                            <td className="py-3 px-4 text-center">
+                              <div className="inline-flex items-center gap-1.5">
+                                <button
+                                  onClick={() => handleMarkStudentAttendance(learner.id, 'Present')}
+                                  className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                                    isPresent
+                                      ? 'bg-emerald-500 text-white shadow-sm'
+                                      : 'border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/15'
+                                  }`}
+                                >
+                                  Present
+                                </button>
+                                <button
+                                  onClick={() => handleMarkStudentAttendance(learner.id, 'Absent')}
+                                  className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                                    !isPresent
+                                      ? 'bg-rose-500 text-white shadow-sm'
+                                      : 'border border-rose-500/40 text-rose-400 hover:bg-rose-500/15'
+                                  }`}
+                                >
+                                  Absent
+                                </button>
+                              </div>
+                            </td>
+
+                            <td className="py-3 px-4 text-slate-400 text-[11px]">
+                              {att?.marked_at ? (
+                                <div>
+                                  <span>{new Date(att.marked_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                  <span className="text-[10px] text-slate-500 block">by {att.marked_by || 'Volunteer'}</span>
+                                </div>
+                              ) : (
+                                <span className="text-slate-500 italic">Unmarked</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Tab 0: YUVA DESK & PROXY VOTING */}
         {activeTab === 'yuvadesk' && (

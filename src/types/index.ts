@@ -405,3 +405,48 @@ export interface TeamMember {
   created_at?: string;
   updated_at?: string;
 }
+
+// ── EVENT DAYS & ATTENDANCE TYPES ───────────────────────────────────
+
+export type EventDayStatus = 'Upcoming' | 'Active' | 'Completed';
+
+export interface EventDay {
+  id: string;
+  event_id: string;
+  day_number: number;
+  name: string; // e.g., "Day 1", "Day 2", "Inauguration Day"
+  date?: string;
+  status: EventDayStatus;
+  is_active?: boolean;
+  activities: string[];
+  is_archived?: boolean;
+  order_index?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export type DayAttendanceStatus = 'Present' | 'Absent';
+
+export interface DayAttendanceRecord {
+  id: string;
+  event_id: string;
+  day_id: string;
+  student_id: string;
+  learner_id?: string; // alias for student_id
+  status: DayAttendanceStatus;
+  marked_by?: string;
+  marked_by_role?: string;
+  marked_at: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export const STANDARD_TN_ACTIVITIES: string[] = [
+  'Student Orientation',
+  'Party & Constituency Allocation + Group Formation',
+  'Speaker & Party Leader Selection',
+  'Government Formation + CM & LOP Election',
+  'Cabinet Formation',
+  'Mock Assembly'
+];
+

@@ -28,7 +28,11 @@ import type {
   ProceedingsQuestion,
   ProceedingsMotion,
   SecurityAuditLog,
-  ProjectorStudioSettings
+  ProjectorStudioSettings,
+  EventDay,
+  DayAttendanceRecord,
+  EventDayStatus,
+  DayAttendanceStatus
 } from '../types';
 import {
   INITIAL_EVENTS,
@@ -96,7 +100,9 @@ const STORAGE_KEYS = {
   PROCEEDINGS_QUESTIONS: 'tn_assembly_proceedings_questions_v6',
   PROCEEDINGS_MOTIONS: 'tn_assembly_proceedings_motions_v6',
   DELETED_IDS: 'tn_assembly_deleted_ids_v6',
-  AUDIT_LOGS: 'tn_assembly_audit_logs_v1'
+  AUDIT_LOGS: 'tn_assembly_audit_logs_v1',
+  EVENT_DAYS: 'tn_assembly_event_days_v1',
+  DAY_ATTENDANCE: 'tn_assembly_day_attendance_v1'
 };
 
 type Listener = () => void;
@@ -317,6 +323,10 @@ class StorageService {
       this.setItem(STORAGE_KEYS.FEEDBACK, INITIAL_FEEDBACK);
     if (!localStorage.getItem(STORAGE_KEYS.TEAM))
       this.setItem(STORAGE_KEYS.TEAM, INITIAL_TEAM);
+    if (!localStorage.getItem(STORAGE_KEYS.EVENT_DAYS))
+      this.setItem(STORAGE_KEYS.EVENT_DAYS, []);
+    if (!localStorage.getItem(STORAGE_KEYS.DAY_ATTENDANCE))
+      this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, []);
 
     // Purge any legacy global un-scoped registrations_frozen key so it never leaks across events
     try {
@@ -546,6 +556,8 @@ class StorageService {
         let allProcs: BillProceeding[] = [];
         let allQs: ParliamentQuestion[] = [];
         let allScores: ScoreRecord[] = [];
+        let allDays: EventDay[] = [];
+        let allDayAtt: DayAttendanceRecord[] = [];
 
         events.forEach(ev => {
           const sc = (ev.social_coverage || {}) as any;
@@ -569,6 +581,12 @@ class StorageService {
           }
           if (Array.isArray(sc.scores)) {
             allScores = [...allScores, ...sc.scores];
+          }
+          if (Array.isArray(sc.event_days)) {
+            allDays = [...allDays, ...sc.event_days];
+          }
+          if (Array.isArray(sc.day_attendance)) {
+            allDayAtt = [...allDayAtt, ...sc.day_attendance];
           }
           
           if (Array.isArray(sc.cabinet_ministries)) {
@@ -649,6 +667,24 @@ class StorageService {
             }
           });
           this.setItem(STORAGE_KEYS.SCORES, Array.from(scoreMap.values()));
+
+          // Merge local and remote event days
+          if (allDays.length > 0) {
+            const localDays = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []);
+            const dayMap = new Map<string, EventDay>();
+            localDays.forEach(d => dayMap.set(d.id, d));
+            allDays.forEach(d => dayMap.set(d.id, d));
+            this.setItem(STORAGE_KEYS.EVENT_DAYS, Array.from(dayMap.values()));
+          }
+
+          // Merge local and remote day attendance
+          if (allDayAtt.length > 0) {
+            const localAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+            const attMap = new Map<string, DayAttendanceRecord>();
+            localAtt.forEach(a => attMap.set(`${a.event_id}:::${a.day_id}:::${a.student_id}`, a));
+            allDayAtt.forEach(a => attMap.set(`${a.event_id}:::${a.day_id}:::${a.student_id}`, a));
+            this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, Array.from(attMap.values()));
+          }
         }
       }
 
@@ -1069,6 +1105,37 @@ class StorageService {
         chairperson: raw.chairperson || null,
         max_capacity: raw.max_capacity || 50,
         created_at: raw.created_at || new Date().toISOString()
+      };
+      if (validId) sanitized.id = validId;
+      return sanitized;
+    }
+    if (table === 'event_days') {
+      const sanitized: Record<string, unknown> = {
+        event_id: sanitizeEventId(raw.event_id),
+        day_number: Number(raw.day_number) || 1,
+        name: raw.name || `Day ${raw.day_number || 1}`,
+        date: raw.date || null,
+        status: raw.status || 'Upcoming',
+        activities: Array.isArray(raw.activities) ? raw.activities : [],
+        is_archived: !!raw.is_archived,
+        order_index: Number(raw.order_index) || 0,
+        created_at: raw.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      if (validId) sanitized.id = validId;
+      return sanitized;
+    }
+    if (table === 'event_day_attendance') {
+      const sanitized: Record<string, unknown> = {
+        event_id: sanitizeEventId(raw.event_id),
+        day_id: raw.day_id,
+        student_id: raw.student_id || raw.learner_id,
+        status: raw.status || 'Present',
+        marked_by: raw.marked_by || null,
+        marked_by_role: raw.marked_by_role || 'volunteer',
+        marked_at: raw.marked_at || new Date().toISOString(),
+        created_at: raw.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString()
       };
       if (validId) sanitized.id = validId;
       return sanitized;
@@ -2022,10 +2089,12 @@ class StorageService {
     let updatedLearner: Learner | null = null;
     const all = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, INITIAL_LEARNERS).map(l => {
       if (l.id === learnerId) {
+        const nextDay1 = day === 1 ? !l.day1_checked_in : l.day1_checked_in;
+        const nextDay2 = day === 2 ? !l.day2_checked_in : l.day2_checked_in;
         updatedLearner = {
           ...l,
-          day1_checked_in: day === 1 ? !l.day1_checked_in : l.day1_checked_in,
-          day2_checked_in: day === 2 ? !l.day2_checked_in : l.day2_checked_in
+          day1_checked_in: nextDay1,
+          day2_checked_in: nextDay2
         };
         return updatedLearner;
       }
@@ -2034,6 +2103,21 @@ class StorageService {
     this.setItem(STORAGE_KEYS.LEARNERS, all);
     if (updatedLearner) {
       this.sbUpsert('learners', updatedLearner as unknown as Record<string, unknown>);
+      // Also update multi-day attendance record if event day exists
+      const targetLearner = updatedLearner as Learner;
+      const days = this.getEventDays(targetLearner.event_id);
+      const targetDay = days.find(d => d.day_number === day || d.order_index === (day - 1));
+      if (targetDay) {
+        const isPres = day === 1 ? targetLearner.day1_checked_in : targetLearner.day2_checked_in;
+        this.setStudentDayAttendance(
+          targetLearner.event_id,
+          targetDay.id,
+          targetLearner.id,
+          isPres ? 'Present' : 'Absent',
+          'Check-in Terminal',
+          'volunteer'
+        );
+      }
     }
   }
 
@@ -2051,6 +2135,471 @@ class StorageService {
       return l;
     });
     this.setItem(STORAGE_KEYS.LEARNERS, all);
+
+    // Sync with DayAttendanceRecord
+    const days = this.getEventDays(eventId);
+    const targetDay = days.find(d => d.day_number === day || d.order_index === (day - 1));
+    if (targetDay) {
+      const targetStudentIds = all.filter(l => l.event_id === eventId).map(l => l.id);
+      this.batchSetDayAttendance(eventId, targetDay.id, targetStudentIds, state ? 'Present' : 'Absent', 'Mass Action');
+    }
+  }
+
+  // ── EVENT DAYS & ACTIVITIES & ATTENDANCE ─────────────────────────────
+
+  /**
+   * Auto-initializes standard default days for an event if none exist yet.
+   */
+  public initializeDefaultDaysForEvent(eventId: string): EventDay[] {
+    if (!eventId) return [];
+    const existing = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []).filter(d => d.event_id === eventId);
+    if (existing.length > 0) return existing;
+
+    const defaultDays: EventDay[] = [
+      {
+        id: genUuid(),
+        event_id: eventId,
+        day_number: 1,
+        name: 'Day 1',
+        status: 'Active',
+        is_active: true,
+        activities: [
+          'Student Orientation',
+          'Party & Constituency Allocation + Group Formation'
+        ],
+        order_index: 0,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      },
+      {
+        id: genUuid(),
+        event_id: eventId,
+        day_number: 2,
+        name: 'Day 2',
+        status: 'Upcoming',
+        is_active: false,
+        activities: [
+          'Speaker & Party Leader Selection',
+          'Government Formation + CM & LOP Election'
+        ],
+        order_index: 1,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      },
+      {
+        id: genUuid(),
+        event_id: eventId,
+        day_number: 3,
+        name: 'Day 3',
+        status: 'Upcoming',
+        is_active: false,
+        activities: [
+          'Cabinet Formation',
+          'Mock Assembly'
+        ],
+        order_index: 2,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
+    ];
+
+    const allDays = [...this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []), ...defaultDays];
+    this.setItem(STORAGE_KEYS.EVENT_DAYS, allDays);
+
+    // Seed historical attendance from day1_checked_in and day2_checked_in
+    const learners = this.getLearners(eventId);
+    const existingAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+    const newAtt: DayAttendanceRecord[] = [...existingAtt];
+
+    learners.forEach(l => {
+      if (l.day1_checked_in) {
+        newAtt.push({
+          id: genUuid(),
+          event_id: eventId,
+          day_id: defaultDays[0].id,
+          student_id: l.id,
+          learner_id: l.id,
+          status: 'Present',
+          marked_by: 'Initial Check-in',
+          marked_by_role: 'volunteer',
+          marked_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        });
+      }
+      if (l.day2_checked_in) {
+        newAtt.push({
+          id: genUuid(),
+          event_id: eventId,
+          day_id: defaultDays[1].id,
+          student_id: l.id,
+          learner_id: l.id,
+          status: 'Present',
+          marked_by: 'Initial Check-in',
+          marked_by_role: 'volunteer',
+          marked_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        });
+      }
+    });
+
+    this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, newAtt);
+    this.persistEventDaysToSocialCoverage(eventId, defaultDays, newAtt.filter(a => a.event_id === eventId));
+    return defaultDays;
+  }
+
+  public getEventDays(eventId?: string): EventDay[] {
+    const all = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []);
+    if (!eventId) return all;
+
+    const eventDays = all.filter(d => d.event_id === eventId && !d.is_archived);
+    if (eventDays.length === 0) {
+      return this.initializeDefaultDaysForEvent(eventId);
+    }
+    return [...eventDays].sort((a, b) => (a.order_index ?? a.day_number) - (b.order_index ?? b.day_number));
+  }
+
+  public getActiveEventDay(eventId: string): EventDay | undefined {
+    const days = this.getEventDays(eventId);
+    return days.find(d => d.status === 'Active') || days[0];
+  }
+
+  public async addEventDay(eventId: string, dayData: Partial<EventDay>): Promise<EventDay> {
+    const days = this.getEventDays(eventId);
+    const nextNumber = dayData.day_number || (days.length > 0 ? Math.max(...days.map(d => d.day_number)) + 1 : 1);
+    const newDay: EventDay = {
+      id: (dayData.id && isValidUuid(dayData.id)) ? dayData.id : genUuid(),
+      event_id: eventId,
+      day_number: nextNumber,
+      name: dayData.name || `Day ${nextNumber}`,
+      date: dayData.date || '',
+      status: dayData.status || (days.length === 0 ? 'Active' : 'Upcoming'),
+      activities: Array.isArray(dayData.activities) ? dayData.activities : ['Student Orientation'],
+      order_index: dayData.order_index ?? days.length,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    // If new day is marked Active, deactivate any other active days
+    let all = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []);
+    if (newDay.status === 'Active') {
+      all = all.map(d => {
+        if (d.event_id === eventId && d.status === 'Active') {
+          return { ...d, status: 'Upcoming' as EventDayStatus, updated_at: new Date().toISOString() };
+        }
+        return d;
+      });
+    }
+
+    all.push(newDay);
+    this.setItem(STORAGE_KEYS.EVENT_DAYS, all);
+    this.sbUpsert('event_days', newDay as unknown as Record<string, unknown>);
+    this.persistEventDaysToSocialCoverage(eventId);
+    return newDay;
+  }
+
+  public async updateEventDay(day: EventDay): Promise<EventDay> {
+    let all = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []);
+    const updatedDay: EventDay = {
+      ...day,
+      updated_at: new Date().toISOString()
+    };
+
+    all = all.map(d => {
+      if (d.id === day.id) {
+        return updatedDay;
+      }
+      // If this day is being set to Active, change previously active day to Completed or Upcoming
+      if (day.status === 'Active' && d.event_id === day.event_id && d.status === 'Active') {
+        return {
+          ...d,
+          status: d.day_number < day.day_number ? 'Completed' : 'Upcoming',
+          updated_at: new Date().toISOString()
+        };
+      }
+      return d;
+    });
+
+    this.setItem(STORAGE_KEYS.EVENT_DAYS, all);
+    this.sbUpsert('event_days', updatedDay as unknown as Record<string, unknown>);
+    this.persistEventDaysToSocialCoverage(day.event_id);
+    return updatedDay;
+  }
+
+  public async setActiveEventDay(eventId: string, dayId: string): Promise<void> {
+    let all = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []);
+    const target = all.find(d => d.id === dayId);
+    if (!target) return;
+
+    all = all.map(d => {
+      if (d.event_id !== eventId) return d;
+      if (d.id === dayId) {
+        return { ...d, is_active: true, status: 'Active' as EventDayStatus, updated_at: new Date().toISOString() };
+      }
+      const wasActive = d.status === 'Active' || d.is_active;
+      return {
+        ...d,
+        is_active: false,
+        status: wasActive
+          ? (((d.order_index ?? 0) < (target.order_index ?? 0) ? 'Completed' : 'Upcoming') as EventDayStatus)
+          : d.status,
+        updated_at: new Date().toISOString()
+      };
+    });
+
+    this.setItem(STORAGE_KEYS.EVENT_DAYS, all);
+    const updatedTarget = all.find(d => d.id === dayId);
+    if (updatedTarget) {
+      this.sbUpsert('event_days', updatedTarget as unknown as Record<string, unknown>);
+    }
+    this.persistEventDaysToSocialCoverage(eventId);
+  }
+
+  public hasAttendanceRecords(dayId: string): boolean {
+    const all = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+    return all.some(a => a.day_id === dayId);
+  }
+
+  public async deleteEventDay(eventId: string, dayId: string, force: boolean = false): Promise<{ success: boolean; error?: string }> {
+    const attendanceRecords = this.getDayAttendance(eventId, dayId);
+    if (attendanceRecords.length > 0 && !force) {
+      return {
+        success: false,
+        error: `This day has ${attendanceRecords.length} recorded attendance records. Please confirm deletion to proceed.`
+      };
+    }
+
+    const all = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []).filter(d => d.id !== dayId);
+    this.setItem(STORAGE_KEYS.EVENT_DAYS, all);
+
+    if (force && attendanceRecords.length > 0) {
+      const remainingAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []).filter(a => a.day_id !== dayId);
+      this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, remainingAtt);
+    }
+
+    await this.sbDelete('event_days', dayId);
+    this.persistEventDaysToSocialCoverage(eventId);
+    return { success: true };
+  }
+
+  public async reorderDayActivities(dayId: string, activities: string[]): Promise<EventDay | null> {
+    const all = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []);
+    const target = all.find(d => d.id === dayId);
+    if (!target) return null;
+
+    const updated: EventDay = {
+      ...target,
+      activities: [...activities],
+      updated_at: new Date().toISOString()
+    };
+
+    const updatedList = all.map(d => d.id === dayId ? updated : d);
+    this.setItem(STORAGE_KEYS.EVENT_DAYS, updatedList);
+    this.sbUpsert('event_days', updated as unknown as Record<string, unknown>);
+    this.persistEventDaysToSocialCoverage(target.event_id);
+    return updated;
+  }
+
+  public getDayAttendance(eventId: string, dayId?: string): DayAttendanceRecord[] {
+    const all = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+    return all.filter(a => a.event_id === eventId && (!dayId || a.day_id === dayId));
+  }
+
+  public async setStudentDayAttendance(
+    eventId: string,
+    dayId: string,
+    studentId: string,
+    status: DayAttendanceStatus,
+    markedBy: string = 'Floor Volunteer',
+    markedByRole: string = 'volunteer'
+  ): Promise<DayAttendanceRecord> {
+    const all = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+    const existingIndex = all.findIndex(a => a.event_id === eventId && a.day_id === dayId && a.student_id === studentId);
+
+    let record: DayAttendanceRecord;
+    if (existingIndex >= 0) {
+      record = {
+        ...all[existingIndex],
+        status,
+        marked_by: markedBy,
+        marked_by_role: markedByRole,
+        marked_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      all[existingIndex] = record;
+    } else {
+      record = {
+        id: genUuid(),
+        event_id: eventId,
+        day_id: dayId,
+        student_id: studentId,
+        learner_id: studentId,
+        status,
+        marked_by: markedBy,
+        marked_by_role: markedByRole,
+        marked_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      all.push(record);
+    }
+
+    this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, all);
+    this.sbUpsert('event_day_attendance', record as unknown as Record<string, unknown>);
+
+    // Two-way sync: if this day is Day 1 or Day 2, also sync learner day1_checked_in/day2_checked_in
+    const days = this.getEventDays(eventId);
+    const currentDay = days.find(d => d.id === dayId);
+    const isDay1 = Boolean(currentDay && (currentDay.day_number === 1 || currentDay.order_index === 0));
+    const isDay2 = Boolean(currentDay && (currentDay.day_number === 2 || currentDay.order_index === 1));
+
+    if (isDay1 || isDay2) {
+      const isPresent = status === 'Present';
+      const allLearners = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, []);
+      let updatedLearner: Learner | null = null;
+      const nextLearners = allLearners.map(l => {
+        if (l.id === studentId) {
+          updatedLearner = {
+            ...l,
+            day1_checked_in: isDay1 ? isPresent : l.day1_checked_in,
+            day2_checked_in: isDay2 ? isPresent : l.day2_checked_in
+          };
+          return updatedLearner;
+        }
+        return l;
+      });
+      if (updatedLearner) {
+        this.setItem(STORAGE_KEYS.LEARNERS, nextLearners);
+        this.sbUpsert('learners', updatedLearner as unknown as Record<string, unknown>);
+      }
+    }
+
+    this.persistEventDaysToSocialCoverage(eventId);
+    return record;
+  }
+
+  public async batchSetDayAttendance(
+    eventId: string,
+    dayId: string,
+    studentIds: string[],
+    status: DayAttendanceStatus,
+    markedBy: string = 'Floor Volunteer',
+    markedByRole: string = 'volunteer'
+  ): Promise<void> {
+    const all = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+    const existingMap = new Map<string, DayAttendanceRecord>();
+    all.forEach(a => existingMap.set(`${a.event_id}:::${a.day_id}:::${a.student_id}`, a));
+
+    const recordsToSave: DayAttendanceRecord[] = [];
+    const timestamp = new Date().toISOString();
+
+    studentIds.forEach(stId => {
+      const key = `${eventId}:::${dayId}:::${stId}`;
+      const existing = existingMap.get(key);
+      const rec: DayAttendanceRecord = existing ? {
+        ...existing,
+        status,
+        marked_by: markedBy,
+        marked_by_role: markedByRole,
+        marked_at: timestamp,
+        updated_at: timestamp
+      } : {
+        id: genUuid(),
+        event_id: eventId,
+        day_id: dayId,
+        student_id: stId,
+        learner_id: stId,
+        status,
+        marked_by: markedBy,
+        marked_by_role: markedByRole,
+        marked_at: timestamp,
+        created_at: timestamp,
+        updated_at: timestamp
+      };
+      existingMap.set(key, rec);
+      recordsToSave.push(rec);
+    });
+
+    this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, Array.from(existingMap.values()));
+
+    // Batch upsert to Supabase if configured
+    if (recordsToSave.length > 0) {
+      this.sbUpsertBatch('event_day_attendance', recordsToSave as unknown as Record<string, unknown>[]);
+    }
+
+    // Two-way sync with learner records for Day 1 and Day 2
+    const days = this.getEventDays(eventId);
+    const currentDay = days.find(d => d.id === dayId);
+    const isDay1 = Boolean(currentDay && (currentDay.day_number === 1 || currentDay.order_index === 0));
+    const isDay2 = Boolean(currentDay && (currentDay.day_number === 2 || currentDay.order_index === 1));
+
+    if (isDay1 || isDay2) {
+      const isPresent = status === 'Present';
+      const studentIdSet = new Set(studentIds);
+      const allLearners = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, []);
+      const nextLearners = allLearners.map(l => {
+        if (studentIdSet.has(l.id)) {
+          return {
+            ...l,
+            day1_checked_in: isDay1 ? isPresent : l.day1_checked_in,
+            day2_checked_in: isDay2 ? isPresent : l.day2_checked_in
+          };
+        }
+        return l;
+      });
+      this.setItem(STORAGE_KEYS.LEARNERS, nextLearners);
+    }
+
+    this.persistEventDaysToSocialCoverage(eventId);
+  }
+
+  public getEventAttendanceSummary(eventId: string): {
+    day: EventDay;
+    total: number;
+    present: number;
+    absent: number;
+    percentage: number;
+  }[] {
+    const days = this.getEventDays(eventId);
+    const learners = this.getLearners(eventId);
+    const total = learners.length;
+    const allAtt = this.getDayAttendance(eventId);
+
+    return days.map(day => {
+      const dayAtt = allAtt.filter(a => a.day_id === day.id);
+      const present = dayAtt.filter(a => a.status === 'Present').length;
+      const absent = Math.max(0, total - present);
+      const percentage = total > 0 ? Math.round((present / total) * 100) : 0;
+      return {
+        day,
+        total,
+        present,
+        absent,
+        percentage
+      };
+    });
+  }
+
+  private persistEventDaysToSocialCoverage(eventId: string, daysOverride?: EventDay[], attOverride?: DayAttendanceRecord[]) {
+    try {
+      const events = this.getEvents();
+      const targetEv = events.find(e => e.id === eventId);
+      if (!targetEv) return;
+
+      const days = daysOverride || this.getEventDays(eventId);
+      const att = attOverride || this.getDayAttendance(eventId);
+
+      const sc = (targetEv.social_coverage || {}) as any;
+      sc.event_days = days;
+      sc.day_attendance = att;
+      targetEv.social_coverage = sc;
+
+      this.setItem(STORAGE_KEYS.EVENTS, events);
+      this.sbUpsert('college_events', targetEv as unknown as Record<string, unknown>);
+    } catch (e) {
+      console.warn('Failed to mirror event days into social_coverage:', e);
+    }
   }
 
   // ── PARTIES ───────────────────────────────────────────────────────────────

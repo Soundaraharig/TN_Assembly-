@@ -21,7 +21,10 @@ import type {
   ChecklistItem,
   ChatMessage,
   FeedbackEntry,
-  TeamMember
+  TeamMember,
+  EventDay,
+  DayAttendanceRecord,
+  DayAttendanceStatus
 } from './types';
 import { storageService } from './services/storageService';
 import { Header } from './components/common/Header';
@@ -33,6 +36,7 @@ import { useTheme } from './lib/theme';
 import { UnifiedLoginPage } from './components/auth/UnifiedLoginPage';
 import { MyEventsDashboard } from './components/admin/MyEventsDashboard';
 import { EventOverviewTab } from './components/admin/EventOverviewTab';
+import { DaysActivitiesTab } from './components/admin/DaysActivitiesTab';
 
 import { ParticipantsTab } from './components/coordinator/ParticipantsTab';
 import { AllocationTab } from './components/coordinator/AllocationTab';
@@ -245,6 +249,14 @@ interface EventTabRouteHandlerProps {
   activeCommittee?: Committee | null;
   currentStudent?: Learner | null;
   navigate: (path: string, options?: any) => void;
+  eventDays: EventDay[];
+  dayAttendance: DayAttendanceRecord[];
+  handleAddEventDay: (dayData: Partial<EventDay>) => Promise<EventDay>;
+  handleUpdateEventDay: (day: EventDay) => Promise<EventDay>;
+  handleDeleteEventDay: (dayId: string, force?: boolean) => Promise<{ success: boolean; error?: string }>;
+  handleSetActiveEventDay: (dayId: string) => Promise<void>;
+  handleSetStudentDayAttendance: (dayId: string, studentId: string, status: DayAttendanceStatus, markedBy?: string) => Promise<DayAttendanceRecord>;
+  handleBatchSetDayAttendance: (dayId: string, studentIds: string[], status: DayAttendanceStatus, markedBy?: string) => Promise<void>;
 }
 
 function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
@@ -758,6 +770,24 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
         />
       )}
 
+      {activeTabFromPath === 'days_activities' && (
+        <DaysActivitiesTab
+          event={activeEvent}
+          eventDays={props.eventDays}
+          dayAttendance={props.dayAttendance}
+          learners={props.learners}
+          parties={props.parties}
+          committees={props.committees}
+          onAddDay={props.handleAddEventDay}
+          onUpdateDay={props.handleUpdateEventDay}
+          onDeleteDay={props.handleDeleteEventDay}
+          onSetActiveDay={props.handleSetActiveEventDay}
+          onSetStudentDayAttendance={props.handleSetStudentDayAttendance}
+          onBatchSetDayAttendance={props.handleBatchSetDayAttendance}
+          onShowToast={props.addToast}
+        />
+      )}
+
       {activeTabFromPath === 'report' && (
         <ReportTab
           event={activeEvent}
@@ -814,6 +844,8 @@ export function App() {
   const [feedback, setFeedback] = useState<FeedbackEntry[]>([]);
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [openNominationPositions, setOpenNominationPositions] = useState<string[]>([]);
+  const [eventDays, setEventDays] = useState<EventDay[]>([]);
+  const [dayAttendance, setDayAttendance] = useState<DayAttendanceRecord[]>([]);
 
   const [currentCoordinator, setCurrentCoordinator] = useState<Coordinator | null>(null);
   const [currentStudent, setCurrentStudent] = useState<Learner | null>(() => {
@@ -947,6 +979,8 @@ export function App() {
       setChatMessages(storageService.getChatMessages(activeEv.id));
       setFeedback(storageService.getFeedback(activeEv.id));
       setTeam(storageService.getTeam(activeEv.id));
+      setEventDays(storageService.getEventDays(activeEv.id));
+      setDayAttendance(storageService.getDayAttendance(activeEv.id));
 
       const coord = coords.find(c => c.event_id === activeEv!.id) || coords[0] || null;
       setCurrentCoordinator(coord);
@@ -1249,6 +1283,8 @@ export function App() {
     setChatMessages(storageService.getChatMessages(ev.id));
     setFeedback(storageService.getFeedback(ev.id));
     setTeam(storageService.getTeam(ev.id));
+    setEventDays(storageService.getEventDays(ev.id));
+    setDayAttendance(storageService.getDayAttendance(ev.id));
 
     const coord = coordinators.find(c => c.event_id === ev.id) || coordinators[0] || null;
     setCurrentCoordinator(coord);
@@ -1476,6 +1512,80 @@ export function App() {
 
   const handleSetAgendaStatus = (id: string, status: any) => {
     storageService.setAgendaItemStatus(id, status);
+  };
+
+  const handleAddEventDay = async (dayData: Partial<EventDay>): Promise<EventDay> => {
+    const activeEv = extractEventFromUrl(events) || currentEvent;
+    if (!activeEv) throw new Error('No active event');
+    const newDay = await storageService.addEventDay(activeEv.id, dayData);
+    setEventDays(storageService.getEventDays(activeEv.id));
+    addToast('Day Added', `Created ${newDay.day_number || newDay.name}`, 'success');
+    return newDay;
+  };
+
+  const handleUpdateEventDay = async (day: EventDay): Promise<EventDay> => {
+    const activeEv = extractEventFromUrl(events) || currentEvent;
+    if (!activeEv) throw new Error('No active event');
+    const updated = await storageService.updateEventDay(day);
+    setEventDays(storageService.getEventDays(activeEv.id));
+    addToast('Day Updated', `Saved changes for ${day.day_number || day.name}`, 'success');
+    return updated;
+  };
+
+  const handleDeleteEventDay = async (dayId: string, force?: boolean): Promise<{ success: boolean; error?: string }> => {
+    const activeEv = extractEventFromUrl(events) || currentEvent;
+    if (!activeEv) return { success: false, error: 'No active event' };
+    const res = await storageService.deleteEventDay(activeEv.id, dayId, force ?? false);
+    if (!res.success) {
+      addToast('Cannot Delete Day', res.error || 'Failed to delete day', 'error');
+      return res;
+    }
+    setEventDays(storageService.getEventDays(activeEv.id));
+    setDayAttendance(storageService.getDayAttendance(activeEv.id));
+    addToast('Day Deleted', 'Event day removed successfully', 'info');
+    return res;
+  };
+
+  const handleSetActiveEventDay = async (dayId: string): Promise<void> => {
+    const activeEv = extractEventFromUrl(events) || currentEvent;
+    if (!activeEv) return;
+    await storageService.setActiveEventDay(activeEv.id, dayId);
+    setEventDays(storageService.getEventDays(activeEv.id));
+    addToast('Active Day Set', 'Volunteers will now record attendance for this day', 'info');
+  };
+
+  const handleSetStudentDayAttendance = async (
+    dayId: string,
+    studentId: string,
+    status: DayAttendanceStatus,
+    markedBy?: string
+  ): Promise<DayAttendanceRecord> => {
+    const activeEv = extractEventFromUrl(events) || currentEvent;
+    if (!activeEv) throw new Error('No active event');
+    const rec = await storageService.setStudentDayAttendance(activeEv.id, dayId, studentId, status, markedBy || userSession?.name || role);
+    setDayAttendance(storageService.getDayAttendance(activeEv.id));
+    setLearners(storageService.getLearners(activeEv.id));
+    return rec;
+  };
+
+  const handleBatchSetDayAttendance = async (
+    dayId: string,
+    studentIds: string[],
+    status: DayAttendanceStatus,
+    markedBy?: string
+  ): Promise<void> => {
+    const activeEv = extractEventFromUrl(events) || currentEvent;
+    if (!activeEv) return;
+    await storageService.batchSetDayAttendance(
+      activeEv.id,
+      dayId,
+      studentIds,
+      status,
+      markedBy || userSession?.name || role
+    );
+    setDayAttendance(storageService.getDayAttendance(activeEv.id));
+    setLearners(storageService.getLearners(activeEv.id));
+    addToast('Attendance Updated', `Marked ${studentIds.length} students as ${status}`, 'success');
   };
 
   const handleSetCurrentAgendaItem = (itemId: string) => {
@@ -1913,8 +2023,12 @@ export function App() {
           committees={committees}
           elections={elections}
           flashVotes={flashVotes}
+          eventDays={eventDays}
+          dayAttendance={dayAttendance}
           onToggleCheckIn={handleToggleCheckIn}
           onCheckInAll={handleCheckInAll}
+          onSetStudentDayAttendance={handleSetStudentDayAttendance}
+          onBatchSetDayAttendance={handleBatchSetDayAttendance}
           onAddWalkIn={(l) => {
             handleAddLearner(l);
             setLearners(storageService.getLearners(currentEvent?.id));
@@ -1945,7 +2059,7 @@ export function App() {
   // Calculate dynamic tab completions based on live data
   const completedTabsSet = new Set<ActiveNavTab>();
   if (team.length > 0) completedTabsSet.add('team');
-  
+  if (eventDays.length > 0) completedTabsSet.add('days_activities');
   if (agenda.length > 0) completedTabsSet.add('agenda');
   if (learners.length > 0) completedTabsSet.add('participants');
   if (nominations.length > 0) completedTabsSet.add('nominations');
@@ -2290,6 +2404,14 @@ export function App() {
                   activeCommittee={activeCommittee}
                   currentStudent={currentStudent}
                   navigate={navigate}
+                  eventDays={eventDays}
+                  dayAttendance={dayAttendance}
+                  handleAddEventDay={handleAddEventDay}
+                  handleUpdateEventDay={handleUpdateEventDay}
+                  handleDeleteEventDay={handleDeleteEventDay}
+                  handleSetActiveEventDay={handleSetActiveEventDay}
+                  handleSetStudentDayAttendance={handleSetStudentDayAttendance}
+                  handleBatchSetDayAttendance={handleBatchSetDayAttendance}
                 />
               }
             />
@@ -2375,6 +2497,14 @@ export function App() {
                   activeCommittee={activeCommittee}
                   currentStudent={currentStudent}
                   navigate={navigate}
+                  eventDays={eventDays}
+                  dayAttendance={dayAttendance}
+                  handleAddEventDay={handleAddEventDay}
+                  handleUpdateEventDay={handleUpdateEventDay}
+                  handleDeleteEventDay={handleDeleteEventDay}
+                  handleSetActiveEventDay={handleSetActiveEventDay}
+                  handleSetStudentDayAttendance={handleSetStudentDayAttendance}
+                  handleBatchSetDayAttendance={handleBatchSetDayAttendance}
                 />
               }
             />
