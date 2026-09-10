@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import type { Learner, Party } from '../../types';
 import {
   getResolvedPartyName,
@@ -261,6 +261,14 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
   const [newMinistryInput, setNewMinistryInput] = useState('');
   const [viewMode, setViewMode] = useState<'roster' | 'config'>('roster');
 
+  const eventLearners = useMemo(() => {
+    return eventId ? (learners || []).filter(l => l.event_id === eventId) : (learners || []);
+  }, [learners, eventId]);
+
+  const eventParties = useMemo(() => {
+    return eventId ? (parties || []).filter(p => p.event_id === eventId) : (parties || []);
+  }, [parties, eventId]);
+
   const isInitializedRef = useRef(false);
   const isDirtyRef = useRef(false);
   const prevSavedMinistriesRef = useRef<string[] | undefined>(savedMinistries);
@@ -439,9 +447,9 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
     }
 
     if (learnerId) {
-      const learner = (learners || []).find(l => l.id === learnerId);
+      const learner = (eventLearners || []).find(l => l.id === learnerId);
       if (learner) {
-        const bench = getResolvedLearnerBench(learner, parties);
+        const bench = getResolvedLearnerBench(learner, eventParties);
         if (isChiefMinisterRole(portfolioRole) && bench === 'Opposition') {
           onShowToast('Bench Rule Violation', 'Chief Minister must belong to the Ruling party / bench.', 'error');
           return;
@@ -455,7 +463,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
 
     if (onAssignCabinetRole) {
       onAssignCabinetRole(learnerId, portfolioRole);
-      const learner = (learners || []).find(l => l.id === learnerId);
+      const learner = (eventLearners || []).find(l => l.id === learnerId);
       if (learner) {
         onShowToast('Minister Appointed', `Assigned ${learner.full_name} as ${portfolioRole}`, 'success');
       } else {
@@ -550,16 +558,16 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                 { role: CANONICAL_ROLES.CHIEF_MINISTER, title: 'Chief Minister', bench: 'Ruling Bench', allowedBench: 'Ruling' as const },
                 { role: CANONICAL_ROLES.LEADER_OF_OPPOSITION, title: 'Leader of Opposition', bench: 'Opposition Bench', allowedBench: 'Opposition' as const }
               ].map(item => {
-                const holder = (learners || []).find(l => {
+                const holder = (eventLearners || []).find(l => {
                   if (item.role === CANONICAL_ROLES.CHIEF_MINISTER) return isChiefMinisterRole(l.role);
                   if (item.role === CANONICAL_ROLES.SPEAKER) return isSpeakerRole(l.role);
                   if (item.role === CANONICAL_ROLES.LEADER_OF_OPPOSITION) return isLeaderOfOppositionRole(l.role);
                   return false;
                 });
 
-                const eligibleLearners = (learners || []).filter(l => {
+                const eligibleLearners = (eventLearners || []).filter(l => {
                   if (!item.allowedBench) return true;
-                  const b = getResolvedLearnerBench(l, parties);
+                  const b = getResolvedLearnerBench(l, eventParties);
                   return b === item.allowedBench;
                 });
 
@@ -585,7 +593,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
 
                     <SearchableDelegateSelect
                       learners={eligibleLearners}
-                      parties={parties}
+                      parties={eventParties}
                       currentLearnerId={holder?.id}
                       disabled={isLocked}
                       onSelect={(learnerId) => handleAssignRole(learnerId, item.role)}
@@ -615,8 +623,8 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {cabinetPortfolios.map(port => {
-                const rulingHolder = (learners || []).find(l => l.role === port.rulingRole);
-                const shadowHolder = (learners || []).find(l => l.role === port.shadowRole);
+                const rulingHolder = (eventLearners || []).find(l => l.role === port.rulingRole);
+                const shadowHolder = (eventLearners || []).find(l => l.role === port.shadowRole);
 
                 return (
                   <div
@@ -638,13 +646,13 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                           </span>
                           {rulingHolder && (
                             <span className="text-[10px] text-slate-400">
-                              {getResolvedPartyName(rulingHolder, parties) || 'Ruling'}
+                              {getResolvedPartyName(rulingHolder, eventParties) || 'Ruling'}
                             </span>
                           )}
                         </div>
                         <SearchableDelegateSelect
-                          learners={learners}
-                          parties={parties}
+                          learners={eventLearners}
+                          parties={eventParties}
                           currentLearnerId={rulingHolder?.id}
                           disabled={isLocked}
                           onSelect={(learnerId) => handleAssignRole(learnerId, port.rulingRole)}
@@ -661,13 +669,13 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                           </span>
                           {shadowHolder && (
                             <span className="text-[10px] text-slate-400">
-                              {getResolvedPartyName(shadowHolder, parties) || 'Opposition'}
+                              {getResolvedPartyName(shadowHolder, eventParties) || 'Opposition'}
                             </span>
                           )}
                         </div>
                         <SearchableDelegateSelect
-                          learners={learners}
-                          parties={parties}
+                          learners={eventLearners}
+                          parties={eventParties}
                           currentLearnerId={shadowHolder?.id}
                           disabled={isLocked}
                           onSelect={(learnerId) => handleAssignRole(learnerId, port.shadowRole)}

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Routes, Route, Navigate, useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { getEventSlug, findEventBySlug, extractEventFromUrl, pathToTab, tabToPath } from './utils/slug';
 import type {
@@ -288,6 +288,48 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
   }, [activeTabFromPath, props.activeNavTab]);
 
   const activeEvent = matchedEvent || props.currentEvent || props.events[0];
+
+  // Strictly event-scoped records computed synchronously so child views and tabs NEVER cross-bleed data across events
+  const currentLearners = useMemo(() => {
+    return activeEvent?.id ? storageService.getLearners(activeEvent.id) : props.learners;
+  }, [activeEvent?.id, props.learners]);
+
+  const currentParties = useMemo(() => {
+    return activeEvent?.id ? storageService.getParties(activeEvent.id) : props.parties;
+  }, [activeEvent?.id, props.parties]);
+
+  const currentCommittees = useMemo(() => {
+    return activeEvent?.id ? storageService.getCommittees(activeEvent.id) : props.committees;
+  }, [activeEvent?.id, props.committees]);
+
+  const currentNominations = useMemo(() => {
+    return activeEvent?.id ? storageService.getNominations(activeEvent.id) : props.nominations;
+  }, [activeEvent?.id, props.nominations]);
+
+  const currentElections = useMemo(() => {
+    return activeEvent?.id ? storageService.getElections(activeEvent.id) : props.elections;
+  }, [activeEvent?.id, props.elections]);
+
+  const currentFlashVotes = useMemo(() => {
+    return activeEvent?.id ? storageService.getFlashVotes(activeEvent.id) : props.flashVotes;
+  }, [activeEvent?.id, props.flashVotes]);
+
+  const currentScores = useMemo(() => {
+    return activeEvent?.id ? storageService.getScores(activeEvent.id) : props.scores;
+  }, [activeEvent?.id, props.scores]);
+
+  const currentAgenda = useMemo(() => {
+    return activeEvent?.id ? storageService.getAgenda(activeEvent.id) : props.agenda;
+  }, [activeEvent?.id, props.agenda]);
+
+  const currentEventDays = useMemo(() => {
+    return activeEvent?.id ? props.eventDays.filter(d => d.event_id === activeEvent.id) : props.eventDays;
+  }, [activeEvent?.id, props.eventDays]);
+
+  const currentDayAttendance = useMemo(() => {
+    return activeEvent?.id ? props.dayAttendance.filter(a => a.event_id === activeEvent.id) : props.dayAttendance;
+  }, [activeEvent?.id, props.dayAttendance]);
+
   if (!activeEvent) {
     if (props.events.length > 0) {
       if (props.role === 'student') {
@@ -314,7 +356,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
       <StudentDashboard
         student={props.currentStudent}
         event={activeEvent}
-        agenda={props.agenda}
+        agenda={currentAgenda}
         party={props.activeParty || null}
         committee={props.activeCommittee || null}
         nominations={studentNominations}
@@ -407,7 +449,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
 
       {activeTabFromPath === 'agenda' && (
         <AgendaTab
-          agenda={props.agenda}
+          agenda={currentAgenda}
           eventId={activeEvent.id}
           userRole={props.userSession?.role || props.role}
           onAddAgendaItem={props.handleAddAgendaItem}
@@ -424,9 +466,9 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
 
       {activeTabFromPath === 'participants' && (
         <ParticipantsTab
-          learners={props.learners}
-          parties={props.parties}
-          committees={props.committees}
+          learners={currentLearners}
+          parties={currentParties}
+          committees={currentCommittees}
           eventName={activeEvent.college_name}
           eventId={activeEvent.id}
           userRole={props.userSession?.role || props.role}
@@ -445,9 +487,9 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
 
       {activeTabFromPath === 'nominations' && (
         <NominationsTab
-          nominations={props.nominations}
-          learners={props.learners}
-          parties={props.parties}
+          nominations={currentNominations}
+          learners={currentLearners}
+          parties={currentParties}
           eventId={activeEvent.id}
           userRole={props.userSession?.role || props.role}
           openPositions={props.openNominationPositions}
@@ -476,7 +518,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
       {activeTabFromPath === 'questionnaire' && (
         <QuestionnaireTab
           questions={props.questions}
-          learners={props.learners}
+          learners={currentLearners}
           eventId={activeEvent.id}
           onAddQuestion={(q) => storageService.addQuestion(q)}
           onAnswerQuestion={(id, resp) => storageService.answerQuestion(id, resp)}
@@ -486,8 +528,8 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
 
       {activeTabFromPath === 'committees' && (
         <CommitteesTab
-          committees={props.committees}
-          learners={props.learners}
+          committees={currentCommittees}
+          learners={currentLearners}
           eventId={activeEvent.id}
           userRole={props.userSession?.role || props.role}
           onAddCommittee={props.handleAddCommittee}
@@ -504,8 +546,8 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
 
       {activeTabFromPath === 'parties' && (
         <PartiesTab
-          parties={props.parties}
-          learners={props.learners}
+          parties={currentParties}
+          learners={currentLearners}
           eventId={activeEvent.id}
           userRole={props.userSession?.role || props.role}
           onUpdatePartyWhatsApp={(id, link) => storageService.updatePartyWhatsAppLink(id, link)}
@@ -523,9 +565,9 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
 
       {activeTabFromPath === 'allocation' && (
         <AllocationTab
-          learners={props.learners}
-          parties={props.parties}
-          committees={props.committees}
+          learners={currentLearners}
+          parties={currentParties}
+          committees={currentCommittees}
           eventId={activeEvent.id}
           onExecuteAllocation={(rulingRatio) => {
             return props.handleExecuteAllocation(rulingRatio, activeEvent.id);
@@ -544,10 +586,11 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           }}
           onUpdateLearner={props.handleUpdateLearner}
           onOpenImportCsv={() => props.setIsImportCsvOpen(true)}
-          onUpdatePartyBench={async (partyId, bench) => {
-            await storageService.setPartyBench(partyId, bench, activeEvent.id);
-            props.setParties(storageService.getParties(activeEvent.id));
-            props.setLearners(storageService.getLearners(activeEvent.id));
+          onUpdatePartyBench={async (partyId, bench, evId) => {
+            const targetEventId = evId || activeEvent.id;
+            await storageService.setPartyBench(partyId, bench, targetEventId);
+            props.setParties(storageService.getParties(targetEventId));
+            props.setLearners(storageService.getLearners(targetEventId));
           }}
           onShowToast={props.addToast}
         />
@@ -555,8 +598,8 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
 
       {activeTabFromPath === 'cabinet' && (
         <CabinetTab
-          learners={props.learners}
-          parties={props.parties}
+          learners={currentLearners}
+          parties={currentParties}
           eventId={activeEvent.id}
           savedMinistries={activeEvent.cabinet_ministries}
           isLocked={activeEvent.is_locked}
@@ -589,8 +632,8 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           volunteers={props.volunteers}
           eventId={activeEvent.id}
           userRole={props.userSession?.role || props.role}
-          parties={props.parties}
-          committees={props.committees}
+          parties={currentParties}
+          committees={currentCommittees}
           onAddVolunteer={props.handleAddVolunteer}
           onToggleArrival={(id) => storageService.toggleVolunteerArrival(id)}
           onBulkImportVolunteers={(vols) => {
@@ -606,12 +649,12 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
 
       {activeTabFromPath === 'control' && (
         <ControlTab
-          learners={props.learners}
-          parties={props.parties}
-          agenda={props.agenda}
-          scores={props.scores}
-          elections={props.elections}
-          flashVotes={props.flashVotes}
+          learners={currentLearners}
+          parties={currentParties}
+          agenda={currentAgenda}
+          scores={currentScores}
+          elections={currentElections}
+          flashVotes={currentFlashVotes}
           currentEvent={activeEvent}
           eventName={activeEvent.college_name}
           onShowToast={props.addToast}
@@ -629,21 +672,21 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
       {activeTabFromPath === 'projector' && (
         <ProjectorTab
           currentEvent={activeEvent}
-          agenda={props.agenda}
-          elections={props.elections}
-          flashVotes={props.flashVotes}
-          learners={props.learners}
+          agenda={currentAgenda}
+          elections={currentElections}
+          flashVotes={currentFlashVotes}
+          learners={currentLearners}
           onShowToast={props.addToast}
         />
       )}
 
       {activeTabFromPath === 'elections' && (
         <ElectionsTab
-          elections={props.elections}
-          flashVotes={props.flashVotes}
-          learners={props.learners}
-          parties={props.parties}
-          nominations={props.nominations}
+          elections={currentElections}
+          flashVotes={currentFlashVotes}
+          learners={currentLearners}
+          parties={currentParties}
+          nominations={currentNominations}
           eventId={activeEvent.id}
           onCastVote={(elecId, candId, delId) => {
             storageService.castVoteInElection(elecId, candId, delId);
@@ -708,7 +751,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
       {activeTabFromPath === 'proceedings' && (
         <ProceedingsTab
           proceedings={props.proceedings}
-          learners={props.learners}
+          learners={currentLearners}
           eventId={activeEvent.id}
           eventSlug={getEventSlug(activeEvent)}
           onAddBill={(bill) => storageService.addBill(bill)}
@@ -728,8 +771,8 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
 
       {activeTabFromPath === 'scoregrid' && (
         <ScoreGridTab
-          scores={props.scores}
-          learners={props.learners}
+          scores={currentScores}
+          learners={currentLearners}
           eventId={activeEvent.id}
           onSaveScore={(sc) => {
             storageService.saveScoreRecord(sc);
@@ -752,7 +795,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
 
       {activeTabFromPath === 'awards' && (
         <AwardsTab
-          learners={props.learners}
+          learners={currentLearners}
           eventName={activeEvent.college_name}
           onShowToast={props.addToast}
         />
@@ -777,11 +820,11 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
       {activeTabFromPath === 'days_activities' && (
         <DaysActivitiesTab
           event={activeEvent}
-          eventDays={props.eventDays}
-          dayAttendance={props.dayAttendance}
-          learners={props.learners}
-          parties={props.parties}
-          committees={props.committees}
+          eventDays={currentEventDays}
+          dayAttendance={currentDayAttendance}
+          learners={currentLearners}
+          parties={currentParties}
+          committees={currentCommittees}
           onAddDay={props.handleAddEventDay}
           onUpdateDay={props.handleUpdateEventDay}
           onDeleteDay={props.handleDeleteEventDay}
@@ -795,7 +838,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
       {activeTabFromPath === 'report' && (
         <ReportTab
           event={activeEvent}
-          learners={props.learners}
+          learners={currentLearners}
           proceedings={props.proceedings}
           onShowToast={props.addToast}
         />

@@ -32,7 +32,7 @@ interface AllocationTabProps {
   onResetAllocation: () => void | Promise<any>;
   onUpdateLearner: (learner: Learner) => void;
   onOpenImportCsv?: () => void;
-  onUpdatePartyBench?: (partyId: string, bench: BenchType) => void;
+  onUpdatePartyBench?: (partyId: string, bench: BenchType, eventId?: string) => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -626,7 +626,7 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
                     <div className="flex items-center gap-1 shrink-0">
                       <button
                         type="button"
-                        onClick={() => onUpdatePartyBench(p.id, 'Ruling')}
+                        onClick={() => onUpdatePartyBench(p.id, 'Ruling', eventId || p.event_id)}
                         className={`px-1.5 py-0.5 rounded text-[10px] font-bold border transition-colors cursor-pointer ${
                           p.bench === 'Ruling'
                             ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
@@ -638,7 +638,7 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
                       </button>
                       <button
                         type="button"
-                        onClick={() => onUpdatePartyBench(p.id, 'Opposition')}
+                        onClick={() => onUpdatePartyBench(p.id, 'Opposition', eventId || p.event_id)}
                         className={`px-1.5 py-0.5 rounded text-[10px] font-bold border transition-colors cursor-pointer ${
                           p.bench === 'Opposition'
                             ? 'bg-rose-600 text-white border-rose-600 shadow-xs'

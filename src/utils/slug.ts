@@ -37,26 +37,27 @@ export function findEventBySlug(events: CollegeEvent[], slug?: string, preferred
   const matchByComputed = events.find(e => getEventSlug(e).toLowerCase() === cleanSlug);
   if (matchByComputed) return matchByComputed;
 
-  // 4. Preferred event match (ensures coordinator stays on their assigned event)
+  // 4. Exact college slug match
+  const matchByColSlug = events.find(e => slugify(e.college_name) === cleanSlug);
+  if (matchByColSlug) return matchByColSlug;
+
+  // 5. Preferred event match (only if unambiguous or exact identifier)
   if (preferredEventId) {
     const pref = events.find(e => e.id === preferredEventId);
     if (pref) {
-      const prefColSlug = slugify(pref.college_name);
-      if (
-        pref.id.toLowerCase() === cleanSlug ||
-        pref.slug?.toLowerCase() === cleanSlug ||
-        getEventSlug(pref).toLowerCase() === cleanSlug ||
-        (prefColSlug && (cleanSlug.includes(prefColSlug) || prefColSlug.includes(cleanSlug)))
-      ) {
+      const prefSlug = (pref.slug || '').toLowerCase();
+      const prefCompSlug = getEventSlug(pref).toLowerCase();
+      if (pref.id.toLowerCase() === cleanSlug || prefSlug === cleanSlug || prefCompSlug === cleanSlug) {
         return pref;
       }
     }
   }
 
-  // 5. Fuzzy fallback match (e.g. college name contained in slug)
+  // 6. Strict prefix or word-boundary fallback (avoiding broad substring false matches)
   return events.find(e => {
     const colSlug = slugify(e.college_name);
-    return colSlug && (cleanSlug.includes(colSlug) || colSlug.includes(cleanSlug));
+    if (!colSlug) return false;
+    return cleanSlug.startsWith(colSlug + '-') || colSlug.startsWith(cleanSlug + '-');
   });
 }
 

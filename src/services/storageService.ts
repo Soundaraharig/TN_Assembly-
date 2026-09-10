@@ -514,11 +514,7 @@ class StorageService {
   public cleanDemoEventDaysAndAttendance(): void {
     try {
       const allEvents = this.getEvents();
-      const demoEvents = allEvents.filter(e => {
-        const name = (e.college_name || '').toLowerCase();
-        const slug = (e.slug || '').toLowerCase();
-        return name.includes('jkkncet') || slug.includes('jkkncet');
-      });
+      const demoEvents = allEvents.filter(e => e.id === '200fdd74-4d21-44d5-9f63-9a07bf267824');
 
       if (demoEvents.length === 0) return;
 
@@ -583,13 +579,15 @@ class StorageService {
         });
       }
     } catch (e) {
-      console.warn('Error in cleanDemoEventDaysAndAttendance:', e);
+      console.warn('[StorageService] Error during cleanDemoEventDaysAndAttendance:', e);
     }
   }
 
   /**
    * Defensive recovery to ensure event 200fdd74-4d21-44d5-9f63-9a07bf267824 retains its correct
    * identity ("JKKNCET TN ASSEMBLY 2026") and coordinator mapping ("soundaraharigece2025@jkkn.ac.in").
+   * STRICTLY checks target event ID '200fdd74-4d21-44d5-9f63-9a07bf267824' so other events created
+   * by the same coordinator are never forcibly renamed or overwritten.
    */
   public restoreJkkncetEvent(): void {
     try {
@@ -597,10 +595,8 @@ class StorageService {
       let changed = false;
       const targetId = '200fdd74-4d21-44d5-9f63-9a07bf267824';
       const updatedEvents = allEvents.map(ev => {
-        const isTarget = ev.id === targetId ||
-          ev.slug === 'jkkncet-tn-assembly-2026-tamil-nadu-2026' ||
-          (ev.college_name && ev.college_name.toLowerCase().includes('jkkncet')) ||
-          (ev.assigned_coordinator_email && ev.assigned_coordinator_email.toLowerCase() === 'soundaraharigece2025@jkkn.ac.in');
+        // STRICTLY match only the exact demo event ID
+        const isTarget = ev.id === targetId;
         
         if (isTarget) {
           const needsNameFix = ev.college_name !== 'JKKNCET TN ASSEMBLY 2026';
@@ -1603,7 +1599,7 @@ class StorageService {
 
   public addEvent(event: Partial<CollegeEvent>): CollegeEvent {
     const all = this.getEvents();
-    const eventId = uid('ev');
+    const eventId = (event.id && isValidUuid(event.id)) ? event.id : genUuid();
     const computedSlug = getEventSlug({
       id: eventId,
       college_name: event.college_name || 'New Assembly',
@@ -2709,16 +2705,17 @@ class StorageService {
     const existingParties = this.getParties();
     const oldParty = existingParties.find(p => p.id === party.id);
     const oldName = oldParty?.name;
+    const targetEventId = party.event_id || oldParty?.event_id;
 
     const all = existingParties.map(p => (p.id === party.id ? party : p));
     this.setItem(STORAGE_KEYS.PARTIES, all);
     await this.sbUpsert('political_parties', party as unknown as Record<string, unknown>);
 
-    // Cascade update to all learners who belong to this party
+    // Cascade update strictly to learners of this event who belong to this party
     const allLearners = this.getLearners();
     let learnersChanged = false;
     const updatedLearners = allLearners.map(l => {
-      if (l.party_id === party.id || (oldName && l.party_name === oldName)) {
+      if ((!targetEventId || l.event_id === targetEventId) && (l.party_id === party.id || (oldName && l.party_name === oldName))) {
         learnersChanged = true;
         return {
           ...l,
@@ -2732,40 +2729,43 @@ class StorageService {
 
     if (learnersChanged) {
       this.setItem(STORAGE_KEYS.LEARNERS, updatedLearners);
-      const learnersToUpdate = updatedLearners.filter(l => l.party_id === party.id || (oldName && l.party_name === oldName));
+      const learnersToUpdate = updatedLearners.filter(l => (!targetEventId || l.event_id === targetEventId) && (l.party_id === party.id || (oldName && l.party_name === oldName)));
       if (learnersToUpdate.length > 0) {
         await this.sbUpsertBatch('learners', learnersToUpdate as unknown as Record<string, unknown>[]);
       }
     }
 
-    // Cascade update to nominations
+    // Cascade update to nominations strictly within targetEventId
     if (oldName && oldName !== party.name) {
       const allNoms = this.getNominationAll();
       const updatedNoms = allNoms.map(n => {
-        if (n.party_name === oldName) {
+        if ((!targetEventId || n.event_id === targetEventId) && n.party_name === oldName) {
           return { ...n, party_name: party.name, bench: party.bench };
         }
         return n;
       });
       this.setItem(STORAGE_KEYS.NOMINATIONS, updatedNoms);
 
-      // Cascade update to election candidates
+      // Cascade update to election candidates strictly within targetEventId
       const allElecs = this.getElectionAll();
-      const updatedElecs = allElecs.map(e => ({
-        ...e,
-        candidates: e.candidates.map(c => {
-          if (c.party === oldName) {
-            return { ...c, party: party.name, bench: party.bench };
-          }
-          return c;
-        })
-      }));
+      const updatedElecs = allElecs.map(e => {
+        if (targetEventId && e.event_id !== targetEventId) return e;
+        return {
+          ...e,
+          candidates: e.candidates.map(c => {
+            if (c.party === oldName) {
+              return { ...c, party: party.name, bench: party.bench };
+            }
+            return c;
+          })
+        };
+      });
       this.setItem(STORAGE_KEYS.ELECTIONS, updatedElecs);
 
-      // Cascade update to score records
+      // Cascade update to score records strictly within targetEventId
       const allScores = this.getScores();
       const updatedScores = allScores.map(s => {
-        if (s.party_name === oldName) {
+        if ((!targetEventId || s.event_id === targetEventId) && s.party_name === oldName) {
           return { ...s, party_name: party.name, bench: party.bench };
         }
         return s;
@@ -2776,34 +2776,38 @@ class StorageService {
     this.notify();
   }
 
-  public async setPartyBench(partyId: string, bench: 'Ruling' | 'Opposition' | 'Independent', _eventId?: string): Promise<void> {
-    const parties = this.getParties().map(p => {
-      if (p.id === partyId) {
+  public async setPartyBench(partyId: string, bench: 'Ruling' | 'Opposition' | 'Independent', eventId?: string): Promise<void> {
+    const allParties = this.getParties();
+    const targetParty = allParties.find(p => p.id === partyId && (!eventId || p.event_id === eventId)) || allParties.find(p => p.id === partyId);
+    if (!targetParty) {
+      console.warn(`[storageService.setPartyBench] Party ${partyId} not found`);
+      return;
+    }
+    const resolvedEventId = eventId || targetParty.event_id;
+
+    const updatedParties = allParties.map(p => {
+      if (p.id === partyId && (!resolvedEventId || p.event_id === resolvedEventId)) {
         return { ...p, bench };
       }
       return p;
     });
-    this.setItem(STORAGE_KEYS.PARTIES, parties);
+    this.setItem(STORAGE_KEYS.PARTIES, updatedParties);
+    await this.sbUpsert('political_parties', { ...targetParty, bench } as unknown as Record<string, unknown>);
 
-    const targetParty = parties.find(p => p.id === partyId);
-    if (targetParty) {
-      await this.sbUpsert('political_parties', targetParty as unknown as Record<string, unknown>);
-
-      // Automatically update all learners belonging to this party to follow the manual bench switch
-      const allLearners = this.getLearners();
-      const updatedLearners = allLearners.map(l => {
-        if (l.party_id === partyId || l.party_name === targetParty.name) {
-          return { ...l, bench };
-        }
-        return l;
-      });
-      this.setItem(STORAGE_KEYS.LEARNERS, updatedLearners);
-
-      // Sync updated learners to Supabase
-      const learnersToUpdate = updatedLearners.filter(l => l.party_id === partyId || l.party_name === targetParty.name);
-      if (learnersToUpdate.length > 0) {
-        await this.sbUpsertBatch('learners', learnersToUpdate as unknown as Record<string, unknown>[]);
+    // Automatically update learners belonging to this party STRICTLY within this event
+    const allLearners = this.getLearners();
+    const updatedLearners = allLearners.map(l => {
+      if ((!resolvedEventId || l.event_id === resolvedEventId) && (l.party_id === partyId || l.party_name === targetParty.name)) {
+        return { ...l, bench };
       }
+      return l;
+    });
+    this.setItem(STORAGE_KEYS.LEARNERS, updatedLearners);
+
+    // Sync updated learners to Supabase ONLY for this event
+    const learnersToUpdate = updatedLearners.filter(l => (!resolvedEventId || l.event_id === resolvedEventId) && (l.party_id === partyId || l.party_name === targetParty.name));
+    if (learnersToUpdate.length > 0) {
+      await this.sbUpsertBatch('learners', learnersToUpdate as unknown as Record<string, unknown>[]);
     }
     this.notify();
   }
@@ -2834,7 +2838,7 @@ class StorageService {
         if (i === 0) bench = 'Ruling';
         else if (i === 1) bench = 'Opposition';
         const newParty: Party = {
-          id: uid('pty'),
+          id: genUuid(),
           event_id: eventId,
           name: `Party ${i + 1}`,
           bench,
@@ -2866,7 +2870,7 @@ class StorageService {
       let learnersChanged = false;
       const changedLearners: Learner[] = [];
       const updatedLearners = allLearners.map(l => {
-        if ((l.party_id && removedIds.has(l.party_id)) || (l.party_name && removedNames.has(l.party_name))) {
+        if (l.event_id === eventId && ((l.party_id && removedIds.has(l.party_id)) || (l.party_name && removedNames.has(l.party_name)))) {
           learnersChanged = true;
           const mod = {
             ...l,
@@ -2895,15 +2899,16 @@ class StorageService {
 
   public async deleteParty(partyId: string): Promise<void> {
     const targetParty = this.getParties().find(p => p.id === partyId);
+    const targetEventId = targetParty?.event_id;
     this.addDeletedIds([partyId]);
     this.setItem(STORAGE_KEYS.PARTIES, this.getParties().filter(p => p.id !== partyId));
     await this.sbDelete('political_parties', partyId);
 
-    // Unassign learners from deleted party
+    // Unassign learners from deleted party strictly within this event
     const allLearners = this.getLearners();
     const changedLearners: Learner[] = [];
     const updatedLearners = allLearners.map(l => {
-      if (l.party_id === partyId || (targetParty && l.party_name === targetParty.name)) {
+      if ((!targetEventId || l.event_id === targetEventId) && (l.party_id === partyId || (targetParty && l.party_name === targetParty.name))) {
         const mod = {
           ...l,
           party_id: undefined,
@@ -2960,7 +2965,7 @@ class StorageService {
       } else {
         const topicName = defaultTopics[i % defaultTopics.length];
         const newComm: Committee = {
-          id: uid('cmt'),
+          id: genUuid(),
           event_id: eventId,
           name: `Committee ${i + 1} - ${topicName}`,
           topic: topicName,
@@ -2992,7 +2997,7 @@ class StorageService {
       let learnersChanged = false;
       const changedLearners: Learner[] = [];
       const updatedLearners = allLearners.map(l => {
-        if ((l.committee_id && removedIds.has(l.committee_id)) || (l.committee_name && removedNames.has(l.committee_name))) {
+        if (l.event_id === eventId && ((l.committee_id && removedIds.has(l.committee_id)) || (l.committee_name && removedNames.has(l.committee_name)))) {
           learnersChanged = true;
           const mod = {
             ...l,
@@ -3021,7 +3026,7 @@ class StorageService {
   public async addCommittee(committee: Partial<Committee>): Promise<Committee> {
     const all = this.getCommittees();
     const newComm: Committee = {
-      id: (committee.id && isValidUuid(committee.id)) ? committee.id : uid('cmt'),
+      id: (committee.id && isValidUuid(committee.id)) ? committee.id : genUuid(),
       event_id: committee.event_id || '',
       name: committee.name || 'Committee Name',
       topic: committee.topic || 'General Assembly Topic',
@@ -3046,16 +3051,17 @@ class StorageService {
     const existingComms = this.getCommittees();
     const oldCom = existingComms.find(c => c.id === com.id);
     const oldName = oldCom?.name;
+    const targetEventId = com.event_id || oldCom?.event_id;
 
     const all = existingComms.map(c => (c.id === com.id ? com : c));
     this.setItem(STORAGE_KEYS.COMMITTEES, all);
     await this.sbUpsert('committees', com as unknown as Record<string, unknown>);
 
-    // Cascade update to all learners belonging to this committee
+    // Cascade update to all learners belonging to this committee strictly within targetEventId
     const allLearners = this.getLearners();
     let learnersChanged = false;
     const updatedLearners = allLearners.map(l => {
-      if (l.committee_id === com.id || (oldName && l.committee_name === oldName)) {
+      if ((!targetEventId || l.event_id === targetEventId) && (l.committee_id === com.id || (oldName && l.committee_name === oldName))) {
         learnersChanged = true;
         return {
           ...l,
@@ -3068,7 +3074,7 @@ class StorageService {
 
     if (learnersChanged) {
       this.setItem(STORAGE_KEYS.LEARNERS, updatedLearners);
-      const learnersToUpdate = updatedLearners.filter(l => l.committee_id === com.id || (oldName && l.committee_name === oldName));
+      const learnersToUpdate = updatedLearners.filter(l => (!targetEventId || l.event_id === targetEventId) && (l.committee_id === com.id || (oldName && l.committee_name === oldName)));
       if (learnersToUpdate.length > 0) {
         await this.sbUpsertBatch('learners', learnersToUpdate as unknown as Record<string, unknown>[]);
       }
@@ -3078,15 +3084,16 @@ class StorageService {
 
   public async deleteCommittee(comId: string): Promise<void> {
     const targetCom = this.getCommittees().find(c => c.id === comId);
+    const targetEventId = targetCom?.event_id;
     this.addDeletedIds([comId]);
     this.setItem(STORAGE_KEYS.COMMITTEES, this.getCommittees().filter(c => c.id !== comId));
     await this.sbDelete('committees', comId);
 
-    // Unassign learners from deleted committee
+    // Unassign learners from deleted committee strictly within targetEventId
     const allLearners = this.getLearners();
     const changedLearners: Learner[] = [];
     const updatedLearners = allLearners.map(l => {
-      if (l.committee_id === comId || (targetCom && l.committee_name === targetCom.name)) {
+      if ((!targetEventId || l.event_id === targetEventId) && (l.committee_id === comId || (targetCom && l.committee_name === targetCom.name))) {
         const mod = {
           ...l,
           committee_id: undefined,
@@ -3682,6 +3689,27 @@ class StorageService {
 
     this.setItem(STORAGE_KEYS.LEARNERS, updated);
 
+    // Maintain event-level dual-layer leadership role index on college_events
+    const allEvents = this.getEvents();
+    const targetEv = allEvents.find(e => e.id === eventId);
+    if (targetEv) {
+      const sc = { ...((targetEv.social_coverage as Record<string, unknown>) || {}) };
+      const currentRoles = { ...((sc.leadership_roles as Record<string, string>) || {}) };
+      if (targetLearner) {
+        currentRoles[canonicalRole] = targetLearner.id;
+      } else {
+        delete currentRoles[canonicalRole];
+      }
+      sc.leadership_roles = currentRoles;
+      const updatedEvents = allEvents.map(e => e.id === eventId ? { ...e, social_coverage: sc } : e);
+      this.setItem(STORAGE_KEYS.EVENTS, updatedEvents);
+      if (supabase) {
+        this.sbUpsert('college_events', { ...targetEv, social_coverage: sc } as unknown as Record<string, unknown>).catch(e => {
+          console.warn('[Supabase] leadership_roles sync error:', e);
+        });
+      }
+    }
+
     if (supabase) {
       const affected = updated.filter(l =>
         l.event_id === eventId &&
@@ -3698,6 +3726,23 @@ class StorageService {
     this.notify();
     const eventLearners = updated.filter(l => l.event_id === eventId);
     return { success: true, learners: eventLearners };
+  }
+
+  public getLeadershipRoles(eventId: string): Record<string, string> {
+    if (!eventId) return {};
+    const event = this.getEvents().find(e => e.id === eventId);
+    const roles: Record<string, string> = (event?.social_coverage as any)?.leadership_roles || {};
+    return roles;
+  }
+
+  public getPartyBenches(eventId: string): Record<string, 'Ruling' | 'Opposition' | 'Independent'> {
+    if (!eventId) return {};
+    const parties = this.getParties(eventId);
+    const benches: Record<string, 'Ruling' | 'Opposition' | 'Independent'> = {};
+    parties.forEach(p => {
+      benches[p.id] = p.bench || 'Independent';
+    });
+    return benches;
   }
 
   // ── NOMINATIONS ───────────────────────────────────────────────────────────
@@ -3783,9 +3828,10 @@ class StorageService {
       }
     }
 
-    // Guard 2: A member is eligible only one time to nominate of a post
+    // Guard 2: A member is eligible only one time to nominate of a post within an event
     if ((nom.candidate_learner_id || nom.candidate_name) && nom.position) {
       const existing = all.find(n =>
+        (!nom.event_id || n.event_id === nom.event_id) &&
         ((nom.candidate_learner_id && n.candidate_learner_id === nom.candidate_learner_id) ||
          (nom.candidate_name && n.candidate_name?.toLowerCase() === nom.candidate_name.toLowerCase())) &&
         n.position === nom.position &&
