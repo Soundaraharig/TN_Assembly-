@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import type { Committee, Learner, UserRole } from '../../types';
 import { canDelete } from '../../utils/permissions';
-import { Plus, BookOpen, Users, Edit, Trash2, X, Eye, Layers, UserCheck } from 'lucide-react';
+import { Plus, BookOpen, Users, Edit, Trash2, X, Eye, Layers, UserCheck, Search, ChevronDown, Check } from 'lucide-react';
 
 interface CommitteesTabProps {
   committees: Committee[];
@@ -14,6 +14,162 @@ interface CommitteesTabProps {
   onSetCommitteeCount?: (count: number) => void | Promise<any>;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
+
+interface SearchableChairpersonSelectProps {
+  members: Learner[];
+  currentChairpersonName?: string;
+  onSelect: (name: string) => void;
+  onShowToast?: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
+  placeholder?: string;
+}
+
+const SearchableChairpersonSelect: React.FC<SearchableChairpersonSelectProps> = ({
+  members = [],
+  currentChairpersonName,
+  onSelect,
+  placeholder = 'Search member name or const no...'
+}) => {
+  const [query, setQuery] = useState('');
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const filtered = members.filter(l => {
+    if (!query.trim()) return true;
+    const q = query.trim().toLowerCase();
+    const nameMatch = l.full_name?.toLowerCase().includes(q);
+    const constNoMatch = String(l.constituency_number || '').toLowerCase().includes(q);
+    const constNameMatch = l.constituency_name?.toLowerCase().includes(q);
+    const partyMatch = l.party_name?.toLowerCase().includes(q);
+    const deptMatch = l.department?.toLowerCase().includes(q);
+    const codeMatch = l.access_code?.toLowerCase().includes(q);
+    return nameMatch || constNoMatch || constNameMatch || partyMatch || deptMatch || codeMatch;
+  });
+
+  const selectedMember = members.find(l => l.full_name === currentChairpersonName);
+
+  return (
+    <div ref={containerRef} className="relative w-full">
+      <div
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full rounded-xl px-3 py-2 text-xs font-semibold border cursor-pointer flex items-center justify-between transition-colors shadow-xs hover:border-amber-500"
+        style={{
+          backgroundColor: 'var(--bg-elevated)',
+          borderColor: currentChairpersonName ? 'var(--accent)' : 'var(--border)',
+          color: 'var(--text-primary)'
+        }}
+      >
+        <span className="truncate flex items-center gap-1.5">
+          {currentChairpersonName ? (
+            <>
+              <span className="font-bold">{currentChairpersonName}</span>
+              {selectedMember && (
+                <span className="text-[10px] text-slate-400">
+                  ({selectedMember.party_name || 'Independent'}{selectedMember.constituency_number ? ` • #${selectedMember.constituency_number}` : ''})
+                </span>
+              )}
+            </>
+          ) : (
+            <span style={{ color: 'var(--text-muted)' }}>-- Choose Chairperson from Members --</span>
+          )}
+        </span>
+        <ChevronDown className={`w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </div>
+
+      {isOpen && (
+        <div
+          className="absolute z-50 left-0 right-0 mt-1 rounded-xl border shadow-2xl p-2 space-y-2 max-h-64 overflow-y-auto"
+          style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+        >
+          <div className="flex items-center gap-2 p-2 rounded-lg border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)' }}>
+            <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <input
+              type="text"
+              autoFocus
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder={placeholder}
+              className="w-full bg-transparent text-xs focus:outline-none placeholder:text-slate-400"
+              style={{ color: 'var(--text-primary)' }}
+            />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery('')}
+                className="text-[10px] text-slate-400 hover:text-white cursor-pointer"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          <div className="space-y-1">
+            <button
+              type="button"
+              onClick={() => {
+                onSelect('');
+                setIsOpen(false);
+              }}
+              className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
+            >
+              ✕ Unassign / Clear Chairperson
+            </button>
+
+            {filtered.length === 0 ? (
+              <p className="text-[11px] text-slate-400 px-2 py-3 italic text-center">
+                No matching members found for "{query}"
+              </p>
+            ) : (
+              filtered.map(l => {
+                const isCurrent = l.full_name === currentChairpersonName;
+                return (
+                  <button
+                    key={l.id}
+                    type="button"
+                    onClick={() => {
+                      onSelect(l.full_name);
+                      setIsOpen(false);
+                    }}
+                    className={`w-full text-left px-2.5 py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-between gap-2 cursor-pointer ${
+                      isCurrent
+                        ? 'bg-amber-500/20 text-amber-500 font-bold border border-amber-500/30'
+                        : 'hover:bg-slate-500/10'
+                    }`}
+                    style={{ color: isCurrent ? undefined : 'var(--text-primary)' }}
+                  >
+                    <div className="truncate flex items-center gap-1.5 min-w-0">
+                      <span className="font-bold truncate">{l.full_name}</span>
+                      <span className="text-[10px] text-slate-400 truncate">
+                        ({l.party_name || 'Independent'}{l.bench ? ` • ${l.bench}` : ''})
+                      </span>
+                    </div>
+                    <div className="shrink-0 flex items-center gap-1.5">
+                      {l.constituency_number ? (
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                          #{l.constituency_number} {l.constituency_name ? l.constituency_name.split('(')[0].replace(/^[0-9]+\s*-\s*/, '').trim() : ''}
+                        </span>
+                      ) : null}
+                      {isCurrent && <Check className="w-3.5 h-3.5 text-amber-500" />}
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const CommitteesTab: React.FC<CommitteesTabProps> = ({
   committees,
@@ -263,26 +419,13 @@ export const CommitteesTab: React.FC<CommitteesTabProps> = ({
                   </label>
 
                   {memberCount > 0 ? (
-                    <select
-                      value={comm.chairperson || ''}
-                      onChange={(e) => handleSelectChairperson(comm, e.target.value)}
-                      className="w-full rounded-xl px-3 py-1.5 text-xs font-semibold focus:outline-none border cursor-pointer"
-                      style={{
-                        backgroundColor: 'var(--bg-elevated)',
-                        borderColor: comm.chairperson ? 'var(--accent)' : 'var(--border)',
-                        color: 'var(--text-primary)'
-                      }}
-                    >
-                      <option value="">-- Choose Chairperson from Members --</option>
-                      {comm.chairperson && !commLearners.some(l => l.full_name === comm.chairperson) && (
-                        <option value={comm.chairperson}>{comm.chairperson} (Current Chairperson)</option>
-                      )}
-                      {commLearners.map((learner) => (
-                        <option key={learner.id} value={learner.full_name}>
-                          {learner.full_name} ({learner.party_name ? `${learner.party_name} • ` : ''}{learner.department || 'MLA'})
-                        </option>
-                      ))}
-                    </select>
+                    <SearchableChairpersonSelect
+                      members={commLearners}
+                      currentChairpersonName={comm.chairperson}
+                      onSelect={(selectedName) => handleSelectChairperson(comm, selectedName)}
+                      onShowToast={onShowToast}
+                      placeholder="Search member name or const no..."
+                    />
                   ) : (
                     <div className="p-2 rounded-xl border text-[11px] italic" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}>
                       No members allocated to this committee yet. (Run Auto-Allocation in Allocation Tab).
