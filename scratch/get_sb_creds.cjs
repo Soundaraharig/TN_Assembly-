@@ -15,7 +15,7 @@ async function main() {
         if (sbMatch) {
           console.log('FOUND SUPABASE URL:', sbMatch[0]);
         }
-        const anonMatch = js.match(/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/);
+        const anonMatch = js.match(/ey[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/);
         if (anonMatch) {
           console.log('FOUND SUPABASE ANON KEY:', anonMatch[0]);
         }

@@ -6,6 +6,7 @@ import {
   isChiefMinisterRole,
   isSpeakerRole,
   isLeaderOfOppositionRole,
+  isAssemblyRoleMatching,
   CANONICAL_ROLES
 } from '../../services/storageService';
 import {
@@ -30,8 +31,8 @@ interface CabinetTabProps {
   eventId?: string;
   savedMinistries?: string[];
   isLocked?: boolean;
-  onSaveCabinet?: (ministries: string[]) => void;
-  onAssignCabinetRole?: (learnerId: string, portfolioRole: string) => void;
+  onSaveCabinet?: (ministries: string[]) => void | Promise<any>;
+  onAssignCabinetRole?: (learnerId: string, portfolioRole: string) => void | Promise<any>;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -421,7 +422,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
     onShowToast('Ministry Deleted', `Removed ${itemToRemove?.name || 'custom ministry'} from list`, 'info');
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (isLocked) {
       onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
       return;
@@ -435,12 +436,16 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
     isInitializedRef.current = true;
     isDirtyRef.current = false;
     if (onSaveCabinet) {
-      onSaveCabinet(selectedMinistryNames);
+      const result = await onSaveCabinet(selectedMinistryNames);
+      if (result && result.success === false) {
+        onShowToast('Save Failed', 'Failed to persist cabinet to database. Please retry.', 'error');
+        return;
+      }
     }
     onShowToast('Cabinet Saved', `Saved ${selectedMinistryNames.length} active ministries for this event`, 'success');
   };
 
-  const handleAssignRole = (learnerId: string, portfolioRole: string) => {
+  const handleAssignRole = async (learnerId: string, portfolioRole: string) => {
     if (isLocked) {
       onShowToast('Roster Locked', 'Unlock event in Overview tab to assign cabinet ministers', 'info');
       return;
@@ -462,7 +467,11 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
     }
 
     if (onAssignCabinetRole) {
-      onAssignCabinetRole(learnerId, portfolioRole);
+      const result = await onAssignCabinetRole(learnerId, portfolioRole);
+      if (result && result.success === false) {
+        onShowToast('Assignment Failed', result.message || 'Failed to assign role. Please retry.', 'error');
+        return;
+      }
       const learner = (eventLearners || []).find(l => l.id === learnerId);
       if (learner) {
         onShowToast('Minister Appointed', `Assigned ${learner.full_name} as ${portfolioRole}`, 'success');
@@ -623,8 +632,8 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {cabinetPortfolios.map(port => {
-                const rulingHolder = (eventLearners || []).find(l => l.role === port.rulingRole);
-                const shadowHolder = (eventLearners || []).find(l => l.role === port.shadowRole);
+                const rulingHolder = (eventLearners || []).find(l => isAssemblyRoleMatching(l.role, port.rulingRole));
+                const shadowHolder = (eventLearners || []).find(l => isAssemblyRoleMatching(l.role, port.shadowRole));
 
                 return (
                   <div

@@ -335,7 +335,8 @@ class StorageService {
 
     // Run systemic cleanup & deduplication on startup
     this.cleanupAndDeduplicateData();
-    this.cleanDemoEventDaysAndAttendance();
+    // DISABLED: cleanDemoEventDaysAndAttendance() was wiping JKKNCET event_days, attendance, and elections on every page load.
+    // this.cleanDemoEventDaysAndAttendance();
     this.restoreJkkncetEvent();
   }
 
@@ -507,80 +508,15 @@ class StorageService {
   }
 
   /**
-   * Cleans demo/mock event days and mock attendance records for demo events (e.g. JKKNCET TN ASSEMBLY 2026).
-   * Strictly preserves: real participants (learners), users, coordinators, parties, committees, and events.
-   * Ensures the event starts fresh with 0 configured days and 0 attendance records.
+   * DISABLED: Previously cleaned demo/mock event days and attendance records.
+   * This was destructive and wiped JKKNCET event data on every page load.
+   * Retained as a no-op to avoid breaking any callers.
    */
   public cleanDemoEventDaysAndAttendance(): void {
-    try {
-      const allEvents = this.getEvents();
-      const demoEvents = allEvents.filter(e => e.id === '200fdd74-4d21-44d5-9f63-9a07bf267824');
-
-      if (demoEvents.length === 0) return;
-
-      const demoEventIds = new Set(demoEvents.map(e => e.id));
-
-      // 1. Remove mock event days for demo events
-      const allDays = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []);
-      const remainingDays = allDays.filter(d => !demoEventIds.has(d.event_id));
-      this.setItem(STORAGE_KEYS.EVENT_DAYS, remainingDays);
-
-      // 2. Remove mock attendance records for demo events
-      const allAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
-      const remainingAtt = allAtt.filter(a => !demoEventIds.has(a.event_id));
-      this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, remainingAtt);
-
-      // 3. Reset demo attendance flags (day1_checked_in, day2_checked_in) on learners for demo events
-      const allLearners = this.getLearners();
-      let learnersModified = false;
-      const updatedLearners = allLearners.map(l => {
-        if (demoEventIds.has(l.event_id) && (l.day1_checked_in || l.day2_checked_in)) {
-          learnersModified = true;
-          return { ...l, day1_checked_in: false, day2_checked_in: false };
-        }
-        return l;
-      });
-      if (learnersModified) {
-        this.setItem(STORAGE_KEYS.LEARNERS, updatedLearners);
-      }
-
-      // 4. Update college_events.social_coverage for demo events
-      const updatedEvents = allEvents.map(ev => {
-        if (demoEventIds.has(ev.id)) {
-          const sc = (ev.social_coverage || {}) as any;
-          sc.event_days = [];
-          sc.day_attendance = [];
-          return { ...ev, social_coverage: sc };
-        }
-        return ev;
-      });
-      this.setItem(STORAGE_KEYS.EVENTS, updatedEvents);
-
-      // 5. If Supabase is active, sync the cleared state to DB
-      if (supabase) {
-        demoEvents.forEach(async ev => {
-          try {
-            await supabase!.from('event_day_attendance').delete().eq('event_id', ev.id);
-            await supabase!.from('day_activities').delete().eq('event_id', ev.id);
-            await supabase!.from('event_days').delete().eq('event_id', ev.id);
-            if (learnersModified) {
-              await supabase!.from('learners').update({ day1_checked_in: false, day2_checked_in: false }).eq('event_id', ev.id);
-            }
-            await this.sbUpsert('college_events', {
-              ...ev,
-              college_name: ev.college_name && ev.college_name !== 'New Assembly' ? ev.college_name : 'JKKNCET TN ASSEMBLY 2026',
-              assigned_coordinator_email: ev.assigned_coordinator_email || 'soundaraharigece2025@jkkn.ac.in',
-              assigned_coordinator_name: ev.assigned_coordinator_name || 'Soundarahari',
-              social_coverage: (ev.social_coverage || {})
-            });
-          } catch (err) {
-            console.warn('[Supabase] cleanDemoEventDaysAndAttendance sync error:', err);
-          }
-        });
-      }
-    } catch (e) {
-      console.warn('[StorageService] Error during cleanDemoEventDaysAndAttendance:', e);
-    }
+    // DISABLED: This method was destructively deleting event_days, attendance records,
+    // and overwriting social_coverage for JKKNCET on every page load.
+    // All cleanup should be done via explicit admin actions, not automatic startup routines.
+    return;
   }
 
   /**
@@ -1073,11 +1009,30 @@ class StorageService {
       const currentEv = events.find(e => e.id === eventId);
       const existingSC = (currentEv?.social_coverage || {}) as Record<string, any>;
 
-      const allocLock = this.getItem<boolean>(`${STORAGE_KEYS.ALLOCATION_LOCK}_${eventId}`, false);
-      const regFrozen = this.getItem<boolean>(`${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${eventId}`, false);
-      const scLocked = this.getItem<boolean>(`${STORAGE_KEYS.SCORES_LOCKED}_${eventId}`, false);
+      const allocLock = this.getAllocationLock(eventId);
+      const regFrozen = this.getRegistrationsFrozen(eventId);
+      const scLocked = this.getScoresLocked(eventId);
       const projSettings = existingSC.projector_settings || this.getItem<ProjectorStudioSettings | null>(`tn_assembly_projector_studio_${eventId}`, null);
       const lastBell = existingSC.last_bell_ring || this.getItem<number | null>(`tn_assembly_last_bell_${eventId}`, null);
+
+      // Protect closed election history: never overwrite closed elections with empty upcoming ones
+      const existingElecs = Array.isArray(existingSC.elections) ? existingSC.elections : [];
+      const closedExisting = existingElecs.filter((e: any) => e.status === 'Closed');
+      const elecsWithHistory = elecs.map(e => {
+        if (e.status === 'Closed') return e;
+        const matchingClosed = closedExisting.find((ce: any) =>
+          ce.id === e.id ||
+          (ce.position && e.position && ce.position.toLowerCase() === e.position.toLowerCase()) ||
+          (ce.title && e.title && ce.title.toLowerCase() === e.title.toLowerCase())
+        );
+        return matchingClosed || e;
+      });
+      const mergedElecs = [...elecsWithHistory];
+      closedExisting.forEach((ce: any) => {
+        if (!mergedElecs.some(e => e.id === ce.id || (e.position && ce.position && e.position.toLowerCase() === ce.position.toLowerCase()))) {
+          mergedElecs.push(ce);
+        }
+      });
 
       const payload = {
         ...existingSC,
@@ -1085,16 +1040,16 @@ class StorageService {
         last_bell_ring: lastBell || existingSC.last_bell_ring,
         open_nominations: openNoms,
         nominations: noms,
-        elections: elecs,
+        elections: mergedElecs,
         flash_votes: fvotes,
         proceedings: procs,
         questions: qs,
         scores: scs,
         yuva_assignments: yuvaAssignments,
         cabinet_ministries: currentEv?.cabinet_ministries || [],
-        allocation_lock: existingSC.allocation_lock !== undefined ? existingSC.allocation_lock : allocLock,
-        registrations_frozen: existingSC.registrations_frozen !== undefined ? existingSC.registrations_frozen : regFrozen,
-        scores_locked: existingSC.scores_locked !== undefined ? existingSC.scores_locked : scLocked,
+        allocation_lock: allocLock,
+        registrations_frozen: regFrozen,
+        scores_locked: scLocked,
         updated_at: new Date().toISOString()
       };
 
@@ -1685,6 +1640,12 @@ class StorageService {
   }
 
   public updateEvent(event: CollegeEvent) {
+    if (event.is_locked !== undefined) {
+      const sc = { ...((event.social_coverage as Record<string, any>) || {}) };
+      sc.allocation_lock = event.is_locked;
+      event.social_coverage = sc;
+      this.setItem(`${STORAGE_KEYS.ALLOCATION_LOCK}_${event.id}`, event.is_locked);
+    }
     const all = this.getEvents().map(e => (e.id === event.id ? event : e));
     this.setItem(STORAGE_KEYS.EVENTS, all);
     this.sbUpsert('college_events', event as unknown as Record<string, unknown>);
@@ -1890,7 +1851,7 @@ class StorageService {
 
       this.setItem(STORAGE_KEYS.COORDINATORS, uniqueCoords);
       this.notify();
-      console.log('✅ [Coordinator Persisted Successfully to Supabase]:', savedRecord);
+      console.log('✅ [Coordinator Persisted Successfully to Supabase]:', { id: savedRecord.id, email: savedRecord.email, name: savedRecord.name });
       return { success: true, data: savedRecord, error: null };
     } catch (e: any) {
       console.error('❌ [Coordinator Persistence Exception]:', e);
@@ -3900,17 +3861,35 @@ class StorageService {
     this.notify();
   }
 
-  public saveCabinetMinistries(eventId: string, ministries: string[]) {
-    const events = this.getEvents().map(e =>
-      e.id === eventId ? { ...e, cabinet_ministries: ministries } : e
-    );
+  public async saveCabinetMinistries(eventId: string, ministries: string[]): Promise<{ success: boolean; error?: any }> {
+    // Update both cabinet_ministries AND social_coverage.cabinet_ministries so both persist to Supabase
+    const events = this.getEvents().map(e => {
+      if (e.id === eventId) {
+        const sc = { ...((e.social_coverage as Record<string, unknown>) || {}) };
+        sc.cabinet_ministries = ministries;
+        return { ...e, cabinet_ministries: ministries, social_coverage: sc };
+      }
+      return e;
+    });
     this.setItem(STORAGE_KEYS.EVENTS, events);
-    const target = events.find(e => e.id === eventId);
-    if (target) {
-      this.sbUpsert('college_events', target as unknown as Record<string, unknown>);
-      this.syncEventStateToSupabase(eventId);
-    }
     this.notify();
+
+    const target = events.find(e => e.id === eventId);
+    if (target && supabase) {
+      try {
+        const { error } = await supabase.from('college_events').update({
+          social_coverage: target.social_coverage
+        }).eq('id', eventId);
+        if (error) {
+          console.error('[Supabase] saveCabinetMinistries error:', error.message);
+          return { success: false, error };
+        }
+      } catch (err) {
+        console.error('[Supabase] saveCabinetMinistries exception:', err);
+        return { success: false, error: err };
+      }
+    }
+    return { success: true };
   }
 
   public saveWhatsAppLinks(eventId: string, treasuryLink: string, oppositionLink: string) {
@@ -3929,11 +3908,11 @@ class StorageService {
     this.setItem(STORAGE_KEYS.PARTIES, parties);
   }
 
-  public assignCabinetRole(
+  public async assignCabinetRole(
     eventId: string,
     learnerId: string | undefined | null,
     portfolioRole: string
-  ): { success: boolean; message?: string; learners: Learner[] } {
+  ): Promise<{ success: boolean; message?: string; learners: Learner[] }> {
     if (!eventId || !portfolioRole) {
       return { success: false, message: 'Event ID and role are required', learners: this.getLearners(eventId) };
     }
@@ -4004,9 +3983,11 @@ class StorageService {
       const updatedEvents = allEvents.map(e => e.id === eventId ? { ...e, social_coverage: sc } : e);
       this.setItem(STORAGE_KEYS.EVENTS, updatedEvents);
       if (supabase) {
-        this.sbUpsert('college_events', { ...targetEv, social_coverage: sc } as unknown as Record<string, unknown>).catch(e => {
+        try {
+          await supabase.from('college_events').update({ social_coverage: sc }).eq('id', eventId);
+        } catch (e) {
           console.warn('[Supabase] leadership_roles sync error:', e);
-        });
+        }
       }
     }
 
@@ -4017,9 +3998,12 @@ class StorageService {
       );
       if (affected.length > 0) {
         const sanitizedBatch = affected.map(item => this.sanitizeRecordForTable('learners', item as unknown as Record<string, unknown>));
-        supabase.from('learners').upsert(sanitizedBatch, { onConflict: 'id' }).then(({ error }) => {
+        try {
+          const { error } = await supabase.from('learners').upsert(sanitizedBatch, { onConflict: 'id' });
           if (error) console.warn('[Supabase] assign cabinet role sync error:', error.message);
-        });
+        } catch (err) {
+          console.warn('[Supabase] assign cabinet role sync exception:', err);
+        }
       }
     }
 
@@ -5405,9 +5389,9 @@ class StorageService {
     if (!targetId) return false;
 
     const ev = this.getEvents().find(e => e.id === targetId);
+    if (ev && typeof ev.is_locked === 'boolean') return ev.is_locked;
     const sc = ev?.social_coverage as Record<string, any> | undefined;
     if (sc && typeof sc.allocation_lock === 'boolean') return sc.allocation_lock;
-    if (ev && typeof ev.is_locked === 'boolean') return ev.is_locked;
 
     const raw = localStorage.getItem(`${STORAGE_KEYS.ALLOCATION_LOCK}_${targetId}`);
     if (raw !== null) {

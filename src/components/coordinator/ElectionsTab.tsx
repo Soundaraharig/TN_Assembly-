@@ -128,19 +128,58 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   const [pollMotionType, setPollMotionType] = useState<LiveFlashVote['motion_type']>('Division');
 
   // Auto-create standard constitutional election rows & party leader elections if missing
+  // GUARD: Never create blank upcoming elections for positions that already have elected leaders or closed elections
   useEffect(() => {
-    if (eventId) {
-      CONSTITUTIONAL_POSTS.forEach(post => {
+    if (!eventId) return;
+
+    // Check if any learners already hold leadership roles (surviving from closed elections)
+    const hasElectedSpeaker = learners.some(l => l.event_id === eventId && l.role && (l.role.toLowerCase().includes('speaker') && !l.role.toLowerCase().includes('deputy')));
+    const hasElectedCM = learners.some(l => l.event_id === eventId && l.role && (l.role.toLowerCase().includes('chief minister') || l.role.toLowerCase().includes('leader of the house')));
+    const hasElectedLOP = learners.some(l => l.event_id === eventId && l.role && (l.role.toLowerCase().includes('leader of the opposition') || l.role.toLowerCase().includes('leader of opposition')));
+
+    // Map constitutional post keys to whether the position is already filled
+    const filledPositions: Record<string, boolean> = {
+      'speaker': hasElectedSpeaker,
+      'cm': hasElectedCM,
+      'lop': hasElectedLOP,
+      'deputy_speaker': false, // deputy speaker is never auto-blocked
+    };
+
+    CONSTITUTIONAL_POSTS.forEach(post => {
+      const exists = elections.some(e =>
+        e.position?.toLowerCase() === post.position.toLowerCase() ||
+        e.title?.toLowerCase() === post.title.toLowerCase()
+      );
+      // If already exists or the position is filled by an elected leader, skip
+      if (exists || filledPositions[post.key]) return;
+
+      onCreateElection({
+        event_id: eventId,
+        title: post.title,
+        position: post.position,
+        type: post.type,
+        status: 'Upcoming',
+        candidates: [],
+        total_votes: 0,
+        voted_delegate_ids: []
+      });
+    });
+
+    // Auto-create Party Leader Elections for all assigned parties
+    if (parties && parties.length > 0) {
+      parties.forEach(p => {
         const exists = elections.some(e =>
-          e.position?.toLowerCase() === post.position.toLowerCase() ||
-          e.title?.toLowerCase() === post.title.toLowerCase()
+          (e.party_id === p.id) ||
+          (e.title.toLowerCase().includes(p.name.toLowerCase()) &&
+           (e.title.toLowerCase().includes('leader') || e.position?.toLowerCase().includes('leader')))
         );
         if (!exists) {
           onCreateElection({
             event_id: eventId,
-            title: post.title,
-            position: post.position,
-            type: post.type,
+            party_id: p.id,
+            title: `${p.name} Leader Election`,
+            position: 'Party Leader',
+            type: 'LEADERSHIP',
             status: 'Upcoming',
             candidates: [],
             total_votes: 0,
@@ -148,32 +187,8 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
           });
         }
       });
-
-      // Auto-create Party Leader Elections for all assigned parties
-      if (parties && parties.length > 0) {
-        parties.forEach(p => {
-          const exists = elections.some(e =>
-            (e.party_id === p.id) ||
-            (e.title.toLowerCase().includes(p.name.toLowerCase()) &&
-             (e.title.toLowerCase().includes('leader') || e.position?.toLowerCase().includes('leader')))
-          );
-          if (!exists) {
-            onCreateElection({
-              event_id: eventId,
-              party_id: p.id,
-              title: `${p.name} Leader Election`,
-              position: 'Party Leader',
-              type: 'LEADERSHIP',
-              status: 'Upcoming',
-              candidates: [],
-              total_votes: 0,
-              voted_delegate_ids: []
-            });
-          }
-        });
-      }
     }
-  }, [elections, eventId, parties]);
+  }, [elections, eventId, parties, learners]);
 
   const toggleAccordion = (id: string) => {
     setExpandedElectionIds(prev => {

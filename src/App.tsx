@@ -287,7 +287,9 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
     }
   }, [activeTabFromPath, props.activeNavTab]);
 
-  const activeEvent = matchedEvent || props.currentEvent || props.events[0];
+  // SAFE fallback: only use matchedEvent or currentEvent; NEVER blindly pick events[0]
+  // to prevent cross-event contamination (e.g. showing JKKN ARTS data in JKKNCET view)
+  const activeEvent = matchedEvent || props.currentEvent || props.events.find(e => e.id === preferredEventId);
 
   // Strictly event-scoped records computed synchronously so child views and tabs NEVER cross-bleed data across events
   const currentLearners = useMemo(() => {
@@ -603,14 +605,20 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           eventId={activeEvent.id}
           savedMinistries={activeEvent.cabinet_ministries}
           isLocked={activeEvent.is_locked}
-          onSaveCabinet={(ministries) => {
-            storageService.saveCabinetMinistries(activeEvent.id, ministries);
-            props.setCurrentEvent(prev => prev ? { ...prev, cabinet_ministries: ministries } : prev);
-            props.setEvents?.(storageService.getEvents());
+          onSaveCabinet={async (ministries) => {
+            const result = await storageService.saveCabinetMinistries(activeEvent.id, ministries);
+            if (result.success) {
+              props.setCurrentEvent(prev => prev ? { ...prev, cabinet_ministries: ministries } : prev);
+              props.setEvents?.(storageService.getEvents());
+            }
+            return result;
           }}
-          onAssignCabinetRole={(learnerId, portfolioRole) => {
-            storageService.assignCabinetRole(activeEvent.id, learnerId, portfolioRole);
-            props.setLearners(storageService.getLearners(activeEvent.id));
+          onAssignCabinetRole={async (learnerId, portfolioRole) => {
+            const result = await storageService.assignCabinetRole(activeEvent.id, learnerId, portfolioRole);
+            if (result.success) {
+              props.setLearners(storageService.getLearners(activeEvent.id));
+            }
+            return result;
           }}
           onShowToast={props.addToast}
         />
