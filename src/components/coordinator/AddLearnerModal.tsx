@@ -39,8 +39,6 @@ export const AddLearnerModal: React.FC<AddLearnerModalProps> = ({
   const [constituencyNumber, setConstituencyNumber] = useState<number | ''>('');
   const [constituencySearch, setConstituencySearch] = useState('');
 
-  if (!isOpen) return null;
-
   const isFrozen = storageService.getRegistrationsFrozen(eventId);
   const isAllocationLocked = storageService.getAllocationLock(eventId);
 
@@ -119,6 +117,8 @@ export const AddLearnerModal: React.FC<AddLearnerModalProps> = ({
   const selectedParty = eventParties.find(p => p.id === partyId);
   const selectedComm = eventCommittees.find(c => c.id === committeeId);
   const matchedConst = constituencyNumber ? TN_CONSTITUENCIES.find(c => c.number === Number(constituencyNumber)) : undefined;
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">

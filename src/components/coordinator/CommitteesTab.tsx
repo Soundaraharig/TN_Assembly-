@@ -171,7 +171,8 @@ export const CommitteesTab: React.FC<CommitteesTabProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {committees.map((comm, index) => {
           const commLearners = (learners || []).filter(
-            l => l.committee_id === comm.id || (!l.committee_id && l.committee_name === comm.name)
+            l => (comm.id && l.committee_id === comm.id) ||
+                 (comm.name && l.committee_name && l.committee_name.trim().toLowerCase() === comm.name.trim().toLowerCase())
           );
           const memberCount = commLearners.length;
 
@@ -273,6 +274,14 @@ export const CommitteesTab: React.FC<CommitteesTabProps> = ({
                       }}
                     >
                       <option value="">-- Choose Chairperson from Members --</option>
+                      {comm.chairperson && !commLearners.some(l => l.full_name === comm.chairperson) && (
+                        <option value={comm.chairperson}>{comm.chairperson} (Current Chairperson)</option>
+                      )}
+                      {commLearners.map((learner) => (
+                        <option key={learner.id} value={learner.full_name}>
+                          {learner.full_name} ({learner.party_name ? `${learner.party_name} • ` : ''}{learner.department || 'MLA'})
+                        </option>
+                      ))}
                     </select>
                   ) : (
                     <div className="p-2 rounded-xl border text-[11px] italic" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}>
@@ -394,11 +403,11 @@ export const CommitteesTab: React.FC<CommitteesTabProps> = ({
             </div>
 
             <div className="overflow-y-auto flex-1 space-y-2 pr-1">
-              {learners.filter(l => l.committee_id === viewRosterComm.id || l.committee_name === viewRosterComm.name).length === 0 ? (
+              {learners.filter(l => (viewRosterComm.id && l.committee_id === viewRosterComm.id) || (viewRosterComm.name && l.committee_name && l.committee_name.trim().toLowerCase() === viewRosterComm.name.trim().toLowerCase())).length === 0 ? (
                 <p className="text-xs italic py-6 text-center" style={{ color: 'var(--text-muted)' }}>No delegates assigned to this committee yet.</p>
               ) : (
                 learners
-                  .filter(l => l.committee_id === viewRosterComm.id || l.committee_name === viewRosterComm.name)
+                  .filter(l => (viewRosterComm.id && l.committee_id === viewRosterComm.id) || (viewRosterComm.name && l.committee_name && l.committee_name.trim().toLowerCase() === viewRosterComm.name.trim().toLowerCase()))
                   .map((learner, i) => (
                     <div
                       key={learner.id}
