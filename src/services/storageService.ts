@@ -2899,6 +2899,12 @@ class StorageService {
       }
     }
 
+    // Two-way sync with learner records for Day 1 and Day 2
+    const days = this.getEventDays(eventId);
+    const currentDay = days.find(d => d.id === dayId);
+    const isDay1 = Boolean(currentDay && (currentDay.day_number === 1 || currentDay.order_index === 0));
+    const isDay2 = Boolean(currentDay && (currentDay.day_number === 2 || currentDay.order_index === 1));
+
     if (isDay1 || isDay2) {
       const isPresent = status === 'Present';
       const studentIdSet = new Set(studentIds);
