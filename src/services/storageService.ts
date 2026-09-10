@@ -158,6 +158,7 @@ class StorageService {
   private writeErrorHandler: WriteErrorHandler | null = null;
   private inFlightPromises = new Map<string, Promise<{ success: boolean; error: any; data?: any }>>();
   private failedWriteSignatures = new Map<string, number>();
+  private fixedLearnerIdsSynced = new Set<string>();
 
   public setWriteErrorHandler(handler: WriteErrorHandler | null) {
     this.writeErrorHandler = handler;
@@ -472,12 +473,18 @@ class StorageService {
         seenLearnerIds.add(l.id);
 
         let finalPartyId = l.party_id;
+        let finalBench = l.bench;
         if (l.party_name) {
           const matchingParty = cleanedParties.find(
             p => p.event_id === evId && p.name && p.name.trim().toLowerCase() === l.party_name!.trim().toLowerCase()
           );
-          if (matchingParty && finalPartyId !== matchingParty.id) {
-            finalPartyId = matchingParty.id;
+          if (matchingParty) {
+            if (finalPartyId !== matchingParty.id) {
+              finalPartyId = matchingParty.id;
+            }
+            if (matchingParty.bench && finalBench !== matchingParty.bench) {
+              finalBench = matchingParty.bench;
+            }
           }
         }
 
@@ -491,7 +498,7 @@ class StorageService {
           }
         }
 
-        cleanedLearners.push({ ...l, event_id: evId, party_id: finalPartyId, committee_id: finalCommId });
+        cleanedLearners.push({ ...l, event_id: evId, party_id: finalPartyId, committee_id: finalCommId, bench: finalBench });
       });
       this.setItem(STORAGE_KEYS.LEARNERS, sortLearnersStably(cleanedLearners));
 
@@ -1435,6 +1442,26 @@ class StorageService {
     }
   }
 
+  public async sbUpdate(table: string, id: string, patch: Record<string, unknown>): Promise<{ success: boolean; error: any; data?: any }> {
+    const sb = supabase;
+    if (!sb) {
+      return { success: false, error: new Error('Supabase not configured') };
+    }
+    const sanitized = this.sanitizeRecordForTable(table, patch);
+    const { id: _ignoredId, ...fieldsToUpdate } = sanitized;
+    try {
+      const { data, error, status } = await sb.from(table).update(fieldsToUpdate).eq('id', id).select();
+      if (error || (status && status >= 400)) {
+        console.warn(`[Supabase Update Warning] Table: "${table}" (HTTP ${status}):`, error?.message);
+        return { success: false, error };
+      }
+      return { success: true, error: null, data: Array.isArray(data) ? data[0] : data };
+    } catch (err) {
+      console.warn(`[Supabase Update Exception] Table: "${table}":`, err);
+      return { success: false, error: err };
+    }
+  }
+
   public async sbUpsertBatch(table: string, records: Record<string, unknown>[]): Promise<{ success: boolean; error: any; data?: any }> {
     const sb = supabase;
     if (!sb) {
@@ -1949,7 +1976,7 @@ class StorageService {
     const unique: Learner[] = [];
     const allParties = this.getItem<Party[]>(STORAGE_KEYS.PARTIES, []);
     let benchFixedCount = 0;
-    const fixedLearners: Array<{ id: string; bench: BenchType }> = [];
+    const learnersToSync: Array<{ id: string; bench: BenchType }> = [];
 
     for (const l of all) {
       if (!l.id || seenIds.has(l.id)) continue;
@@ -1969,8 +1996,11 @@ class StorageService {
 
       if (party?.bench && party.bench !== l.bench) {
         unique.push({ ...l, bench: party.bench });
-        fixedLearners.push({ id: l.id, bench: party.bench });
         benchFixedCount++;
+        if (!this.fixedLearnerIdsSynced.has(l.id)) {
+          this.fixedLearnerIdsSynced.add(l.id);
+          learnersToSync.push({ id: l.id, bench: party.bench });
+        }
       } else {
         unique.push(l);
       }
@@ -1978,9 +2008,11 @@ class StorageService {
 
     if (benchFixedCount > 0) {
       this.setItem(STORAGE_KEYS.LEARNERS, unique);
-      fixedLearners.forEach(fl => {
-        this.sbUpsert('learners', { id: fl.id, bench: fl.bench });
-      });
+      if (learnersToSync.length > 0) {
+        learnersToSync.forEach(fl => {
+          this.sbUpdate('learners', fl.id, { bench: fl.bench });
+        });
+      }
     }
 
     const sortedAll = sortLearnersStably(unique);
