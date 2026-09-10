@@ -218,28 +218,46 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   const handleMarkStudentAttendance = async (studentId: string, status: DayAttendanceStatus) => {
     if (!activeDay) return;
     const volunteerName = volunteer?.name ? `${volunteer.name} (Volunteer)` : 'Floor Volunteer';
-    if (onSetStudentDayAttendance) {
-      await onSetStudentDayAttendance(activeDay.id, studentId, status, volunteerName);
-    } else {
-      await storageService.setStudentDayAttendance(eventId, activeDay.id, studentId, status, volunteerName, 'volunteer');
+    try {
+      if (onSetStudentDayAttendance) {
+        await onSetStudentDayAttendance(activeDay.id, studentId, status, volunteerName);
+      } else {
+        await storageService.setStudentDayAttendance(eventId, activeDay.id, studentId, status, volunteerName, 'volunteer');
+      }
+      onShowToast?.(
+        status === 'Present' ? 'Marked Present' : 'Marked Absent',
+        `Recorded for ${activeDay.name}`,
+        status === 'Present' ? 'success' : 'info'
+      );
+    } catch (err: any) {
+      console.error('[VolunteerDashboard] Attendance save failed:', err);
+      onShowToast?.(
+        'Save Failed',
+        err?.message || 'Could not record attendance in database',
+        'error'
+      );
     }
-    onShowToast?.(
-      status === 'Present' ? 'Marked Present' : 'Marked Absent',
-      `Recorded for ${activeDay.name}`,
-      status === 'Present' ? 'success' : 'info'
-    );
   };
 
   const handleBatchMarkAttendance = async (status: DayAttendanceStatus) => {
     if (!activeDay) return;
     const volunteerName = volunteer?.name ? `${volunteer.name} (Volunteer)` : 'Floor Volunteer';
     const studentIds = learners.map(l => l.id);
-    if (onBatchSetDayAttendance) {
-      await onBatchSetDayAttendance(activeDay.id, studentIds, status, volunteerName);
-    } else {
-      await storageService.batchSetDayAttendance(eventId, activeDay.id, studentIds, status, volunteerName, 'volunteer');
+    try {
+      if (onBatchSetDayAttendance) {
+        await onBatchSetDayAttendance(activeDay.id, studentIds, status, volunteerName);
+      } else {
+        await storageService.batchSetDayAttendance(eventId, activeDay.id, studentIds, status, volunteerName, 'volunteer');
+      }
+      onShowToast?.('Attendance Updated', `Marked all delegates as ${status} on ${activeDay.name}`, 'success');
+    } catch (err: any) {
+      console.error('[VolunteerDashboard] Batch attendance save failed:', err);
+      onShowToast?.(
+        'Batch Save Failed',
+        err?.message || 'Could not save batch attendance in database',
+        'error'
+      );
     }
-    onShowToast?.('Attendance Updated', `Marked all delegates as ${status} on ${activeDay.name}`, 'success');
   };
 
   const fetchVersionRef = useRef(0);

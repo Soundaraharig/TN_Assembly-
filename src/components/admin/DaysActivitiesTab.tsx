@@ -252,8 +252,12 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
   const handleMarkAll = async (status: DayAttendanceStatus) => {
     if (!currentAttendanceDay) return;
     const studentIds = learners.map(l => l.id);
-    await onBatchSetDayAttendance(currentAttendanceDay.id, studentIds, status, 'Admin Batch Action');
-    onShowToast('Batch Updated', `Marked all ${learners.length} students as ${status} for ${currentAttendanceDay.name}`, 'success');
+    try {
+      await onBatchSetDayAttendance(currentAttendanceDay.id, studentIds, status, 'Admin Batch Action');
+      onShowToast('Batch Updated', `Marked all ${learners.length} students as ${status} for ${currentAttendanceDay.name}`, 'success');
+    } catch (err: any) {
+      onShowToast('Batch Save Failed', err?.message || 'Could not save batch attendance in database', 'error');
+    }
   };
 
   return (
@@ -830,7 +834,13 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                           <td className="py-3 px-4 text-center">
                             <div className="inline-flex items-center gap-1.5">
                               <button
-                                onClick={() => onSetStudentDayAttendance(currentAttendanceDay.id, learner.id, 'Present', 'Admin')}
+                                onClick={async () => {
+                                  try {
+                                    await onSetStudentDayAttendance(currentAttendanceDay.id, learner.id, 'Present', 'Admin');
+                                  } catch (err: any) {
+                                    onShowToast('Save Failed', err?.message || 'Could not record attendance in database', 'error');
+                                  }
+                                }}
                                 className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
                                   isPresent
                                     ? 'bg-emerald-500 text-white shadow-sm'
@@ -840,7 +850,13 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                                 Present
                               </button>
                               <button
-                                onClick={() => onSetStudentDayAttendance(currentAttendanceDay.id, learner.id, 'Absent', 'Admin')}
+                                onClick={async () => {
+                                  try {
+                                    await onSetStudentDayAttendance(currentAttendanceDay.id, learner.id, 'Absent', 'Admin');
+                                  } catch (err: any) {
+                                    onShowToast('Save Failed', err?.message || 'Could not record attendance in database', 'error');
+                                  }
+                                }}
                                 className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
                                   !isPresent
                                     ? 'bg-rose-500 text-white shadow-sm'

@@ -528,14 +528,17 @@ CREATE TABLE IF NOT EXISTS event_day_attendance (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     event_id UUID NOT NULL REFERENCES college_events(id) ON DELETE CASCADE,
     day_id UUID NOT NULL REFERENCES event_days(id) ON DELETE CASCADE,
+    event_day_id UUID REFERENCES event_days(id) ON DELETE CASCADE,
     student_id UUID NOT NULL REFERENCES learners(id) ON DELETE CASCADE,
+    participant_id UUID REFERENCES learners(id) ON DELETE CASCADE,
     status TEXT NOT NULL DEFAULT 'Present', -- 'Present' | 'Absent'
     marked_by TEXT,
     marked_by_role TEXT,
     marked_at TIMESTAMPTZ DEFAULT NOW(),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    CONSTRAINT unique_event_day_student UNIQUE (event_id, day_id, student_id)
+    CONSTRAINT unique_event_day_student UNIQUE (event_id, day_id, student_id),
+    CONSTRAINT unique_event_day_id_student UNIQUE (event_id, event_day_id, student_id)
 );
 
 -- Performance Indexes
@@ -603,7 +606,8 @@ DECLARE
 BEGIN
     FOR demo_ev IN (
         SELECT id FROM public.college_events 
-        WHERE LOWER(college_name) LIKE '%jkkncet%' 
+        WHERE id = '200fdd74-4d21-44d5-9f63-9a07bf267824'
+           OR LOWER(college_name) LIKE '%jkkncet%' 
            OR LOWER(slug) LIKE '%jkkncet%'
     ) LOOP
         -- Remove demo day attendance
@@ -620,12 +624,16 @@ BEGIN
         SET day1_checked_in = false, day2_checked_in = false
         WHERE event_id = demo_ev.id;
 
-        -- Reset event_days and day_attendance in social_coverage JSONB
+        -- Restore original authoritative college name, coordinator email and slug
         UPDATE public.college_events
-        SET social_coverage = jsonb_set(
-            jsonb_set(COALESCE(social_coverage, '{}'::jsonb), '{event_days}', '[]'::jsonb, true),
-            '{day_attendance}', '[]'::jsonb, true
-        )
+        SET college_name = 'JKKNCET TN ASSEMBLY 2026',
+            assigned_coordinator_email = 'soundaraharigece2025@jkkn.ac.in',
+            assigned_coordinator_name = 'Soundarahari',
+            slug = 'jkkncet-tn-assembly-2026-tamil-nadu-2026',
+            social_coverage = jsonb_set(
+                jsonb_set(COALESCE(social_coverage, '{}'::jsonb), '{event_days}', '[]'::jsonb, true),
+                '{day_attendance}', '[]'::jsonb, true
+            )
         WHERE id = demo_ev.id;
     END LOOP;
 END $$;

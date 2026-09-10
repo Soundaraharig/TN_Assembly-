@@ -336,6 +336,7 @@ class StorageService {
     // Run systemic cleanup & deduplication on startup
     this.cleanupAndDeduplicateData();
     this.cleanDemoEventDaysAndAttendance();
+    this.restoreJkkncetEvent();
   }
 
   /**
@@ -570,7 +571,10 @@ class StorageService {
               await supabase!.from('learners').update({ day1_checked_in: false, day2_checked_in: false }).eq('event_id', ev.id);
             }
             await this.sbUpsert('college_events', {
-              id: ev.id,
+              ...ev,
+              college_name: ev.college_name && ev.college_name !== 'New Assembly' ? ev.college_name : 'JKKNCET TN ASSEMBLY 2026',
+              assigned_coordinator_email: ev.assigned_coordinator_email || 'soundaraharigece2025@jkkn.ac.in',
+              assigned_coordinator_name: ev.assigned_coordinator_name || 'Soundarahari',
               social_coverage: (ev.social_coverage || {})
             });
           } catch (err) {
@@ -580,6 +584,52 @@ class StorageService {
       }
     } catch (e) {
       console.warn('Error in cleanDemoEventDaysAndAttendance:', e);
+    }
+  }
+
+  /**
+   * Defensive recovery to ensure event 200fdd74-4d21-44d5-9f63-9a07bf267824 retains its correct
+   * identity ("JKKNCET TN ASSEMBLY 2026") and coordinator mapping ("soundaraharigece2025@jkkn.ac.in").
+   */
+  public restoreJkkncetEvent(): void {
+    try {
+      const allEvents = this.getEvents();
+      let changed = false;
+      const targetId = '200fdd74-4d21-44d5-9f63-9a07bf267824';
+      const updatedEvents = allEvents.map(ev => {
+        const isTarget = ev.id === targetId ||
+          ev.slug === 'jkkncet-tn-assembly-2026-tamil-nadu-2026' ||
+          (ev.college_name && ev.college_name.toLowerCase().includes('jkkncet')) ||
+          (ev.assigned_coordinator_email && ev.assigned_coordinator_email.toLowerCase() === 'soundaraharigece2025@jkkn.ac.in');
+        
+        if (isTarget) {
+          const needsNameFix = ev.college_name !== 'JKKNCET TN ASSEMBLY 2026';
+          const needsEmailFix = ev.assigned_coordinator_email !== 'soundaraharigece2025@jkkn.ac.in';
+          if (needsNameFix || needsEmailFix) {
+            changed = true;
+            return {
+              ...ev,
+              college_name: 'JKKNCET TN ASSEMBLY 2026',
+              assigned_coordinator_email: 'soundaraharigece2025@jkkn.ac.in',
+              assigned_coordinator_name: ev.assigned_coordinator_name || 'Soundarahari',
+              slug: 'jkkncet-tn-assembly-2026-tamil-nadu-2026'
+            };
+          }
+        }
+        return ev;
+      });
+
+      if (changed) {
+        this.setItem(STORAGE_KEYS.EVENTS, updatedEvents);
+        const restoredEv = updatedEvents.find(e => e.id === targetId);
+        if (restoredEv && supabase) {
+          this.sbUpsert('college_events', restoredEv as unknown as Record<string, unknown>).catch(e => {
+            console.warn('[StorageService] restoreJkkncetEvent cloud sync warning:', e);
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[StorageService] Error during restoreJkkncetEvent:', e);
     }
   }
 
@@ -718,6 +768,7 @@ class StorageService {
           });
 
           this.setItem(STORAGE_KEYS.EVENTS, Array.from(eventMap.values()));
+          this.restoreJkkncetEvent();
           this.setItem(STORAGE_KEYS.OPEN_NOMINATIONS, openNomMap);
           this.setItem(STORAGE_KEYS.NOMINATIONS, allNoms);
           this.setItem(STORAGE_KEYS.ELECTIONS, allElecs);
@@ -1130,25 +1181,27 @@ class StorageService {
     }
     if (table === 'college_events') {
       const { cabinet_ministries: _cm, ...clean } = raw;
+      const existingEv = validId ? this.getEvents().find(e => e.id === validId) : undefined;
+      const defaultName = (validId === '200fdd74-4d21-44d5-9f63-9a07bf267824') ? 'JKKNCET TN ASSEMBLY 2026' : 'JKKNCET TN ASSEMBLY 2026';
       const sanitized: Record<string, unknown> = {
-        college_name: clean.college_name || 'New Assembly',
-        event_stage: clean.event_stage || 'College Round',
-        status: clean.status || 'Pre-Event',
-        chapter: clean.chapter || 'Tamil Nadu',
-        level: clean.level || 'College Round',
-        location: clean.location || null,
-        dates: clean.dates || null,
-        assigned_coordinator_email: clean.assigned_coordinator_email || null,
-        assigned_coordinator_name: clean.assigned_coordinator_name || null,
-        elections_count: clean.elections_count || 3,
-        is_locked: !!clean.is_locked,
-        participant_count: clean.participant_count || 0,
-        chief_guests: clean.chief_guests || [],
-        social_coverage: clean.social_coverage || {},
-        slug: clean.slug || null,
-        treasury_whatsapp_link: clean.treasury_whatsapp_link || null,
-        opposition_whatsapp_link: clean.opposition_whatsapp_link || null,
-        created_at: clean.created_at || new Date().toISOString(),
+        college_name: clean.college_name && clean.college_name !== 'New Assembly' ? clean.college_name : (existingEv?.college_name && existingEv.college_name !== 'New Assembly' ? existingEv.college_name : defaultName),
+        event_stage: clean.event_stage || existingEv?.event_stage || 'College Round',
+        status: clean.status || existingEv?.status || 'Pre-Event',
+        chapter: clean.chapter || existingEv?.chapter || 'Tamil Nadu',
+        level: clean.level || existingEv?.level || 'College Round',
+        location: clean.location !== undefined ? clean.location : (existingEv?.location || null),
+        dates: clean.dates !== undefined ? clean.dates : (existingEv?.dates || null),
+        assigned_coordinator_email: clean.assigned_coordinator_email !== undefined ? clean.assigned_coordinator_email : (existingEv?.assigned_coordinator_email || (validId === '200fdd74-4d21-44d5-9f63-9a07bf267824' ? 'soundaraharigece2025@jkkn.ac.in' : null)),
+        assigned_coordinator_name: clean.assigned_coordinator_name !== undefined ? clean.assigned_coordinator_name : (existingEv?.assigned_coordinator_name || (validId === '200fdd74-4d21-44d5-9f63-9a07bf267824' ? 'Soundarahari' : null)),
+        elections_count: clean.elections_count !== undefined ? clean.elections_count : (existingEv?.elections_count || 3),
+        is_locked: clean.is_locked !== undefined ? !!clean.is_locked : !!existingEv?.is_locked,
+        participant_count: clean.participant_count !== undefined ? clean.participant_count : (existingEv?.participant_count || 0),
+        chief_guests: clean.chief_guests !== undefined ? clean.chief_guests : (existingEv?.chief_guests || []),
+        social_coverage: clean.social_coverage !== undefined ? clean.social_coverage : (existingEv?.social_coverage || {}),
+        slug: clean.slug || existingEv?.slug || (validId === '200fdd74-4d21-44d5-9f63-9a07bf267824' ? 'jkkncet-tn-assembly-2026-tamil-nadu-2026' : null),
+        treasury_whatsapp_link: clean.treasury_whatsapp_link !== undefined ? clean.treasury_whatsapp_link : (existingEv?.treasury_whatsapp_link || null),
+        opposition_whatsapp_link: clean.opposition_whatsapp_link !== undefined ? clean.opposition_whatsapp_link : (existingEv?.opposition_whatsapp_link || null),
+        created_at: clean.created_at || existingEv?.created_at || new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
       if (validId) sanitized.id = validId;
@@ -1211,10 +1264,14 @@ class StorageService {
       return sanitized;
     }
     if (table === 'event_day_attendance') {
+      const dId = raw.day_id || raw.event_day_id;
+      const sId = raw.student_id || raw.learner_id || raw.participant_id;
       const sanitized: Record<string, unknown> = {
         event_id: sanitizeEventId(raw.event_id),
-        day_id: raw.day_id,
-        student_id: raw.student_id || raw.learner_id,
+        day_id: dId,
+        event_day_id: dId,
+        student_id: sId,
+        participant_id: sId,
         status: raw.status || 'Present',
         marked_by: raw.marked_by || null,
         marked_by_role: raw.marked_by_role || 'volunteer',
@@ -2454,7 +2511,13 @@ class StorageService {
     }
 
     this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, all);
-    this.sbUpsert('event_day_attendance', record as unknown as Record<string, unknown>);
+    if (supabase) {
+      const res = await this.sbUpsert('event_day_attendance', record as unknown as Record<string, unknown>);
+      if (!res.success) {
+        console.error('[StorageService] Failed to save attendance to Supabase:', res.error);
+        throw new Error(res.error?.message || 'Failed to save attendance record to database');
+      }
+    }
 
     // Two-way sync: if this day is Day 1 or Day 2, also sync learner day1_checked_in/day2_checked_in
     const days = this.getEventDays(eventId);
@@ -2532,8 +2595,12 @@ class StorageService {
     this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, Array.from(existingMap.values()));
 
     // Batch upsert to Supabase if configured
-    if (recordsToSave.length > 0) {
-      this.sbUpsertBatch('event_day_attendance', recordsToSave as unknown as Record<string, unknown>[]);
+    if (recordsToSave.length > 0 && supabase) {
+      const res = await this.sbUpsertBatch('event_day_attendance', recordsToSave as unknown as Record<string, unknown>[]);
+      if (!res.success) {
+        console.error('[StorageService] Failed to batch save attendance to Supabase:', res.error);
+        throw new Error(res.error?.message || 'Failed to batch save attendance records to database');
+      }
     }
 
     // Two-way sync with learner records for Day 1 and Day 2
