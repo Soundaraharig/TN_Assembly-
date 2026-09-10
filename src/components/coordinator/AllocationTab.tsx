@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import type { Learner, Party, Committee, AcademicYear, BenchType } from '../../types';
-import { storageService, getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
+import { storageService, getResolvedPartyName, getResolvedCommitteeName, getResolvedLearnerBench } from '../../services/storageService';
 import { DownloadModal } from './DownloadModal';
 import {
   RotateCcw,
@@ -65,9 +65,13 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
   const [quickEditLearner, setQuickEditLearner] = useState<Learner | null>(null);
 
   const totalLearners = learners.length;
-  const allocatedCount = learners.filter(l => !!l.bench && !!l.party_name).length;
-  const rulingCount = learners.filter(l => l.bench === 'Ruling').length;
-  const oppCount = learners.filter(l => l.bench === 'Opposition').length;
+  const allocatedCount = learners.filter(l => {
+    const b = getResolvedLearnerBench(l, parties);
+    const p = getResolvedPartyName(l, parties);
+    return !!b && !!p;
+  }).length;
+  const rulingCount = learners.filter(l => getResolvedLearnerBench(l, parties) === 'Ruling').length;
+  const oppCount = learners.filter(l => getResolvedLearnerBench(l, parties) === 'Opposition').length;
   const unallocatedCount = totalLearners - allocatedCount;
 
   // Academic year distribution
@@ -86,12 +90,13 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
   const partyCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     learners.forEach(l => {
-      if (l.party_name) {
-        counts[l.party_name] = (counts[l.party_name] || 0) + 1;
+      const pName = getResolvedPartyName(l, parties);
+      if (pName) {
+        counts[pName] = (counts[pName] || 0) + 1;
       }
     });
     return counts;
-  }, [learners]);
+  }, [learners, parties]);
 
   // Filtered delegate roster
   const filteredLearners = useMemo(() => {
@@ -106,20 +111,23 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
       }
 
       if (selectedBench !== 'ALL') {
+        const resBench = getResolvedLearnerBench(l, parties);
         if (selectedBench === 'UNALLOCATED') {
-          if (l.bench) return false;
-        } else if (l.bench !== selectedBench) {
+          if (resBench && resBench !== 'Independent') return false;
+        } else if (resBench !== selectedBench) {
           return false;
         }
       }
 
-      if (selectedParty !== 'ALL' && l.party_name !== selectedParty) return false;
-      if (selectedCommittee !== 'ALL' && l.committee_name !== selectedCommittee) return false;
+      const resParty = getResolvedPartyName(l, parties);
+      if (selectedParty !== 'ALL' && resParty !== selectedParty) return false;
+      const resComm = getResolvedCommitteeName(l, committees);
+      if (selectedCommittee !== 'ALL' && resComm !== selectedCommittee) return false;
       if (selectedYear !== 'ALL' && l.academic_year !== selectedYear) return false;
 
       return true;
     });
-  }, [learners, searchTerm, selectedBench, selectedParty, selectedCommittee, selectedYear]);
+  }, [learners, parties, committees, searchTerm, selectedBench, selectedParty, selectedCommittee, selectedYear]);
 
   // Unallocated counters
   const unassignedPartyCount = learners.filter(l => !l.party_id && !l.party_name).length;
@@ -815,7 +823,10 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {parties.map((party) => {
-              const partyMembers = learners.filter(l => l.party_id === party.id || (!l.party_id && l.party_name === party.name));
+              const partyMembers = learners.filter(l =>
+                l.party_id === party.id ||
+                (l.party_name && l.party_name.trim().toLowerCase() === party.name.trim().toLowerCase())
+              );
 
               return (
                 <div
@@ -871,10 +882,11 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {committees.map((committee, idx) => {
               const members = learners.filter(
-                l => l.committee_id === committee.id || (!l.committee_id && l.committee_name === committee.name)
+                l => l.committee_id === committee.id ||
+                (l.committee_name && l.committee_name.trim().toLowerCase() === committee.name.trim().toLowerCase())
               );
-              const cRuling = members.filter(m => m.bench === 'Ruling').length;
-              const cOpp = members.filter(m => m.bench === 'Opposition').length;
+              const cRuling = members.filter(m => getResolvedLearnerBench(m, parties) === 'Ruling').length;
+              const cOpp = members.filter(m => getResolvedLearnerBench(m, parties) === 'Opposition').length;
 
               return (
                 <div
@@ -901,32 +913,35 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
                         No delegates assigned to this committee yet.
                       </p>
                     ) : (
-                      members.map((member) => (
-                        <div
-                          key={member.id}
-                          onClick={() => setQuickEditLearner(member)}
-                          className="flex items-center justify-between pt-1.5 text-slate-700 dark:text-slate-300 hover:text-amber-600 cursor-pointer transition-colors"
-                        >
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`w-2 h-2 rounded-full shrink-0 ${
-                                member.bench === 'Ruling'
-                                  ? 'bg-blue-500'
-                                  : member.bench === 'Opposition'
-                                  ? 'bg-rose-500'
-                                  : 'bg-slate-400'
-                              }`}
-                            />
-                            <span className="font-semibold text-xs">{member.full_name}</span>
-                          </div>
+                      members.map((member) => {
+                        const mBench = getResolvedLearnerBench(member, parties);
+                        return (
+                          <div
+                            key={member.id}
+                            onClick={() => setQuickEditLearner(member)}
+                            className="flex items-center justify-between pt-1.5 text-slate-700 dark:text-slate-300 hover:text-amber-600 cursor-pointer transition-colors"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`w-2 h-2 rounded-full shrink-0 ${
+                                  mBench === 'Ruling'
+                                    ? 'bg-blue-500'
+                                    : mBench === 'Opposition'
+                                    ? 'bg-rose-500'
+                                    : 'bg-slate-400'
+                                }`}
+                              />
+                              <span className="font-semibold text-xs">{member.full_name}</span>
+                            </div>
 
-                          {member.role && member.role !== 'Member of Legislative Assembly (MLA)' ? (
-                            <span className="text-[10px] text-slate-400 font-medium text-right shrink-0 ml-2">
-                              {member.role}
-                            </span>
-                          ) : null}
-                        </div>
-                      ))
+                            {member.role && member.role !== 'Member of Legislative Assembly (MLA)' ? (
+                              <span className="text-[10px] text-slate-400 font-medium text-right shrink-0 ml-2">
+                                {member.role}
+                              </span>
+                            ) : null}
+                          </div>
+                        );
+                      })
                     )}
                   </div>
                 </div>
@@ -1085,21 +1100,24 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
 
                         {/* Bench */}
                         <td className="py-3 px-4">
-                          {learner.bench ? (
-                            <span
-                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                                learner.bench === 'Ruling'
-                                  ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
-                                  : 'bg-rose-500/10 text-rose-600 border-rose-500/30'
-                              }`}
-                            >
-                              {learner.bench}
-                            </span>
-                          ) : (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-500/10 text-slate-400 border border-slate-500/20">
-                              Unallocated
-                            </span>
-                          )}
+                          {(() => {
+                            const resolvedBench = getResolvedLearnerBench(learner, parties);
+                            return resolvedBench ? (
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                  resolvedBench === 'Ruling'
+                                    ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
+                                    : 'bg-rose-500/10 text-rose-600 border-rose-500/30'
+                                }`}
+                              >
+                                {resolvedBench}
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-500/10 text-slate-400 border border-slate-500/20">
+                                Unallocated
+                              </span>
+                            );
+                          })()}
                         </td>
 
                         {/* Party */}

@@ -470,7 +470,28 @@ class StorageService {
           return;
         }
         seenLearnerIds.add(l.id);
-        cleanedLearners.push({ ...l, event_id: evId });
+
+        let finalPartyId = l.party_id;
+        if (l.party_name) {
+          const matchingParty = cleanedParties.find(
+            p => p.event_id === evId && p.name && p.name.trim().toLowerCase() === l.party_name!.trim().toLowerCase()
+          );
+          if (matchingParty && finalPartyId !== matchingParty.id) {
+            finalPartyId = matchingParty.id;
+          }
+        }
+
+        let finalCommId = l.committee_id;
+        if (l.committee_name) {
+          const matchingComm = cleanedComms.find(
+            c => c.event_id === evId && c.name && c.name.trim().toLowerCase() === l.committee_name!.trim().toLowerCase()
+          );
+          if (matchingComm && finalCommId !== matchingComm.id) {
+            finalCommId = matchingComm.id;
+          }
+        }
+
+        cleanedLearners.push({ ...l, event_id: evId, party_id: finalPartyId, committee_id: finalCommId });
       });
       this.setItem(STORAGE_KEYS.LEARNERS, sortLearnersStably(cleanedLearners));
 
@@ -1926,6 +1947,9 @@ class StorageService {
     const seenIds = new Set<string>();
     const seenCodes = new Set<string>();
     const unique: Learner[] = [];
+    const allParties = this.getItem<Party[]>(STORAGE_KEYS.PARTIES, []);
+    let benchFixedCount = 0;
+    const fixedLearners: Array<{ id: string; bench: BenchType }> = [];
 
     for (const l of all) {
       if (!l.id || seenIds.has(l.id)) continue;
@@ -1936,7 +1960,27 @@ class StorageService {
 
       seenIds.add(l.id);
       if (codeKey) seenCodes.add(codeKey);
-      unique.push(l);
+
+      // Dynamically align bench with political party bench
+      const party = allParties.find(p =>
+        (l.party_id && p.id === l.party_id) ||
+        (l.party_name && p.name.trim().toLowerCase() === l.party_name.trim().toLowerCase() && (!l.event_id || !p.event_id || p.event_id === l.event_id))
+      );
+
+      if (party?.bench && party.bench !== l.bench) {
+        unique.push({ ...l, bench: party.bench });
+        fixedLearners.push({ id: l.id, bench: party.bench });
+        benchFixedCount++;
+      } else {
+        unique.push(l);
+      }
+    }
+
+    if (benchFixedCount > 0) {
+      this.setItem(STORAGE_KEYS.LEARNERS, unique);
+      fixedLearners.forEach(fl => {
+        this.sbUpsert('learners', { id: fl.id, bench: fl.bench });
+      });
     }
 
     const sortedAll = sortLearnersStably(unique);
@@ -6083,15 +6127,17 @@ export const CANONICAL_ROLES = {
  * Dynamically resolves a learner's bench based on direct bench field or party's bench.
  */
 export function getResolvedLearnerBench(learner: Partial<Learner>, parties: Party[] = []): BenchType {
+  if (parties && parties.length > 0) {
+    if (learner.party_id) {
+      const found = parties.find(p => p.id === learner.party_id);
+      if (found?.bench) return found.bench;
+    }
+    if (learner.party_name) {
+      const found = parties.find(p => p.name.trim().toLowerCase() === learner.party_name?.trim().toLowerCase());
+      if (found?.bench) return found.bench;
+    }
+  }
   if (learner.bench) return learner.bench;
-  if (learner.party_id) {
-    const found = parties.find(p => p.id === learner.party_id);
-    if (found?.bench) return found.bench;
-  }
-  if (learner.party_name) {
-    const found = parties.find(p => p.name.toLowerCase() === learner.party_name?.toLowerCase());
-    if (found?.bench) return found.bench;
-  }
   return 'Independent';
 }
 

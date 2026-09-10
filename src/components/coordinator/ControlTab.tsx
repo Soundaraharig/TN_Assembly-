@@ -507,7 +507,8 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   ) : (
                     parties.map((party) => {
                       const partyMemberCount = learners.filter(
-                        l => l.party_id === party.id || (!l.party_id && l.party_name === party.name)
+                        l => l.party_id === party.id ||
+                        (l.party_name && l.party_name.trim().toLowerCase() === party.name.trim().toLowerCase())
                       ).length;
                       const isRuling = party.bench === 'Ruling';
                       const isOpposition = party.bench === 'Opposition';

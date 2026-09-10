@@ -120,6 +120,7 @@ interface SearchableDelegateSelectProps {
   onSelect: (learnerId: string) => void;
   onShowToast?: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
   placeholder?: string;
+  allLearners?: Learner[];
 }
 
 const SearchableDelegateSelect: React.FC<SearchableDelegateSelectProps> = ({
@@ -129,7 +130,8 @@ const SearchableDelegateSelect: React.FC<SearchableDelegateSelectProps> = ({
   disabled = false,
   onSelect,
   onShowToast,
-  placeholder = 'Search by name or constituency no...'
+  placeholder = 'Search by name or constituency no...',
+  allLearners
 }) => {
   const [query, setQuery] = useState('');
   const [isOpen, setIsOpen] = useState(false);
@@ -155,7 +157,7 @@ const SearchableDelegateSelect: React.FC<SearchableDelegateSelectProps> = ({
     return nameMatch || constNoMatch || constNameMatch || codeMatch;
   });
 
-  const selectedLearner = (learners || []).find(l => l.id === currentLearnerId);
+  const selectedLearner = (learners || []).find(l => l.id === currentLearnerId) || (allLearners || []).find(l => l.id === currentLearnerId);
 
   return (
     <div ref={containerRef} className="relative w-full">
@@ -575,6 +577,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                 });
 
                 const eligibleLearners = (eventLearners || []).filter(l => {
+                  if (holder && l.id === holder.id) return true;
                   if (!item.allowedBench) return true;
                   const b = getResolvedLearnerBench(l, eventParties);
                   return b === item.allowedBench;
@@ -603,6 +606,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                     <SearchableDelegateSelect
                       learners={eligibleLearners}
                       parties={eventParties}
+                      allLearners={eventLearners}
                       currentLearnerId={holder?.id}
                       disabled={isLocked}
                       onSelect={(learnerId) => handleAssignRole(learnerId, item.role)}

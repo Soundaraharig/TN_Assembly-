@@ -200,7 +200,8 @@ export const PartiesTab: React.FC<PartiesTabProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {parties.map((party, index) => {
           const partyLearners = (learners || []).filter(
-            l => l.party_id === party.id || (!l.party_id && l.party_name === party.name)
+            l => l.party_id === party.id ||
+            (l.party_name && l.party_name.trim().toLowerCase() === party.name.trim().toLowerCase())
           );
           const memberCount = partyLearners.length;
 
