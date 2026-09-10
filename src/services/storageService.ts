@@ -335,6 +335,7 @@ class StorageService {
 
     // Run systemic cleanup & deduplication on startup
     this.cleanupAndDeduplicateData();
+    this.cleanDemoEventDaysAndAttendance();
   }
 
   /**
@@ -504,6 +505,84 @@ class StorageService {
     }
   }
 
+  /**
+   * Cleans demo/mock event days and mock attendance records for demo events (e.g. JKKNCET TN ASSEMBLY 2026).
+   * Strictly preserves: real participants (learners), users, coordinators, parties, committees, and events.
+   * Ensures the event starts fresh with 0 configured days and 0 attendance records.
+   */
+  public cleanDemoEventDaysAndAttendance(): void {
+    try {
+      const allEvents = this.getEvents();
+      const demoEvents = allEvents.filter(e => {
+        const name = (e.college_name || '').toLowerCase();
+        const slug = (e.slug || '').toLowerCase();
+        return name.includes('jkkncet') || slug.includes('jkkncet');
+      });
+
+      if (demoEvents.length === 0) return;
+
+      const demoEventIds = new Set(demoEvents.map(e => e.id));
+
+      // 1. Remove mock event days for demo events
+      const allDays = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []);
+      const remainingDays = allDays.filter(d => !demoEventIds.has(d.event_id));
+      this.setItem(STORAGE_KEYS.EVENT_DAYS, remainingDays);
+
+      // 2. Remove mock attendance records for demo events
+      const allAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+      const remainingAtt = allAtt.filter(a => !demoEventIds.has(a.event_id));
+      this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, remainingAtt);
+
+      // 3. Reset demo attendance flags (day1_checked_in, day2_checked_in) on learners for demo events
+      const allLearners = this.getLearners();
+      let learnersModified = false;
+      const updatedLearners = allLearners.map(l => {
+        if (demoEventIds.has(l.event_id) && (l.day1_checked_in || l.day2_checked_in)) {
+          learnersModified = true;
+          return { ...l, day1_checked_in: false, day2_checked_in: false };
+        }
+        return l;
+      });
+      if (learnersModified) {
+        this.setItem(STORAGE_KEYS.LEARNERS, updatedLearners);
+      }
+
+      // 4. Update college_events.social_coverage for demo events
+      const updatedEvents = allEvents.map(ev => {
+        if (demoEventIds.has(ev.id)) {
+          const sc = (ev.social_coverage || {}) as any;
+          sc.event_days = [];
+          sc.day_attendance = [];
+          return { ...ev, social_coverage: sc };
+        }
+        return ev;
+      });
+      this.setItem(STORAGE_KEYS.EVENTS, updatedEvents);
+
+      // 5. If Supabase is active, sync the cleared state to DB
+      if (supabase) {
+        demoEvents.forEach(async ev => {
+          try {
+            await supabase!.from('event_day_attendance').delete().eq('event_id', ev.id);
+            await supabase!.from('day_activities').delete().eq('event_id', ev.id);
+            await supabase!.from('event_days').delete().eq('event_id', ev.id);
+            if (learnersModified) {
+              await supabase!.from('learners').update({ day1_checked_in: false, day2_checked_in: false }).eq('event_id', ev.id);
+            }
+            await this.sbUpsert('college_events', {
+              id: ev.id,
+              social_coverage: (ev.social_coverage || {})
+            });
+          } catch (err) {
+            console.warn('[Supabase] cleanDemoEventDaysAndAttendance sync error:', err);
+          }
+        });
+      }
+    } catch (e) {
+      console.warn('Error in cleanDemoEventDaysAndAttendance:', e);
+    }
+  }
+
   // ── Supabase sync ────────────────────────────────────────────────────────
 
   public async syncFromSupabase(): Promise<void> {
@@ -668,23 +747,29 @@ class StorageService {
           });
           this.setItem(STORAGE_KEYS.SCORES, Array.from(scoreMap.values()));
 
-          // Merge local and remote event days
-          if (allDays.length > 0) {
-            const localDays = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []);
-            const dayMap = new Map<string, EventDay>();
-            localDays.forEach(d => dayMap.set(d.id, d));
-            allDays.forEach(d => dayMap.set(d.id, d));
-            this.setItem(STORAGE_KEYS.EVENT_DAYS, Array.from(dayMap.values()));
-          }
+          // Merge local and remote event days — remote is authoritative per event
+          const remoteEventIds = new Set(events.map(e => e.id));
+          const localDays = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []);
+          // Retain local days ONLY for events not present in remote
+          const retainedLocalDays = localDays.filter(d => !remoteEventIds.has(d.event_id));
 
-          // Merge local and remote day attendance
-          if (allDayAtt.length > 0) {
-            const localAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
-            const attMap = new Map<string, DayAttendanceRecord>();
-            localAtt.forEach(a => attMap.set(`${a.event_id}:::${a.day_id}:::${a.student_id}`, a));
-            allDayAtt.forEach(a => attMap.set(`${a.event_id}:::${a.day_id}:::${a.student_id}`, a));
-            this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, Array.from(attMap.values()));
-          }
+          // Deduplicate allDays by strictly (event_id, day_number)
+          const deduplicatedDaysMap = new Map<string, EventDay>();
+          allDays.forEach(d => {
+            const key = `${d.event_id}:::${d.day_number}`;
+            const existing = deduplicatedDaysMap.get(key);
+            if (!existing || d.status === 'Active' || new Date(d.updated_at || 0).getTime() > new Date(existing.updated_at || 0).getTime()) {
+              deduplicatedDaysMap.set(key, d);
+            }
+          });
+          this.setItem(STORAGE_KEYS.EVENT_DAYS, [...retainedLocalDays, ...Array.from(deduplicatedDaysMap.values())]);
+
+          // Merge local and remote day attendance — remote is authoritative per event
+          const localAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+          const retainedLocalAtt = localAtt.filter(a => !remoteEventIds.has(a.event_id));
+          const attMap = new Map<string, DayAttendanceRecord>();
+          allDayAtt.forEach(a => attMap.set(`${a.event_id}:::${a.day_id}:::${a.student_id}`, a));
+          this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...retainedLocalAtt, ...Array.from(attMap.values())]);
         }
       }
 
@@ -1170,12 +1255,16 @@ class StorageService {
     const runWrite = async () => {
       try {
         console.log(`[Supabase Write Attempt] Table: "${table}" Payload:`, sanitized);
+        let onConflict = 'id';
+        if (table === 'event_days') onConflict = 'event_id,day_number';
+        else if (table === 'event_day_attendance') onConflict = 'event_id,day_id,student_id';
+
         let query;
         if (sanitized.id && isValidUuid(sanitized.id as string)) {
-          query = sb.from(table).upsert(sanitized, { onConflict: 'id' }).select();
+          query = sb.from(table).upsert(sanitized, { onConflict }).select();
         } else {
           const { id, ...insertPayload } = sanitized;
-          query = sb.from(table).insert(insertPayload).select();
+          query = sb.from(table).upsert(insertPayload, { onConflict }).select();
         }
 
         const { data, error, status } = await query;
@@ -1230,7 +1319,10 @@ class StorageService {
     const runBatch = async () => {
       try {
         console.log(`[Supabase Write Batch Attempt] Table: "${table}" Count: ${sanitizedBatch.length}`);
-        const { data, error, status } = await sb.from(table).upsert(sanitizedBatch, { onConflict: 'id' }).select();
+        let onConflict = 'id';
+        if (table === 'event_days') onConflict = 'event_id,day_number';
+        else if (table === 'event_day_attendance') onConflict = 'event_id,day_id,student_id';
+        const { data, error, status } = await sb.from(table).upsert(sanitizedBatch, { onConflict }).select();
         if (error || (status && status >= 400)) {
           this.failedWriteSignatures.set(batchKey, Date.now());
           console.error(`❌ [Supabase Write Batch Error] Table: "${table}" (HTTP ${status}) Code: ${error?.code} — ${error?.message}. Details:`, error?.details || error?.hint);
@@ -2148,105 +2240,10 @@ class StorageService {
   // ── EVENT DAYS & ACTIVITIES & ATTENDANCE ─────────────────────────────
 
   /**
-   * Auto-initializes standard default days for an event if none exist yet.
+   * Auto-initialization explicitly disabled — days must be created manually by Admin.
    */
-  public initializeDefaultDaysForEvent(eventId: string): EventDay[] {
-    if (!eventId) return [];
-    const existing = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []).filter(d => d.event_id === eventId);
-    if (existing.length > 0) return existing;
-
-    const defaultDays: EventDay[] = [
-      {
-        id: genUuid(),
-        event_id: eventId,
-        day_number: 1,
-        name: 'Day 1',
-        status: 'Active',
-        is_active: true,
-        activities: [
-          'Student Orientation',
-          'Party & Constituency Allocation + Group Formation'
-        ],
-        order_index: 0,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      },
-      {
-        id: genUuid(),
-        event_id: eventId,
-        day_number: 2,
-        name: 'Day 2',
-        status: 'Upcoming',
-        is_active: false,
-        activities: [
-          'Speaker & Party Leader Selection',
-          'Government Formation + CM & LOP Election'
-        ],
-        order_index: 1,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      },
-      {
-        id: genUuid(),
-        event_id: eventId,
-        day_number: 3,
-        name: 'Day 3',
-        status: 'Upcoming',
-        is_active: false,
-        activities: [
-          'Cabinet Formation',
-          'Mock Assembly'
-        ],
-        order_index: 2,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }
-    ];
-
-    const allDays = [...this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []), ...defaultDays];
-    this.setItem(STORAGE_KEYS.EVENT_DAYS, allDays);
-
-    // Seed historical attendance from day1_checked_in and day2_checked_in
-    const learners = this.getLearners(eventId);
-    const existingAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
-    const newAtt: DayAttendanceRecord[] = [...existingAtt];
-
-    learners.forEach(l => {
-      if (l.day1_checked_in) {
-        newAtt.push({
-          id: genUuid(),
-          event_id: eventId,
-          day_id: defaultDays[0].id,
-          student_id: l.id,
-          learner_id: l.id,
-          status: 'Present',
-          marked_by: 'Initial Check-in',
-          marked_by_role: 'volunteer',
-          marked_at: new Date().toISOString(),
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        });
-      }
-      if (l.day2_checked_in) {
-        newAtt.push({
-          id: genUuid(),
-          event_id: eventId,
-          day_id: defaultDays[1].id,
-          student_id: l.id,
-          learner_id: l.id,
-          status: 'Present',
-          marked_by: 'Initial Check-in',
-          marked_by_role: 'volunteer',
-          marked_at: new Date().toISOString(),
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        });
-      }
-    });
-
-    this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, newAtt);
-    this.persistEventDaysToSocialCoverage(eventId, defaultDays, newAtt.filter(a => a.event_id === eventId));
-    return defaultDays;
+  public initializeDefaultDaysForEvent(_eventId: string): EventDay[] {
+    return [];
   }
 
   public getEventDays(eventId?: string): EventDay[] {
@@ -2254,9 +2251,6 @@ class StorageService {
     if (!eventId) return all;
 
     const eventDays = all.filter(d => d.event_id === eventId && !d.is_archived);
-    if (eventDays.length === 0) {
-      return this.initializeDefaultDaysForEvent(eventId);
-    }
     return [...eventDays].sort((a, b) => (a.order_index ?? a.day_number) - (b.order_index ?? b.day_number));
   }
 
@@ -2268,6 +2262,12 @@ class StorageService {
   public async addEventDay(eventId: string, dayData: Partial<EventDay>): Promise<EventDay> {
     const days = this.getEventDays(eventId);
     const nextNumber = dayData.day_number || (days.length > 0 ? Math.max(...days.map(d => d.day_number)) + 1 : 1);
+
+    // Enforce uniqueness of (event_id, day_number)
+    if (days.some(d => d.day_number === nextNumber)) {
+      throw new Error(`A day with Day Number ${nextNumber} already exists for this event.`);
+    }
+
     const newDay: EventDay = {
       id: (dayData.id && isValidUuid(dayData.id)) ? dayData.id : genUuid(),
       event_id: eventId,
@@ -2275,7 +2275,7 @@ class StorageService {
       name: dayData.name || `Day ${nextNumber}`,
       date: dayData.date || '',
       status: dayData.status || (days.length === 0 ? 'Active' : 'Upcoming'),
-      activities: Array.isArray(dayData.activities) ? dayData.activities : ['Student Orientation'],
+      activities: Array.isArray(dayData.activities) ? dayData.activities : [],
       order_index: dayData.order_index ?? days.length,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
@@ -2300,6 +2300,11 @@ class StorageService {
   }
 
   public async updateEventDay(day: EventDay): Promise<EventDay> {
+    const existing = this.getEventDays(day.event_id);
+    if (existing.some(d => d.id !== day.id && d.day_number === day.day_number)) {
+      throw new Error(`A day with Day Number ${day.day_number} already exists for this event.`);
+    }
+
     let all = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []);
     const updatedDay: EventDay = {
       ...day,
@@ -2376,6 +2381,9 @@ class StorageService {
     if (force && attendanceRecords.length > 0) {
       const remainingAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []).filter(a => a.day_id !== dayId);
       this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, remainingAtt);
+      if (supabase) {
+        supabase.from('event_day_attendance').delete().eq('day_id', dayId).then();
+      }
     }
 
     await this.sbDelete('event_days', dayId);
@@ -3547,18 +3555,58 @@ class StorageService {
     this.setItem(STORAGE_KEYS.PARTIES, parties);
   }
 
-  public assignCabinetRole(eventId: string, learnerId: string, portfolioRole: string) {
-    if (!eventId || !portfolioRole) return;
+  public assignCabinetRole(
+    eventId: string,
+    learnerId: string | undefined | null,
+    portfolioRole: string
+  ): { success: boolean; message?: string; learners: Learner[] } {
+    if (!eventId || !portfolioRole) {
+      return { success: false, message: 'Event ID and role are required', learners: this.getLearners(eventId) };
+    }
+
+    const canonicalRole = normalizeLeadershipRole(portfolioRole);
+    const parties = this.getParties(eventId);
     const allLearners = this.getLearners();
-    
+
+    let targetLearner: Learner | undefined;
+    if (learnerId && learnerId.trim()) {
+      targetLearner = allLearners.find(l => l.event_id === eventId && (l.id === learnerId || l.access_code === learnerId));
+      if (!targetLearner) {
+        return { success: false, message: 'Participant not found in roster', learners: this.getLearners(eventId) };
+      }
+
+      const bench = getResolvedLearnerBench(targetLearner, parties);
+
+      // Bench rules validation:
+      if (isChiefMinisterRole(canonicalRole)) {
+        if (bench === 'Opposition') {
+          return {
+            success: false,
+            message: 'Chief Minister must belong to the Ruling party / bench (Opposition delegates cannot be appointed CM)',
+            learners: this.getLearners(eventId)
+          };
+        }
+      } else if (isLeaderOfOppositionRole(canonicalRole)) {
+        if (bench === 'Ruling') {
+          return {
+            success: false,
+            message: 'Leader of Opposition must belong to the Opposition party / bench (Ruling delegates cannot be appointed LOP)',
+            learners: this.getLearners(eventId)
+          };
+        }
+      }
+    }
+
+    const isMatchingRole = (r?: string) => isAssemblyRoleMatching(r, canonicalRole);
+
     const updated = allLearners.map(l => {
       if (l.event_id === eventId) {
-        // If this learner is target, assign portfolioRole
-        if (l.id === learnerId) {
-          return { ...l, role: portfolioRole };
+        // If this learner is target, assign canonicalRole
+        if (targetLearner && l.id === targetLearner.id) {
+          return { ...l, role: canonicalRole };
         }
-        // If another learner currently holds this portfolioRole, reset them to default MLA
-        if (l.role === portfolioRole && l.id !== learnerId) {
+        // If another learner currently holds this role (or alias), reset them to default MLA
+        if (isMatchingRole(l.role) && (!targetLearner || l.id !== targetLearner.id)) {
           return { ...l, role: 'Member of Legislative Assembly (MLA)' };
         }
       }
@@ -3566,8 +3614,12 @@ class StorageService {
     });
 
     this.setItem(STORAGE_KEYS.LEARNERS, updated);
+
     if (supabase) {
-      const affected = updated.filter(l => l.role === portfolioRole || (allLearners.find(oldL => oldL.id === l.id)?.role === portfolioRole));
+      const affected = updated.filter(l =>
+        l.event_id === eventId &&
+        (isMatchingRole(l.role) || (allLearners.find(oldL => oldL.id === l.id && isMatchingRole(oldL.role))))
+      );
       if (affected.length > 0) {
         const sanitizedBatch = affected.map(item => this.sanitizeRecordForTable('learners', item as unknown as Record<string, unknown>));
         supabase.from('learners').upsert(sanitizedBatch, { onConflict: 'id' }).then(({ error }) => {
@@ -3575,7 +3627,10 @@ class StorageService {
         });
       }
     }
+
     this.notify();
+    const eventLearners = updated.filter(l => l.event_id === eventId);
+    return { success: true, learners: eventLearners };
   }
 
   // ── NOMINATIONS ───────────────────────────────────────────────────────────
@@ -3884,11 +3939,25 @@ class StorageService {
 
   public closeElection(electionId: string) {
     let targetEventId = '';
+    let winnerRoleToAssign = '';
+    let winnerCandidate: ElectionCandidate | undefined;
+
     const all = this.getElectionAll().map(e => {
       if (e.id === electionId) {
         targetEventId = e.event_id;
         const sorted = [...e.candidates].sort((a, b) => b.votes - a.votes);
         const win = sorted.length > 0 && sorted[0].votes > 0 ? sorted[0].name : undefined;
+        if (win && sorted[0]) {
+          winnerCandidate = sorted[0];
+          const pos = (e.position || e.title || '').trim();
+          if (isSpeakerRole(pos) || e.type === 'SPEAKER') {
+            winnerRoleToAssign = CANONICAL_ROLES.SPEAKER;
+          } else if (isChiefMinisterRole(pos)) {
+            winnerRoleToAssign = CANONICAL_ROLES.CHIEF_MINISTER;
+          } else if (isLeaderOfOppositionRole(pos)) {
+            winnerRoleToAssign = CANONICAL_ROLES.LEADER_OF_OPPOSITION;
+          }
+        }
         return {
           ...e,
           status: 'Closed' as const,
@@ -3899,11 +3968,29 @@ class StorageService {
       return e;
     });
     this.setItem(STORAGE_KEYS.ELECTIONS, all);
+
+    // Sync winner leadership role to learner record
+    if (targetEventId && winnerRoleToAssign && winnerCandidate) {
+      const allLearners = this.getLearners(targetEventId);
+      const cand = winnerCandidate as ElectionCandidate;
+      const targetLearner = allLearners.find(l =>
+        (cand.learner_id && l.id === cand.learner_id) ||
+        (cand.id && l.id === cand.id) ||
+        l.full_name.toLowerCase() === cand.name.toLowerCase()
+      );
+      if (targetLearner) {
+        this.assignCabinetRole(targetEventId, targetLearner.id, winnerRoleToAssign);
+      }
+    }
+
     if (targetEventId) this.syncEventStateToSupabase(targetEventId);
   }
 
   public setElectionStatus(electionId: string, status: 'Upcoming' | 'Live' | 'Closed') {
     let targetEventId = '';
+    let winnerRoleToAssign = '';
+    let winnerCandidate: ElectionCandidate | undefined;
+
     const all = this.getElectionAll().map(e => {
       if (e.id === electionId) {
         targetEventId = e.event_id;
@@ -3912,6 +3999,17 @@ class StorageService {
         if (status === 'Closed') {
           const sorted = [...e.candidates].sort((a, b) => b.votes - a.votes);
           winner = sorted.length > 0 && sorted[0].votes > 0 ? sorted[0].name : undefined;
+          if (winner && sorted[0]) {
+            winnerCandidate = sorted[0];
+            const pos = (e.position || e.title || '').trim();
+            if (isSpeakerRole(pos) || e.type === 'SPEAKER') {
+              winnerRoleToAssign = CANONICAL_ROLES.SPEAKER;
+            } else if (isChiefMinisterRole(pos)) {
+              winnerRoleToAssign = CANONICAL_ROLES.CHIEF_MINISTER;
+            } else if (isLeaderOfOppositionRole(pos)) {
+              winnerRoleToAssign = CANONICAL_ROLES.LEADER_OF_OPPOSITION;
+            }
+          }
           if (!completedAt) completedAt = new Date().toISOString();
         }
         return { ...e, status, winner, completed_at: completedAt };
@@ -3919,6 +4017,21 @@ class StorageService {
       return e;
     });
     this.setItem(STORAGE_KEYS.ELECTIONS, all);
+
+    // Sync winner leadership role to learner record
+    if (targetEventId && winnerRoleToAssign && winnerCandidate) {
+      const allLearners = this.getLearners(targetEventId);
+      const cand = winnerCandidate as ElectionCandidate;
+      const targetLearner = allLearners.find(l =>
+        (cand.learner_id && l.id === cand.learner_id) ||
+        (cand.id && l.id === cand.id) ||
+        l.full_name.toLowerCase() === cand.name.toLowerCase()
+      );
+      if (targetLearner) {
+        this.assignCabinetRole(targetEventId, targetLearner.id, winnerRoleToAssign);
+      }
+    }
+
     if (targetEventId) this.syncEventStateToSupabase(targetEventId);
   }
 
@@ -5432,4 +5545,77 @@ export function getResolvedCommitteeName(learner: Partial<Learner>, committees: 
   }
   return '';
 }
+
+export const CANONICAL_ROLES = {
+  CHIEF_MINISTER: 'Chief Minister',
+  SPEAKER: 'Assembly Speaker',
+  LEADER_OF_OPPOSITION: 'Leader of Opposition'
+} as const;
+
+/**
+ * Dynamically resolves a learner's bench based on direct bench field or party's bench.
+ */
+export function getResolvedLearnerBench(learner: Partial<Learner>, parties: Party[] = []): BenchType {
+  if (learner.bench) return learner.bench;
+  if (learner.party_id) {
+    const found = parties.find(p => p.id === learner.party_id);
+    if (found?.bench) return found.bench;
+  }
+  if (learner.party_name) {
+    const found = parties.find(p => p.name.toLowerCase() === learner.party_name?.toLowerCase());
+    if (found?.bench) return found.bench;
+  }
+  return 'Independent';
+}
+
+/**
+ * Normalizes any role string into a canonical role if it matches a core leadership position.
+ */
+export function normalizeLeadershipRole(role?: string): string {
+  if (!role) return '';
+  const r = role.trim().toLowerCase();
+  if (r.includes('chief minister') || r === 'cm' || r.includes('leader of the house')) {
+    return CANONICAL_ROLES.CHIEF_MINISTER;
+  }
+  if (r.includes('speaker') && !r.includes('deputy')) {
+    return CANONICAL_ROLES.SPEAKER;
+  }
+  if (r.includes('opposition') || r.includes('lop') || r.includes('shadow leader')) {
+    return CANONICAL_ROLES.LEADER_OF_OPPOSITION;
+  }
+  return role.trim();
+}
+
+export function isChiefMinisterRole(role?: string): boolean {
+  if (!role) return false;
+  const r = role.trim().toLowerCase();
+  return r === 'chief minister' || r.includes('chief minister') || r.includes('leader of the house');
+}
+
+export function isSpeakerRole(role?: string): boolean {
+  if (!role) return false;
+  const r = role.trim().toLowerCase();
+  return (r === 'assembly speaker' || r === 'speaker' || r.includes('speaker of')) && !r.includes('deputy');
+}
+
+export function isLeaderOfOppositionRole(role?: string): boolean {
+  if (!role) return false;
+  const r = role.trim().toLowerCase();
+  return (
+    r === 'leader of opposition' ||
+    r === 'leader of the opposition' ||
+    r === 'opposition leader' ||
+    r.includes('leader of opposition') ||
+    r.includes('leader of the opposition')
+  );
+}
+
+export function isAssemblyRoleMatching(currentRole: string | undefined, targetRole: string): boolean {
+  if (!currentRole || !targetRole) return false;
+  if (isChiefMinisterRole(targetRole) && isChiefMinisterRole(currentRole)) return true;
+  if (isSpeakerRole(targetRole) && isSpeakerRole(currentRole)) return true;
+  if (isLeaderOfOppositionRole(targetRole) && isLeaderOfOppositionRole(currentRole)) return true;
+  return currentRole.trim().toLowerCase() === targetRole.trim().toLowerCase();
+}
+
 

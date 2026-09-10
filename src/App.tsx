@@ -652,10 +652,14 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           onCloseElection={(elecId) => {
             storageService.closeElection(elecId);
             props.setElections(storageService.getElections(activeEvent.id));
+            props.setLearners(storageService.getLearners(activeEvent.id));
           }}
           onSetElectionStatus={(elecId, status) => {
             storageService.setElectionStatus(elecId, status);
             props.setElections(storageService.getElections(activeEvent.id));
+            if (status === 'Closed') {
+              props.setLearners(storageService.getLearners(activeEvent.id));
+            }
           }}
           onAddCandidate={(elecId, cand) => {
             const result = storageService.addCandidateToElection(elecId, cand);

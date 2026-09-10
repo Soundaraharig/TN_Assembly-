@@ -309,49 +309,59 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                 </span>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                {overallSummary.map(({ day, totalStudents, presentCount, percentage }) => {
-                  const isActive = day.status === 'Active';
-                  return (
-                    <div
-                      key={day.id}
-                      onClick={() => handleOpenAttendance(day)}
-                      className={`p-3 rounded-xl border transition cursor-pointer hover:border-amber-500/50 flex flex-col justify-between ${
-                        isActive ? 'ring-1 ring-emerald-500' : ''
-                      }`}
-                      style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>
-                          {day.name}
-                        </span>
-                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                          isActive ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-slate-500/15 text-slate-400'
-                        }`}>
-                          {isActive ? 'ACTIVE' : day.status}
-                        </span>
+              {sortedDays.length === 0 ? (
+                <div
+                  className="p-5 rounded-xl border border-dashed text-center text-xs text-slate-400 space-y-1"
+                  style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+                >
+                  <p className="font-semibold text-slate-300">No assembly days configured yet.</p>
+                  <p className="text-[11px]">Click "+ Add Day" above to configure your first day.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {overallSummary.map(({ day, totalStudents, presentCount, percentage }) => {
+                    const isActive = day.status === 'Active';
+                    return (
+                      <div
+                        key={day.id}
+                        onClick={() => handleOpenAttendance(day)}
+                        className={`p-3 rounded-xl border transition cursor-pointer hover:border-amber-500/50 flex flex-col justify-between ${
+                          isActive ? 'ring-1 ring-emerald-500' : ''
+                        }`}
+                        style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>
+                            {day.name}
+                          </span>
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                            isActive ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-slate-500/15 text-slate-400'
+                          }`}>
+                            {isActive ? 'ACTIVE' : day.status}
+                          </span>
+                        </div>
+                        <div className="mt-2 flex items-baseline justify-between">
+                          <span className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
+                            {presentCount} <span className="text-xs font-normal opacity-70">/ {totalStudents}</span>
+                          </span>
+                          <span className="text-xs font-bold text-emerald-500">
+                            {percentage}% Present
+                          </span>
+                        </div>
+                        <div className="w-full h-1.5 rounded-full bg-slate-700/30 overflow-hidden mt-1.5">
+                          <div
+                            className="h-full rounded-full transition-all duration-500"
+                            style={{
+                              width: `${percentage}%`,
+                              backgroundColor: isActive ? 'var(--emerald)' : 'var(--amber)'
+                            }}
+                          />
+                        </div>
                       </div>
-                      <div className="mt-2 flex items-baseline justify-between">
-                        <span className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
-                          {presentCount} <span className="text-xs font-normal opacity-70">/ {totalStudents}</span>
-                        </span>
-                        <span className="text-xs font-bold text-emerald-500">
-                          {percentage}% Present
-                        </span>
-                      </div>
-                      <div className="w-full h-1.5 rounded-full bg-slate-700/30 overflow-hidden mt-1.5">
-                        <div
-                          className="h-full rounded-full transition-all duration-500"
-                          style={{
-                            width: `${percentage}%`,
-                            backgroundColor: isActive ? 'var(--emerald)' : 'var(--amber)'
-                          }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
 
@@ -367,7 +377,33 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {sortedDays.map((day) => {
+              {sortedDays.length === 0 ? (
+                <div
+                  className="col-span-full p-12 rounded-2xl border-2 border-dashed text-center space-y-4 shadow-sm"
+                  style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+                >
+                  <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-500">
+                    <Calendar className="w-7 h-7" />
+                  </div>
+                  <div className="space-y-1">
+                    <h4 className="text-base font-black tracking-tight" style={{ color: 'var(--text-primary)' }}>
+                      No Assembly Days Configured (0)
+                    </h4>
+                    <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+                      Start fresh by creating Day 1. You can configure any number of days and assign activities dynamically without automatic pre-seeding.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleOpenAddDay}
+                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-xs shadow-md shadow-amber-500/20 inline-flex items-center gap-2 transition cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>+ Add Day</span>
+                  </button>
+                </div>
+              ) : (
+                sortedDays.map((day) => {
                 const isActive = day.status === 'Active';
                 const dayAtt = dayAttendance.filter(a => a.day_id === day.id);
                 const presentCount = dayAtt.filter(a => a.status === 'Present').length;
@@ -499,7 +535,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                     </div>
                   </div>
                 );
-              })}
+              }))}
             </div>
 
             {/* Bottom Add Day Button */}
@@ -846,6 +882,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
         day={editingDay}
         eventId={event.id}
         nextDayNumber={sortedDays.length + 1}
+        existingDays={sortedDays}
         onSave={async (data) => {
           if (editingDay) {
             await onUpdateDay({ ...editingDay, ...data } as EventDay);

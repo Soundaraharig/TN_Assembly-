@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { Learner, Party } from '../../types';
-import { getResolvedPartyName } from '../../services/storageService';
+import {
+  getResolvedPartyName,
+  getResolvedLearnerBench,
+  isChiefMinisterRole,
+  isSpeakerRole,
+  isLeaderOfOppositionRole,
+  CANONICAL_ROLES
+} from '../../services/storageService';
 import {
   Landmark,
   Save,
@@ -223,7 +230,7 @@ const SearchableDelegateSelect: React.FC<SearchableDelegateSelectProps> = ({
                   <div className="truncate">
                     <span className="font-bold">{l.full_name}</span>
                     <span className="text-[10px] text-slate-400 ml-1.5">
-                      ({getResolvedPartyName(l, parties) || 'Independent'})
+                      ({getResolvedPartyName(l, parties) || 'Independent'} • {getResolvedLearnerBench(l, parties)})
                     </span>
                   </div>
                   <span className="text-[10px] font-mono text-amber-500 shrink-0">
@@ -430,6 +437,22 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
       onShowToast('Roster Locked', 'Unlock event in Overview tab to assign cabinet ministers', 'info');
       return;
     }
+
+    if (learnerId) {
+      const learner = (learners || []).find(l => l.id === learnerId);
+      if (learner) {
+        const bench = getResolvedLearnerBench(learner, parties);
+        if (isChiefMinisterRole(portfolioRole) && bench === 'Opposition') {
+          onShowToast('Bench Rule Violation', 'Chief Minister must belong to the Ruling party / bench.', 'error');
+          return;
+        }
+        if (isLeaderOfOppositionRole(portfolioRole) && bench === 'Ruling') {
+          onShowToast('Bench Rule Violation', 'Leader of Opposition must belong to the Opposition party / bench.', 'error');
+          return;
+        }
+      }
+    }
+
     if (onAssignCabinetRole) {
       onAssignCabinetRole(learnerId, portfolioRole);
       const learner = (learners || []).find(l => l.id === learnerId);
@@ -523,16 +546,23 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {[
-                { role: 'Speaker of Legislative Assembly', title: 'Assembly Speaker', bench: 'Neutral / Presiding' },
-                { role: 'Chief Minister (Leader of the House)', title: 'Chief Minister', bench: 'Ruling Bench' },
-                { role: 'Leader of the Opposition', title: 'Leader of Opposition', bench: 'Opposition Bench' }
+                { role: CANONICAL_ROLES.SPEAKER, title: 'Assembly Speaker', bench: 'Neutral / Presiding', allowedBench: undefined },
+                { role: CANONICAL_ROLES.CHIEF_MINISTER, title: 'Chief Minister', bench: 'Ruling Bench', allowedBench: 'Ruling' as const },
+                { role: CANONICAL_ROLES.LEADER_OF_OPPOSITION, title: 'Leader of Opposition', bench: 'Opposition Bench', allowedBench: 'Opposition' as const }
               ].map(item => {
-                const holder = (learners || []).find(l =>
-                  l.role === item.role ||
-                  (item.role === 'Chief Minister (Leader of the House)' && (l.role === 'Chief Minister' || l.role?.includes('Chief Minister'))) ||
-                  (item.role === 'Speaker of Legislative Assembly' && (l.role === 'Speaker of the Assembly' || l.role?.includes('Speaker'))) ||
-                  (item.role === 'Leader of the Opposition' && (l.role === 'Opposition Leader' || l.role?.includes('Leader of the Opposition')))
-                );
+                const holder = (learners || []).find(l => {
+                  if (item.role === CANONICAL_ROLES.CHIEF_MINISTER) return isChiefMinisterRole(l.role);
+                  if (item.role === CANONICAL_ROLES.SPEAKER) return isSpeakerRole(l.role);
+                  if (item.role === CANONICAL_ROLES.LEADER_OF_OPPOSITION) return isLeaderOfOppositionRole(l.role);
+                  return false;
+                });
+
+                const eligibleLearners = (learners || []).filter(l => {
+                  if (!item.allowedBench) return true;
+                  const b = getResolvedLearnerBench(l, parties);
+                  return b === item.allowedBench;
+                });
+
                 return (
                   <div
                     key={item.role}
@@ -554,12 +584,17 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                     </div>
 
                     <SearchableDelegateSelect
-                      learners={learners}
+                      learners={eligibleLearners}
+                      parties={parties}
                       currentLearnerId={holder?.id}
                       disabled={isLocked}
                       onSelect={(learnerId) => handleAssignRole(learnerId, item.role)}
                       onShowToast={onShowToast}
-                      placeholder={`Search name or const no for ${item.title}...`}
+                      placeholder={
+                        item.allowedBench
+                          ? `Search ${item.allowedBench} delegates for ${item.title}...`
+                          : `Search delegates for ${item.title}...`
+                      }
                     />
                   </div>
                 );

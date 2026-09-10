@@ -321,7 +321,10 @@ DECLARE
         'event_deadlines',
         'proceedings_questions',
         'proceedings_motions',
-        'event_participants'
+        'event_participants',
+        'event_days',
+        'day_activities',
+        'event_day_attendance'
     ];
 BEGIN
     FOREACH tbl IN ARRAY tables_list
@@ -540,3 +543,90 @@ CREATE INDEX IF NOT EXISTS idx_event_days_event_id ON event_days(event_id);
 CREATE INDEX IF NOT EXISTS idx_day_activities_day_id ON day_activities(day_id);
 CREATE INDEX IF NOT EXISTS idx_event_day_att_event_day ON event_day_attendance(event_id, day_id);
 CREATE INDEX IF NOT EXISTS idx_event_day_att_student ON event_day_attendance(student_id);
+
+-- ====================================================================
+-- 10d. EVENT DAYS UNIQUE CONSTRAINT (ONE UNIQUE DAY NUMBER PER EVENT)
+-- ====================================================================
+
+-- 1. Deduplicate any pre-existing duplicate day numbers per event keeping latest
+DELETE FROM public.event_days a USING public.event_days b
+WHERE a.ctid < b.ctid 
+  AND a.event_id = b.event_id 
+  AND a.day_number = b.day_number;
+
+-- 2. Enforce unique constraint: (event_id, day_number)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conname = 'uq_event_days_event_day'
+    ) THEN
+        ALTER TABLE public.event_days
+        ADD CONSTRAINT uq_event_days_event_day UNIQUE (event_id, day_number);
+    END IF;
+END $$;
+
+-- ====================================================================
+-- 10e. RLS POLICIES FOR EVENT DAYS & ATTENDANCE
+-- ====================================================================
+ALTER TABLE public.event_days ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.day_activities ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.event_day_attendance ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow read access event_days" ON public.event_days;
+DROP POLICY IF EXISTS "Allow write access event_days" ON public.event_days;
+CREATE POLICY "Allow read access event_days" ON public.event_days FOR SELECT TO anon, authenticated USING (true);
+CREATE POLICY "Allow write access event_days" ON public.event_days FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow read access day_activities" ON public.day_activities;
+DROP POLICY IF EXISTS "Allow write access day_activities" ON public.day_activities;
+CREATE POLICY "Allow read access day_activities" ON public.day_activities FOR SELECT TO anon, authenticated USING (true);
+CREATE POLICY "Allow write access day_activities" ON public.day_activities FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow read access event_day_attendance" ON public.event_day_attendance;
+DROP POLICY IF EXISTS "Allow write access event_day_attendance" ON public.event_day_attendance;
+CREATE POLICY "Allow read access event_day_attendance" ON public.event_day_attendance FOR SELECT TO anon, authenticated USING (true);
+CREATE POLICY "Allow write access event_day_attendance" ON public.event_day_attendance FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+GRANT ALL ON public.event_days TO anon, authenticated, postgres, service_role;
+GRANT ALL ON public.day_activities TO anon, authenticated, postgres, service_role;
+GRANT ALL ON public.event_day_attendance TO anon, authenticated, postgres, service_role;
+
+-- ====================================================================
+-- 10f. TARGETED DEMO EVENT DAYS & ATTENDANCE CLEANUP MIGRATION
+-- Purges only mock/demo days and mock attendance for demo event
+-- PRESERVES: college_events, learners, political_parties, committees, coordinators, accounts
+-- ====================================================================
+DO $$
+DECLARE
+    demo_ev RECORD;
+BEGIN
+    FOR demo_ev IN (
+        SELECT id FROM public.college_events 
+        WHERE LOWER(college_name) LIKE '%jkkncet%' 
+           OR LOWER(slug) LIKE '%jkkncet%'
+    ) LOOP
+        -- Remove demo day attendance
+        DELETE FROM public.event_day_attendance WHERE event_id = demo_ev.id;
+        
+        -- Remove demo day activities
+        DELETE FROM public.day_activities WHERE event_id = demo_ev.id;
+        
+        -- Remove demo event days
+        DELETE FROM public.event_days WHERE event_id = demo_ev.id;
+
+        -- Reset fake attendance flags on learners for this demo event
+        UPDATE public.learners
+        SET day1_checked_in = false, day2_checked_in = false
+        WHERE event_id = demo_ev.id;
+
+        -- Reset event_days and day_attendance in social_coverage JSONB
+        UPDATE public.college_events
+        SET social_coverage = jsonb_set(
+            jsonb_set(COALESCE(social_coverage, '{}'::jsonb), '{event_days}', '[]'::jsonb, true),
+            '{day_attendance}', '[]'::jsonb, true
+        )
+        WHERE id = demo_ev.id;
+    END LOOP;
+END $$;
+

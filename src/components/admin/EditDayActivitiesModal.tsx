@@ -9,6 +9,7 @@ interface EditDayActivitiesModalProps {
   day?: EventDay | null;
   eventId: string;
   nextDayNumber?: number;
+  existingDays?: EventDay[];
   onSave: (dayData: Partial<EventDay>) => Promise<void>;
   onShowToast?: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
@@ -19,6 +20,7 @@ export const EditDayActivitiesModal: React.FC<EditDayActivitiesModalProps> = ({
   day,
   eventId,
   nextDayNumber = 1,
+  existingDays = [],
   onSave,
   onShowToast
 }) => {
@@ -43,25 +45,8 @@ export const EditDayActivitiesModal: React.FC<EditDayActivitiesModalProps> = ({
       setName(`Day ${num}`);
       setDate('');
       setStatus(num === 1 ? 'Active' : 'Upcoming');
-      // Suggest default activities based on day number
-      if (num === 1) {
-        setAssignedActivities([
-          'Student Orientation',
-          'Party & Constituency Allocation + Group Formation'
-        ]);
-      } else if (num === 2) {
-        setAssignedActivities([
-          'Speaker & Party Leader Selection',
-          'Government Formation + CM & LOP Election'
-        ]);
-      } else if (num === 3) {
-        setAssignedActivities([
-          'Cabinet Formation',
-          'Mock Assembly'
-        ]);
-      } else {
-        setAssignedActivities(['Mock Assembly']);
-      }
+      // Fresh start: do not auto-seed default activities
+      setAssignedActivities([]);
     }
     setCustomActivity('');
   }, [day, nextDayNumber, isOpen]);
@@ -117,6 +102,16 @@ export const EditDayActivitiesModal: React.FC<EditDayActivitiesModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanName = name.trim() || `Day ${dayNumber}`;
+
+    // Validate duplicate day number
+    if (existingDays && existingDays.length > 0) {
+      const duplicate = existingDays.find(d => Number(d.day_number) === Number(dayNumber) && (!day || d.id !== day.id));
+      if (duplicate) {
+        onShowToast?.('Duplicate Day Number', `Day ${dayNumber} (${duplicate.name}) already exists. Please choose a unique day number.`, 'error');
+        return;
+      }
+    }
+
     if (assignedActivities.length === 0) {
       onShowToast?.('Missing Activities', 'Please assign at least one activity to this day.', 'error');
       return;

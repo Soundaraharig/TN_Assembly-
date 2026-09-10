@@ -1,6 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import type { Learner, Party, Committee, UserRole } from '../../types';
-import { storageService, getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
+import {
+  storageService,
+  getResolvedPartyName,
+  getResolvedCommitteeName,
+  isChiefMinisterRole,
+  isSpeakerRole,
+  isLeaderOfOppositionRole,
+  isAssemblyRoleMatching
+} from '../../services/storageService';
 import { canDelete } from '../../utils/permissions';
 import { generateDelegateBadgesPDF } from '../../utils/pdfExport';
 import { EditLearnerModal } from './EditLearnerModal';
@@ -21,7 +29,11 @@ import {
   Lock,
   Copy,
   Check,
-  Loader2
+  Loader2,
+  Crown,
+  Gavel,
+  Shield,
+  Award
 } from 'lucide-react';
 
 interface ParticipantsTabProps {
@@ -156,7 +168,24 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
       const resolvedCommittee = getResolvedCommitteeName(l, committees);
 
       if (selectedParty !== 'ALL' && resolvedParty !== selectedParty) return false;
-      if (selectedRole !== 'ALL' && l.role !== selectedRole) return false;
+      if (selectedRole !== 'ALL') {
+        if (selectedRole === 'Chief Minister') {
+          if (!isChiefMinisterRole(l.role)) return false;
+        } else if (selectedRole === 'Assembly Speaker') {
+          if (!isSpeakerRole(l.role)) return false;
+        } else if (selectedRole === 'Leader of Opposition') {
+          if (!isLeaderOfOppositionRole(l.role)) return false;
+        } else if (selectedRole === 'Cabinet Minister') {
+          if (!l.role || !l.role.toLowerCase().includes('minister') || l.role.toLowerCase().includes('shadow') || isChiefMinisterRole(l.role)) return false;
+        } else if (selectedRole === 'Shadow Minister') {
+          if (!l.role || !l.role.toLowerCase().includes('shadow minister')) return false;
+        } else if (selectedRole === 'Member of Legislative Assembly (MLA)') {
+          const r = (l.role || '').toLowerCase();
+          if (r && !r.includes('mla') && !r.includes('member of') && !r.includes('delegate')) return false;
+        } else {
+          if (!isAssemblyRoleMatching(l.role, selectedRole)) return false;
+        }
+      }
       if (selectedCommittee !== 'ALL' && resolvedCommittee !== selectedCommittee) return false;
       if (selectedBench !== 'ALL' && l.bench !== selectedBench) return false;
 
@@ -343,6 +372,71 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
       }
     });
     onShowToast('Batch Committee Updated', `Assigned committee ${comm ? comm.name : 'Unassigned'} to ${selectedLearnerIds.size} delegates`, 'success');
+  };
+
+  const renderRoleBadge = (role?: string) => {
+    if (!role) return <span className="text-slate-400 dark:text-slate-600 font-medium">—</span>;
+
+    if (isChiefMinisterRole(role)) {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-black bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40 shadow-xs">
+          <Crown className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+          <span className="truncate">{role}</span>
+        </span>
+      );
+    }
+
+    if (isSpeakerRole(role)) {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-black bg-purple-500/15 text-purple-700 dark:text-purple-300 border border-purple-500/40 shadow-xs">
+          <Gavel className="w-3.5 h-3.5 text-purple-500 shrink-0" />
+          <span className="truncate">{role}</span>
+        </span>
+      );
+    }
+
+    if (isLeaderOfOppositionRole(role)) {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-black bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/40 shadow-xs">
+          <Shield className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+          <span className="truncate">{role}</span>
+        </span>
+      );
+    }
+
+    const isShadow = role.toLowerCase().includes('shadow');
+    const isMinister = role.toLowerCase().includes('minister');
+
+    if (isMinister && !isShadow) {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[11px] font-bold bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+          <Award className="w-3 h-3 text-emerald-500 shrink-0" />
+          <span className="max-w-[150px] truncate">{role}</span>
+        </span>
+      );
+    }
+
+    if (isShadow) {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[11px] font-bold bg-orange-500/10 text-orange-700 dark:text-orange-300 border border-orange-500/30">
+          <Shield className="w-3 h-3 text-orange-500 shrink-0" />
+          <span className="max-w-[150px] truncate">{role}</span>
+        </span>
+      );
+    }
+
+    return (
+      <span
+        className="px-2 py-0.5 rounded text-[11px] font-medium inline-block max-w-[170px] truncate border"
+        style={{
+          backgroundColor: 'var(--bg-elevated)',
+          borderColor: 'var(--border)',
+          color: 'var(--text-primary)'
+        }}
+      >
+        {role}
+      </span>
+    );
   };
 
   return (
@@ -628,11 +722,11 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
             >
               <option value="ALL">All roles</option>
               <option value="Chief Minister">Chief Minister</option>
-              <option value="Speaker of the Assembly">Speaker</option>
-              <option value="Deputy Speaker">Deputy Speaker</option>
-              <option value="Leader of the Opposition">Leader of Opposition</option>
-              <option value="Shadow Minister">Shadow Minister</option>
-              <option value="Member of Legislative Assembly (MLA)">Member of Assembly (MLA)</option>
+              <option value="Assembly Speaker">Assembly Speaker</option>
+              <option value="Leader of Opposition">Leader of Opposition</option>
+              <option value="Cabinet Minister">Cabinet Ministers</option>
+              <option value="Shadow Minister">Shadow Ministers</option>
+              <option value="Member of Legislative Assembly (MLA)">MLAs / Regular Members</option>
             </select>
 
             <select
@@ -1022,20 +1116,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
 
                       {/* Assembly Role */}
                       <td className="py-3 px-4">
-                        {learner.role ? (
-                          <span
-                            className="px-2 py-0.5 rounded text-[11px] font-medium inline-block max-w-[170px] truncate border"
-                            style={{
-                              backgroundColor: 'var(--bg-elevated)',
-                              borderColor: 'var(--border)',
-                              color: 'var(--text-primary)'
-                            }}
-                          >
-                            {learner.role}
-                          </span>
-                        ) : (
-                          <span className="text-slate-400 dark:text-slate-600 font-medium">—</span>
-                        )}
+                        {renderRoleBadge(learner.role)}
                       </td>
 
                       {/* Committee */}
