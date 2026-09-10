@@ -1389,6 +1389,22 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
         </div>
       )}
 
+      {/* Edit Learner Modal */}
+      {editingLearner && (
+        <EditLearnerModal
+          isOpen={Boolean(editingLearner)}
+          onClose={() => setEditingLearner(null)}
+          learner={editingLearner}
+          parties={parties}
+          committees={committees}
+          onSave={(updated) => {
+            onUpdateLearner(updated);
+            onShowToast('Participant Updated', `Saved details for ${updated.full_name}`, 'success');
+            setEditingLearner(null);
+          }}
+        />
+      )}
+
       {/* Download / Export Modal */}
       <DownloadModal
         isOpen={isDownloadModalOpen}

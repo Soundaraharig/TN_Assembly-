@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import type { Learner, Party, AgendaItem, ScoreRecord, Election, LiveFlashVote, CollegeEvent } from '../../types';
 import {
   Clock,
@@ -181,11 +181,24 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   const [registrationsFrozen, setRegistrationsFrozen] = useState(() => storageService.getRegistrationsFrozen(currentEvent?.id));
   const [scoresLocked, setScoresLocked] = useState(() => storageService.getScoresLocked(currentEvent?.id));
 
+  // Issue #6: Monotonic lock timestamps & busy tracking to eliminate toggle flickering
+  const [togglingLocks, setTogglingLocks] = useState<Set<'allocation' | 'frozen' | 'scores'>>(new Set());
+  const lastLocalToggleTimestampRef = useRef<{ allocation?: number; frozen?: number; scores?: number }>({});
+
   useEffect(() => {
     const updateLocks = () => {
-      setAllocationLock(storageService.getAllocationLock(currentEvent?.id));
-      setRegistrationsFrozen(storageService.getRegistrationsFrozen(currentEvent?.id));
-      setScoresLocked(storageService.getScoresLocked(currentEvent?.id));
+      const now = Date.now();
+      const recent = lastLocalToggleTimestampRef.current;
+
+      if (!recent.allocation || now - recent.allocation > 3500) {
+        setAllocationLock(storageService.getAllocationLock(currentEvent?.id));
+      }
+      if (!recent.frozen || now - recent.frozen > 3500) {
+        setRegistrationsFrozen(storageService.getRegistrationsFrozen(currentEvent?.id));
+      }
+      if (!recent.scores || now - recent.scores > 3500) {
+        setScoresLocked(storageService.getScoresLocked(currentEvent?.id));
+      }
     };
     updateLocks();
     const unsub = storageService.subscribe(updateLocks);
@@ -839,20 +852,40 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   <strong className="block text-slate-900 dark:text-white font-bold">Allocation lock</strong>
                   <span className="text-slate-500 text-[11px]">Disables further role & party changes.</span>
                 </div>
-                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                <label className={`relative inline-flex items-center shrink-0 ${togglingLocks.has('allocation') ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}>
                   <input
                     type="checkbox"
                     checked={allocationLock}
+                    disabled={togglingLocks.has('allocation')}
                     onChange={async (e) => {
+                      if (togglingLocks.has('allocation')) return;
                       const val = e.target.checked;
+                      setTogglingLocks(prev => new Set(prev).add('allocation'));
+                      lastLocalToggleTimestampRef.current.allocation = Date.now();
                       setAllocationLock(val);
-                      const res = await storageService.setAllocationLock(val, currentEvent?.id);
-                      if (!res.success) {
+
+                      try {
+                        const res = await storageService.setAllocationLock(val, currentEvent?.id);
+                        if (!res.success) {
+                          setAllocationLock(!val);
+                          delete lastLocalToggleTimestampRef.current.allocation;
+                          onShowToast('Lock Failed', res.error?.message || 'Database update failed', 'error');
+                          return;
+                        }
+                        onShowToast(val ? '🔒 Allocation Locked' : '🔓 Allocation Unlocked', val ? 'Role & party allocations locked' : 'Allocations unlocked', 'info');
+                      } catch (err: any) {
                         setAllocationLock(!val);
-                        onShowToast('Lock Failed', res.error?.message || 'Database update failed', 'error');
-                        return;
+                        delete lastLocalToggleTimestampRef.current.allocation;
+                        onShowToast('Lock Error', err?.message || 'Network error updating lock', 'error');
+                      } finally {
+                        setTimeout(() => {
+                          setTogglingLocks(prev => {
+                            const next = new Set(prev);
+                            next.delete('allocation');
+                            return next;
+                          });
+                        }, 400);
                       }
-                      onShowToast(val ? '🔒 Allocation Locked' : '🔓 Allocation Unlocked', val ? 'Role & party allocations locked' : 'Allocations unlocked', 'info');
                     }}
                     className="sr-only peer"
                   />
@@ -866,20 +899,40 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   <strong className="block text-slate-900 dark:text-white font-bold">Registrations frozen</strong>
                   <span className="text-slate-500 text-[11px]">Blocks new walk-in additions.</span>
                 </div>
-                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                <label className={`relative inline-flex items-center shrink-0 ${togglingLocks.has('frozen') ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}>
                   <input
                     type="checkbox"
                     checked={registrationsFrozen}
+                    disabled={togglingLocks.has('frozen')}
                     onChange={async (e) => {
+                      if (togglingLocks.has('frozen')) return;
                       const val = e.target.checked;
+                      setTogglingLocks(prev => new Set(prev).add('frozen'));
+                      lastLocalToggleTimestampRef.current.frozen = Date.now();
                       setRegistrationsFrozen(val);
-                      const res = await storageService.setRegistrationsFrozen(val, currentEvent?.id);
-                      if (!res.success) {
+
+                      try {
+                        const res = await storageService.setRegistrationsFrozen(val, currentEvent?.id);
+                        if (!res.success) {
+                          setRegistrationsFrozen(!val);
+                          delete lastLocalToggleTimestampRef.current.frozen;
+                          onShowToast('Freeze Failed', res.error?.message || 'Database update failed', 'error');
+                          return;
+                        }
+                        onShowToast(val ? '❄️ Registrations Frozen' : '🔓 Registrations Open', val ? 'Walk-in & CSV additions blocked' : 'Registrations open', 'info');
+                      } catch (err: any) {
                         setRegistrationsFrozen(!val);
-                        onShowToast('Freeze Failed', res.error?.message || 'Database update failed', 'error');
-                        return;
+                        delete lastLocalToggleTimestampRef.current.frozen;
+                        onShowToast('Freeze Error', err?.message || 'Network error updating lock', 'error');
+                      } finally {
+                        setTimeout(() => {
+                          setTogglingLocks(prev => {
+                            const next = new Set(prev);
+                            next.delete('frozen');
+                            return next;
+                          });
+                        }, 400);
                       }
-                      onShowToast(val ? '❄️ Registrations Frozen' : '🔓 Registrations Open', val ? 'Walk-in & CSV additions blocked' : 'Registrations open', 'info');
                     }}
                     className="sr-only peer"
                   />
@@ -893,20 +946,40 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   <strong className="block text-slate-900 dark:text-white font-bold">Scores locked</strong>
                   <span className="text-slate-500 text-[11px]">Blocks jury submissions live.</span>
                 </div>
-                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                <label className={`relative inline-flex items-center shrink-0 ${togglingLocks.has('scores') ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}>
                   <input
                     type="checkbox"
                     checked={scoresLocked}
+                    disabled={togglingLocks.has('scores')}
                     onChange={async (e) => {
+                      if (togglingLocks.has('scores')) return;
                       const val = e.target.checked;
+                      setTogglingLocks(prev => new Set(prev).add('scores'));
+                      lastLocalToggleTimestampRef.current.scores = Date.now();
                       setScoresLocked(val);
-                      const res = await storageService.setScoresLocked(val, currentEvent?.id);
-                      if (!res.success) {
+
+                      try {
+                        const res = await storageService.setScoresLocked(val, currentEvent?.id);
+                        if (!res.success) {
+                          setScoresLocked(!val);
+                          delete lastLocalToggleTimestampRef.current.scores;
+                          onShowToast('Lock Failed', res.error?.message || 'Database update failed', 'error');
+                          return;
+                        }
+                        onShowToast(val ? '🔒 Scores Locked' : '🔓 Scores Unlocked', val ? 'Jury evaluation scoring locked' : 'Scoring open', 'info');
+                      } catch (err: any) {
                         setScoresLocked(!val);
-                        onShowToast('Lock Failed', res.error?.message || 'Database update failed', 'error');
-                        return;
+                        delete lastLocalToggleTimestampRef.current.scores;
+                        onShowToast('Lock Error', err?.message || 'Network error updating lock', 'error');
+                      } finally {
+                        setTimeout(() => {
+                          setTogglingLocks(prev => {
+                            const next = new Set(prev);
+                            next.delete('scores');
+                            return next;
+                          });
+                        }, 400);
                       }
-                      onShowToast(val ? '🔒 Scores Locked' : '🔓 Scores Unlocked', val ? 'Jury evaluation scoring locked' : 'Scoring open', 'info');
                     }}
                     className="sr-only peer"
                   />

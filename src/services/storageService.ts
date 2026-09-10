@@ -13,11 +13,14 @@ import type {
   Volunteer,
   UserSession,
   Nomination,
+  NominationHistoryEntry,
   Election,
   ElectionCandidate,
   LiveFlashVote,
   BillProceeding,
   ScoreRecord,
+  VoteAuditEntry,
+  AggregatedScore,
   ParliamentQuestion,
   ChecklistItem,
   ChatMessage,
@@ -102,7 +105,9 @@ const STORAGE_KEYS = {
   DELETED_IDS: 'tn_assembly_deleted_ids_v6',
   AUDIT_LOGS: 'tn_assembly_audit_logs_v1',
   EVENT_DAYS: 'tn_assembly_event_days_v1',
-  DAY_ATTENDANCE: 'tn_assembly_day_attendance_v1'
+  DAY_ATTENDANCE: 'tn_assembly_day_attendance_v1',
+  VOTE_AUDIT_LOG: 'tn_assembly_vote_audit_log_v1',
+  LOCK_UPDATED_AT: 'tn_assembly_lock_updated_at_v1'
 };
 
 type Listener = () => void;
@@ -652,13 +657,31 @@ class StorageService {
         let allDays: EventDay[] = [];
         let allDayAtt: DayAttendanceRecord[] = [];
 
+        const now = Date.now();
+        const lockTimestamps = this.getItem<Record<string, number>>(STORAGE_KEYS.LOCK_UPDATED_AT, {});
+
         events.forEach(ev => {
           const sc = (ev.social_coverage || {}) as any;
           if (Array.isArray(sc.open_nominations)) {
             openNomMap[ev.id] = sc.open_nominations;
           }
           if (Array.isArray(sc.nominations)) {
-            allNoms = [...allNoms, ...sc.nominations];
+            const nomsWithEvent = sc.nominations.map((n: any) => ({
+              ...n,
+              event_id: n.event_id || ev.id,
+              status: n.status || 'Approved',
+              nominated_by_name: n.nominated_by_name || n.candidate_name || 'Self',
+              history: Array.isArray(n.history) && n.history.length > 0 ? n.history : [
+                {
+                  id: uid('hist'),
+                  status: n.status || 'Submitted',
+                  changed_by: n.nominated_by_name || n.candidate_name || 'Self',
+                  timestamp: n.created_at || new Date().toISOString(),
+                  comment: 'Nomination filed'
+                }
+              ]
+            }));
+            allNoms = [...allNoms, ...nomsWithEvent];
           }
           if (Array.isArray(sc.elections)) {
             allElecs = [...allElecs, ...sc.elections];
@@ -691,14 +714,24 @@ class StorageService {
             this.setItem(STORAGE_KEYS.YUVA_ASSIGNMENTS, sc.yuva_assignments);
           }
 
+          // Anti-flicker: Only accept remote lock state if local action timestamp was not set within 4 seconds
           if (typeof sc.allocation_lock === 'boolean') {
-            this.setItem(`${STORAGE_KEYS.ALLOCATION_LOCK}_${ev.id}`, sc.allocation_lock);
+            const lastAction = lockTimestamps[`alloc_${ev.id}`] || 0;
+            if (now - lastAction > 4000) {
+              this.setItem(`${STORAGE_KEYS.ALLOCATION_LOCK}_${ev.id}`, sc.allocation_lock);
+            }
           }
           if (typeof sc.registrations_frozen === 'boolean') {
-            this.setItem(`${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${ev.id}`, sc.registrations_frozen);
+            const lastAction = lockTimestamps[`reg_${ev.id}`] || 0;
+            if (now - lastAction > 4000) {
+              this.setItem(`${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${ev.id}`, sc.registrations_frozen);
+            }
           }
           if (typeof sc.scores_locked === 'boolean') {
-            this.setItem(`${STORAGE_KEYS.SCORES_LOCKED}_${ev.id}`, sc.scores_locked);
+            const lastAction = lockTimestamps[`score_${ev.id}`] || 0;
+            if (now - lastAction > 4000) {
+              this.setItem(`${STORAGE_KEYS.SCORES_LOCKED}_${ev.id}`, sc.scores_locked);
+            }
           }
           if (sc.projector_settings) {
             this.setItem(`tn_assembly_projector_studio_${ev.id}`, sc.projector_settings);
@@ -742,21 +775,144 @@ class StorageService {
           this.setItem(STORAGE_KEYS.EVENTS, Array.from(eventMap.values()));
           this.restoreJkkncetEvent();
           this.setItem(STORAGE_KEYS.OPEN_NOMINATIONS, openNomMap);
-          this.setItem(STORAGE_KEYS.NOMINATIONS, allNoms);
-          this.setItem(STORAGE_KEYS.ELECTIONS, allElecs);
-          this.setItem(STORAGE_KEYS.FLASH_VOTES, allFVotes);
+
+          // Merge local and remote nominations by ID (preserving new local nominations)
+          const localNoms = this.getItem<Nomination[]>(STORAGE_KEYS.NOMINATIONS, []);
+          const nomMap = new Map<string, Nomination>();
+          localNoms.forEach(n => nomMap.set(n.id, n));
+          allNoms.forEach(remoteN => {
+            const local = nomMap.get(remoteN.id);
+            if (!local) {
+              nomMap.set(remoteN.id, remoteN);
+            } else {
+              // Combine histories
+              const combinedHist = [...(local.history || [])];
+              (remoteN.history || []).forEach((rh: NominationHistoryEntry) => {
+                if (!combinedHist.some(h => h.id === rh.id)) combinedHist.push(rh);
+              });
+              nomMap.set(remoteN.id, {
+                ...remoteN,
+                ...local,
+                history: combinedHist.length > 0 ? combinedHist : remoteN.history
+              });
+            }
+          });
+          this.setItem(STORAGE_KEYS.NOMINATIONS, Array.from(nomMap.values()));
+
+          // Monotonic Election Merging (Issue #7: vote count can never drop)
+          const localElecs = this.getItem<Election[]>(STORAGE_KEYS.ELECTIONS, []);
+          const elecMap = new Map<string, Election>();
+          localElecs.forEach(e => elecMap.set(e.id, e));
+          allElecs.forEach(remoteE => {
+            const localE = elecMap.get(remoteE.id);
+            if (!localE) {
+              elecMap.set(remoteE.id, remoteE);
+            } else {
+              const mergedVoters = Array.from(new Set([
+                ...(localE.voted_delegate_ids || []),
+                ...(remoteE.voted_delegate_ids || [])
+              ]));
+
+              const candMap = new Map<string, ElectionCandidate>();
+              (localE.candidates || []).forEach(c => candMap.set(c.id, { ...c }));
+              (remoteE.candidates || []).forEach(rc => {
+                const existingCand = candMap.get(rc.id);
+                if (!existingCand) {
+                  candMap.set(rc.id, { ...rc });
+                } else {
+                  candMap.set(rc.id, {
+                    ...existingCand,
+                    ...rc,
+                    votes: Math.max(existingCand.votes || 0, rc.votes || 0)
+                  });
+                }
+              });
+
+              const mergedCandidates = Array.from(candMap.values());
+              const candsTotal = mergedCandidates.reduce((sum, c) => sum + (c.votes || 0), 0);
+              const monotonicTotal = Math.max(
+                localE.total_votes || 0,
+                remoteE.total_votes || 0,
+                candsTotal,
+                mergedVoters.length
+              );
+
+              let finalStatus = remoteE.status;
+              if (localE.status === 'Closed' || remoteE.status === 'Closed') {
+                finalStatus = 'Closed';
+              } else if (localE.status === 'Live' || remoteE.status === 'Live') {
+                finalStatus = 'Live';
+              }
+
+              elecMap.set(remoteE.id, {
+                ...remoteE,
+                ...localE,
+                status: finalStatus,
+                candidates: mergedCandidates,
+                voted_delegate_ids: mergedVoters,
+                total_votes: monotonicTotal,
+                winner: localE.winner || remoteE.winner
+              });
+            }
+          });
+          this.setItem(STORAGE_KEYS.ELECTIONS, Array.from(elecMap.values()));
+
+          // Monotonic Flash Vote Merging (Issue #7: votes can never drop)
+          const localFVotes = this.getItem<LiveFlashVote[]>(STORAGE_KEYS.FLASH_VOTES, []);
+          const fvoteMap = new Map<string, LiveFlashVote>();
+          localFVotes.forEach(fv => fvoteMap.set(fv.id, fv));
+          allFVotes.forEach(remoteFV => {
+            const localFV = fvoteMap.get(remoteFV.id);
+            if (!localFV) {
+              fvoteMap.set(remoteFV.id, remoteFV);
+            } else {
+              const voteByLearner = new Map<string, any>();
+              (localFV.votes || []).forEach(v => voteByLearner.set(v.learner_id, v));
+              (remoteFV.votes || []).forEach(v => {
+                if (!voteByLearner.has(v.learner_id)) {
+                  voteByLearner.set(v.learner_id, v);
+                }
+              });
+
+              const mergedVotes = Array.from(voteByLearner.values());
+              const ayes = mergedVotes.filter(v => v.vote === 'AYE').length;
+              const noes = mergedVotes.filter(v => v.vote === 'NO').length;
+              const abstains = mergedVotes.filter(v => v.vote === 'ABSTAIN').length;
+              const mergedVoterIds = Array.from(new Set([
+                ...(localFV.voter_ids || []),
+                ...(remoteFV.voter_ids || []),
+                ...mergedVotes.map(v => v.learner_id)
+              ]));
+
+              fvoteMap.set(remoteFV.id, {
+                ...remoteFV,
+                ...localFV,
+                status: (localFV.status === 'CLOSED' || remoteFV.status === 'CLOSED') ? 'CLOSED' : remoteFV.status,
+                votes: mergedVotes,
+                voter_ids: mergedVoterIds,
+                ayes_count: Math.max(ayes, localFV.ayes_count || 0, remoteFV.ayes_count || 0),
+                noes_count: Math.max(noes, localFV.noes_count || 0, remoteFV.noes_count || 0),
+                abstain_count: Math.max(abstains, localFV.abstain_count || 0, remoteFV.abstain_count || 0)
+              });
+            }
+          });
+          this.setItem(STORAGE_KEYS.FLASH_VOTES, Array.from(fvoteMap.values()));
+
           this.setItem(STORAGE_KEYS.PROCEEDINGS, allProcs);
           this.setItem(STORAGE_KEYS.QUESTIONS, allQs);
 
-          // Smart merge local and remote scores by learner_id & timestamp
+          // Smart merge local and remote scores by composite key: (event_id, learner_id, jury_id)
+          // Issue #3: Ensures scores from different jurors never clobber each other!
           const localScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
           const scoreMap = new Map<string, ScoreRecord>();
           localScores.forEach(s => {
-            const key = `${s.learner_id}:::${s.event_id || ''}`;
+            const juryKey = s.jury_id || s.juror_name || 'default_jury';
+            const key = `${s.event_id || ''}:::${s.learner_id}:::${juryKey}`;
             scoreMap.set(key, s);
           });
           allScores.forEach(s => {
-            const key = `${s.learner_id}:::${s.event_id || ''}`;
+            const juryKey = s.jury_id || s.juror_name || 'default_jury';
+            const key = `${s.event_id || ''}:::${s.learner_id}:::${juryKey}`;
             const existing = scoreMap.get(key);
             if (!existing) {
               scoreMap.set(key, s);
@@ -1121,6 +1277,8 @@ class StorageService {
         return e;
       });
 
+      const voteAudit = this.getVoteAuditLog(eventId);
+
       const payload = {
         ...existingSC,
         projector_settings: projSettings || existingSC.projector_settings,
@@ -1132,6 +1290,7 @@ class StorageService {
         proceedings: procs,
         questions: qs,
         scores: scs,
+        vote_audit_log: voteAudit,
         yuva_assignments: yuvaAssignments,
         cabinet_ministries: currentEv?.cabinet_ministries || [],
         allocation_lock: allocLock,
@@ -4262,6 +4421,15 @@ class StorageService {
       }
     }
 
+    const nominatorName = nom.nominated_by_name || nom.candidate_name || 'Self';
+    const initialHist: NominationHistoryEntry = {
+      id: uid('hist'),
+      status: (nom.status as any) || 'Submitted',
+      changed_by: nominatorName,
+      timestamp: new Date().toISOString(),
+      comment: nom.nominated_by_name ? `Nominated by ${nom.nominated_by_name}` : 'Self-nomination filed'
+    };
+
     const newNom: Nomination = {
       id: uid('nom'),
       event_id: nom.event_id || '',
@@ -4273,7 +4441,10 @@ class StorageService {
       manifesto: nom.manifesto || '',
       status: nom.status || 'Pending',
       votes_received: 0,
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      nominated_by_name: nominatorName,
+      nominated_by_id: nom.nominated_by_id,
+      history: [initialHist]
     };
     all.unshift(newNom);
     this.setItem(STORAGE_KEYS.NOMINATIONS, all);
@@ -4285,12 +4456,25 @@ class StorageService {
     return this.getItem<Nomination[]>(STORAGE_KEYS.NOMINATIONS, INITIAL_NOMINATIONS);
   }
 
-  public updateNominationStatus(id: string, status: 'Pending' | 'Approved' | 'Rejected') {
+  public updateNominationStatus(
+    id: string,
+    status: 'Pending' | 'Approved' | 'Rejected' | 'Withdrawn',
+    changedBy: string = 'Coordinator',
+    comment?: string
+  ) {
     let targetEventId = '';
     const all = this.getNominationAll().map(n => {
       if (n.id === id) {
         targetEventId = n.event_id;
-        return { ...n, status };
+        const history = Array.isArray(n.history) ? [...n.history] : [];
+        history.push({
+          id: uid('hist'),
+          status,
+          changed_by: changedBy,
+          timestamp: new Date().toISOString(),
+          comment: comment || `Status updated to ${status}`
+        });
+        return { ...n, status, history };
       }
       return n;
     });
@@ -4304,6 +4488,33 @@ class StorageService {
       }
     }
     if (targetEventId) this.syncEventStateToSupabase(targetEventId);
+  }
+
+  public withdrawNomination(id: string, delegateName: string = 'Delegate') {
+    this.updateNominationStatus(id, 'Withdrawn', delegateName, 'Nomination withdrawn by candidate');
+  }
+
+  public getNominationHistory(eventId?: string) {
+    const noms = this.getNominations(eventId);
+    return noms.map(n => ({
+      nomination_id: n.id,
+      candidate_name: n.candidate_name,
+      position: n.position,
+      party_name: n.party_name,
+      bench: n.bench,
+      nominated_by_name: n.nominated_by_name || n.candidate_name,
+      created_at: n.created_at,
+      status: n.status,
+      history: (n.history && n.history.length > 0) ? n.history : [
+        {
+          id: uid('hist'),
+          status: n.status || 'Submitted',
+          changed_by: n.nominated_by_name || n.candidate_name || 'Self',
+          timestamp: n.created_at || new Date().toISOString(),
+          comment: 'Nomination filed'
+        }
+      ]
+    }));
   }
 
   private syncApprovedNominationToElection(nom: Nomination) {
@@ -4527,6 +4738,20 @@ class StorageService {
     if (delegateId) {
       if (!election.voted_delegate_ids) election.voted_delegate_ids = [];
       election.voted_delegate_ids.push(delegateId);
+
+      const learners = this.getLearners(election.event_id);
+      const voterLearner = learners.find(l => l.id === delegateId);
+      this.recordVoteAuditEntry({
+        id: uid('vote_aud'),
+        event_id: election.event_id,
+        poll_id: election.id,
+        poll_type: 'ELECTION',
+        voter_id: delegateId,
+        voter_name: voterLearner?.full_name || 'Delegate',
+        candidate_id: candidate.id,
+        candidate_name: candidate.name,
+        timestamp: new Date().toISOString()
+      });
     }
 
     // Check leader
@@ -4860,6 +5085,19 @@ class StorageService {
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     });
 
+    if (target.event_id) {
+      this.recordVoteAuditEntry({
+        id: uid('vote_aud'),
+        event_id: target.event_id,
+        poll_id: target.id,
+        poll_type: 'FLASH_VOTE',
+        voter_id: learner.id,
+        voter_name: learner.full_name,
+        decision,
+        timestamp: new Date().toISOString()
+      });
+    }
+
     this.setItem(STORAGE_KEYS.FLASH_VOTES, all);
     if (target.event_id) this.syncEventStateToSupabase(target.event_id);
     return true;
@@ -5013,25 +5251,240 @@ class StorageService {
     return all;
   }
 
+  private scoreSyncTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
   public saveScoreRecord(score: ScoreRecord) {
+    if (!score.learner_id) {
+      console.warn('[StorageService] Cannot save score without learner_id');
+      return;
+    }
+
     const all = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, INITIAL_SCORES);
-    const idx = all.findIndex(s =>
-      (s.id && score.id && s.id === score.id) ||
-      (s.learner_id === score.learner_id && s.event_id === score.event_id && (
-        (score.jury_id && s.jury_id === score.jury_id) ||
-        (score.juror_name && s.juror_name === score.juror_name)
-      ))
-    );
+    const juryKey = score.jury_id || score.juror_name || 'default_jury';
+
+    // Validation and rubric normalization
+    const research = Math.max(0, Math.min(30, Number(score.research_constituency ?? 0)));
+    const relevance = Math.max(0, Math.min(20, Number(score.relevance_agenda ?? 0)));
+    const comm = Math.max(0, Math.min(20, Number(score.communication_delivery ?? 0)));
+    const conduct = Math.max(0, Math.min(12, Number(score.parliamentary_conduct ?? 0)));
+    const originality = Math.max(0, Math.min(12, Number(score.originality_preparation ?? 0)));
+    const timeMgmt = Math.max(0, Math.min(6, Number(score.time_management ?? 0)));
+    
+    // Scale or calculate total
+    const computedTotal = research + relevance + comm + conduct + originality + timeMgmt;
+    const finalTotal = computedTotal > 0 ? computedTotal : (score.total ?? 0);
+
+    const normalizedScore: ScoreRecord = {
+      ...score,
+      id: score.id || uid('score'),
+      event_id: score.event_id || '',
+      learner_id: score.learner_id,
+      jury_id: score.jury_id || 'default_jury',
+      juror_name: score.juror_name || 'Juror',
+      research_constituency: research,
+      relevance_agenda: relevance,
+      communication_delivery: comm,
+      parliamentary_conduct: conduct,
+      originality_preparation: originality,
+      time_management: timeMgmt,
+      total: finalTotal,
+      updated_at: new Date().toISOString()
+    };
+
+    // Composite key match: (event_id, learner_id, jury_id)
+    const idx = all.findIndex(s => {
+      if (s.id && normalizedScore.id && s.id === normalizedScore.id) return true;
+      const sJury = s.jury_id || s.juror_name || 'default_jury';
+      return (
+        s.learner_id === normalizedScore.learner_id &&
+        (!normalizedScore.event_id || !s.event_id || s.event_id === normalizedScore.event_id) &&
+        sJury === juryKey
+      );
+    });
+
     if (idx >= 0) {
-      all[idx] = { ...all[idx], ...score };
+      all[idx] = { ...all[idx], ...normalizedScore };
     } else {
-      all.push(score);
+      all.push(normalizedScore);
     }
     this.setItem(STORAGE_KEYS.SCORES, all);
+    this.notify();
 
-    if (score.event_id) {
-      this.syncEventStateToSupabase(score.event_id);
+    if (normalizedScore.event_id) {
+      this.scheduleScoreSync(normalizedScore.event_id);
     }
+  }
+
+  // Debounced read-merge-write to Supabase to prevent parallel juror clobbering
+  private scheduleScoreSync(eventId: string) {
+    if (!supabase || !eventId) return;
+    const existingTimer = this.scoreSyncTimers.get(eventId);
+    if (existingTimer) clearTimeout(existingTimer);
+
+    const timer = setTimeout(async () => {
+      this.scoreSyncTimers.delete(eventId);
+      if (!supabase) return;
+      try {
+        // Fetch existing scores from Supabase to merge rather than clobber
+        const { data: evData } = await supabase
+          .from('college_events')
+          .select('social_coverage')
+          .eq('id', eventId)
+          .single();
+
+        const remoteSC = (evData?.social_coverage || {}) as Record<string, any>;
+        const remoteScores = Array.isArray(remoteSC.scores) ? (remoteSC.scores as ScoreRecord[]) : [];
+        const localScores = this.getScores(eventId);
+
+        // Merge by composite key: (event_id, learner_id, jury_id)
+        const scoreMap = new Map<string, ScoreRecord>();
+        remoteScores.forEach(s => {
+          const jKey = s.jury_id || s.juror_name || 'default_jury';
+          scoreMap.set(`${s.event_id || eventId}:::${s.learner_id}:::${jKey}`, s);
+        });
+        localScores.forEach(s => {
+          const jKey = s.jury_id || s.juror_name || 'default_jury';
+          const k = `${s.event_id || eventId}:::${s.learner_id}:::${jKey}`;
+          const existing = scoreMap.get(k);
+          if (!existing) {
+            scoreMap.set(k, s);
+          } else {
+            const localTime = new Date(s.updated_at || 0).getTime();
+            const remoteTime = new Date(existing.updated_at || 0).getTime();
+            if (localTime >= remoteTime) {
+              scoreMap.set(k, s);
+            }
+          }
+        });
+
+        const mergedScores = Array.from(scoreMap.values());
+        this.setItem(STORAGE_KEYS.SCORES, [
+          ...this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []).filter(s => s.event_id !== eventId),
+          ...mergedScores
+        ]);
+
+        await supabase
+          .from('college_events')
+          .update({
+            social_coverage: {
+              ...remoteSC,
+              scores: mergedScores,
+              updated_at: new Date().toISOString()
+            }
+          })
+          .eq('id', eventId);
+      } catch (err) {
+        console.warn('[StorageService] Error syncing scores to Supabase:', err);
+      }
+    }, 400);
+
+    this.scoreSyncTimers.set(eventId, timer);
+  }
+
+  // Multi-juror rubric aggregation engine (Issue #3)
+  public getAggregatedScores(eventId?: string): Record<string, AggregatedScore> {
+    const scores = this.getScores(eventId);
+    const learners = this.getLearners(eventId);
+    const learnerMap = new Map<string, Learner>();
+    learners.forEach(l => learnerMap.set(l.id, l));
+
+    const aggMap: Record<string, AggregatedScore> = {};
+
+    scores.forEach(s => {
+      if (!s.learner_id) return;
+      const learner = learnerMap.get(s.learner_id);
+      const name = s.learner_name || learner?.full_name || 'Delegate';
+      const party = s.party_name || learner?.party_name || 'Independent';
+      const bench = s.bench || learner?.bench || 'Ruling';
+
+      if (!aggMap[s.learner_id]) {
+        aggMap[s.learner_id] = {
+          learner_id: s.learner_id,
+          event_id: s.event_id || eventId || '',
+          learner_name: name,
+          party_name: party,
+          bench,
+          juror_count: 0,
+          juror_names: [],
+          avg_research: 0,
+          avg_relevance: 0,
+          avg_comm: 0,
+          avg_conduct: 0,
+          avg_originality: 0,
+          avg_time: 0,
+          avg_total: 0,
+          updated_at: s.updated_at || new Date().toISOString()
+        };
+      }
+
+      const agg = aggMap[s.learner_id];
+      const jName = s.juror_name || s.jury_id || `Juror ${agg.juror_count + 1}`;
+      if (!agg.juror_names.includes(jName)) {
+        agg.juror_names.push(jName);
+      }
+    });
+
+    // Compute arithmetic mean for all 6 rubrics and total across all jurors
+    Object.keys(aggMap).forEach(lid => {
+      const agg = aggMap[lid];
+      const learnerScores = scores.filter(s => s.learner_id === lid);
+      const count = learnerScores.length || 1;
+      agg.juror_count = count;
+
+      let sumResearch = 0;
+      let sumRelevance = 0;
+      let sumComm = 0;
+      let sumConduct = 0;
+      let sumOriginality = 0;
+      let sumTime = 0;
+      let sumTotal = 0;
+      let latest = learnerScores[0];
+
+      learnerScores.forEach(s => {
+        sumResearch += Number(s.research_constituency || 0);
+        sumRelevance += Number(s.relevance_agenda || 0);
+        sumComm += Number(s.communication_delivery || 0);
+        sumConduct += Number(s.parliamentary_conduct || 0);
+        sumOriginality += Number(s.originality_preparation || 0);
+        sumTime += Number(s.time_management || 0);
+        sumTotal += Number(s.total || 0);
+        if (new Date(s.updated_at || 0).getTime() > new Date(latest?.updated_at || 0).getTime()) {
+          latest = s;
+        }
+      });
+
+      agg.avg_research = Number((sumResearch / count).toFixed(1));
+      agg.avg_relevance = Number((sumRelevance / count).toFixed(1));
+      agg.avg_comm = Number((sumComm / count).toFixed(1));
+      agg.avg_conduct = Number((sumConduct / count).toFixed(1));
+      agg.avg_originality = Number((sumOriginality / count).toFixed(1));
+      agg.avg_time = Number((sumTime / count).toFixed(1));
+      agg.avg_total = Number((sumTotal / count).toFixed(1));
+      agg.latest_score = latest;
+      agg.updated_at = latest?.updated_at || agg.updated_at;
+    });
+
+    return aggMap;
+  }
+
+  // ── VOTE AUDIT TRAIL (Issue #7: Monotonic Audit Log) ──
+  public recordVoteAuditEntry(entry: VoteAuditEntry) {
+    const all = this.getItem<VoteAuditEntry[]>(STORAGE_KEYS.VOTE_AUDIT_LOG, []);
+    // Prevent duplicate audit entries by voter and poll
+    if (all.some(a => a.poll_id === entry.poll_id && a.voter_id === entry.voter_id)) {
+      return;
+    }
+    all.push(entry);
+    this.setItem(STORAGE_KEYS.VOTE_AUDIT_LOG, all);
+  }
+
+  public getVoteAuditLog(eventId?: string, pollId?: string): VoteAuditEntry[] {
+    const all = this.getItem<VoteAuditEntry[]>(STORAGE_KEYS.VOTE_AUDIT_LOG, []);
+    return all.filter(a => {
+      if (eventId && a.event_id !== eventId) return false;
+      if (pollId && a.poll_id !== pollId) return false;
+      return true;
+    });
   }
 
   public resetScores(eventId?: string) {
@@ -5619,6 +6072,10 @@ class StorageService {
 
     // Optimistic local update for target event only
     this.setItem(key, locked);
+    const lockTimestamps = this.getItem<Record<string, number>>(STORAGE_KEYS.LOCK_UPDATED_AT, {});
+    lockTimestamps[`alloc_${targetId}`] = Date.now();
+    this.setItem(STORAGE_KEYS.LOCK_UPDATED_AT, lockTimestamps);
+
     const events = this.getEvents().map(e => {
       if (e.id === targetId) {
         const sc = (e.social_coverage || {}) as Record<string, any>;
@@ -5694,6 +6151,10 @@ class StorageService {
 
     // Optimistic local update for target event only
     this.setItem(key, frozen);
+    const lockTimestamps = this.getItem<Record<string, number>>(STORAGE_KEYS.LOCK_UPDATED_AT, {});
+    lockTimestamps[`reg_${targetId}`] = Date.now();
+    this.setItem(STORAGE_KEYS.LOCK_UPDATED_AT, lockTimestamps);
+
     const events = this.getEvents().map(e => {
       if (e.id === targetId) {
         const sc = (e.social_coverage || {}) as Record<string, any>;
@@ -5766,6 +6227,10 @@ class StorageService {
 
     // Optimistic local update for target event only
     this.setItem(key, locked);
+    const scoreLockTimestamps = this.getItem<Record<string, number>>(STORAGE_KEYS.LOCK_UPDATED_AT, {});
+    scoreLockTimestamps[`score_${targetId}`] = Date.now();
+    this.setItem(STORAGE_KEYS.LOCK_UPDATED_AT, scoreLockTimestamps);
+
     const events = this.getEvents().map(e => {
       if (e.id === targetId) {
         const sc = (e.social_coverage || {}) as Record<string, any>;

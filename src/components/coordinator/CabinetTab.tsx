@@ -121,6 +121,8 @@ interface SearchableDelegateSelectProps {
   onShowToast?: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
   placeholder?: string;
   allLearners?: Learner[];
+  assignedMinisterMap?: Map<string, string>;
+  portfolioRole?: string;
 }
 
 const SearchableDelegateSelect: React.FC<SearchableDelegateSelectProps> = ({
@@ -131,7 +133,8 @@ const SearchableDelegateSelect: React.FC<SearchableDelegateSelectProps> = ({
   onSelect,
   onShowToast,
   placeholder = 'Search by name or constituency no...',
-  allLearners
+  allLearners,
+  assignedMinisterMap
 }) => {
   const [query, setQuery] = useState('');
   const [isOpen, setIsOpen] = useState(false);
@@ -216,31 +219,56 @@ const SearchableDelegateSelect: React.FC<SearchableDelegateSelectProps> = ({
             {filtered.length === 0 ? (
               <p className="text-[11px] text-slate-400 px-2 py-2 italic text-center">No matching delegates found</p>
             ) : (
-              filtered.map(l => (
-                <button
-                  key={l.id}
-                  onClick={() => {
-                    onSelect(l.id);
-                    setIsOpen(false);
-                  }}
-                  className={`w-full text-left px-2.5 py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-between gap-2 cursor-pointer ${
-                    l.id === currentLearnerId
-                      ? 'bg-amber-500/20 text-amber-500 font-bold border border-amber-500/30'
-                      : 'hover:bg-slate-500/10'
-                  }`}
-                  style={{ color: l.id === currentLearnerId ? undefined : 'var(--text-primary)' }}
-                >
-                  <div className="truncate">
-                    <span className="font-bold">{l.full_name}</span>
-                    <span className="text-[10px] text-slate-400 ml-1.5">
-                      ({getResolvedPartyName(l, parties) || 'Independent'} • {getResolvedLearnerBench(l, parties)})
+              filtered.map(l => {
+                const alreadyAssignedRole = assignedMinisterMap?.get(l.id);
+                const isCurrent = l.id === currentLearnerId;
+                const isAssignedElsewhere = Boolean(alreadyAssignedRole && !isCurrent);
+
+                return (
+                  <button
+                    key={l.id}
+                    type="button"
+                    disabled={isAssignedElsewhere}
+                    onClick={() => {
+                      if (isAssignedElsewhere) {
+                        onShowToast?.(
+                          'Delegate Already Appointed',
+                          `${l.full_name} is already assigned as ${alreadyAssignedRole}. Unassign them from that portfolio first.`,
+                          'info'
+                        );
+                        return;
+                      }
+                      onSelect(l.id);
+                      setIsOpen(false);
+                    }}
+                    className={`w-full text-left px-2.5 py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-between gap-2 ${
+                      isAssignedElsewhere
+                        ? 'opacity-40 cursor-not-allowed bg-slate-500/5'
+                        : isCurrent
+                        ? 'bg-amber-500/20 text-amber-500 font-bold border border-amber-500/30 cursor-pointer'
+                        : 'hover:bg-slate-500/10 cursor-pointer'
+                    }`}
+                    style={{ color: isCurrent ? undefined : 'var(--text-primary)' }}
+                    title={isAssignedElsewhere ? `Already appointed as ${alreadyAssignedRole}` : undefined}
+                  >
+                    <div className="truncate flex items-center gap-1.5 min-w-0">
+                      <span className="font-bold truncate">{l.full_name}</span>
+                      {isAssignedElsewhere ? (
+                        <span className="shrink-0 px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-rose-500/15 text-rose-500 border border-rose-500/30">
+                          Already Assigned: {alreadyAssignedRole}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-400 truncate">
+                          ({getResolvedPartyName(l, parties) || 'Independent'} • {getResolvedLearnerBench(l, parties)})
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[10px] font-mono text-amber-500 shrink-0">
+                      {l.constituency_number ? `#${l.constituency_number} ` : ''}{l.constituency_name || ''}
                     </span>
-                  </div>
-                  <span className="text-[10px] font-mono text-amber-500 shrink-0">
-                    {l.constituency_number ? `#${l.constituency_number} ` : ''}{l.constituency_name || ''}
-                  </span>
-                </button>
-              ))
+                  </button>
+                );
+              })
             )}
           </div>
         </div>
@@ -271,6 +299,25 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
   const eventParties = useMemo(() => {
     return eventId ? (parties || []).filter(p => p.event_id === eventId) : (parties || []);
   }, [parties, eventId]);
+
+  // Map of learner_id -> portfolio role for any delegate currently assigned a cabinet, shadow, or leadership role
+  const assignedMinisterMap = useMemo(() => {
+    const map = new Map<string, string>();
+    (eventLearners || []).forEach(l => {
+      if (l.role) {
+        if (isChiefMinisterRole(l.role)) {
+          map.set(l.id, CANONICAL_ROLES.CHIEF_MINISTER);
+        } else if (isSpeakerRole(l.role)) {
+          map.set(l.id, CANONICAL_ROLES.SPEAKER);
+        } else if (isLeaderOfOppositionRole(l.role)) {
+          map.set(l.id, CANONICAL_ROLES.LEADER_OF_OPPOSITION);
+        } else if (l.role.startsWith('Minister for') || l.role.startsWith('Shadow Minister for')) {
+          map.set(l.id, l.role);
+        }
+      }
+    });
+    return map;
+  }, [eventLearners]);
 
   const isInitializedRef = useRef(false);
   const isDirtyRef = useRef(false);
@@ -611,6 +658,8 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                       disabled={isLocked}
                       onSelect={(learnerId) => handleAssignRole(learnerId, item.role)}
                       onShowToast={onShowToast}
+                      assignedMinisterMap={assignedMinisterMap}
+                      portfolioRole={item.role}
                       placeholder={
                         item.allowedBench
                           ? `Search ${item.allowedBench} delegates for ${item.title}...`
@@ -671,6 +720,8 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                           onSelect={(learnerId) => handleAssignRole(learnerId, port.rulingRole)}
                           onShowToast={onShowToast}
                           placeholder="Search minister name or const no..."
+                          assignedMinisterMap={assignedMinisterMap}
+                          portfolioRole={port.rulingRole}
                         />
                       </div>
 
@@ -694,6 +745,8 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
                           onSelect={(learnerId) => handleAssignRole(learnerId, port.shadowRole)}
                           onShowToast={onShowToast}
                           placeholder="Search shadow minister name or const no..."
+                          assignedMinisterMap={assignedMinisterMap}
+                          portfolioRole={port.shadowRole}
                         />
                       </div>
                     </div>

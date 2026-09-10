@@ -183,6 +183,14 @@ export type NominationPosition =
   | 'Student Journalist'
   | 'Administrator';
 
+export interface NominationHistoryEntry {
+  id: string;
+  status: 'Submitted' | 'Pending' | 'Approved' | 'Rejected' | 'Withdrawn';
+  changed_by: string;
+  timestamp: string;
+  comment?: string;
+}
+
 export interface Nomination {
   id: string;
   event_id: string;
@@ -192,9 +200,12 @@ export interface Nomination {
   party_name: string;
   bench: BenchType;
   manifesto: string;
-  status: 'Pending' | 'Approved' | 'Rejected';
+  status: 'Pending' | 'Approved' | 'Rejected' | 'Withdrawn';
   votes_received?: number;
   created_at: string;
+  nominated_by_name?: string;
+  nominated_by_id?: string;
+  history?: NominationHistoryEntry[];
 }
 
 export interface ElectionCandidate {
@@ -283,6 +294,38 @@ export interface ScoreRecord {
   feedback?: string;
   juror_name?: string;
   is_locked?: boolean;
+  updated_at: string;
+}
+
+export interface VoteAuditEntry {
+  id: string;
+  event_id: string;
+  poll_id: string;
+  poll_type: 'ELECTION' | 'FLASH_VOTE';
+  voter_id: string;
+  voter_name: string;
+  candidate_id?: string;
+  candidate_name?: string;
+  decision?: 'AYE' | 'NO' | 'ABSTAIN';
+  timestamp: string;
+}
+
+export interface AggregatedScore {
+  learner_id: string;
+  event_id: string;
+  learner_name: string;
+  party_name: string;
+  bench: BenchType;
+  juror_count: number;
+  juror_names: string[];
+  avg_research: number;
+  avg_relevance: number;
+  avg_comm: number;
+  avg_conduct: number;
+  avg_originality: number;
+  avg_time: number;
+  avg_total: number;
+  latest_score?: ScoreRecord;
   updated_at: string;
 }
 

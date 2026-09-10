@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import type { ScoreRecord, Learner, BenchType } from '../../types';
+import type { ScoreRecord, Learner } from '../../types';
+import { storageService } from '../../services/storageService';
 import {
   Grid,
   Plus,
@@ -32,43 +33,61 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   const [debate, setDebate] = useState(23);
   const [remarks, setRemarks] = useState('');
 
-  // Sorted Leaderboard with multi-juror aggregation
+  // Sorted Leaderboard with multi-juror aggregation using storageService
   const leaderboard = useMemo(() => {
-    const map = new Map<string, {
-      learner_id: string;
-      learner_name: string;
-      party_name: string;
-      bench: BenchType;
-      oratory: number;
-      policy_knowledge: number;
-      parliamentary_conduct: number;
-      rebuttal_debate: number;
-      total: number;
-      evalCount: number;
-    }>();
+    const aggMap = storageService.getAggregatedScores(eventId);
+    const aggList = Object.values(aggMap);
+    if (aggList.length > 0) {
+      return aggList.map(a => ({
+        id: a.learner_id,
+        learner_id: a.learner_id,
+        learner_name: a.learner_name,
+        party_name: a.party_name,
+        bench: a.bench,
+        oratory: Math.round(a.avg_comm),
+        policy_knowledge: Math.round(a.avg_research),
+        parliamentary_conduct: Math.round(a.avg_conduct),
+        rebuttal_debate: Math.round(a.avg_relevance),
+        total: Math.round(a.avg_total),
+        evalCount: a.juror_count,
+        juror_names: a.juror_names
+      })).sort((a, b) => b.total - a.total);
+    }
 
+    // Fallback if local state provided directly
+    const map = new Map<string, any>();
     scores.forEach(s => {
       const existing = map.get(s.learner_id);
+      const orat = Number(s.communication_delivery ?? s.oratory ?? 0);
+      const pol = Number(s.research_constituency ?? s.policy_knowledge ?? 0);
+      const cond = Number(s.parliamentary_conduct ?? 0);
+      const deb = Number(s.relevance_agenda ?? s.rebuttal_debate ?? 0);
+      const tot = Number(s.total ?? (orat + pol + cond + deb));
+
       if (!existing) {
         map.set(s.learner_id, {
           learner_id: s.learner_id,
           learner_name: s.learner_name,
           party_name: s.party_name,
           bench: s.bench,
-          oratory: s.oratory,
-          policy_knowledge: s.policy_knowledge,
-          parliamentary_conduct: s.parliamentary_conduct,
-          rebuttal_debate: s.rebuttal_debate,
-          total: s.total,
-          evalCount: 1
+          oratory: orat,
+          policy_knowledge: pol,
+          parliamentary_conduct: cond,
+          rebuttal_debate: deb,
+          total: tot,
+          evalCount: 1,
+          juror_names: [s.juror_name || 'Juror']
         });
       } else {
-        existing.oratory += s.oratory;
-        existing.policy_knowledge += s.policy_knowledge;
-        existing.parliamentary_conduct += s.parliamentary_conduct;
-        existing.rebuttal_debate += s.rebuttal_debate;
-        existing.total += s.total;
+        existing.oratory += orat;
+        existing.policy_knowledge += pol;
+        existing.parliamentary_conduct += cond;
+        existing.rebuttal_debate += deb;
+        existing.total += tot;
         existing.evalCount += 1;
+        if (s.juror_name && !existing.juror_names.includes(s.juror_name)) {
+          existing.juror_names.push(s.juror_name);
+        }
       }
     });
 
@@ -83,9 +102,10 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
       parliamentary_conduct: Math.round(item.parliamentary_conduct / item.evalCount),
       rebuttal_debate: Math.round(item.rebuttal_debate / item.evalCount),
       total: Math.round(item.total / item.evalCount),
-      evalCount: item.evalCount
+      evalCount: item.evalCount,
+      juror_names: item.juror_names
     })).sort((a, b) => b.total - a.total);
-  }, [scores]);
+  }, [scores, eventId]);
 
   const handleResetScores = () => {
     if (window.confirm('⚠️ Are you sure you want to RESET ALL jury evaluation scores? All recorded delegate marks and leaderboard rankings will be permanently cleared.')) {
@@ -117,10 +137,13 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
       policy_knowledge: Number(policy),
       parliamentary_conduct: Number(conduct),
       rebuttal_debate: Number(debate),
+      communication_delivery: Number(oratory),
+      research_constituency: Number(policy),
+      relevance_agenda: Number(debate),
       total,
       juror_name: jurorName,
       feedback: remarks.trim() || 'Strong delivery and parliamentary acumen.',
-      updated_at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      updated_at: new Date().toISOString()
     };
 
     onSaveScore(scoreItem);

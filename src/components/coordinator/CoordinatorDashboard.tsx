@@ -254,6 +254,9 @@ export const CoordinatorDashboard: React.FC<CoordinatorDashboardProps> = ({
         onClose={() => setIsAddWalkInOpen(false)}
         eventId={currentEvent.id}
         existingCodes={existingCodes}
+        parties={parties}
+        committees={committees}
+        existingLearners={learners}
         onAddLearner={(l) => {
           onAddLearner(l);
           onShowToast('Walk-in Added', `Registered ${l.full_name} with access code ${l.access_code}`, 'success');

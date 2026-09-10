@@ -8,13 +8,18 @@ import {
   Play,
   Square,
   Trash2,
-  CheckCircle2,
   Search,
   Info,
   Landmark,
   Crown,
   Scale,
-  Award
+  Award,
+  ChevronDown,
+  ChevronUp,
+  History,
+  Clock,
+  User,
+  ArrowRight
 } from 'lucide-react';
 
 interface NominationsTabProps {
@@ -27,7 +32,7 @@ interface NominationsTabProps {
   onToggleOpenPosition?: (position: string) => void;
   onSetAllOpenPositions?: (open: boolean, positions: string[]) => void;
   onAddNomination: (nom: Partial<Nomination>) => void;
-  onUpdateStatus?: (id: string, status: 'Pending' | 'Approved' | 'Rejected') => void;
+  onUpdateStatus?: (id: string, status: 'Pending' | 'Approved' | 'Rejected' | 'Withdrawn') => void;
   onDeleteNomination: (id: string) => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
@@ -69,6 +74,7 @@ export const NominationsTab: React.FC<NominationsTabProps> = ({
   onToggleOpenPosition,
   onSetAllOpenPositions,
   onAddNomination,
+  onUpdateStatus,
   onDeleteNomination,
   onShowToast
 }) => {
@@ -76,6 +82,28 @@ export const NominationsTab: React.FC<NominationsTabProps> = ({
   const [sortBy, setSortBy] = useState<'newest' | 'party' | 'name'>('newest');
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+
+  // Issue #1: Global default is CLOSED / collapsed for all nomination panels across all events
+  const [expandedNominationIds, setExpandedNominationIds] = useState<Set<string>>(new Set());
+  // Issue #2: Dedicated view for Nomination History & Audit Trail
+  const [activeSubTab, setActiveSubTab] = useState<'cards' | 'history'>('cards');
+
+  const toggleExpand = (nomId: string) => {
+    setExpandedNominationIds(prev => {
+      const next = new Set(prev);
+      if (next.has(nomId)) next.delete(nomId);
+      else next.add(nomId);
+      return next;
+    });
+  };
+
+  const expandAll = () => {
+    setExpandedNominationIds(new Set(displayedNominations.map(n => n.id)));
+  };
+
+  const collapseAll = () => {
+    setExpandedNominationIds(new Set());
+  };
 
   // Modal Form state
   const [candidateLearnerId, setCandidateLearnerId] = useState('');
@@ -428,7 +456,7 @@ export const NominationsTab: React.FC<NominationsTabProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
         
         {/* Sort Pill Buttons (Matching Image 3: Newest first | Group by party | Name A–Z) */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-xs font-bold text-slate-400 mr-1">Sort:</span>
           <button
             onClick={() => setSortBy('newest')}
@@ -460,6 +488,24 @@ export const NominationsTab: React.FC<NominationsTabProps> = ({
           >
             Name A–Z
           </button>
+
+          <span className="text-slate-300 dark:text-slate-700 mx-1">|</span>
+
+          {/* Quick Collapse / Expand Controls (Issue #1) */}
+          <button
+            onClick={expandAll}
+            className="px-2.5 py-1 rounded-xl text-[11px] font-bold border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-500/10 cursor-pointer"
+            title="Expand all nomination panels"
+          >
+            Expand All
+          </button>
+          <button
+            onClick={collapseAll}
+            className="px-2.5 py-1 rounded-xl text-[11px] font-bold border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-500/10 cursor-pointer"
+            title="Collapse all nomination panels (default)"
+          >
+            Collapse All
+          </button>
         </div>
 
         {/* Search Input */}
@@ -476,111 +522,363 @@ export const NominationsTab: React.FC<NominationsTabProps> = ({
         </div>
       </div>
 
-      {/* ── 6. NOMINATED CANDIDATE CARDS GRID ── */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {displayedNominations.length === 0 ? (
-          <div
-            className="col-span-full py-16 text-center rounded-3xl border italic text-xs space-y-2"
-            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-muted)' }}
-          >
-            <FileSpreadsheet className="w-8 h-8 mx-auto opacity-40 text-amber-500" />
-            <p className="font-semibold">
-              No candidate nominations found {selectedFilter !== 'ALL' ? `for ${selectedFilter}` : ''}.
-            </p>
-            <p className="text-[11px] not-italic">
-              Delegates can self-nominate when positions are opened, or you can click "+ Manual Add" above.
-            </p>
-          </div>
-        ) : (
-          displayedNominations.map(nom => {
-            const learner = learners.find(l => l.id === nom.candidate_learner_id);
-            const partyName = learner ? getResolvedPartyName(learner, parties) : (nom.party_name || 'Independent');
-            const isRuling = nom.bench === 'Ruling';
+      {/* ── SUB-TAB SWITCHER: Candidate Cards vs History Audit Trail (Issue #2) ── */}
+      <div className="flex items-center gap-2 border-b pb-3" style={{ borderColor: 'var(--border-soft)' }}>
+        <button
+          onClick={() => setActiveSubTab('cards')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+            activeSubTab === 'cards'
+              ? 'bg-amber-500 text-slate-950 shadow-md font-extrabold'
+              : 'border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-500/10'
+          }`}
+        >
+          <span>Nomination Panels</span>
+          <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-black/20 text-current font-mono">
+            {displayedNominations.length}
+          </span>
+        </button>
 
-            return (
-              <div
-                key={nom.id}
-                className="rounded-3xl p-5 border shadow-sm space-y-3.5 flex flex-col justify-between transition-all hover:-translate-y-0.5 hover:shadow-md"
-                style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
-              >
-                <div className="space-y-3">
-                  
-                  {/* Top Badges */}
-                  <div className="flex items-center justify-between gap-2">
-                    <span
-                      className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border"
-                      style={{
-                        backgroundColor: 'var(--accent-soft)',
-                        color: 'var(--accent)',
-                        borderColor: 'var(--accent)'
-                      }}
-                    >
-                      {nom.position}
-                    </span>
+        <button
+          onClick={() => setActiveSubTab('history')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+            activeSubTab === 'history'
+              ? 'bg-amber-500 text-slate-950 shadow-md font-extrabold'
+              : 'border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-500/10'
+          }`}
+        >
+          <History className="w-3.5 h-3.5" />
+          <span>Nomination History & Audit Trail</span>
+          <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-black/20 text-current font-mono">
+            {nominations.length}
+          </span>
+        </button>
+      </div>
 
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 flex items-center gap-1">
-                      <CheckCircle2 className="w-3 h-3" /> Nominated
-                    </span>
-                  </div>
+      {/* ── 6A. NOMINATED CANDIDATE CARDS GRID (DEFAULT CLOSED - Issue #1) ── */}
+      {activeSubTab === 'cards' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {displayedNominations.length === 0 ? (
+            <div
+              className="col-span-full py-16 text-center rounded-3xl border italic text-xs space-y-2"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-muted)' }}
+            >
+              <FileSpreadsheet className="w-8 h-8 mx-auto opacity-40 text-amber-500" />
+              <p className="font-semibold">
+                No candidate nominations found {selectedFilter !== 'ALL' ? `for ${selectedFilter}` : ''}.
+              </p>
+              <p className="text-[11px] not-italic">
+                Delegates can self-nominate when positions are opened, or you can click "+ Manual Add" above.
+              </p>
+            </div>
+          ) : (
+            displayedNominations.map(nom => {
+              const learner = learners.find(l => l.id === nom.candidate_learner_id);
+              const partyName = learner ? getResolvedPartyName(learner, parties) : (nom.party_name || 'Independent');
+              const isRuling = nom.bench === 'Ruling';
+              const isExpanded = expandedNominationIds.has(nom.id);
+              const nominator = nom.nominated_by_name || nom.candidate_name || 'Self-nominated';
 
-                  {/* Candidate Identity */}
-                  <div>
-                    <h4 className="text-base font-black leading-tight" style={{ color: 'var(--text-primary)' }}>
-                      {nom.candidate_name}
-                    </h4>
-                    
-                    <div className="flex items-center gap-1.5 mt-1 text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>
-                      <span>{partyName}</span>
-                      <span>•</span>
-                      <span className={isRuling ? 'text-emerald-500 font-bold' : 'text-rose-500 font-bold'}>
-                        {nom.bench || 'Independent'} Bench
+              return (
+                <div
+                  key={nom.id}
+                  className={`rounded-3xl border shadow-sm transition-all flex flex-col justify-between ${
+                    isExpanded ? 'p-5 ring-1 ring-amber-500/40 space-y-4' : 'p-4 hover:border-amber-500/50 cursor-pointer space-y-2.5'
+                  }`}
+                  style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+                >
+                  {/* Clickable Header for Card Accordion (Closed by default) */}
+                  <div
+                    onClick={() => toggleExpand(nom.id)}
+                    className="cursor-pointer select-none space-y-2.5"
+                    title={isExpanded ? 'Click to collapse panel' : 'Click to expand panel details'}
+                  >
+                    {/* Top Badges */}
+                    <div className="flex items-center justify-between gap-2">
+                      <span
+                        className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border"
+                        style={{
+                          backgroundColor: 'var(--accent-soft)',
+                          color: 'var(--accent)',
+                          borderColor: 'var(--accent)'
+                        }}
+                      >
+                        {nom.position}
                       </span>
+
+                      <div className="flex items-center gap-1.5">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                          nom.status === 'Approved'
+                            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                            : nom.status === 'Rejected'
+                            ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30'
+                            : nom.status === 'Withdrawn'
+                            ? 'bg-slate-500/10 text-slate-500 dark:text-slate-400 border-slate-500/30'
+                            : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30'
+                        }`}>
+                          {nom.status || 'Pending'}
+                        </span>
+
+                        <div className="p-1 rounded-lg text-slate-400 hover:text-amber-500 transition-colors">
+                          {isExpanded ? (
+                            <ChevronUp className="w-4 h-4" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4" />
+                          )}
+                        </div>
+                      </div>
                     </div>
 
-                    {learner && (learner.constituency_number || learner.constituency_name) && (
-                      <p className="text-[11px] font-medium text-slate-400 mt-0.5">
-                        AC #{learner.constituency_number || '—'} {learner.constituency_name || ''}
+                    {/* Candidate Identity */}
+                    <div>
+                      <h4 className="text-base font-black leading-tight" style={{ color: 'var(--text-primary)' }}>
+                        {nom.candidate_name}
+                      </h4>
+                      
+                      <div className="flex items-center gap-1.5 mt-1 text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                        <span>{partyName}</span>
+                        <span>•</span>
+                        <span className={isRuling ? 'text-emerald-500 font-bold' : 'text-rose-500 font-bold'}>
+                          {nom.bench || 'Independent'} Bench
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Hint when closed */}
+                    {!isExpanded && (
+                      <p className="text-[10px] font-medium text-amber-600/80 dark:text-amber-400/80 flex items-center gap-1 pt-1 border-t border-slate-500/10">
+                        <span>Click to view manifesto, AC #{learner?.constituency_number || '—'} & history</span>
+                        <ArrowRight className="w-2.5 h-2.5" />
                       </p>
                     )}
                   </div>
 
-                  {/* Manifesto Quote */}
-                  <div
-                    className="p-3.5 rounded-2xl border text-xs italic leading-relaxed"
-                    style={{
-                      backgroundColor: 'var(--bg-elevated)',
-                      borderColor: 'var(--border-soft)',
-                      color: 'var(--text-secondary)'
-                    }}
-                  >
-                    "{nom.manifesto || 'Committed to upholding parliamentary rules, student welfare, and progressive policy debate.'}"
-                  </div>
-                </div>
+                  {/* Expanded Content Section (Only shown when explicitly clicked) */}
+                  {isExpanded && (
+                    <div className="space-y-3.5 pt-2 border-t" style={{ borderColor: 'var(--border-soft)' }}>
+                      {learner && (learner.constituency_number || learner.constituency_name) && (
+                        <div className="text-[11px] font-medium text-slate-400 flex items-center justify-between">
+                          <span>Constituency:</span>
+                          <span className="font-semibold text-slate-200">
+                            AC #{learner.constituency_number || '—'} {learner.constituency_name || ''}
+                          </span>
+                        </div>
+                      )}
 
-                {/* Footer Actions */}
-                <div className="flex items-center justify-between gap-2 pt-2.5 border-t" style={{ borderColor: 'var(--border-soft)' }}>
-                  <span className="text-[10px] font-semibold text-slate-400">
-                    {new Date(nom.created_at || Date.now()).toLocaleDateString()}
-                  </span>
+                      {/* Who Nominated Whom */}
+                      <div className="text-[11px] font-medium text-slate-400 flex items-center justify-between">
+                        <span>Nominated by:</span>
+                        <span className="font-semibold text-amber-500 flex items-center gap-1">
+                          <User className="w-3 h-3" />
+                          {nominator}
+                        </span>
+                      </div>
 
-                  {canDelete(userRole) && (
-                    <button
-                      onClick={() => {
-                        onDeleteNomination(nom.id);
-                        onShowToast('Nomination Removed', `Removed ${nom.candidate_name}'s nomination`, 'info');
-                      }}
-                      className="px-2.5 py-1 rounded-lg text-xs font-bold text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer flex items-center gap-1"
-                      title="Delete nomination record"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" /> Remove
-                    </button>
+                      {/* Manifesto Quote */}
+                      <div
+                        className="p-3.5 rounded-2xl border text-xs italic leading-relaxed"
+                        style={{
+                          backgroundColor: 'var(--bg-elevated)',
+                          borderColor: 'var(--border-soft)',
+                          color: 'var(--text-secondary)'
+                        }}
+                      >
+                        "{nom.manifesto || 'Committed to upholding parliamentary rules, student welfare, and progressive policy debate.'}"
+                      </div>
+
+                      {/* Timeline history inside card */}
+                      {Array.isArray(nom.history) && nom.history.length > 0 && (
+                        <div className="space-y-1.5 p-2.5 rounded-xl bg-slate-500/5 border border-slate-500/10">
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                            <Clock className="w-3 h-3" /> Audit History
+                          </div>
+                          <div className="space-y-1">
+                            {nom.history.map((h, i) => (
+                              <div key={h.id || i} className="text-[10px] flex items-center justify-between text-slate-400">
+                                <span>{h.status} by <strong className="text-slate-300">{h.changed_by}</strong></span>
+                                <span className="font-mono text-[9px]">{new Date(h.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Status Management Actions (Coordinator) */}
+                      {userRole !== 'student' && (
+                        <div className="flex items-center gap-1.5 pt-1">
+                          {nom.status !== 'Approved' && (
+                            <button
+                              onClick={() => {
+                                onUpdateStatus?.(nom.id, 'Approved');
+                                onShowToast('Nomination Approved', `Approved ${nom.candidate_name} for ${nom.position}`, 'success');
+                              }}
+                              className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-500/10 text-emerald-500 border border-emerald-500/30 hover:bg-emerald-500/20 cursor-pointer"
+                            >
+                              Approve
+                            </button>
+                          )}
+                          {nom.status !== 'Rejected' && (
+                            <button
+                              onClick={() => {
+                                onUpdateStatus?.(nom.id, 'Rejected');
+                                onShowToast('Nomination Rejected', `Rejected ${nom.candidate_name}'s nomination`, 'info');
+                              }}
+                              className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-rose-500/10 text-rose-500 border border-rose-500/30 hover:bg-rose-500/20 cursor-pointer"
+                            >
+                              Reject
+                            </button>
+                          )}
+                          {nom.status !== 'Withdrawn' && (
+                            <button
+                              onClick={() => {
+                                onUpdateStatus?.(nom.id, 'Withdrawn');
+                                onShowToast('Nomination Withdrawn', `Marked ${nom.candidate_name}'s nomination as withdrawn`, 'info');
+                              }}
+                              className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-500/10 text-slate-400 border border-slate-500/30 hover:bg-slate-500/20 cursor-pointer"
+                            >
+                              Withdraw
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Footer Actions */}
+                      <div className="flex items-center justify-between gap-2 pt-2 border-t" style={{ borderColor: 'var(--border-soft)' }}>
+                        <span className="text-[10px] font-semibold text-slate-400">
+                          {new Date(nom.created_at || Date.now()).toLocaleDateString()}
+                        </span>
+
+                        {canDelete(userRole) && (
+                          <button
+                            onClick={() => {
+                              onDeleteNomination(nom.id);
+                              onShowToast('Nomination Removed', `Removed ${nom.candidate_name}'s nomination`, 'info');
+                            }}
+                            className="px-2.5 py-1 rounded-lg text-xs font-bold text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer flex items-center gap-1"
+                            title="Delete nomination record"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" /> Remove
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   )}
                 </div>
-              </div>
-            );
-          })
-        )}
-      </div>
+              );
+            })
+          )}
+        </div>
+      )}
+
+      {/* ── 6B. DEDICATED NOMINATION HISTORY & AUDIT TRAIL VIEW (Issue #2) ── */}
+      {activeSubTab === 'history' && (
+        <div
+          className="rounded-3xl p-6 border shadow-sm space-y-4"
+          style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+        >
+          <div className="flex items-center justify-between border-b pb-3" style={{ borderColor: 'var(--border-soft)' }}>
+            <div>
+              <h4 className="text-base font-extrabold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+                <History className="w-5 h-5 text-amber-500" />
+                <span>Nomination History & Audit Trail</span>
+              </h4>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Audit log showing who nominated whom, timestamps, and status changes strictly scoped to this event.
+              </p>
+            </div>
+            <span className="text-xs font-mono px-3 py-1 rounded-full bg-amber-500/10 text-amber-500 font-bold border border-amber-500/20">
+              {nominations.length} total records
+            </span>
+          </div>
+
+          {nominations.length === 0 ? (
+            <div className="py-12 text-center text-xs italic text-slate-400">
+              No nomination history recorded for this event.
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-500/10 space-y-2">
+              {nominations.map(nom => {
+                const nominator = nom.nominated_by_name || nom.candidate_name || 'Self-nominated';
+                const historyEntries = Array.isArray(nom.history) && nom.history.length > 0
+                  ? nom.history
+                  : [
+                      {
+                        id: 'init',
+                        status: nom.status || 'Submitted',
+                        changed_by: nominator,
+                        timestamp: nom.created_at || new Date().toISOString(),
+                        comment: 'Nomination filed'
+                      }
+                    ];
+
+                return (
+                  <div key={nom.id} className="pt-3 pb-2 space-y-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <span
+                          className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border"
+                          style={{
+                            backgroundColor: 'var(--accent-soft)',
+                            color: 'var(--accent)',
+                            borderColor: 'var(--accent)'
+                          }}
+                        >
+                          {nom.position}
+                        </span>
+                        <h5 className="text-sm font-bold text-slate-100">
+                          {nom.candidate_name}
+                        </h5>
+                        <span className="text-xs text-slate-400 font-semibold">
+                          ({nom.party_name} • {nom.bench} Bench)
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="text-slate-400">Nominated by:</span>
+                        <span className="font-bold text-amber-400">{nominator}</span>
+                      </div>
+                    </div>
+
+                    {/* Progression Timeline */}
+                    <div className="flex flex-wrap items-center gap-2 pl-2 border-l-2 border-amber-500/30">
+                      {historyEntries.map((step, idx) => (
+                        <div key={step.id || idx} className="flex items-center gap-2 text-xs">
+                          {idx > 0 && <ArrowRight className="w-3 h-3 text-slate-600 shrink-0" />}
+                          <div className="p-2 rounded-xl bg-slate-900/50 border border-slate-800 space-y-0.5">
+                            <div className="flex items-center gap-2">
+                              <span className={`px-2 py-0.2 rounded-full text-[10px] font-bold ${
+                                step.status === 'Approved'
+                                  ? 'bg-emerald-500/20 text-emerald-400'
+                                  : step.status === 'Rejected'
+                                  ? 'bg-rose-500/20 text-rose-400'
+                                  : step.status === 'Withdrawn'
+                                  ? 'bg-slate-500/20 text-slate-400'
+                                  : 'bg-amber-500/20 text-amber-400'
+                              }`}>
+                                {step.status}
+                              </span>
+                              <span className="text-[10px] text-slate-400">
+                                by <strong className="text-slate-200">{step.changed_by}</strong>
+                              </span>
+                            </div>
+                            <div className="text-[9px] font-mono text-slate-500">
+                              {new Date(step.timestamp).toLocaleString()}
+                            </div>
+                            {step.comment && (
+                              <div className="text-[10px] italic text-slate-400">
+                                {step.comment}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── 7. MANUAL NOMINATION MODAL ── */}
       {isAddModalOpen && (

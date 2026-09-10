@@ -2591,6 +2591,9 @@ export function App() {
               onClose={() => setIsAddWalkInOpen(false)}
               eventId={activeEvModal.id}
               existingCodes={existingCodesSet}
+              parties={parties}
+              committees={committees}
+              existingLearners={learners}
               onAddLearner={async (l) => {
                 await handleAddLearner({ ...l, event_id: activeEvModal.id });
                 addToast('Walk-in Added', `Registered ${l.full_name} with access code ${l.access_code}`, 'success');
