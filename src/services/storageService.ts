@@ -112,8 +112,8 @@ function genUuid(): string {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
       return crypto.randomUUID();
     }
-  } catch {}
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+  } catch { }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
     const r = (Math.random() * 16) | 0;
     const v = c === 'x' ? r : (r & 0x3) | 0x8;
     return v.toString(16);
@@ -331,7 +331,7 @@ class StorageService {
     // Purge any legacy global un-scoped registrations_frozen key so it never leaks across events
     try {
       localStorage.removeItem(STORAGE_KEYS.REGISTRATIONS_FROZEN);
-    } catch {}
+    } catch { }
 
     // Run systemic cleanup & deduplication on startup
     this.cleanupAndDeduplicateData();
@@ -597,7 +597,7 @@ class StorageService {
       const updatedEvents = allEvents.map(ev => {
         // STRICTLY match only the exact demo event ID
         const isTarget = ev.id === targetId;
-        
+
         if (isTarget) {
           const needsNameFix = ev.college_name !== 'JKKNCET TN ASSEMBLY 2026';
           const needsEmailFix = ev.assigned_coordinator_email !== 'soundaraharigece2025@jkkn.ac.in';
@@ -649,7 +649,9 @@ class StorageService {
         { data: committees, error: commErr },
         { data: agenda, error: agendaErr },
         { data: juryMembers, error: juryErr },
-        { data: volunteers, error: volErr }
+        { data: volunteers, error: volErr },
+        { data: rawEventDays, error: eventDaysErr },
+        { data: rawAttendance, error: attendanceErr }
       ] = await Promise.all([
         supabase.from('college_events').select('*').order('created_at', { ascending: false }),
         supabase.from('coordinators').select('*'),
@@ -658,7 +660,9 @@ class StorageService {
         supabase.from('committees').select('*'),
         supabase.from('session_agenda').select('*').order('time', { ascending: true }),
         supabase.from('jury_members').select('*'),
-        supabase.from('volunteers').select('*')
+        supabase.from('volunteers').select('*'),
+        supabase.from('event_days').select('*').order('day_number', { ascending: true }),
+        supabase.from('event_day_attendance').select('*')
       ]);
 
       if (currentVersion !== this.syncVersion) {
@@ -713,7 +717,7 @@ class StorageService {
           if (Array.isArray(sc.day_attendance)) {
             allDayAtt = [...allDayAtt, ...sc.day_attendance];
           }
-          
+
           if (Array.isArray(sc.cabinet_ministries)) {
             ev.cabinet_ministries = sc.cabinet_ministries;
           }
@@ -740,6 +744,14 @@ class StorageService {
             this.setItem(`tn_assembly_last_bell_${ev.id}`, sc.last_bell_ring);
           }
         });
+
+        // Merge authoritative records directly from event_days and event_day_attendance tables
+        if (!eventDaysErr && Array.isArray(rawEventDays)) {
+          allDays = [...allDays, ...(rawEventDays as unknown as EventDay[])];
+        }
+        if (!attendanceErr && Array.isArray(rawAttendance)) {
+          allDayAtt = [...allDayAtt, ...(rawAttendance as unknown as DayAttendanceRecord[])];
+        }
 
         if (events.length === 0) {
           this.setItem(STORAGE_KEYS.EVENTS, []);
@@ -1021,6 +1033,12 @@ class StorageService {
           this.syncFromSupabase();
         })
         .on('postgres_changes', { event: '*', schema: 'public', table: 'volunteers' }, () => {
+          this.syncFromSupabase();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'event_days' }, () => {
+          this.syncFromSupabase();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'event_day_attendance' }, () => {
           this.syncFromSupabase();
         })
         .subscribe();
@@ -1322,6 +1340,41 @@ class StorageService {
 
         const { data, error, status } = await query;
         if (error || (status && status >= 400)) {
+          // Graceful 409 conflict recovery for event_day_attendance
+          if (table === 'event_day_attendance' && (status === 409 || error?.code === '23505' || String(error?.message || '').toLowerCase().includes('conflict') || String(error?.message || '').toLowerCase().includes('duplicate'))) {
+            console.warn(`[Supabase 409 Conflict Caught on event_day_attendance] Resolving by updating existing row...`);
+            const eId = sanitized.event_id as string;
+            const dId = (sanitized.day_id || sanitized.event_day_id) as string;
+            const sId = (sanitized.student_id || sanitized.participant_id) as string;
+            const { data: existingRow } = await sb
+              .from('event_day_attendance')
+              .select('*')
+              .eq('event_id', eId)
+              .eq('day_id', dId)
+              .eq('student_id', sId)
+              .maybeSingle();
+
+            if (existingRow) {
+              const { data: updatedData, error: updateErr } = await sb
+                .from('event_day_attendance')
+                .update({
+                  status: sanitized.status,
+                  marked_by: sanitized.marked_by,
+                  marked_by_role: sanitized.marked_by_role,
+                  marked_at: sanitized.marked_at || new Date().toISOString(),
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', existingRow.id)
+                .select();
+
+              if (!updateErr && updatedData && updatedData.length > 0) {
+                this.failedWriteSignatures.delete(writeKey);
+                console.log(`✅ [Supabase 409 Resolved via Update] Table: "${table}" Data:`, updatedData[0]);
+                return { success: true, error: null, data: updatedData[0] };
+              }
+            }
+          }
+
           this.failedWriteSignatures.set(writeKey, Date.now());
           console.error(`❌ [Supabase Write Error] Table: "${table}" (HTTP ${status}) Code: ${error?.code} — ${error?.message}. Details:`, error?.details || error?.hint);
           this.notifyWriteError(table, 'save', error || new Error(`Write failed with status ${status}`));
@@ -1435,7 +1488,7 @@ class StorageService {
 
     // 2. Validate password strictly against the authoritative record (invalidates old passwords)
     const isValid = (coord.password_hash && coord.password_hash === passTrim) ||
-                    (coord.raw_temp_password && coord.raw_temp_password === passTrim);
+      (coord.raw_temp_password && coord.raw_temp_password === passTrim);
     if (!isValid) return null;
 
     return {
@@ -1461,8 +1514,8 @@ class StorageService {
     return jury.find(j => {
       const jCode = (j.access_code || '').toUpperCase().replace(/-/g, '');
       return jCode === normClean ||
-             (!normClean.startsWith('JURY') && jCode === `JURY${normClean}`) ||
-             (normClean.startsWith('JURY') && jCode === normClean);
+        (!normClean.startsWith('JURY') && jCode === `JURY${normClean}`) ||
+        (normClean.startsWith('JURY') && jCode === normClean);
     }) || null;
   }
 
@@ -1475,9 +1528,9 @@ class StorageService {
       const vCode = (v.access_code || '').toUpperCase().replace(/-/g, '');
       const phoneSuffix = v.phone ? v.phone.replace(/\D/g, '').slice(-4) : '';
       return vCode === normClean ||
-             (normClean.startsWith('VOL') && vCode === normClean) ||
-             (!normClean.startsWith('VOL') && vCode === `VOL${normClean}`) ||
-             (phoneSuffix && (phoneSuffix === normClean || `VOL${phoneSuffix}` === normClean));
+        (normClean.startsWith('VOL') && vCode === normClean) ||
+        (!normClean.startsWith('VOL') && vCode === `VOL${normClean}`) ||
+        (phoneSuffix && (phoneSuffix === normClean || `VOL${phoneSuffix}` === normClean));
     }) || null;
   }
 
@@ -1499,9 +1552,9 @@ class StorageService {
       const vCode = (v.access_code || '').toUpperCase().replace(/-/g, '');
       const phoneSuffix = v.phone ? v.phone.replace(/\D/g, '').slice(-4) : '';
       return vCode === normClean ||
-             (normClean.startsWith('VOL') && vCode === normClean) ||
-             (!normClean.startsWith('VOL') && vCode === `VOL${normClean}`) ||
-             (phoneSuffix && (phoneSuffix === normClean || `VOL${phoneSuffix}` === normClean));
+        (normClean.startsWith('VOL') && vCode === normClean) ||
+        (!normClean.startsWith('VOL') && vCode === `VOL${normClean}`) ||
+        (phoneSuffix && (phoneSuffix === normClean || `VOL${phoneSuffix}` === normClean));
     });
 
     if (matchedVol) {
@@ -1525,8 +1578,8 @@ class StorageService {
     const matchedJury = candidateJury.find(j => {
       const jCode = (j.access_code || '').toUpperCase().replace(/-/g, '');
       return jCode === normClean ||
-             (!normClean.startsWith('JURY') && jCode === `JURY${normClean}`) ||
-             (normClean.startsWith('JURY') && jCode === normClean);
+        (!normClean.startsWith('JURY') && jCode === `JURY${normClean}`) ||
+        (normClean.startsWith('JURY') && jCode === normClean);
     });
 
     if (matchedJury) {
@@ -2475,21 +2528,124 @@ class StorageService {
     markedBy: string = 'Floor Volunteer',
     markedByRole: string = 'volunteer'
   ): Promise<DayAttendanceRecord> {
+    const timestamp = new Date().toISOString();
     const all = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
     const existingIndex = all.findIndex(a => a.event_id === eventId && a.day_id === dayId && a.student_id === studentId);
+    const existingLocal = existingIndex >= 0 ? all[existingIndex] : null;
+
+    let targetDbId = existingLocal?.id;
+    let remoteRecord: any = null;
+
+    // 1. Check whether an attendance record already exists in Supabase
+    if (supabase) {
+      try {
+        const { data: dbExisting, error: checkError } = await supabase
+          .from('event_day_attendance')
+          .select('*')
+          .eq('event_id', eventId)
+          .eq('day_id', dayId)
+          .eq('student_id', studentId)
+          .maybeSingle();
+
+        if (!checkError && dbExisting) {
+          remoteRecord = dbExisting;
+          targetDbId = dbExisting.id;
+        }
+      } catch (checkEx) {
+        console.warn('[StorageService] Pre-check for existing attendance record failed:', checkEx);
+      }
+    }
 
     let record: DayAttendanceRecord;
-    if (existingIndex >= 0) {
+
+    if (remoteRecord || existingLocal) {
+      // 2. Record exists -> UPDATE existing record
+      const baseId = targetDbId || existingLocal?.id || genUuid();
       record = {
-        ...all[existingIndex],
+        ...(existingLocal || remoteRecord),
+        id: baseId,
+        event_id: eventId,
+        day_id: dayId,
+        student_id: studentId,
+        learner_id: studentId,
         status,
         marked_by: markedBy,
         marked_by_role: markedByRole,
-        marked_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        marked_at: timestamp,
+        updated_at: timestamp
       };
-      all[existingIndex] = record;
+
+      if (existingIndex >= 0) {
+        all[existingIndex] = record;
+      } else {
+        all.push(record);
+      }
+      this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, all);
+
+      if (supabase) {
+        let updateSuccessful = false;
+
+        // Try primary key ID update first
+        if (targetDbId && isValidUuid(targetDbId)) {
+          const { data: upData, error: upErr } = await supabase
+            .from('event_day_attendance')
+            .update({
+              status,
+              marked_by: markedBy,
+              marked_by_role: markedByRole,
+              marked_at: timestamp,
+              updated_at: timestamp
+            })
+            .eq('id', targetDbId)
+            .select();
+
+          if (!upErr && upData && upData.length > 0) {
+            updateSuccessful = true;
+            record.id = upData[0].id;
+          }
+        }
+
+        // Fallback to composite key (event_id, day_id, student_id) update
+        if (!updateSuccessful) {
+          const { data: compData, error: compErr } = await supabase
+            .from('event_day_attendance')
+            .update({
+              status,
+              marked_by: markedBy,
+              marked_by_role: markedByRole,
+              marked_at: timestamp,
+              updated_at: timestamp
+            })
+            .eq('event_id', eventId)
+            .eq('day_id', dayId)
+            .eq('student_id', studentId)
+            .select();
+
+          if (!compErr && compData && compData.length > 0) {
+            updateSuccessful = true;
+            record.id = compData[0].id;
+          } else {
+            // Final fallback to sbUpsert
+            const res = await this.sbUpsert('event_day_attendance', record as unknown as Record<string, unknown>);
+            if (!res.success) {
+              console.error('[StorageService] Failed to save attendance to Supabase:', res.error);
+              throw new Error(res.error?.message || 'Failed to save attendance record to database');
+            }
+            if (res.data?.id) {
+              record.id = res.data.id;
+            }
+          }
+        }
+
+        // Keep local storage synced with DB id
+        const idx = all.findIndex(a => a.event_id === eventId && a.day_id === dayId && a.student_id === studentId);
+        if (idx >= 0) {
+          all[idx] = record;
+          this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, all);
+        }
+      }
     } else {
+      // 3. Record does not exist -> INSERT new record via UPSERT with graceful 409 recovery
       record = {
         id: genUuid(),
         event_id: eventId,
@@ -2499,19 +2655,65 @@ class StorageService {
         status,
         marked_by: markedBy,
         marked_by_role: markedByRole,
-        marked_at: new Date().toISOString(),
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        marked_at: timestamp,
+        created_at: timestamp,
+        updated_at: timestamp
       };
       all.push(record);
-    }
+      this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, all);
 
-    this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, all);
-    if (supabase) {
-      const res = await this.sbUpsert('event_day_attendance', record as unknown as Record<string, unknown>);
-      if (!res.success) {
-        console.error('[StorageService] Failed to save attendance to Supabase:', res.error);
-        throw new Error(res.error?.message || 'Failed to save attendance record to database');
+      if (supabase) {
+        const res = await this.sbUpsert('event_day_attendance', record as unknown as Record<string, unknown>);
+        if (!res.success) {
+          const is409 = res.error?.code === '23505' ||
+            res.error?.status === 409 ||
+            String(res.error?.message || '').toLowerCase().includes('conflict') ||
+            String(res.error?.message || '').toLowerCase().includes('duplicate');
+
+          if (is409) {
+            console.warn('[StorageService] 409 Conflict caught during attendance insert. Fetching existing record and updating...');
+            const { data: conflictRow } = await supabase
+              .from('event_day_attendance')
+              .select('*')
+              .eq('event_id', eventId)
+              .eq('day_id', dayId)
+              .eq('student_id', studentId)
+              .maybeSingle();
+
+            if (conflictRow) {
+              const { data: resolvedData } = await supabase
+                .from('event_day_attendance')
+                .update({
+                  status,
+                  marked_by: markedBy,
+                  marked_by_role: markedByRole,
+                  marked_at: timestamp,
+                  updated_at: timestamp
+                })
+                .eq('id', conflictRow.id)
+                .select();
+
+              if (resolvedData && resolvedData.length > 0) {
+                record = { ...record, id: conflictRow.id, status };
+                const idx = all.findIndex(a => a.event_id === eventId && a.day_id === dayId && a.student_id === studentId);
+                if (idx >= 0) {
+                  all[idx] = record;
+                  this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, all);
+                }
+              }
+            }
+          } else {
+            console.error('[StorageService] Failed to save attendance to Supabase:', res.error);
+            throw new Error(res.error?.message || 'Failed to save attendance record to database');
+          }
+        } else if (res.data?.id) {
+          record.id = res.data.id;
+          const idx = all.findIndex(a => a.event_id === eventId && a.day_id === dayId && a.student_id === studentId);
+          if (idx >= 0) {
+            all[idx] = record;
+            this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, all);
+          }
+        }
       }
     }
 
@@ -2542,6 +2744,19 @@ class StorageService {
       }
     }
 
+    // Security audit log entry
+    try {
+      this.logAudit({
+        event_id: eventId,
+        action: 'ATTENDANCE_RECORDED' as any,
+        actor_role: markedByRole,
+        actor_name: markedBy,
+        details: `Attendance marked ${status} for student ${studentId} on day ${dayId}`
+      });
+    } catch {
+      // Non-blocking audit log
+    }
+
     this.persistEventDaysToSocialCoverage(eventId);
     return record;
   }
@@ -2554,56 +2769,135 @@ class StorageService {
     markedBy: string = 'Floor Volunteer',
     markedByRole: string = 'volunteer'
   ): Promise<void> {
+    const timestamp = new Date().toISOString();
     const all = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
     const existingMap = new Map<string, DayAttendanceRecord>();
     all.forEach(a => existingMap.set(`${a.event_id}:::${a.day_id}:::${a.student_id}`, a));
 
-    const recordsToSave: DayAttendanceRecord[] = [];
-    const timestamp = new Date().toISOString();
+    // Fetch existing records from Supabase if connected
+    const remoteExistingMap = new Map<string, any>();
+    if (supabase) {
+      try {
+        const { data: remoteRows, error: remoteErr } = await supabase
+          .from('event_day_attendance')
+          .select('*')
+          .eq('event_id', eventId)
+          .eq('day_id', dayId);
+
+        if (!remoteErr && Array.isArray(remoteRows)) {
+          remoteRows.forEach(r => remoteExistingMap.set(r.student_id, r));
+        }
+      } catch (fetchEx) {
+        console.warn('[StorageService] Remote batch fetch failed:', fetchEx);
+      }
+    }
+
+    const existingStudentIdsToUpdate: string[] = [];
+    const newRecordsToInsert: DayAttendanceRecord[] = [];
 
     studentIds.forEach(stId => {
       const key = `${eventId}:::${dayId}:::${stId}`;
-      const existing = existingMap.get(key);
-      const rec: DayAttendanceRecord = existing ? {
-        ...existing,
-        status,
-        marked_by: markedBy,
-        marked_by_role: markedByRole,
-        marked_at: timestamp,
-        updated_at: timestamp
-      } : {
-        id: genUuid(),
-        event_id: eventId,
-        day_id: dayId,
-        student_id: stId,
-        learner_id: stId,
-        status,
-        marked_by: markedBy,
-        marked_by_role: markedByRole,
-        marked_at: timestamp,
-        created_at: timestamp,
-        updated_at: timestamp
-      };
-      existingMap.set(key, rec);
-      recordsToSave.push(rec);
+      const localExisting = existingMap.get(key);
+      const remoteExisting = remoteExistingMap.get(stId);
+
+      if (remoteExisting || localExisting) {
+        const baseId = remoteExisting?.id || localExisting?.id || genUuid();
+        const rec: DayAttendanceRecord = {
+          ...(localExisting || remoteExisting),
+          id: baseId,
+          event_id: eventId,
+          day_id: dayId,
+          student_id: stId,
+          learner_id: stId,
+          status,
+          marked_by: markedBy,
+          marked_by_role: markedByRole,
+          marked_at: timestamp,
+          updated_at: timestamp
+        };
+        existingMap.set(key, rec);
+        existingStudentIdsToUpdate.push(stId);
+      } else {
+        const rec: DayAttendanceRecord = {
+          id: genUuid(),
+          event_id: eventId,
+          day_id: dayId,
+          student_id: stId,
+          learner_id: stId,
+          status,
+          marked_by: markedBy,
+          marked_by_role: markedByRole,
+          marked_at: timestamp,
+          created_at: timestamp,
+          updated_at: timestamp
+        };
+        existingMap.set(key, rec);
+        newRecordsToInsert.push(rec);
+      }
     });
 
     this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, Array.from(existingMap.values()));
 
-    // Batch upsert to Supabase if configured
-    if (recordsToSave.length > 0 && supabase) {
-      const res = await this.sbUpsertBatch('event_day_attendance', recordsToSave as unknown as Record<string, unknown>[]);
-      if (!res.success) {
-        console.error('[StorageService] Failed to batch save attendance to Supabase:', res.error);
-        throw new Error(res.error?.message || 'Failed to batch save attendance records to database');
+    if (supabase) {
+      // 1. Bulk UPDATE existing records by (event_id, day_id, in:student_id)
+      if (existingStudentIdsToUpdate.length > 0) {
+        const { error: updateBatchErr } = await supabase
+          .from('event_day_attendance')
+          .update({
+            status,
+            marked_by: markedBy,
+            marked_by_role: markedByRole,
+            marked_at: timestamp,
+            updated_at: timestamp
+          })
+          .eq('event_id', eventId)
+          .eq('day_id', dayId)
+          .in('student_id', existingStudentIdsToUpdate);
+
+        if (updateBatchErr) {
+          console.warn('[StorageService] Bulk update error on existing records, falling back to batch upsert:', updateBatchErr);
+        }
+      }
+
+      // 2. Insert new records via batch upsert
+      if (newRecordsToInsert.length > 0) {
+        const res = await this.sbUpsertBatch('event_day_attendance', newRecordsToInsert as unknown as Record<string, unknown>[]);
+        if (!res.success) {
+          console.warn('[StorageService] New records batch upsert returned error, executing fallback update to resolve potential conflicts:', res.error);
+          await supabase
+            .from('event_day_attendance')
+            .update({
+              status,
+              marked_by: markedBy,
+              marked_by_role: markedByRole,
+              marked_at: timestamp,
+              updated_at: timestamp
+            })
+            .eq('event_id', eventId)
+            .eq('day_id', dayId)
+            .in('student_id', newRecordsToInsert.map(r => r.student_id));
+        }
+      }
+
+      // 3. Post-batch sync to capture all server IDs
+      try {
+        const { data: freshRows } = await supabase
+          .from('event_day_attendance')
+          .select('*')
+          .eq('event_id', eventId)
+          .eq('day_id', dayId);
+
+        if (freshRows && Array.isArray(freshRows)) {
+          freshRows.forEach(fr => {
+            const k = `${fr.event_id}:::${fr.day_id}:::${fr.student_id}`;
+            existingMap.set(k, fr as unknown as DayAttendanceRecord);
+          });
+          this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, Array.from(existingMap.values()));
+        }
+      } catch (syncEx) {
+        console.warn('[StorageService] Post-batch sync failed:', syncEx);
       }
     }
-
-    // Two-way sync with learner records for Day 1 and Day 2
-    const days = this.getEventDays(eventId);
-    const currentDay = days.find(d => d.id === dayId);
-    const isDay1 = Boolean(currentDay && (currentDay.day_number === 1 || currentDay.order_index === 0));
-    const isDay2 = Boolean(currentDay && (currentDay.day_number === 2 || currentDay.order_index === 1));
 
     if (isDay1 || isDay2) {
       const isPresent = status === 'Present';
@@ -3765,7 +4059,7 @@ class StorageService {
     const map = this.getItem<Record<string, string[]>>(STORAGE_KEYS.OPEN_NOMINATIONS, {});
     const validRoles = ['Speaker', 'Chief Minister', 'Leader of Opposition', 'Party Leader'];
     const currentList = eventId in map ? map[eventId] : validRoles;
-    
+
     let isOpenNow = false;
     let nextList: string[];
     if (currentList.includes(position)) {
@@ -3818,7 +4112,7 @@ class StorageService {
     // Guard 1: Assigned Speaker or Deputy Speaker cannot nominate
     if (nom.candidate_learner_id || nom.candidate_name) {
       const learners = this.getLearners(nom.event_id);
-      const matchLearner = learners.find(l => 
+      const matchLearner = learners.find(l =>
         (nom.candidate_learner_id && l.id === nom.candidate_learner_id) ||
         (nom.candidate_name && l.full_name?.toLowerCase() === nom.candidate_name.toLowerCase())
       );
@@ -3833,7 +4127,7 @@ class StorageService {
       const existing = all.find(n =>
         (!nom.event_id || n.event_id === nom.event_id) &&
         ((nom.candidate_learner_id && n.candidate_learner_id === nom.candidate_learner_id) ||
-         (nom.candidate_name && n.candidate_name?.toLowerCase() === nom.candidate_name.toLowerCase())) &&
+          (nom.candidate_name && n.candidate_name?.toLowerCase() === nom.candidate_name.toLowerCase())) &&
         n.position === nom.position &&
         n.status !== 'Rejected'
       );
@@ -5054,7 +5348,7 @@ class StorageService {
     if (committees.length === 0 || learners.length === 0) return;
 
     // Filter out Speaker and Deputy Speaker
-    const eligibleLearners = learners.filter(l => 
+    const eligibleLearners = learners.filter(l =>
       !l.role?.toLowerCase().includes('speaker')
     );
 
@@ -5094,7 +5388,7 @@ class StorageService {
         const sess = JSON.parse(saved);
         if (sess?.currentEventId) return sess.currentEventId;
       }
-    } catch {}
+    } catch { }
     const evs = this.getEvents();
     return evs.length > 0 ? evs[0].id : undefined;
   }
@@ -5428,7 +5722,7 @@ class StorageService {
   // ── DEADLINES CONFIGURATION ─────────────────────────────────────────
   public getEventDeadline(eventSlug: string): EventDeadline {
     const list: EventDeadline[] = this.getItem(STORAGE_KEYS.DEADLINES, []);
-    
+
     if (list.length > 0) {
       // Find matching item or return primary deadline entry
       const cleanKey = (eventSlug || '').toLowerCase().trim();
@@ -5464,7 +5758,7 @@ class StorageService {
   public updateEventDeadlineStatus(eventSlug: string, isOpen: boolean): EventDeadline {
     const list: EventDeadline[] = this.getItem(STORAGE_KEYS.DEADLINES, []);
     const now = new Date().toISOString();
-    
+
     const updatedStatus: 'OPEN' | 'CLOSED' = isOpen ? 'OPEN' : 'CLOSED';
 
     let target: EventDeadline;
@@ -5490,7 +5784,7 @@ class StorageService {
     }
 
     // Unconditionally update ALL deadline records in storage to this status
-    const updatedList = list.length > 0 
+    const updatedList = list.length > 0
       ? list.map(item => ({ ...item, is_open: isOpen, status: updatedStatus, updated_at: now }))
       : [target];
 

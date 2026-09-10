@@ -127,6 +127,11 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   const [isCheckInAllLoading, setIsCheckInAllLoading] = useState(false);
   const [isResetAllLoading, setIsResetAllLoading] = useState(false);
 
+  // Loading state tracking for attendance buttons
+  const [processingAttendanceIds, setProcessingAttendanceIds] = useState<Set<string>>(new Set());
+  const [isBatchAttendanceLoading, setIsBatchAttendanceLoading] = useState(false);
+  const [attendanceRefreshKey, setAttendanceRefreshKey] = useState(0);
+
   const handleToggleWithLoading = (learnerId: string, day: 1 | 2) => {
     const key = `${learnerId}_${day}`;
     setTogglingIds(prev => new Set(prev).add(key));
@@ -162,14 +167,18 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     return storageService.getActiveEventDay(eventId);
   }, [eventDays, eventId]);
 
-  // Current day attendance records
+  // Current day attendance records (combines props and live local storage for zero-lag instant UI updates)
   const activeDayAttendance = useMemo(() => {
     if (!activeDay) return [];
+    const localRecords = storageService.getDayAttendance(eventId, activeDay.id);
+    if (localRecords.length > 0) {
+      return localRecords;
+    }
     if (dayAttendance && dayAttendance.length > 0) {
       return dayAttendance.filter(a => a.day_id === activeDay.id);
     }
-    return storageService.getDayAttendance(eventId, activeDay.id);
-  }, [activeDay, dayAttendance, eventId]);
+    return [];
+  }, [activeDay, dayAttendance, eventId, attendanceRefreshKey]);
 
   const activeDayAttMap = useMemo(() => {
     const map = new Map<string, DayAttendanceRecord>();
@@ -217,16 +226,23 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
 
   const handleMarkStudentAttendance = async (studentId: string, status: DayAttendanceStatus) => {
     if (!activeDay) return;
+    if (processingAttendanceIds.has(studentId)) return; // Prevent race conditions & rapid multi-clicks
+
+    setProcessingAttendanceIds(prev => new Set(prev).add(studentId));
+    const targetLearner = learners.find(l => l.id === studentId);
+    const learnerName = targetLearner?.full_name || 'Delegate';
     const volunteerName = volunteer?.name ? `${volunteer.name} (Volunteer)` : 'Floor Volunteer';
+
     try {
       if (onSetStudentDayAttendance) {
         await onSetStudentDayAttendance(activeDay.id, studentId, status, volunteerName);
       } else {
         await storageService.setStudentDayAttendance(eventId, activeDay.id, studentId, status, volunteerName, 'volunteer');
       }
+      setAttendanceRefreshKey(k => k + 1);
       onShowToast?.(
         status === 'Present' ? 'Marked Present' : 'Marked Absent',
-        `Recorded for ${activeDay.name}`,
+        `${learnerName} successfully marked ${status} for ${activeDay.name}`,
         status === 'Present' ? 'success' : 'info'
       );
     } catch (err: any) {
@@ -236,20 +252,33 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
         err?.message || 'Could not record attendance in database',
         'error'
       );
+    } finally {
+      setProcessingAttendanceIds(prev => {
+        const next = new Set(prev);
+        next.delete(studentId);
+        return next;
+      });
     }
   };
 
   const handleBatchMarkAttendance = async (status: DayAttendanceStatus) => {
-    if (!activeDay) return;
+    if (!activeDay || isBatchAttendanceLoading) return;
+    setIsBatchAttendanceLoading(true);
     const volunteerName = volunteer?.name ? `${volunteer.name} (Volunteer)` : 'Floor Volunteer';
     const studentIds = learners.map(l => l.id);
+
     try {
       if (onBatchSetDayAttendance) {
         await onBatchSetDayAttendance(activeDay.id, studentIds, status, volunteerName);
       } else {
         await storageService.batchSetDayAttendance(eventId, activeDay.id, studentIds, status, volunteerName, 'volunteer');
       }
-      onShowToast?.('Attendance Updated', `Marked all delegates as ${status} on ${activeDay.name}`, 'success');
+      setAttendanceRefreshKey(k => k + 1);
+      onShowToast?.(
+        'Attendance Updated',
+        `Successfully marked all ${learners.length} delegates as ${status} on ${activeDay.name}`,
+        'success'
+      );
     } catch (err: any) {
       console.error('[VolunteerDashboard] Batch attendance save failed:', err);
       onShowToast?.(
@@ -257,6 +286,8 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
         err?.message || 'Could not save batch attendance in database',
         'error'
       );
+    } finally {
+      setIsBatchAttendanceLoading(false);
     }
   };
 
@@ -1098,14 +1129,20 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
               <div className="flex items-center gap-2 shrink-0">
                 <button
                   onClick={() => handleBatchMarkAttendance('Present')}
-                  className="px-3 py-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                  disabled={isBatchAttendanceLoading}
+                  className={`px-3 py-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-xs font-bold flex items-center gap-1.5 transition ${
+                    isBatchAttendanceLoading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                  }`}
                 >
                   <CheckCircle className="w-3.5 h-3.5" />
                   <span>Mark All Present</span>
                 </button>
                 <button
                   onClick={() => handleBatchMarkAttendance('Absent')}
-                  className="px-3 py-1.5 rounded-xl border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                  disabled={isBatchAttendanceLoading}
+                  className={`px-3 py-1.5 rounded-xl border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-xs font-bold flex items-center gap-1.5 transition ${
+                    isBatchAttendanceLoading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                  }`}
                 >
                   <XCircle className="w-3.5 h-3.5" />
                   <span>Reset All Absent</span>
@@ -1198,7 +1235,10 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                               <div className="inline-flex items-center gap-1.5">
                                 <button
                                   onClick={() => handleMarkStudentAttendance(learner.id, 'Present')}
-                                  className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                                  disabled={processingAttendanceIds.has(learner.id)}
+                                  className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
+                                    processingAttendanceIds.has(learner.id) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                                  } ${
                                     isPresent
                                       ? 'bg-emerald-500 text-white shadow-sm'
                                       : 'border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/15'
@@ -1208,7 +1248,10 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                                 </button>
                                 <button
                                   onClick={() => handleMarkStudentAttendance(learner.id, 'Absent')}
-                                  className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                                  disabled={processingAttendanceIds.has(learner.id)}
+                                  className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
+                                    processingAttendanceIds.has(learner.id) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                                  } ${
                                     !isPresent
                                       ? 'bg-rose-500 text-white shadow-sm'
                                       : 'border border-rose-500/40 text-rose-400 hover:bg-rose-500/15'
