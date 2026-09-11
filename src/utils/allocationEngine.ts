@@ -14,36 +14,6 @@ export interface AllocationResult {
   };
 }
 
-const CABINET_PORTFOLIOS = [
-  "Minister for Education",
-  "Minister for Women & Child Development",
-  "Minister for Youth Affairs & Sports",
-  "Minister for Health & Family Welfare",
-  "Minister for Social Justice & Empowerment",
-  "Minister for Road Transport & Highways",
-  "Minister for Rural Development",
-  "Minister for Science & Technology",
-  "Minister for MSME",
-  "Minister for Environment, Forest, & Climate Change",
-  "Minister for Skill Development & Entrepreneurship",
-  "Minister for Electronics & IT",
-  "Minister for Finance",
-  "Minister for Home Affairs",
-  "Minister for Agriculture"
-];
-
-const SHADOW_PORTFOLIOS = [
-  "Shadow Minister for Education",
-  "Shadow Minister for Women & Child Development",
-  "Shadow Minister for Youth Affairs & Sports",
-  "Shadow Minister for Health & Family Welfare",
-  "Shadow Minister for Finance",
-  "Shadow Minister for Home Affairs",
-  "Shadow Minister for Agriculture",
-  "Shadow Minister for Electronics & IT",
-  "Shadow Minister for Rural Development",
-  "Shadow Minister for Environment"
-];
 
 // Helper to shuffle an array in place
 function shuffleArray<T>(array: T[]): T[] {
@@ -198,33 +168,6 @@ export function allocateParties(
     resultLearners = resultLearners.map(l => allocatedMap.get(l.id) || l);
   }
 
-  // Assign Senior Roles (Chief Minister, Opposition Leader, etc.) if not already set
-  const rulingLearners = resultLearners.filter(l => l.bench === 'Ruling');
-  const oppLearners = resultLearners.filter(l => l.bench === 'Opposition');
-  const yrOrder: Record<string, number> = { '4th Year': 4, '3rd Year': 3, '2nd Year': 2, '1st Year': 1 };
-
-  if (mode === 'REALLOCATE_ALL' || !rulingLearners.some(l => l.role?.includes('Chief Minister'))) {
-    const sortedRuling = [...rulingLearners].sort(
-      (a, b) => (yrOrder[b.academic_year] || 1) - (yrOrder[a.academic_year] || 1)
-    );
-    if (sortedRuling.length > 0) sortedRuling[0].role = 'Chief Minister (Leader of the House)';
-    if (sortedRuling.length > 1) sortedRuling[1].role = 'Speaker of Legislative Assembly';
-    if (sortedRuling.length > 2) sortedRuling[2].role = 'Deputy Speaker';
-    for (let i = 3; i < sortedRuling.length && (i - 3) < CABINET_PORTFOLIOS.length; i++) {
-      sortedRuling[i].role = CABINET_PORTFOLIOS[i - 3];
-    }
-  }
-
-  if (mode === 'REALLOCATE_ALL' || !oppLearners.some(l => l.role?.includes('Leader of the Opposition'))) {
-    const sortedOpp = [...oppLearners].sort(
-      (a, b) => (yrOrder[b.academic_year] || 1) - (yrOrder[a.academic_year] || 1)
-    );
-    if (sortedOpp.length > 0) sortedOpp[0].role = 'Leader of the Opposition';
-    if (sortedOpp.length > 1) sortedOpp[1].role = 'Deputy Leader of Opposition';
-    for (let i = 2; i < sortedOpp.length && (i - 2) < SHADOW_PORTFOLIOS.length; i++) {
-      sortedOpp[i].role = SHADOW_PORTFOLIOS[i - 2];
-    }
-  }
 
   // Compute Stats
   const stats = computeAllocationStats(resultLearners);
