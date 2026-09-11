@@ -28,6 +28,7 @@ export const EditDayActivitiesModal: React.FC<EditDayActivitiesModalProps> = ({
   const [name, setName] = useState<string>('');
   const [date, setDate] = useState<string>('');
   const [status, setStatus] = useState<EventDayStatus>('Upcoming');
+  const [mainDay, setMainDay] = useState<1 | 2 | null>(null);
   const [assignedActivities, setAssignedActivities] = useState<string[]>([]);
   const [customActivity, setCustomActivity] = useState<string>('');
   const [isSaving, setIsSaving] = useState(false);
@@ -38,6 +39,7 @@ export const EditDayActivitiesModal: React.FC<EditDayActivitiesModalProps> = ({
       setName(day.name || `Day ${day.day_number}`);
       setDate(day.date || '');
       setStatus(day.status || 'Upcoming');
+      setMainDay(day.main_day ?? null);
       setAssignedActivities(day.activities ? [...day.activities] : []);
     } else {
       const num = nextDayNumber;
@@ -45,6 +47,7 @@ export const EditDayActivitiesModal: React.FC<EditDayActivitiesModalProps> = ({
       setName(`Day ${num}`);
       setDate('');
       setStatus(num === 1 ? 'Active' : 'Upcoming');
+      setMainDay(null);
       // Fresh start: do not auto-seed default activities
       setAssignedActivities([]);
     }
@@ -126,6 +129,7 @@ export const EditDayActivitiesModal: React.FC<EditDayActivitiesModalProps> = ({
         name: cleanName,
         date: date.trim(),
         status,
+        main_day: mainDay,
         activities: assignedActivities
       });
       onShowToast?.(day ? 'Day Updated' : 'Day Created', `Successfully configured ${cleanName}`, 'success');
@@ -268,6 +272,67 @@ export const EditDayActivitiesModal: React.FC<EditDayActivitiesModalProps> = ({
                 Marking this day as Active will automatically display this day and its activities in the Volunteer Attendance terminal.
               </p>
             )}
+          </div>
+
+          {/* Main Assembly Day Check-in Mapping */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                Main Assembly Day Check-in Mapping
+              </label>
+              <span className="text-[10px] text-amber-500 font-bold uppercase tracking-wide">
+                Reflects in D1 / D2 Badges
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { val: null, label: 'None', sub: 'Activity Session', desc: 'Will NOT alter D1 / D2 check-in' },
+                { val: 1 as const, label: '⭐️ Main Day 1', sub: 'Syncs with D1', desc: 'Attendance updates D1 check-in' },
+                { val: 2 as const, label: '⭐️ Main Day 2', sub: 'Syncs with D2', desc: 'Attendance updates D2 check-in' }
+              ].map((opt) => {
+                const isSel = mainDay === opt.val;
+                return (
+                  <button
+                    key={opt.label}
+                    type="button"
+                    onClick={() => setMainDay(opt.val)}
+                    className={`p-2.5 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                      isSel ? 'shadow-sm ring-2 ring-amber-500' : 'opacity-70 hover:opacity-100'
+                    }`}
+                    style={{
+                      backgroundColor: isSel
+                        ? opt.val === 1
+                          ? 'rgba(245, 158, 11, 0.15)'
+                          : opt.val === 2
+                          ? 'rgba(59, 130, 246, 0.15)'
+                          : 'var(--bg-surface)'
+                        : 'var(--bg-elevated)',
+                      borderColor: isSel
+                        ? opt.val === 1
+                          ? '#f59e0b'
+                          : opt.val === 2
+                          ? '#3b82f6'
+                          : 'var(--border)'
+                        : 'var(--border)',
+                      color: isSel ? 'var(--text-primary)' : 'var(--text-secondary)'
+                    }}
+                  >
+                    <div>
+                      <span className="text-xs font-black block">{opt.label}</span>
+                      <span className="text-[10px] font-semibold text-amber-500 block">{opt.sub}</span>
+                    </div>
+                    <span className="text-[10px] text-slate-400 block mt-1 leading-tight">{opt.desc}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[11px] mt-1.5 text-slate-400">
+              {mainDay === 1
+                ? 'Marking attendance (Forenoon / Afternoon) on this day will automatically update Delegate Day 1 (D1) Check-in.'
+                : mainDay === 2
+                ? 'Marking attendance (Forenoon / Afternoon) on this day will automatically update Delegate Day 2 (D2) Check-in.'
+                : 'Regular event session. Attendance recorded on this day is tracked independently and will NOT alter D1/D2 check-in.'}
+            </p>
           </div>
 
           {/* Activity Selector: Standard TN Assembly Activities */}

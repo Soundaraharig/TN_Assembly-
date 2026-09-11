@@ -464,11 +464,13 @@ export interface EventDay {
   activities: string[];
   is_archived?: boolean;
   order_index?: number;
+  main_day?: 1 | 2 | null; // Mapped to Main Day 1, Main Day 2, or null (regular activity session)
   created_at?: string;
   updated_at?: string;
 }
 
 export type DayAttendanceStatus = 'Present' | 'Absent';
+export type SessionType = 'FN' | 'AN';
 
 export interface DayAttendanceRecord {
   id: string;
@@ -477,11 +479,32 @@ export interface DayAttendanceRecord {
   student_id: string;
   learner_id?: string; // alias for student_id
   status: DayAttendanceStatus;
+  fn_status?: DayAttendanceStatus; // Forenoon session attendance
+  an_status?: DayAttendanceStatus; // Afternoon session attendance
   marked_by?: string;
   marked_by_role?: string;
   marked_at: string;
   created_at?: string;
   updated_at?: string;
+}
+
+/**
+ * Calculates effective FN, AN, and overall attendance status for a student day record.
+ * If legacy records have status === 'Present' with fn/an unset, treats them as Present.
+ */
+export function getRecordSessionStatuses(record?: DayAttendanceRecord): {
+  fn: DayAttendanceStatus;
+  an: DayAttendanceStatus;
+  overall: DayAttendanceStatus;
+} {
+  if (!record) {
+    return { fn: 'Absent', an: 'Absent', overall: 'Absent' };
+  }
+  const isOverallPresent = record.status === 'Present';
+  const fn: DayAttendanceStatus = record.fn_status || (isOverallPresent ? 'Present' : 'Absent');
+  const an: DayAttendanceStatus = record.an_status || (isOverallPresent ? 'Present' : 'Absent');
+  const overall: DayAttendanceStatus = (fn === 'Present' || an === 'Present' || isOverallPresent) ? 'Present' : 'Absent';
+  return { fn, an, overall };
 }
 
 export const STANDARD_TN_ACTIVITIES: string[] = [

@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import type { EventDay, Learner, DayAttendanceRecord, CollegeEvent, Party, Committee, DayAttendanceStatus } from '../../types';
+import { getRecordSessionStatuses } from '../../types';
 import { EditDayActivitiesModal } from './EditDayActivitiesModal';
 import {
   Plus,
@@ -15,7 +16,10 @@ import {
   Download,
   AlertTriangle,
   PlayCircle,
-  CheckSquare
+  CheckSquare,
+  Sun,
+  Sunset,
+  Star
 } from 'lucide-react';
 
 interface DaysActivitiesTabProps {
@@ -33,13 +37,15 @@ interface DaysActivitiesTabProps {
     dayId: string,
     studentId: string,
     status: DayAttendanceStatus,
-    markedBy?: string
+    markedBy?: string,
+    session?: 'FN' | 'AN'
   ) => Promise<DayAttendanceRecord>;
   onBatchSetDayAttendance: (
     dayId: string,
     studentIds: string[],
     status: DayAttendanceStatus,
-    markedBy?: string
+    markedBy?: string,
+    session?: 'FN' | 'AN'
   ) => Promise<void>;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
@@ -72,8 +78,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
   const [deleteConfirmCount, setDeleteConfirmCount] = useState<number>(0);
 
   // Attendance drilldown search & filters
-  const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'PRESENT' | 'ABSENT'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'FN_PRESENT' | 'AN_PRESENT' | 'FULL_PRESENT' | 'ABSENT'>('ALL');
 
   // Sorted days
   const sortedDays = useMemo(() => {
@@ -99,7 +104,16 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
     const totalStudents = learners.length;
     return sortedDays.map(day => {
       const dayAtt = dayAttendance.filter(a => a.day_id === day.id);
-      const presentCount = dayAtt.filter(a => a.status === 'Present').length;
+      const dayAttMap = new Map<string, DayAttendanceRecord>();
+      dayAtt.forEach(a => dayAttMap.set(a.student_id, a));
+
+      let presentCount = 0;
+      learners.forEach(l => {
+        const att = dayAttMap.get(l.id);
+        const { overall } = getRecordSessionStatuses(att);
+        if (overall === 'Present') presentCount++;
+      });
+
       const absentCount = Math.max(0, totalStudents - presentCount);
       const percentage = totalStudents > 0 ? Math.round((presentCount / totalStudents) * 100) : 0;
       return {
@@ -110,17 +124,60 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
         percentage
       };
     });
-  }, [sortedDays, dayAttendance, learners.length]);
+  }, [sortedDays, dayAttendance, learners]);
 
-  // Attendance for current viewed day
+  // Attendance for current viewed day (Forenoon, Afternoon, Overall)
   const currentDayStats = useMemo(() => {
-    if (!currentAttendanceDay) return { presentCount: 0, absentCount: 0, percentage: 0 };
-    const dayAtt = dayAttendance.filter(a => a.day_id === currentAttendanceDay.id);
-    const presentCount = dayAtt.filter(a => a.status === 'Present').length;
-    const absentCount = Math.max(0, learners.length - presentCount);
-    const percentage = learners.length > 0 ? Math.round((presentCount / learners.length) * 100) : 0;
-    return { presentCount, absentCount, percentage };
-  }, [currentAttendanceDay, dayAttendance, learners.length]);
+    if (!currentAttendanceDay) {
+      return {
+        total: 0,
+        fnPresentCount: 0,
+        fnPercentage: 0,
+        anPresentCount: 0,
+        anPercentage: 0,
+        overallPresentCount: 0,
+        overallPercentage: 0,
+        bothPresentCount: 0,
+        absentCount: 0
+      };
+    }
+    const dayAttMap = new Map<string, DayAttendanceRecord>();
+    dayAttendance
+      .filter(a => a.day_id === currentAttendanceDay.id)
+      .forEach(a => dayAttMap.set(a.student_id, a));
+
+    let fnPresentCount = 0;
+    let anPresentCount = 0;
+    let bothPresentCount = 0;
+    let overallPresentCount = 0;
+
+    learners.forEach(l => {
+      const att = dayAttMap.get(l.id);
+      const { fn, an, overall } = getRecordSessionStatuses(att);
+      if (fn === 'Present') fnPresentCount++;
+      if (an === 'Present') anPresentCount++;
+      if (fn === 'Present' && an === 'Present') bothPresentCount++;
+      if (overall === 'Present') overallPresentCount++;
+    });
+
+    const total = learners.length;
+    const fnPercentage = total > 0 ? Math.round((fnPresentCount / total) * 100) : 0;
+    const anPercentage = total > 0 ? Math.round((anPresentCount / total) * 100) : 0;
+    const overallPercentage = total > 0 ? Math.round((overallPresentCount / total) * 100) : 0;
+    const absentCount = Math.max(0, total - overallPresentCount);
+
+    return {
+      total,
+      fnPresentCount,
+      fnPercentage,
+      anPresentCount,
+      anPercentage,
+      overallPresentCount,
+      overallPercentage,
+      bothPresentCount,
+      absentCount
+    };
+  }, [currentAttendanceDay, dayAttendance, learners]);
 
   // Filtered learners for attendance view
   const filteredLearners = useMemo(() => {
@@ -145,12 +202,18 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
         (l.department && l.department.toLowerCase().includes(query));
 
       const attRecord = dayAttMap.get(l.id);
-      const isPresent = attRecord ? attRecord.status === 'Present' : false;
+      const { fn, an, overall } = getRecordSessionStatuses(attRecord);
 
-      const matchesStatus =
-        statusFilter === 'ALL' ||
-        (statusFilter === 'PRESENT' && isPresent) ||
-        (statusFilter === 'ABSENT' && !isPresent);
+      let matchesStatus = true;
+      if (statusFilter === 'FN_PRESENT') {
+        matchesStatus = fn === 'Present';
+      } else if (statusFilter === 'AN_PRESENT') {
+        matchesStatus = an === 'Present';
+      } else if (statusFilter === 'FULL_PRESENT') {
+        matchesStatus = fn === 'Present' && an === 'Present';
+      } else if (statusFilter === 'ABSENT') {
+        matchesStatus = overall === 'Absent';
+      }
 
       return matchesSearch && matchesStatus;
     });
@@ -211,15 +274,28 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
       'Constituency',
       'Party',
       'Bench',
-      'Status',
+      'Forenoon (FN) Status',
+      'Afternoon (AN) Status',
+      'Day Overall Status',
+      'Main Check-in Mapping',
+      'Main Day Check-in Status',
       'Marked At',
       'Marked By'
     ];
 
+    const isMain1 = currentAttendanceDay.main_day === 1;
+    const isMain2 = currentAttendanceDay.main_day === 2;
+
     const rows = learners.map(l => {
       const party = parties.find(p => p.id === l.party_id);
       const att = dayAttMap.get(l.id);
-      const status = att ? att.status : 'Absent';
+      const { fn, an, overall } = getRecordSessionStatuses(att);
+      const mainMapping = isMain1 ? 'Main Day 1 (D1)' : isMain2 ? 'Main Day 2 (D2)' : 'Unlinked';
+      const checkinStatus = isMain1
+        ? (l.day1_checked_in ? 'Checked In (D1)' : 'Not Checked In (D1)')
+        : isMain2
+        ? (l.day2_checked_in ? 'Checked In (D2)' : 'Not Checked In (D2)')
+        : 'N/A';
       const markedAt = att?.marked_at ? new Date(att.marked_at).toLocaleString() : 'N/A';
       const markedBy = att?.marked_by || 'N/A';
 
@@ -231,7 +307,11 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
         `"${l.constituency_name || ''}"`,
         `"${party?.name || l.party_name || ''}"`,
         `"${l.bench || ''}"`,
-        `"${status}"`,
+        `"${fn}"`,
+        `"${an}"`,
+        `"${overall}"`,
+        `"${mainMapping}"`,
+        `"${checkinStatus}"`,
         `"${markedAt}"`,
         `"${markedBy}"`
       ].join(',');
@@ -246,15 +326,16 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    onShowToast('CSV Exported', `Downloaded attendance report for ${currentAttendanceDay.name}`, 'success');
+    onShowToast('CSV Exported', `Downloaded detailed session attendance report for ${currentAttendanceDay.name}`, 'success');
   };
 
-  const handleMarkAll = async (status: DayAttendanceStatus) => {
+  const handleMarkAll = async (status: DayAttendanceStatus, session?: 'FN' | 'AN') => {
     if (!currentAttendanceDay) return;
     const studentIds = learners.map(l => l.id);
+    const sessionLabel = session === 'FN' ? 'Forenoon (FN)' : session === 'AN' ? 'Afternoon (AN)' : 'Full Day';
     try {
-      await onBatchSetDayAttendance(currentAttendanceDay.id, studentIds, status, 'Admin Batch Action');
-      onShowToast('Batch Updated', `Marked all ${learners.length} students as ${status} for ${currentAttendanceDay.name}`, 'success');
+      await onBatchSetDayAttendance(currentAttendanceDay.id, studentIds, status, 'Admin Batch Action', session);
+      onShowToast('Batch Updated', `Marked all ${learners.length} students as ${status} for ${currentAttendanceDay.name} (${sessionLabel})`, 'success');
     } catch (err: any) {
       onShowToast('Batch Save Failed', err?.message || 'Could not save batch attendance in database', 'error');
     }
@@ -442,6 +523,53 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                               <span>{day.date}</span>
                             </p>
                           )}
+
+                          {/* Main Day 1 / Day 2 Mapping Badge & Quick Controls */}
+                          <div className="flex items-center gap-1.5 mt-2">
+                            {day.main_day === 1 ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500/15 text-amber-400 border border-amber-500/40 inline-flex items-center gap-1">
+                                <Star className="w-2.5 h-2.5 fill-amber-400" /> MAIN DAY 1 (D1)
+                              </span>
+                            ) : day.main_day === 2 ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-blue-500/15 text-blue-400 border border-blue-500/40 inline-flex items-center gap-1">
+                                <Star className="w-2.5 h-2.5 fill-blue-400" /> MAIN DAY 2 (D2)
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-medium text-slate-400 border border-slate-700/50">
+                                Activity Session
+                              </span>
+                            )}
+
+                            {/* Quick Mapping Actions */}
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const target = day.main_day === 1 ? null : 1;
+                                await onUpdateDay({ ...day, main_day: target });
+                                onShowToast('Check-in Mapping', target ? `Assigned ${day.name} to Main Day 1 (D1 Check-in).` : `Unlinked ${day.name} from Main Day 1.`, 'success');
+                              }}
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-bold border transition cursor-pointer ${
+                                day.main_day === 1 ? 'bg-amber-500 text-white border-amber-500' : 'text-slate-400 hover:text-amber-400 border-slate-700'
+                              }`}
+                              title="Toggle Main Day 1 mapping (reflects in D1 Check-in)"
+                            >
+                              D1
+                            </button>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const target = day.main_day === 2 ? null : 2;
+                                await onUpdateDay({ ...day, main_day: target });
+                                onShowToast('Check-in Mapping', target ? `Assigned ${day.name} to Main Day 2 (D2 Check-in).` : `Unlinked ${day.name} from Main Day 2.`, 'success');
+                              }}
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-bold border transition cursor-pointer ${
+                                day.main_day === 2 ? 'bg-blue-500 text-white border-blue-500' : 'text-slate-400 hover:text-blue-400 border-slate-700'
+                              }`}
+                              title="Toggle Main Day 2 mapping (reflects in D2 Check-in)"
+                            >
+                              D2
+                            </button>
+                          </div>
                         </div>
 
                         <span className={`text-[10px] font-extrabold uppercase px-2.5 py-1 rounded-full border ${
@@ -590,8 +718,74 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                     )}
                   </div>
                   <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                    Event: <strong style={{ color: 'var(--text-primary)' }}>{event.college_name}</strong> • Record and inspect student delegate attendance.
+                    Event: <strong style={{ color: 'var(--text-primary)' }}>{event.college_name}</strong> • Record Forenoon (FN) and Afternoon (AN) delegate attendance.
                   </p>
+
+                  {/* Main Day 1 / Day 2 Mapping Header Banner */}
+                  <div className="flex flex-wrap items-center gap-2 mt-2.5">
+                    {currentAttendanceDay.main_day === 1 ? (
+                      <span className="px-2.5 py-1 rounded-full text-xs font-black bg-amber-500/20 text-amber-400 border border-amber-500/40 inline-flex items-center gap-1.5 shadow-sm">
+                        <Star className="w-3.5 h-3.5 fill-amber-400" />
+                        MAIN DAY 1 — Reflects in Delegate Check-in (D1)
+                      </span>
+                    ) : currentAttendanceDay.main_day === 2 ? (
+                      <span className="px-2.5 py-1 rounded-full text-xs font-black bg-blue-500/20 text-blue-400 border border-blue-500/40 inline-flex items-center gap-1.5 shadow-sm">
+                        <Star className="w-3.5 h-3.5 fill-blue-400" />
+                        MAIN DAY 2 — Reflects in Delegate Check-in (D2)
+                      </span>
+                    ) : (
+                      <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-slate-500/15 text-slate-400 border border-slate-500/30 inline-flex items-center gap-1.5">
+                        Standalone Activity Session (Does not alter D1 / D2 Check-in)
+                      </span>
+                    )}
+
+                    {/* Quick Switch Buttons */}
+                    <div className="flex items-center gap-1 sm:ml-2">
+                      <span className="text-[11px] font-bold text-slate-400 mr-1">Check-in Mapping:</span>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const target = currentAttendanceDay.main_day === 1 ? null : 1;
+                          await onUpdateDay({ ...currentAttendanceDay, main_day: target });
+                          onShowToast('Check-in Mapping', target ? `Mapped ${currentAttendanceDay.name} to Main Day 1 (D1 Check-in).` : `Unlinked ${currentAttendanceDay.name} from Main Day 1.`, 'success');
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                          currentAttendanceDay.main_day === 1
+                            ? 'bg-amber-500 text-white border-amber-500 shadow-sm'
+                            : 'hover:bg-slate-500/15 text-slate-300 border-slate-700'
+                        }`}
+                      >
+                        ⭐️ Main Day 1
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const target = currentAttendanceDay.main_day === 2 ? null : 2;
+                          await onUpdateDay({ ...currentAttendanceDay, main_day: target });
+                          onShowToast('Check-in Mapping', target ? `Mapped ${currentAttendanceDay.name} to Main Day 2 (D2 Check-in).` : `Unlinked ${currentAttendanceDay.name} from Main Day 2.`, 'success');
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                          currentAttendanceDay.main_day === 2
+                            ? 'bg-blue-500 text-white border-blue-500 shadow-sm'
+                            : 'hover:bg-slate-500/15 text-slate-300 border-slate-700'
+                        }`}
+                      >
+                        ⭐️ Main Day 2
+                      </button>
+                      {currentAttendanceDay.main_day && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await onUpdateDay({ ...currentAttendanceDay, main_day: null });
+                            onShowToast('Check-in Mapping', `Unlinked ${currentAttendanceDay.name} from main check-in.`, 'info');
+                          }}
+                          className="px-2 py-1 rounded-lg text-[11px] font-semibold text-rose-400 hover:bg-rose-500/15 border border-rose-500/30 transition cursor-pointer"
+                        >
+                          Unlink
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -615,7 +809,13 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
               {sortedDays.map((d) => {
                 const isCurrent = d.id === currentAttendanceDay.id;
                 const dAtt = dayAttendance.filter(a => a.day_id === d.id);
-                const pres = dAtt.filter(a => a.status === 'Present').length;
+                const dAttMap = new Map<string, DayAttendanceRecord>();
+                dAtt.forEach(a => dAttMap.set(a.student_id, a));
+                let pres = 0;
+                learners.forEach(l => {
+                  const att = dAttMap.get(l.id);
+                  if (getRecordSessionStatuses(att).overall === 'Present') pres++;
+                });
                 return (
                   <button
                     key={d.id}
@@ -630,6 +830,8 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                     }}
                   >
                     <span>{d.name}</span>
+                    {d.main_day === 1 && <span className="text-[10px] text-amber-200">★ D1</span>}
+                    {d.main_day === 2 && <span className="text-[10px] text-blue-200">★ D2</span>}
                     <span className={`px-1.5 py-0.2 rounded text-[10px] ${
                       isCurrent ? 'bg-black/20 text-white' : 'bg-slate-500/20 text-slate-400'
                     }`}>
@@ -660,10 +862,10 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
             </div>
           </div>
 
-          {/* Metric Cards Row */}
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+          {/* Metric Cards Row: Total, FN, AN, Overall */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="p-4 rounded-2xl border" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Total Registered</p>
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Total Delegates</p>
               <p className="text-2xl font-black mt-1" style={{ color: 'var(--text-primary)' }}>
                 {learners.length}
               </p>
@@ -671,35 +873,52 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
             </div>
 
             <div className="p-4 rounded-2xl border" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Present Count</p>
-              <p className="text-2xl font-black mt-1 text-emerald-500">
-                {currentDayStats.presentCount}
-              </p>
-              <p className="text-[11px] text-emerald-600 font-semibold mt-0.5">{currentDayStats.percentage}% of delegates</p>
-            </div>
-
-            <div className="p-4 rounded-2xl border" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Absent Count</p>
-              <p className="text-2xl font-black mt-1 text-rose-500">
-                {currentDayStats.absentCount}
-              </p>
-              <p className="text-[11px] text-rose-400 mt-0.5">Not checked in on this day</p>
-            </div>
-
-            <div className="p-4 rounded-2xl border" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Attendance Rate</p>
-              <p className="text-2xl font-black mt-1 text-amber-500">
-                {currentDayStats.percentage}%
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold uppercase tracking-wider text-amber-500 flex items-center gap-1">
+                  <Sun className="w-3.5 h-3.5 text-amber-500" /> Forenoon (FN)
+                </p>
+                <span className="text-[11px] font-extrabold text-amber-500">{currentDayStats.fnPercentage}%</span>
+              </div>
+              <p className="text-2xl font-black mt-1 text-amber-400">
+                {currentDayStats.fnPresentCount} <span className="text-xs font-normal opacity-70">/ {learners.length}</span>
               </p>
               <div className="w-full h-1.5 rounded-full bg-slate-700/40 mt-1.5 overflow-hidden">
-                <div className="h-full bg-amber-500 rounded-full" style={{ width: `${currentDayStats.percentage}%` }} />
+                <div className="h-full bg-amber-500 rounded-full transition-all duration-500" style={{ width: `${currentDayStats.fnPercentage}%` }} />
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl border" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold uppercase tracking-wider text-sky-400 flex items-center gap-1">
+                  <Sunset className="w-3.5 h-3.5 text-sky-400" /> Afternoon (AN)
+                </p>
+                <span className="text-[11px] font-extrabold text-sky-400">{currentDayStats.anPercentage}%</span>
+              </div>
+              <p className="text-2xl font-black mt-1 text-sky-400">
+                {currentDayStats.anPresentCount} <span className="text-xs font-normal opacity-70">/ {learners.length}</span>
+              </p>
+              <div className="w-full h-1.5 rounded-full bg-slate-700/40 mt-1.5 overflow-hidden">
+                <div className="h-full bg-sky-400 rounded-full transition-all duration-500" style={{ width: `${currentDayStats.anPercentage}%` }} />
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl border" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold uppercase tracking-wider text-emerald-400">Overall Day Present</p>
+                <span className="text-[11px] font-extrabold text-emerald-400">{currentDayStats.overallPercentage}%</span>
+              </div>
+              <p className="text-2xl font-black mt-1 text-emerald-400">
+                {currentDayStats.overallPresentCount} <span className="text-xs font-normal opacity-70">/ {learners.length}</span>
+              </p>
+              <div className="w-full h-1.5 rounded-full bg-slate-700/40 mt-1.5 overflow-hidden">
+                <div className="h-full bg-emerald-500 rounded-full transition-all duration-500" style={{ width: `${currentDayStats.overallPercentage}%` }} />
               </div>
             </div>
           </div>
 
           {/* Search, Filters & Batch Actions */}
           <div
-            className="p-4 rounded-2xl border flex flex-col md:flex-row md:items-center justify-between gap-4"
+            className="p-4 rounded-2xl border flex flex-col xl:flex-row xl:items-center justify-between gap-4"
             style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
           >
             <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-1">
@@ -715,37 +934,61 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                 <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
               </div>
 
-              {/* Status Filter */}
-              <div className="flex rounded-xl p-1 border shrink-0" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
-                {(['ALL', 'PRESENT', 'ABSENT'] as const).map((sf) => (
+              {/* Status Filter Tabs */}
+              <div className="flex flex-wrap rounded-xl p-1 border shrink-0" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
+                {[
+                  { key: 'ALL' as const, label: `All (${learners.length})` },
+                  { key: 'FN_PRESENT' as const, label: `FN (${currentDayStats.fnPresentCount})` },
+                  { key: 'AN_PRESENT' as const, label: `AN (${currentDayStats.anPresentCount})` },
+                  { key: 'FULL_PRESENT' as const, label: `Both (${currentDayStats.bothPresentCount})` },
+                  { key: 'ABSENT' as const, label: `Absent (${currentDayStats.absentCount})` }
+                ].map((sf) => (
                   <button
-                    key={sf}
-                    onClick={() => setStatusFilter(sf)}
-                    className={`px-3 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
-                      statusFilter === sf ? 'bg-amber-500 text-white' : 'text-slate-400 hover:text-white'
+                    key={sf.key}
+                    onClick={() => setStatusFilter(sf.key)}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
+                      statusFilter === sf.key ? 'bg-amber-500 text-white' : 'text-slate-400 hover:text-white'
                     }`}
                   >
-                    {sf}
+                    {sf.label}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Batch Controls */}
-            <div className="flex items-center gap-2 shrink-0">
+            {/* Batch Controls for FN, AN, Both */}
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                onClick={() => handleMarkAll('Present', 'FN')}
+                className="px-3 py-1.5 rounded-xl border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                title="Mark all delegates Present for Forenoon (FN)"
+              >
+                <Sun className="w-3.5 h-3.5 text-amber-400" />
+                <span>Mark FN Present</span>
+              </button>
+              <button
+                onClick={() => handleMarkAll('Present', 'AN')}
+                className="px-3 py-1.5 rounded-xl border border-sky-500/40 bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                title="Mark all delegates Present for Afternoon (AN)"
+              >
+                <Sunset className="w-3.5 h-3.5 text-sky-400" />
+                <span>Mark AN Present</span>
+              </button>
               <button
                 onClick={() => handleMarkAll('Present')}
                 className="px-3 py-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                title="Mark all delegates Present for both FN and AN sessions"
               >
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>Mark All Present</span>
+                <span>Mark Both Present</span>
               </button>
               <button
                 onClick={() => handleMarkAll('Absent')}
                 className="px-3 py-1.5 rounded-xl border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                title="Reset all delegates to Absent"
               >
                 <XCircle className="w-3.5 h-3.5" />
-                <span>Reset All Absent</span>
+                <span>Reset Absent</span>
               </button>
             </div>
           </div>
@@ -756,12 +999,19 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
             style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
           >
             <div className="p-4 border-b flex items-center justify-between" style={{ borderColor: 'var(--border)' }}>
-              <span className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-primary)' }}>
-                Student Attendance List ({filteredLearners.length} displayed)
-              </span>
-              <span className="text-xs text-slate-400">
-                Attendance records are stored separately for {currentAttendanceDay.name}
-              </span>
+              <div>
+                <span className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-primary)' }}>
+                  Student Attendance List ({filteredLearners.length} displayed)
+                </span>
+                <span className="text-xs text-slate-400 block mt-0.5">
+                  Separate Forenoon (FN) & Afternoon (AN) tracking for {currentAttendanceDay.name}
+                </span>
+              </div>
+              {currentAttendanceDay.main_day && (
+                <span className="text-[11px] font-bold text-amber-500 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/30">
+                  ⭐️ Syncing with Main Day {currentAttendanceDay.main_day} (D{currentAttendanceDay.main_day}) Check-in
+                </span>
+              )}
             </div>
 
             {filteredLearners.length === 0 ? (
@@ -775,18 +1025,23 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                     <tr className="border-b text-[11px] uppercase font-bold text-slate-400" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-elevated)' }}>
                       <th className="py-3 px-4">Student</th>
                       <th className="py-3 px-4">Access Code / ID</th>
-                      <th className="py-3 px-4">Dept & Year</th>
                       <th className="py-3 px-4">Constituency & Party</th>
-                      <th className="py-3 px-4 text-center">Status</th>
-                      <th className="py-3 px-4 text-center">Action</th>
+                      <th className="py-3 px-4 text-center">🌅 Forenoon (FN)</th>
+                      <th className="py-3 px-4 text-center">🌇 Afternoon (AN)</th>
+                      <th className="py-3 px-4 text-center">Day Status</th>
+                      <th className="py-3 px-4 text-center">Main Check-in</th>
                       <th className="py-3 px-4">Audit Info</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
                     {filteredLearners.map((learner) => {
                       const att = dayAttendance.find(a => a.day_id === currentAttendanceDay.id && a.student_id === learner.id);
-                      const isPresent = att ? att.status === 'Present' : false;
+                      const { fn, an, overall } = getRecordSessionStatuses(att);
+                      const isFnPresent = fn === 'Present';
+                      const isAnPresent = an === 'Present';
                       const party = parties.find(p => p.id === learner.party_id);
+                      const isMain1 = currentAttendanceDay.main_day === 1;
+                      const isMain2 = currentAttendanceDay.main_day === 2;
 
                       return (
                         <tr
@@ -798,17 +1053,13 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                               {learner.full_name}
                             </div>
                             <div className="text-[11px] text-slate-400">{learner.email || 'No email'}</div>
+                            <div className="text-[10px] text-slate-500">{learner.department || 'General'} • {learner.academic_year || '1st Year'}</div>
                           </td>
 
                           <td className="py-3 px-4">
                             <span className="font-mono font-bold px-2 py-0.5 rounded bg-slate-500/15 text-slate-300">
                               {learner.access_code}
                             </span>
-                          </td>
-
-                          <td className="py-3 px-4 text-slate-300">
-                            <div>{learner.department || 'General'}</div>
-                            <div className="text-[10px] text-slate-500">{learner.academic_year || '1st Year'}</div>
                           </td>
 
                           <td className="py-3 px-4">
@@ -820,52 +1071,160 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                             </div>
                           </td>
 
+                          {/* Forenoon (FN) Session Column */}
                           <td className="py-3 px-4 text-center">
-                            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${
-                              isPresent
-                                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/40'
-                                : 'bg-rose-500/15 text-rose-400 border border-rose-500/40'
-                            }`}>
-                              {isPresent ? <CheckCircle2 className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
-                              <span>{isPresent ? 'Present' : 'Absent'}</span>
-                            </span>
+                            <div className="flex flex-col items-center gap-1.5">
+                              <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                                isFnPresent
+                                  ? 'bg-amber-500/15 text-amber-400 border border-amber-500/40'
+                                  : 'bg-slate-500/15 text-slate-400 border border-slate-700/50'
+                              }`}>
+                                {isFnPresent ? <Sun className="w-3 h-3 text-amber-400" /> : <XCircle className="w-3 h-3 text-slate-400" />}
+                                <span>{isFnPresent ? 'Present' : 'Absent'}</span>
+                              </span>
+
+                              <div className="inline-flex items-center gap-1">
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      await onSetStudentDayAttendance(currentAttendanceDay.id, learner.id, 'Present', 'Admin', 'FN');
+                                    } catch (err: any) {
+                                      onShowToast('Save Failed', err?.message || 'Could not record attendance in database', 'error');
+                                    }
+                                  }}
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
+                                    isFnPresent
+                                      ? 'bg-amber-500 text-white shadow-sm'
+                                      : 'border border-amber-500/40 text-amber-400 hover:bg-amber-500/15'
+                                  }`}
+                                  title="Mark Forenoon Present"
+                                >
+                                  P
+                                </button>
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      await onSetStudentDayAttendance(currentAttendanceDay.id, learner.id, 'Absent', 'Admin', 'FN');
+                                    } catch (err: any) {
+                                      onShowToast('Save Failed', err?.message || 'Could not record attendance in database', 'error');
+                                    }
+                                  }}
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
+                                    !isFnPresent
+                                      ? 'bg-rose-500 text-white shadow-sm'
+                                      : 'border border-rose-500/40 text-rose-400 hover:bg-rose-500/15'
+                                  }`}
+                                  title="Mark Forenoon Absent"
+                                >
+                                  A
+                                </button>
+                              </div>
+                            </div>
                           </td>
 
+                          {/* Afternoon (AN) Session Column */}
                           <td className="py-3 px-4 text-center">
-                            <div className="inline-flex items-center gap-1.5">
-                              <button
-                                onClick={async () => {
-                                  try {
-                                    await onSetStudentDayAttendance(currentAttendanceDay.id, learner.id, 'Present', 'Admin');
-                                  } catch (err: any) {
-                                    onShowToast('Save Failed', err?.message || 'Could not record attendance in database', 'error');
-                                  }
-                                }}
-                                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
-                                  isPresent
-                                    ? 'bg-emerald-500 text-white shadow-sm'
-                                    : 'border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/15'
-                                }`}
-                              >
-                                Present
-                              </button>
-                              <button
-                                onClick={async () => {
-                                  try {
-                                    await onSetStudentDayAttendance(currentAttendanceDay.id, learner.id, 'Absent', 'Admin');
-                                  } catch (err: any) {
-                                    onShowToast('Save Failed', err?.message || 'Could not record attendance in database', 'error');
-                                  }
-                                }}
-                                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
-                                  !isPresent
-                                    ? 'bg-rose-500 text-white shadow-sm'
-                                    : 'border border-rose-500/40 text-rose-400 hover:bg-rose-500/15'
-                                }`}
-                              >
-                                Absent
-                              </button>
+                            <div className="flex flex-col items-center gap-1.5">
+                              <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                                isAnPresent
+                                  ? 'bg-sky-500/15 text-sky-400 border border-sky-500/40'
+                                  : 'bg-slate-500/15 text-slate-400 border border-slate-700/50'
+                              }`}>
+                                {isAnPresent ? <Sunset className="w-3 h-3 text-sky-400" /> : <XCircle className="w-3 h-3 text-slate-400" />}
+                                <span>{isAnPresent ? 'Present' : 'Absent'}</span>
+                              </span>
+
+                              <div className="inline-flex items-center gap-1">
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      await onSetStudentDayAttendance(currentAttendanceDay.id, learner.id, 'Present', 'Admin', 'AN');
+                                    } catch (err: any) {
+                                      onShowToast('Save Failed', err?.message || 'Could not record attendance in database', 'error');
+                                    }
+                                  }}
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
+                                    isAnPresent
+                                      ? 'bg-sky-500 text-white shadow-sm'
+                                      : 'border border-sky-500/40 text-sky-400 hover:bg-sky-500/15'
+                                  }`}
+                                  title="Mark Afternoon Present"
+                                >
+                                  P
+                                </button>
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      await onSetStudentDayAttendance(currentAttendanceDay.id, learner.id, 'Absent', 'Admin', 'AN');
+                                    } catch (err: any) {
+                                      onShowToast('Save Failed', err?.message || 'Could not record attendance in database', 'error');
+                                    }
+                                  }}
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
+                                    !isAnPresent
+                                      ? 'bg-rose-500 text-white shadow-sm'
+                                      : 'border border-rose-500/40 text-rose-400 hover:bg-rose-500/15'
+                                  }`}
+                                  title="Mark Afternoon Absent"
+                                >
+                                  A
+                                </button>
+                              </div>
                             </div>
+                          </td>
+
+                          {/* Day Overall Status */}
+                          <td className="py-3 px-4 text-center">
+                            {isFnPresent && isAnPresent ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>Full Day (FN+AN)</span>
+                              </span>
+                            ) : isFnPresent ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-500/15 text-amber-400 border border-amber-500/40">
+                                <Sun className="w-3.5 h-3.5" />
+                                <span>FN Only</span>
+                              </span>
+                            ) : isAnPresent ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-sky-500/15 text-sky-400 border border-sky-500/40">
+                                <Sunset className="w-3.5 h-3.5" />
+                                <span>AN Only</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-rose-500/15 text-rose-400 border border-rose-500/40">
+                                <XCircle className="w-3.5 h-3.5" />
+                                <span>Absent</span>
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Main Check-in Reflection Column */}
+                          <td className="py-3 px-4 text-center">
+                            {isMain1 ? (
+                              learner.day1_checked_in ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 border">
+                                  ● D1 Checked In
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700 border">
+                                  ○ D1 Inactive
+                                </span>
+                              )
+                            ) : isMain2 ? (
+                              learner.day2_checked_in ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 border">
+                                  ● D2 Checked In
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700 border">
+                                  ○ D2 Inactive
+                                </span>
+                              )
+                            ) : (
+                              <span className="text-[10px] text-slate-500 italic">
+                                Standalone
+                              </span>
+                            )}
                           </td>
 
                           <td className="py-3 px-4 text-slate-400 text-[11px]">

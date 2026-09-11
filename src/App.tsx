@@ -255,8 +255,8 @@ interface EventTabRouteHandlerProps {
   handleUpdateEventDay: (day: EventDay) => Promise<EventDay>;
   handleDeleteEventDay: (dayId: string, force?: boolean) => Promise<{ success: boolean; error?: string }>;
   handleSetActiveEventDay: (dayId: string) => Promise<void>;
-  handleSetStudentDayAttendance: (dayId: string, studentId: string, status: DayAttendanceStatus, markedBy?: string) => Promise<DayAttendanceRecord>;
-  handleBatchSetDayAttendance: (dayId: string, studentIds: string[], status: DayAttendanceStatus, markedBy?: string) => Promise<void>;
+  handleSetStudentDayAttendance: (dayId: string, studentId: string, status: DayAttendanceStatus, markedBy?: string, session?: 'FN' | 'AN') => Promise<DayAttendanceRecord>;
+  handleBatchSetDayAttendance: (dayId: string, studentIds: string[], status: DayAttendanceStatus, markedBy?: string, session?: 'FN' | 'AN') => Promise<void>;
 }
 
 function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
@@ -1641,11 +1641,12 @@ export function App() {
     dayId: string,
     studentId: string,
     status: DayAttendanceStatus,
-    markedBy?: string
+    markedBy?: string,
+    session?: 'FN' | 'AN'
   ): Promise<DayAttendanceRecord> => {
     const activeEv = extractEventFromUrl(events) || currentEvent;
     if (!activeEv) throw new Error('No active event');
-    const rec = await storageService.setStudentDayAttendance(activeEv.id, dayId, studentId, status, markedBy || userSession?.name || role);
+    const rec = await storageService.setStudentDayAttendance(activeEv.id, dayId, studentId, status, markedBy || userSession?.name || role, 'coordinator', session);
     setDayAttendance(storageService.getDayAttendance(activeEv.id));
     setLearners(storageService.getLearners(activeEv.id));
     return rec;
@@ -1655,7 +1656,8 @@ export function App() {
     dayId: string,
     studentIds: string[],
     status: DayAttendanceStatus,
-    markedBy?: string
+    markedBy?: string,
+    session?: 'FN' | 'AN'
   ): Promise<void> => {
     const activeEv = extractEventFromUrl(events) || currentEvent;
     if (!activeEv) return;
@@ -1664,11 +1666,13 @@ export function App() {
       dayId,
       studentIds,
       status,
-      markedBy || userSession?.name || role
+      markedBy || userSession?.name || role,
+      'coordinator',
+      session
     );
     setDayAttendance(storageService.getDayAttendance(activeEv.id));
     setLearners(storageService.getLearners(activeEv.id));
-    addToast('Attendance Updated', `Marked ${studentIds.length} students as ${status}`, 'success');
+    addToast('Attendance Updated', `Marked ${studentIds.length} students as ${status}${session ? ` (${session})` : ''}`, 'success');
   };
 
   const handleSetCurrentAgendaItem = (itemId: string) => {

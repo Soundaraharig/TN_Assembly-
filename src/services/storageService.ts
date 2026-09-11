@@ -2702,7 +2702,9 @@ class StorageService {
       // Also update multi-day attendance record if event day exists
       const targetLearner = updatedLearner as Learner;
       const days = this.getEventDays(targetLearner.event_id);
-      const targetDay = days.find(d => d.day_number === day || d.order_index === (day - 1));
+      // Prioritize explicit main_day mapping, fallback to legacy day_number only if no days have main_day configured
+      const hasAnyMainDay = days.some(d => d.main_day === 1 || d.main_day === 2);
+      const targetDay = days.find(d => d.main_day === day) || (!hasAnyMainDay ? days.find(d => d.day_number === day || d.order_index === (day - 1)) : undefined);
       if (targetDay) {
         const isPres = day === 1 ? targetLearner.day1_checked_in : targetLearner.day2_checked_in;
         this.setStudentDayAttendance(
@@ -2734,7 +2736,8 @@ class StorageService {
 
     // Sync with DayAttendanceRecord
     const days = this.getEventDays(eventId);
-    const targetDay = days.find(d => d.day_number === day || d.order_index === (day - 1));
+    const hasAnyMainDay = days.some(d => d.main_day === 1 || d.main_day === 2);
+    const targetDay = days.find(d => d.main_day === day) || (!hasAnyMainDay ? days.find(d => d.day_number === day || d.order_index === (day - 1)) : undefined);
     if (targetDay) {
       const targetStudentIds = all.filter(l => l.event_id === eventId).map(l => l.id);
       this.batchSetDayAttendance(eventId, targetDay.id, targetStudentIds, state ? 'Present' : 'Absent', 'Mass Action');
@@ -2781,12 +2784,24 @@ class StorageService {
       status: dayData.status || (days.length === 0 ? 'Active' : 'Upcoming'),
       activities: Array.isArray(dayData.activities) ? dayData.activities : [],
       order_index: dayData.order_index ?? days.length,
+      main_day: dayData.main_day ?? null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
 
-    // If new day is marked Active, deactivate any other active days
     let all = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []);
+
+    // If new day has main_day mapping (1 or 2), unmap any existing day in this event with the same main_day
+    if (newDay.main_day === 1 || newDay.main_day === 2) {
+      all = all.map(d => {
+        if (d.event_id === eventId && d.main_day === newDay.main_day) {
+          return { ...d, main_day: null, updated_at: new Date().toISOString() };
+        }
+        return d;
+      });
+    }
+
+    // If new day is marked Active, deactivate any other active days
     if (newDay.status === 'Active') {
       all = all.map(d => {
         if (d.event_id === eventId && d.status === 'Active') {
@@ -2812,12 +2827,17 @@ class StorageService {
     let all = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []);
     const updatedDay: EventDay = {
       ...day,
+      main_day: day.main_day ?? null,
       updated_at: new Date().toISOString()
     };
 
     all = all.map(d => {
       if (d.id === day.id) {
         return updatedDay;
+      }
+      // If this day has main_day mapping (1 or 2), unmap any other day in this event
+      if ((updatedDay.main_day === 1 || updatedDay.main_day === 2) && d.event_id === day.event_id && d.main_day === updatedDay.main_day) {
+        return { ...d, main_day: null, updated_at: new Date().toISOString() };
       }
       // If this day is being set to Active, change previously active day to Completed or Upcoming
       if (day.status === 'Active' && d.event_id === day.event_id && d.status === 'Active') {
@@ -2924,7 +2944,8 @@ class StorageService {
     studentId: string,
     status: DayAttendanceStatus,
     markedBy: string = 'Floor Volunteer',
-    markedByRole: string = 'volunteer'
+    markedByRole: string = 'volunteer',
+    session?: 'FN' | 'AN'
   ): Promise<DayAttendanceRecord> {
     const timestamp = new Date().toISOString();
     const all = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
@@ -2954,6 +2975,24 @@ class StorageService {
       }
     }
 
+    const prior = existingLocal || remoteRecord;
+    let nextFnStatus: DayAttendanceStatus;
+    let nextAnStatus: DayAttendanceStatus;
+
+    if (session === 'FN') {
+      nextFnStatus = status;
+      nextAnStatus = prior?.an_status ?? (prior?.status === 'Present' ? 'Present' : 'Absent');
+    } else if (session === 'AN') {
+      nextAnStatus = status;
+      nextFnStatus = prior?.fn_status ?? (prior?.status === 'Present' ? 'Present' : 'Absent');
+    } else {
+      nextFnStatus = status;
+      nextAnStatus = status;
+    }
+
+    const effectiveStatus: DayAttendanceStatus =
+      (nextFnStatus === 'Present' || nextAnStatus === 'Present') ? 'Present' : 'Absent';
+
     let record: DayAttendanceRecord;
 
     if (remoteRecord || existingLocal) {
@@ -2966,7 +3005,9 @@ class StorageService {
         day_id: dayId,
         student_id: studentId,
         learner_id: studentId,
-        status,
+        status: effectiveStatus,
+        fn_status: nextFnStatus,
+        an_status: nextAnStatus,
         marked_by: markedBy,
         marked_by_role: markedByRole,
         marked_at: timestamp,
@@ -2988,7 +3029,9 @@ class StorageService {
           const { data: upData, error: upErr } = await supabase
             .from('event_day_attendance')
             .update({
-              status,
+              status: effectiveStatus,
+              fn_status: nextFnStatus,
+              an_status: nextAnStatus,
               marked_by: markedBy,
               marked_by_role: markedByRole,
               marked_at: timestamp,
@@ -3008,7 +3051,9 @@ class StorageService {
           const { data: compData, error: compErr } = await supabase
             .from('event_day_attendance')
             .update({
-              status,
+              status: effectiveStatus,
+              fn_status: nextFnStatus,
+              an_status: nextAnStatus,
               marked_by: markedBy,
               marked_by_role: markedByRole,
               marked_at: timestamp,
@@ -3050,7 +3095,9 @@ class StorageService {
         day_id: dayId,
         student_id: studentId,
         learner_id: studentId,
-        status,
+        status: effectiveStatus,
+        fn_status: nextFnStatus,
+        an_status: nextAnStatus,
         marked_by: markedBy,
         marked_by_role: markedByRole,
         marked_at: timestamp,
@@ -3082,7 +3129,9 @@ class StorageService {
               const { data: resolvedData } = await supabase
                 .from('event_day_attendance')
                 .update({
-                  status,
+                  status: effectiveStatus,
+                  fn_status: nextFnStatus,
+                  an_status: nextAnStatus,
                   marked_by: markedBy,
                   marked_by_role: markedByRole,
                   marked_at: timestamp,
@@ -3092,7 +3141,7 @@ class StorageService {
                 .select();
 
               if (resolvedData && resolvedData.length > 0) {
-                record = { ...record, id: conflictRow.id, status };
+                record = { ...record, id: conflictRow.id, status: effectiveStatus, fn_status: nextFnStatus, an_status: nextAnStatus };
                 const idx = all.findIndex(a => a.event_id === eventId && a.day_id === dayId && a.student_id === studentId);
                 if (idx >= 0) {
                   all[idx] = record;
@@ -3115,14 +3164,14 @@ class StorageService {
       }
     }
 
-    // Two-way sync: if this day is Day 1 or Day 2, also sync learner day1_checked_in/day2_checked_in
+    // Two-way sync: strictly sync learner day1_checked_in/day2_checked_in if this day is mapped as Main Day 1 or Main Day 2
     const days = this.getEventDays(eventId);
     const currentDay = days.find(d => d.id === dayId);
-    const isDay1 = Boolean(currentDay && (currentDay.day_number === 1 || currentDay.order_index === 0));
-    const isDay2 = Boolean(currentDay && (currentDay.day_number === 2 || currentDay.order_index === 1));
+    const isDay1 = Boolean(currentDay && currentDay.main_day === 1);
+    const isDay2 = Boolean(currentDay && currentDay.main_day === 2);
 
     if (isDay1 || isDay2) {
-      const isPresent = status === 'Present';
+      const isPresent = effectiveStatus === 'Present';
       const allLearners = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, []);
       let updatedLearner: Learner | null = null;
       const nextLearners = allLearners.map(l => {
@@ -3149,7 +3198,7 @@ class StorageService {
         action: 'ATTENDANCE_RECORDED' as any,
         actor_role: markedByRole,
         actor_name: markedBy,
-        details: `Attendance marked ${status} for student ${studentId} on day ${dayId}`
+        details: `Attendance marked ${effectiveStatus}${session ? ` (${session}: ${status})` : ''} for student ${studentId} on day ${dayId}`
       });
     } catch {
       // Non-blocking audit log
@@ -3165,7 +3214,8 @@ class StorageService {
     studentIds: string[],
     status: DayAttendanceStatus,
     markedBy: string = 'Floor Volunteer',
-    markedByRole: string = 'volunteer'
+    markedByRole: string = 'volunteer',
+    session?: 'FN' | 'AN'
   ): Promise<void> {
     const timestamp = new Date().toISOString();
     const all = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
@@ -3197,24 +3247,35 @@ class StorageService {
       const key = `${eventId}:::${dayId}:::${stId}`;
       const localExisting = existingMap.get(key);
       const remoteExisting = remoteExistingMap.get(stId);
+      const prior = localExisting || remoteExisting;
 
-      if (remoteExisting || localExisting) {
-        const baseId = remoteExisting?.id || localExisting?.id || genUuid();
-        const rec: DayAttendanceRecord = {
-          ...(localExisting || remoteExisting),
-          id: baseId,
-          event_id: eventId,
-          day_id: dayId,
-          student_id: stId,
-          learner_id: stId,
-          status,
+      let nextFn: DayAttendanceStatus;
+      let nextAn: DayAttendanceStatus;
+      if (session === 'FN') {
+        nextFn = status;
+        nextAn = prior?.an_status ?? (prior?.status === 'Present' ? 'Present' : 'Absent');
+      } else if (session === 'AN') {
+        nextAn = status;
+        nextFn = prior?.fn_status ?? (prior?.status === 'Present' ? 'Present' : 'Absent');
+      } else {
+        nextFn = status;
+        nextAn = status;
+      }
+      const effectiveStatus: DayAttendanceStatus = (nextFn === 'Present' || nextAn === 'Present') ? 'Present' : 'Absent';
+
+      if (prior) {
+        existingStudentIdsToUpdate.push(stId);
+        const updatedRec: DayAttendanceRecord = {
+          ...prior,
+          status: effectiveStatus,
+          fn_status: nextFn,
+          an_status: nextAn,
           marked_by: markedBy,
           marked_by_role: markedByRole,
           marked_at: timestamp,
           updated_at: timestamp
         };
-        existingMap.set(key, rec);
-        existingStudentIdsToUpdate.push(stId);
+        existingMap.set(key, updatedRec);
       } else {
         const rec: DayAttendanceRecord = {
           id: genUuid(),
@@ -3222,7 +3283,9 @@ class StorageService {
           day_id: dayId,
           student_id: stId,
           learner_id: stId,
-          status,
+          status: effectiveStatus,
+          fn_status: nextFn,
+          an_status: nextAn,
           marked_by: markedBy,
           marked_by_role: markedByRole,
           marked_at: timestamp,
@@ -3239,10 +3302,11 @@ class StorageService {
     if (supabase) {
       // 1. Bulk UPDATE existing records by (event_id, day_id, in:student_id)
       if (existingStudentIdsToUpdate.length > 0) {
+        const isPres = status === 'Present';
         const { error: updateBatchErr } = await supabase
           .from('event_day_attendance')
           .update({
-            status,
+            status: isPres ? 'Present' : 'Absent',
             marked_by: markedBy,
             marked_by_role: markedByRole,
             marked_at: timestamp,
@@ -3265,7 +3329,7 @@ class StorageService {
           await supabase
             .from('event_day_attendance')
             .update({
-              status,
+              status: status === 'Present' ? 'Present' : 'Absent',
               marked_by: markedBy,
               marked_by_role: markedByRole,
               marked_at: timestamp,
@@ -3288,7 +3352,12 @@ class StorageService {
         if (freshRows && Array.isArray(freshRows)) {
           freshRows.forEach(fr => {
             const k = `${fr.event_id}:::${fr.day_id}:::${fr.student_id}`;
-            existingMap.set(k, fr as unknown as DayAttendanceRecord);
+            const localRec = existingMap.get(k);
+            existingMap.set(k, {
+              ...(fr as unknown as DayAttendanceRecord),
+              fn_status: localRec?.fn_status,
+              an_status: localRec?.an_status
+            });
           });
           this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, Array.from(existingMap.values()));
         }
@@ -3296,28 +3365,34 @@ class StorageService {
         console.warn('[StorageService] Post-batch sync failed:', syncEx);
       }
     }
-
-    // Two-way sync with learner records for Day 1 and Day 2
+    // Two-way sync with learner records strictly if this day is mapped to Main Day 1 or Main Day 2
     const days = this.getEventDays(eventId);
     const currentDay = days.find(d => d.id === dayId);
-    const isDay1 = Boolean(currentDay && (currentDay.day_number === 1 || currentDay.order_index === 0));
-    const isDay2 = Boolean(currentDay && (currentDay.day_number === 2 || currentDay.order_index === 1));
+    const isDay1 = Boolean(currentDay && currentDay.main_day === 1);
+    const isDay2 = Boolean(currentDay && currentDay.main_day === 2);
 
     if (isDay1 || isDay2) {
-      const isPresent = status === 'Present';
       const studentIdSet = new Set(studentIds);
       const allLearners = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, []);
+      const changedLearners: Learner[] = [];
       const nextLearners = allLearners.map(l => {
         if (studentIdSet.has(l.id)) {
-          return {
+          const rec = existingMap.get(`${eventId}:::${dayId}:::${l.id}`);
+          const isPres = rec ? rec.status === 'Present' : (status === 'Present');
+          const updated = {
             ...l,
-            day1_checked_in: isDay1 ? isPresent : l.day1_checked_in,
-            day2_checked_in: isDay2 ? isPresent : l.day2_checked_in
+            day1_checked_in: isDay1 ? isPres : l.day1_checked_in,
+            day2_checked_in: isDay2 ? isPres : l.day2_checked_in
           };
+          changedLearners.push(updated);
+          return updated;
         }
         return l;
       });
       this.setItem(STORAGE_KEYS.LEARNERS, nextLearners);
+      if (changedLearners.length > 0) {
+        this.sbUpsertBatch('learners', changedLearners as unknown as Record<string, unknown>[]);
+      }
     }
 
     this.persistEventDaysToSocialCoverage(eventId);
