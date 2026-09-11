@@ -78,6 +78,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
   const [deleteConfirmCount, setDeleteConfirmCount] = useState<number>(0);
 
   // Attendance drilldown search & filters
+  const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'FN_PRESENT' | 'AN_PRESENT' | 'FULL_PRESENT' | 'ABSENT'>('ALL');
 
   // Sorted days
@@ -1036,7 +1037,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                   <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
                     {filteredLearners.map((learner) => {
                       const att = dayAttendance.find(a => a.day_id === currentAttendanceDay.id && a.student_id === learner.id);
-                      const { fn, an, overall } = getRecordSessionStatuses(att);
+                      const { fn, an } = getRecordSessionStatuses(att);
                       const isFnPresent = fn === 'Present';
                       const isAnPresent = an === 'Present';
                       const party = parties.find(p => p.id === learner.party_id);
