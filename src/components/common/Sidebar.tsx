@@ -26,7 +26,9 @@ import {
   MessageCircle,
   BarChart,
   Monitor,
-  X
+  X,
+  Copy,
+  Check
 } from 'lucide-react';
 
 export type ActiveNavTab =
@@ -114,6 +116,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'report', label: 'Report', icon: BarChart }
   ];
 
+  const [copiedEventId, setCopiedEventId] = React.useState(false);
+
+  const handleCopyEventId = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (eventId) {
+      navigator.clipboard.writeText(eventId);
+      setCopiedEventId(true);
+      setTimeout(() => setCopiedEventId(false), 2000);
+    }
+  };
+
   const handleTabClick = (tabId: ActiveNavTab) => {
     onSelectTab(tabId);
     if (onCloseMobile) onCloseMobile();
@@ -121,24 +135,68 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const navContent = (
     <div className="space-y-6 text-xs overflow-y-auto pr-1 pb-10">
-      {/* Event Info Badge */}
-      {eventId && (
-        <div className="px-3 py-2 rounded-xl border mb-2 flex flex-col gap-0.5" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
-          <div className="flex items-center justify-between text-[10px] font-bold text-amber-500 uppercase tracking-wider">
-            <span>EVENT ID</span>
-            <span className="font-mono text-[11px] text-amber-400 font-bold">{eventId}</span>
-          </div>
-          {eventName && (
-            <span className="text-[11px] font-medium text-slate-300 truncate" title={eventName}>
-              {eventName}
+      {/* Event Info Card */}
+      {(eventName || eventId) && (
+        <div
+          className="p-3 rounded-2xl border mb-3 flex flex-col gap-2 transition-all shadow-xs"
+          style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+        >
+          {/* Header Tag */}
+          <div className="flex items-center justify-between">
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-amber-500">
+              <Landmark className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              <span>Active Event</span>
             </span>
+            {role === 'super_admin' && (
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                Super Admin
+              </span>
+            )}
+          </div>
+
+          {/* Event Title */}
+          {eventName && (
+            <div
+              className="text-xs font-bold leading-snug break-words"
+              style={{ color: 'var(--text-primary)' }}
+              title={eventName}
+            >
+              {eventName}
+            </div>
+          )}
+
+          {/* Copyable Event ID Pill */}
+          {eventId && (
+            <button
+              type="button"
+              onClick={handleCopyEventId}
+              className="w-full flex items-center justify-between gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] font-mono cursor-pointer transition-all hover:border-amber-500/40 group text-left"
+              style={{
+                backgroundColor: 'var(--bg-surface)',
+                borderColor: 'var(--border-soft)',
+                color: 'var(--text-secondary)'
+              }}
+              title={`Click to copy Event ID: ${eventId}`}
+            >
+              <span className="text-[9px] font-bold uppercase tracking-wider text-amber-500/90 font-sans shrink-0">
+                ID
+              </span>
+              <span className="font-mono text-[10px] truncate max-w-[130px] text-amber-400 group-hover:text-amber-300 font-semibold select-all">
+                {eventId}
+              </span>
+              {copiedEventId ? (
+                <Check className="w-3 h-3 text-emerald-400 shrink-0" />
+              ) : (
+                <Copy className="w-3 h-3 text-slate-400 group-hover:text-slate-200 shrink-0 transition-colors" />
+              )}
+            </button>
           )}
         </div>
       )}
 
-      {/* Super Admin Back to Hub Button */}
+      {/* Super Admin Back to Hub Button (Visible on mobile drawer, desktop header already has it) */}
       {role === 'super_admin' && (
-        <div className="pb-3 border-b border-slate-700/40">
+        <div className="pb-3 border-b border-slate-700/40 lg:hidden">
           <Link
             to="/events"
             onClick={() => {

@@ -451,32 +451,56 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
     const isShadow = role.toLowerCase().includes('shadow');
     const isMinister = role.toLowerCase().includes('minister');
 
+    const isMLA = role === 'Member of Legislative Assembly (MLA)' || role === 'Member of Legislative Assembly' || role === 'MLA';
+    if (isMLA) {
+      return (
+        <span
+          className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-[11px] font-semibold border whitespace-nowrap shadow-2xs"
+          style={{
+            backgroundColor: 'var(--bg-elevated)',
+            borderColor: 'var(--border)',
+            color: 'var(--text-primary)'
+          }}
+          title="Member of Legislative Assembly (MLA)"
+        >
+          MLA
+        </span>
+      );
+    }
+
     if (isMinister && !isShadow) {
       return (
-        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[11px] font-bold bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+        <span 
+          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg text-[11px] font-bold bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 whitespace-nowrap shadow-2xs"
+          title={role}
+        >
           <Award className="w-3 h-3 text-emerald-500 shrink-0" />
-          <span className="max-w-[150px] truncate">{role}</span>
+          <span>{role}</span>
         </span>
       );
     }
 
     if (isShadow) {
       return (
-        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[11px] font-bold bg-orange-500/10 text-orange-700 dark:text-orange-300 border border-orange-500/30">
+        <span 
+          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg text-[11px] font-bold bg-orange-500/10 text-orange-700 dark:text-orange-300 border border-orange-500/30 whitespace-nowrap shadow-2xs"
+          title={role}
+        >
           <Shield className="w-3 h-3 text-orange-500 shrink-0" />
-          <span className="max-w-[150px] truncate">{role}</span>
+          <span>{role}</span>
         </span>
       );
     }
 
     return (
       <span
-        className="px-2 py-0.5 rounded text-[11px] font-medium inline-block max-w-[170px] truncate border"
+        className="px-2.5 py-0.5 rounded-lg text-[11px] font-medium inline-block whitespace-nowrap border shadow-2xs"
         style={{
           backgroundColor: 'var(--bg-elevated)',
           borderColor: 'var(--border)',
           color: 'var(--text-primary)'
         }}
+        title={role}
       >
         {role}
       </span>
@@ -1044,7 +1068,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
       {/* Table */}
       <div className="p-4 rounded-2xl border space-y-4" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
         <div className="overflow-x-auto rounded-xl border" style={{ borderColor: 'var(--border-soft)' }}>
-          <table className="w-full text-left text-xs">
+          <table className="w-full text-left text-xs min-w-[1150px]">
             <thead style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>
               <tr>
                 {/* Master Checkbox */}
@@ -1057,18 +1081,18 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                     title={isAllFilteredSelected ? 'Deselect all' : 'Select all filtered'}
                   />
                 </th>
-                <th className="py-3 px-3 text-center">Check-in</th>
-                <th className="py-3 px-3 text-center">Access Code</th>
-                <th className="py-3 px-3 text-center">#</th>
-                <th className="py-3 px-4">Delegate Name</th>
-                <th className="py-3 px-4">Party</th>
-                <th className="py-3 px-4">Bench</th>
-                <th className="py-3 px-4">Assembly Role</th>
-                <th className="py-3 px-4">Committee</th>
-                <th className="py-3 px-3 text-center font-mono">No.</th>
-                <th className="py-3 px-4">Constituency</th>
-                <th className="py-3 px-4">District</th>
-                <th className="py-3 px-4 text-right">Actions</th>
+                <th className="py-3 px-3 text-center whitespace-nowrap">Check-in</th>
+                <th className="py-3 px-3 text-center whitespace-nowrap">Access Code</th>
+                <th className="py-3 px-3 text-center font-mono w-10">#</th>
+                <th className="py-3 px-4 whitespace-nowrap">Delegate Name</th>
+                <th className="py-3 px-4 whitespace-nowrap">Party</th>
+                <th className="py-3 px-4 whitespace-nowrap">Bench</th>
+                <th className="py-3 px-4 whitespace-nowrap">Assembly Role</th>
+                <th className="py-3 px-4 whitespace-nowrap">Committee</th>
+                <th className="py-3 px-3 text-center font-mono whitespace-nowrap">No.</th>
+                <th className="py-3 px-4 whitespace-nowrap">Constituency</th>
+                <th className="py-3 px-4 whitespace-nowrap">District</th>
+                <th className="py-3 px-4 text-right whitespace-nowrap sticky right-0 z-10 shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.06)]" style={{ backgroundColor: 'var(--bg-elevated)' }}>Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y" style={{ borderColor: 'var(--border-soft)' }}>
@@ -1121,17 +1145,16 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                             const isD2An = anD2 === 'Present' || (!attD2 && learner.day2_checked_in);
                             const isD2Both = isD2Fn && isD2An;
                             const isD2Any = isD2Fn || isD2An;
-
                             return (
                               <>
                                 {/* D1 SESSION CONTROL */}
                                 <div
                                   className={`inline-flex items-center rounded-lg border p-0.5 text-[10px] transition-all ${
                                     isD1Both
-                                      ? 'bg-emerald-950/40 border-emerald-500/50 shadow-xs'
+                                      ? 'bg-emerald-500/15 border-emerald-500/40 dark:bg-emerald-950/40 dark:border-emerald-500/50 shadow-2xs'
                                       : isD1Any
-                                      ? 'bg-amber-950/40 border-amber-500/40'
-                                      : 'bg-slate-900/40 border-slate-700/60'
+                                      ? 'bg-amber-500/15 border-amber-500/40 dark:bg-amber-950/40 dark:border-amber-500/40'
+                                      : 'bg-slate-100 dark:bg-slate-800/70 border-slate-200 dark:border-slate-700/60'
                                   }`}
                                 >
                                   <button
@@ -1143,13 +1166,13 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                       isD1Both
                                         ? 'bg-emerald-500 text-white font-black'
                                         : isD1Any
-                                        ? 'text-amber-300 font-bold'
-                                        : 'text-slate-400 hover:text-slate-200'
+                                        ? 'text-amber-700 dark:text-amber-300 font-bold'
+                                        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-200'
                                     }`}
                                   >
                                     {isD1Loading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : '●'} D1
                                   </button>
-                                  <div className="w-[1px] h-3 bg-slate-700 mx-0.5" />
+                                  <div className="w-[1px] h-3 bg-slate-300 dark:bg-slate-700 mx-0.5" />
                                   <button
                                     type="button"
                                     onClick={() => handleToggleWithLoading(learner.id, 1, 'FN')}
@@ -1157,8 +1180,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                     title={`Day 1 Forenoon (FN): ${isD1Fn ? 'Present (Click to toggle)' : 'Absent (Click to mark present)'}`}
                                     className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
                                       isD1Fn
-                                        ? 'bg-amber-400 text-slate-950 font-black shadow-xs'
-                                        : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                                        ? 'bg-amber-400 text-slate-950 font-black shadow-2xs'
+                                        : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-200'
                                     }`}
                                   >
                                     FN
@@ -1170,8 +1193,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                     title={`Day 1 Afternoon (AN): ${isD1An ? 'Present (Click to toggle)' : 'Absent (Click to mark present)'}`}
                                     className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
                                       isD1An
-                                        ? 'bg-indigo-400 text-slate-950 font-black shadow-xs'
-                                        : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                                        ? 'bg-indigo-400 text-slate-950 font-black shadow-2xs'
+                                        : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-200'
                                     }`}
                                   >
                                     AN
@@ -1182,10 +1205,10 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                 <div
                                   className={`inline-flex items-center rounded-lg border p-0.5 text-[10px] transition-all ${
                                     isD2Both
-                                      ? 'bg-emerald-950/40 border-emerald-500/50 shadow-xs'
+                                      ? 'bg-emerald-500/15 border-emerald-500/40 dark:bg-emerald-950/40 dark:border-emerald-500/50 shadow-2xs'
                                       : isD2Any
-                                      ? 'bg-amber-950/40 border-amber-500/40'
-                                      : 'bg-slate-900/40 border-slate-700/60'
+                                      ? 'bg-amber-500/15 border-amber-500/40 dark:bg-amber-950/40 dark:border-amber-500/40'
+                                      : 'bg-slate-100 dark:bg-slate-800/70 border-slate-200 dark:border-slate-700/60'
                                   }`}
                                 >
                                   <button
@@ -1197,13 +1220,13 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                       isD2Both
                                         ? 'bg-emerald-500 text-white font-black'
                                         : isD2Any
-                                        ? 'text-amber-300 font-bold'
-                                        : 'text-slate-400 hover:text-slate-200'
+                                        ? 'text-amber-700 dark:text-amber-300 font-bold'
+                                        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-200'
                                     }`}
                                   >
                                     {isD2Loading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : '●'} D2
                                   </button>
-                                  <div className="w-[1px] h-3 bg-slate-700 mx-0.5" />
+                                  <div className="w-[1px] h-3 bg-slate-300 dark:bg-slate-700 mx-0.5" />
                                   <button
                                     type="button"
                                     onClick={() => handleToggleWithLoading(learner.id, 2, 'FN')}
@@ -1211,8 +1234,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                     title={`Day 2 Forenoon (FN): ${isD2Fn ? 'Present (Click to toggle)' : 'Absent (Click to mark present)'}`}
                                     className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
                                       isD2Fn
-                                        ? 'bg-amber-400 text-slate-950 font-black shadow-xs'
-                                        : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                                        ? 'bg-amber-400 text-slate-950 font-black shadow-2xs'
+                                        : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-200'
                                     }`}
                                   >
                                     FN
@@ -1224,8 +1247,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                     title={`Day 2 Afternoon (AN): ${isD2An ? 'Present (Click to toggle)' : 'Absent (Click to mark present)'}`}
                                     className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
                                       isD2An
-                                        ? 'bg-indigo-400 text-slate-950 font-black shadow-xs'
-                                        : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                                        ? 'bg-indigo-400 text-slate-950 font-black shadow-2xs'
+                                        : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-200'
                                     }`}
                                   >
                                     AN
@@ -1238,7 +1261,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                       </td>
 
                       {/* SEPARATE ACCESS CODE COLUMN */}
-                      <td className="py-3 px-3 text-center">
+                      <td className="py-3 px-3 text-center whitespace-nowrap">
                         <button
                           type="button"
                           onClick={() => handleCopyAccessCode(learner.access_code)}
@@ -1255,12 +1278,12 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                       </td>
 
                       {/* Serial Number */}
-                      <td className="py-3 px-3 text-center font-mono" style={{ color: 'var(--text-muted)' }}>
+                      <td className="py-3 px-3 text-center font-mono whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
                         {idx + 1}
                       </td>
 
                       {/* Delegate Name & Department */}
-                      <td className="py-3 px-4">
+                      <td className="py-3 px-4 whitespace-nowrap">
                         <div>
                           <strong className="block font-bold text-sm" style={{ color: 'var(--text-primary)' }}>
                             {learner.full_name}
@@ -1274,14 +1297,14 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                       </td>
 
                       {/* Party */}
-                      <td className="py-3 px-4">
+                      <td className="py-3 px-4 whitespace-nowrap">
                         <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>
                           {getResolvedPartyName(learner, parties) || '—'}
                         </span>
                       </td>
 
                       {/* Bench */}
-                      <td className="py-3 px-4">
+                      <td className="py-3 px-4 whitespace-nowrap">
                         {learner.bench ? (
                           <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
                             learner.bench === 'Ruling'
@@ -1298,36 +1321,39 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                       </td>
 
                       {/* Assembly Role */}
-                      <td className="py-3 px-4">
+                      <td className="py-3 px-4 whitespace-nowrap">
                         {renderRoleBadge(learner.role)}
                       </td>
 
                       {/* Committee */}
-                      <td className="py-3 px-4">
+                      <td className="py-3 px-4 whitespace-nowrap">
                         <span className="font-medium text-xs" style={{ color: 'var(--text-secondary)' }}>
                           {getResolvedCommitteeName(learner, committees) || '—'}
                         </span>
                       </td>
 
                       {/* Constituency No. */}
-                      <td className="py-3 px-3 text-center font-mono font-bold" style={{ color: 'var(--text-primary)' }}>
+                      <td className="py-3 px-3 text-center font-mono font-bold whitespace-nowrap" style={{ color: 'var(--text-primary)' }}>
                         {learner.constituency_number || '—'}
                       </td>
 
                       {/* Constituency Name */}
-                      <td className="py-3 px-4">
+                      <td className="py-3 px-4 whitespace-nowrap">
                         <span className="font-medium" style={{ color: 'var(--text-primary)' }}>
                           {learner.constituency_name ? `${learner.constituency_number ? `${learner.constituency_number} - ` : ''}${learner.constituency_name}` : '—'}
                         </span>
                       </td>
 
                       {/* District */}
-                      <td className="py-3 px-4" style={{ color: 'var(--text-secondary)' }}>
+                      <td className="py-3 px-4 whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>
                         {learner.district || '—'}
                       </td>
 
                       {/* Actions: Edit & Delete */}
-                      <td className="py-3 px-4 text-right">
+                      <td 
+                        className="py-3 px-4 text-right whitespace-nowrap sticky right-0 z-10 shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.06)]"
+                        style={{ backgroundColor: isRowSelected ? 'var(--bg-elevated)' : 'var(--bg-surface)' }}
+                      >
                         <div className="flex items-center justify-end gap-1">
                           <button
                             onClick={() => setEditingLearner(learner)}
