@@ -45,23 +45,29 @@ export interface MinistryItem {
 
 export const DEFAULT_MINISTRY_ITEMS: MinistryItem[] = [
   { id: 'min_edu', name: 'Ministry of Education' },
-  { id: 'min_wcd', name: 'Ministry of Women & Child Development' },
-  { id: 'min_sports', name: 'Ministry of Youth Affairs & Sports' },
+  { id: 'min_finance', name: 'Ministry of Finance' },
   { id: 'min_health', name: 'Ministry of Health & Family Welfare' },
+  { id: 'min_it_ai', name: 'Ministry of IT & AI' },
+  { id: 'min_pwi', name: 'Ministry of Public Works & Infrastructure' },
+  { id: 'min_sports', name: 'Ministry of Youth Affairs & Sports' },
+  { id: 'min_youth_sports', name: 'Ministry of Youth & Sports' },
+  { id: 'min_wcd', name: 'Ministry of Women & Child Development' },
   { id: 'min_social', name: 'Ministry of Social Justice & Empowerment' },
   { id: 'min_transport', name: 'Ministry of Road Transport & Highways' },
   { id: 'min_rural', name: 'Ministry of Rural Development' },
   { id: 'min_science', name: 'Ministry of Science & Technology' },
   { id: 'min_msme', name: 'Ministry of MSME' },
   { id: 'min_env', name: 'Ministry of Environment, Forest, & Climate Change' },
+  { id: 'min_environment', name: 'Ministry of Environment' },
   { id: 'min_skill', name: 'Ministry of Skill Development & Entrepreneurship' },
   { id: 'min_it', name: 'Ministry of Electronics & IT' },
   { id: 'min_jal', name: 'Ministry of Jal Shakti' },
   { id: 'min_urban', name: 'Ministry of Housing & Urban Affairs' },
-  { id: 'min_finance', name: 'Ministry of Finance' },
   { id: 'min_home', name: 'Ministry of Home Affairs' },
   { id: 'min_defence', name: 'Ministry of Defence' },
   { id: 'min_agri', name: 'Ministry of Agriculture' },
+  { id: 'min_law', name: 'Ministry of Law & Justice' },
+  { id: 'min_commerce', name: 'Ministry of Commerce & Industry' },
   { id: 'min_power', name: 'Ministry of Power' },
   { id: 'min_railways', name: 'Ministry of Railways' },
   { id: 'min_parliament', name: 'Ministry of Parliamentary Affairs' },
@@ -76,17 +82,19 @@ export const DEFAULT_CUSTOM_ITEMS: MinistryItem[] = [
 
 export const DEFAULT_SELECTED_IDS: string[] = [
   'min_edu',
-  'min_wcd',
-  'min_sports',
-  'min_health',
-  'min_skill',
   'min_finance',
+  'min_health',
+  'min_it_ai',
+  'min_pwi',
+  'min_sports',
+  'min_wcd',
+  'min_skill',
   'min_home',
   'min_defence',
   'min_agri',
   'min_it',
   'min_tourism',
-  'custom_environment'
+  'min_environment'
 ];
 
 const getStoredCustomMinistries = (eId?: string): MinistryItem[] => {
@@ -370,10 +378,23 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
         const newSelectedIds: string[] = [];
         const currentCustoms = getStoredCustomMinistries(eventId);
         const newCustoms: MinistryItem[] = [...currentCustoms];
+        const normalizeMinName = (s: string) =>
+          s.toLowerCase()
+            .replace(/^ministry\s+(of|for)\s+/i, '')
+            .replace(/\band\b/g, '&')
+            .replace(/infrastracture/g, 'infrastructure')
+            .replace(/ai\s*&\s*it/g, 'it&ai')
+            .replace(/[^a-z0-9&]/g, '');
 
         savedMinistries.forEach((savedItemStr) => {
-          // Find matching standard item by ID or Name
-          const standardMatch = DEFAULT_MINISTRY_ITEMS.find(m => m.id === savedItemStr || m.name === savedItemStr);
+          const normSaved = normalizeMinName(savedItemStr);
+
+          // Find matching standard item by ID, Name, or normalized name
+          const standardMatch = DEFAULT_MINISTRY_ITEMS.find(m =>
+            m.id === savedItemStr ||
+            m.name.toLowerCase() === savedItemStr.toLowerCase() ||
+            normalizeMinName(m.name) === normSaved
+          );
           if (standardMatch) {
             if (!newSelectedIds.includes(standardMatch.id)) {
               newSelectedIds.push(standardMatch.id);
@@ -382,7 +403,11 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
           }
 
           // Find matching custom item by ID or Name
-          const customMatch = newCustoms.find(m => m.id === savedItemStr || m.name === savedItemStr);
+          const customMatch = newCustoms.find(m =>
+            m.id === savedItemStr ||
+            m.name.toLowerCase() === savedItemStr.toLowerCase() ||
+            normalizeMinName(m.name) === normSaved
+          );
           if (customMatch) {
             if (!newSelectedIds.includes(customMatch.id)) {
               newSelectedIds.push(customMatch.id);
@@ -560,7 +585,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
     .map(id => allMinistries.find(m => m.id === id))
     .filter((m): m is MinistryItem => Boolean(m))
     .map(m => {
-      const shortName = m.name.replace(/^Ministry of\s+/, '');
+      const shortName = m.name.replace(/^Ministry\s+(of|for)\s+/i, '').trim();
       return {
         id: m.id,
         ministry: m.name,

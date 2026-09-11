@@ -6890,7 +6890,27 @@ export function isAssemblyRoleMatching(currentRole: string | undefined, targetRo
   if (isDeputySpeakerRole(targetRole) && isDeputySpeakerRole(currentRole)) return true;
   if (isSpeakerRole(targetRole) && isSpeakerRole(currentRole)) return true;
   if (isLeaderOfOppositionRole(targetRole) && isLeaderOfOppositionRole(currentRole)) return true;
-  return currentRole.trim().toLowerCase() === targetRole.trim().toLowerCase();
+
+  if (currentRole.trim().toLowerCase() === targetRole.trim().toLowerCase()) return true;
+
+  // Normalize ministerial titles:
+  // e.g., "Minister for IT & AI", "IT & AI Minister", "Minister for Ministry Of AI And IT"
+  const normalizeMinister = (s: string) =>
+    s.toLowerCase()
+      .replace(/^shadow\s+/i, '')
+      .replace(/^(minister\s+(for|of)|union\s+minister\s+(for|of))\s+/i, '')
+      .replace(/\s+minister$/i, '')
+      .replace(/^ministry\s+(of|for)\s+/i, '')
+      .replace(/\band\b/g, '&')
+      .replace(/infrastracture/g, 'infrastructure')
+      .replace(/ai\s*&\s*it/g, 'it&ai')
+      .replace(/[^a-z0-9&]/g, '');
+
+  const isCurrentShadow = currentRole.toLowerCase().includes('shadow');
+  const isTargetShadow = targetRole.toLowerCase().includes('shadow');
+  if (isCurrentShadow !== isTargetShadow) return false;
+
+  return normalizeMinister(currentRole) === normalizeMinister(targetRole);
 }
 
 
