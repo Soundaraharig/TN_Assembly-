@@ -87,10 +87,10 @@ const SearchableChairpersonSelect: React.FC<SearchableChairpersonSelectProps> = 
 
       {isOpen && (
         <div
-          className="absolute z-50 left-0 right-0 mt-1 rounded-xl border shadow-2xl p-2 space-y-2 max-h-64 overflow-y-auto"
+          className="absolute z-50 left-0 mt-1 w-[360px] sm:w-[420px] max-w-[95vw] rounded-2xl border shadow-2xl p-2.5 space-y-2 max-h-72 overflow-y-auto"
           style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
         >
-          <div className="flex items-center gap-2 p-2 rounded-lg border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)' }}>
+          <div className="flex items-center gap-2 p-2 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)' }}>
             <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
             <input
               type="text"
@@ -119,13 +119,14 @@ const SearchableChairpersonSelect: React.FC<SearchableChairpersonSelectProps> = 
                 onSelect('');
                 setIsOpen(false);
               }}
-              className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
+              className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer flex items-center gap-1.5"
             >
-              ✕ Unassign / Clear Chairperson
+              <span>✕</span>
+              <span>Unassign / Clear Chairperson</span>
             </button>
 
             {filtered.length === 0 ? (
-              <p className="text-[11px] text-slate-400 px-2 py-3 italic text-center">
+              <p className="text-[11px] text-slate-400 px-3 py-3 italic text-center">
                 No matching members found for "{query}"
               </p>
             ) : (
@@ -139,26 +140,33 @@ const SearchableChairpersonSelect: React.FC<SearchableChairpersonSelectProps> = 
                       onSelect(l.full_name);
                       setIsOpen(false);
                     }}
-                    className={`w-full text-left px-2.5 py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-between gap-2 cursor-pointer ${
+                    className={`w-full text-left px-3 py-2.5 rounded-xl text-xs transition-all flex flex-col gap-1 border cursor-pointer ${
                       isCurrent
-                        ? 'bg-amber-500/20 text-amber-500 font-bold border border-amber-500/30'
-                        : 'hover:bg-slate-500/10'
+                        ? 'bg-amber-500/15 text-amber-500 font-bold border-amber-500/40 shadow-xs'
+                        : 'hover:bg-slate-500/10 border-transparent'
                     }`}
                     style={{ color: isCurrent ? undefined : 'var(--text-primary)' }}
                   >
-                    <div className="truncate flex items-center gap-1.5 min-w-0">
-                      <span className="font-bold truncate">{l.full_name}</span>
-                      <span className="text-[10px] text-slate-400 truncate">
-                        ({l.party_name || 'Independent'}{l.bench ? ` • ${l.bench}` : ''})
+                    {/* Top Row: Full Name + Constituency Badge */}
+                    <div className="flex items-center justify-between gap-2 w-full">
+                      <span className="font-bold text-xs" style={{ color: isCurrent ? undefined : 'var(--text-primary)' }}>
+                        {l.full_name}
                       </span>
+                      <div className="shrink-0 flex items-center gap-1.5">
+                        {l.constituency_number ? (
+                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20 font-medium">
+                            #{l.constituency_number} {l.constituency_name ? l.constituency_name.split('(')[0].replace(/^[0-9]+\s*-\s*/, '').trim() : ''}
+                          </span>
+                        ) : null}
+                        {isCurrent && <Check className="w-3.5 h-3.5 text-amber-500" />}
+                      </div>
                     </div>
-                    <div className="shrink-0 flex items-center gap-1.5">
-                      {l.constituency_number ? (
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20">
-                          #{l.constituency_number} {l.constituency_name ? l.constituency_name.split('(')[0].replace(/^[0-9]+\s*-\s*/, '').trim() : ''}
-                        </span>
-                      ) : null}
-                      {isCurrent && <Check className="w-3.5 h-3.5 text-amber-500" />}
+
+                    {/* Bottom Row: Party & Bench info */}
+                    <div className="flex items-center justify-between gap-2 w-full text-[11px] text-slate-400">
+                      <span className="truncate">
+                        {l.party_name || 'Independent'} • {l.bench ? `${l.bench} Bench` : ''} {l.department ? `(${l.department})` : ''}
+                      </span>
                     </div>
                   </button>
                 );

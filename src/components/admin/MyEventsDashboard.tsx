@@ -257,7 +257,13 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
                   <p className="flex items-center gap-2">
                     <Users className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--text-muted)' }} />
                     <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>
-                      {learners.filter(l => l.event_id === event.id || !l.event_id).length} participants
+                      {(() => {
+                        const byStorage = storageService.getLearners(event.id);
+                        if (byStorage.length > 0) return byStorage.length;
+                        const byProps = learners.filter(l => l.event_id === event.id);
+                        if (byProps.length > 0) return byProps.length;
+                        return event.participant_count || 0;
+                      })()} participants
                     </span>
                   </p>
                 </div>
@@ -322,11 +328,16 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
             </div>
             <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
               Are you sure you want to permanently delete <strong style={{ color: 'var(--text-primary)' }}>{events.find(e => e.id === deletingEventId)?.college_name || 'this event'}</strong>?
-              {(learners.filter(l => l.event_id === deletingEventId).length > 0 || (events.find(e => e.id === deletingEventId)?.participant_count || 0) > 0) && (
-                <span className="block mt-2 p-2 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400 font-semibold border border-rose-500/20">
-                  ⚠️ This event contains {learners.filter(l => l.event_id === deletingEventId).length || events.find(e => e.id === deletingEventId)?.participant_count} active delegates and recorded data. Deletion is irreversible!
-                </span>
-              )}
+              {(() => {
+                const count = (deletingEventId ? storageService.getLearners(deletingEventId).length : 0) ||
+                  learners.filter(l => l.event_id === deletingEventId).length ||
+                  events.find(e => e.id === deletingEventId)?.participant_count || 0;
+                return count > 0 ? (
+                  <span className="block mt-2 p-2 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400 font-semibold border border-rose-500/20">
+                    ⚠️ This event contains {count} active delegates and recorded data. Deletion is irreversible!
+                  </span>
+                ) : null;
+              })()}
             </p>
             <div className="flex items-center justify-end gap-2 pt-2">
               <button

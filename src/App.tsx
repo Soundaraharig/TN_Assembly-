@@ -2392,7 +2392,7 @@ export function App() {
                       addToast('Event Selected', `Opened ${ev.college_name}`, 'info');
                     }}
                     onShowToast={addToast}
-                    learners={learners}
+                    learners={storageService.getLearners()}
                   />
                 )
               }

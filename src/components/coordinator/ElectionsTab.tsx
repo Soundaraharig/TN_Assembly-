@@ -59,7 +59,7 @@ const CONSTITUTIONAL_POSTS = [
     type: 'SPEAKER' as const,
     electorate: 'ALL' as const,
     electorateLabel: 'Whole House (All Delegates)',
-    description: 'Whole House (Ruling, Opposition & Independent delegates)',
+    description: 'Whole House elects Speaker (Highest votes) & Deputy Speaker (2nd highest votes)',
     icon: Crown
   },
   {
@@ -71,16 +71,6 @@ const CONSTITUTIONAL_POSTS = [
     electorateLabel: 'Ruling Bench Only',
     description: 'Ruling Bench delegates only',
     icon: Trophy
-  },
-  {
-    key: 'deputy_speaker',
-    title: 'Deputy Speaker Election',
-    position: 'Deputy Speaker',
-    type: 'DEPUTY_SPEAKER' as const,
-    electorate: 'ALL' as const,
-    electorateLabel: 'Whole House (All Delegates)',
-    description: 'Whole House (Ruling, Opposition & Independent delegates)',
-    icon: Crown
   },
   {
     key: 'lop',
@@ -235,11 +225,16 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
       const title = (elec.title || '').toLowerCase();
       const pos = (elec.position || '').toLowerCase();
 
+      // Deputy Speaker is not a separate election; 2nd highest in Speaker election is Deputy Speaker
+      if (title.includes('deputy') || pos.includes('deputy') || elec.type === 'DEPUTY_SPEAKER') {
+        return;
+      }
+
       if ((title.includes('party leader') && !title.includes('ruling') && !title.includes('opposition')) || (pos === 'party leader')) {
         partyLeaders.push(elec);
       } else if (
-        pos.includes('speaker') || pos.includes('deputy') || pos.includes('ruling') || pos.includes('opposition') ||
-        title.includes('speaker') || title.includes('deputy') || title.includes('chief minister') || title.includes('prime minister') || title.includes('leader of opposition')
+        pos.includes('speaker') || pos.includes('ruling') || pos.includes('opposition') ||
+        title.includes('speaker') || title.includes('chief minister') || title.includes('prime minister') || title.includes('leader of opposition')
       ) {
         constitutional.push(elec);
       } else {
@@ -717,25 +712,48 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
             {/* Winner Banner if Closed */}
             {isClosed && (
-              <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center font-black">
-                    <Trophy className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <span className="text-[10px] uppercase font-bold tracking-widest text-amber-500 block">
-                      Elected Winner
-                    </span>
-                    <h4 className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>
-                      {elec.winner || (leader ? leader.name : 'No winner declared')}
-                    </h4>
-                    {leader && (
-                      <p className="text-[11px] text-slate-400">
-                        Won with {leader.votes} votes ({elec.total_votes > 0 ? Math.round((leader.votes / elec.total_votes) * 100) : 0}%) • {leader.party}
-                      </p>
-                    )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center font-black">
+                      <Trophy className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase font-bold tracking-widest text-amber-500 block">
+                        {(elec.type === 'SPEAKER' || elec.position === 'Speaker') ? 'Elected Assembly Speaker (1st Highest)' : 'Elected Winner'}
+                      </span>
+                      <h4 className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>
+                        {elec.winner || (leader ? leader.name : 'No winner declared')}
+                      </h4>
+                      {leader && (
+                        <p className="text-[11px] text-slate-400">
+                          Won with {leader.votes} votes ({elec.total_votes > 0 ? Math.round((leader.votes / elec.total_votes) * 100) : 0}%) • {leader.party}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
+
+                {(elec.type === 'SPEAKER' || elec.position === 'Speaker') && sortedCandidates.length > 1 && sortedCandidates[1].votes > 0 && (
+                  <div className="p-3 rounded-lg bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-indigo-500 text-white flex items-center justify-center font-black">
+                        <Crown className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <span className="text-[10px] uppercase font-bold tracking-widest text-indigo-400 block">
+                          Designated Deputy Speaker (2nd Highest)
+                        </span>
+                        <h4 className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>
+                          {sortedCandidates[1].name}
+                        </h4>
+                        <p className="text-[11px] text-slate-400">
+                          {sortedCandidates[1].votes} votes ({elec.total_votes > 0 ? Math.round((sortedCandidates[1].votes / elec.total_votes) * 100) : 0}%) • {sortedCandidates[1].party}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

@@ -191,11 +191,11 @@ const SearchableDelegateSelect: React.FC<SearchableDelegateSelectProps> = ({
 
       {!disabled && isOpen && (
         <div
-          className="absolute z-40 left-0 right-0 mt-1 rounded-xl border shadow-2xl p-2 space-y-2 max-h-64 overflow-y-auto"
+          className="absolute z-50 left-0 mt-1 w-[360px] sm:w-[420px] max-w-[95vw] rounded-2xl border shadow-2xl p-2.5 space-y-2 max-h-72 overflow-y-auto"
           style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
         >
-          <div className="flex items-center gap-2 p-2 rounded-lg border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)' }}>
-            <Search className="w-3.5 h-3.5 text-slate-400" />
+          <div className="flex items-center gap-2 p-2 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)' }}>
+            <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
             <input
               type="text"
               autoFocus
@@ -205,6 +205,15 @@ const SearchableDelegateSelect: React.FC<SearchableDelegateSelectProps> = ({
               className="w-full bg-transparent text-xs focus:outline-none placeholder:text-slate-400"
               style={{ color: 'var(--text-primary)' }}
             />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery('')}
+                className="text-[10px] text-slate-400 hover:text-white cursor-pointer"
+              >
+                ✕
+              </button>
+            )}
           </div>
 
           <div className="space-y-1">
@@ -213,12 +222,13 @@ const SearchableDelegateSelect: React.FC<SearchableDelegateSelectProps> = ({
                 onSelect('');
                 setIsOpen(false);
               }}
-              className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
+              className="w-full text-left px-3 py-2 rounded-xl text-xs font-semibold text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer flex items-center gap-1.5"
             >
-              ✕ Unassign / Clear Role
+              <span>✕</span>
+              <span>Unassign / Clear Role</span>
             </button>
             {filtered.length === 0 ? (
-              <p className="text-[11px] text-slate-400 px-2 py-2 italic text-center">No matching delegates found</p>
+              <p className="text-[11px] text-slate-400 px-3 py-3 italic text-center">No matching delegates found</p>
             ) : (
               filtered.map(l => {
                 const alreadyAssignedRole = assignedMinisterMap?.get(l.id);
@@ -242,31 +252,43 @@ const SearchableDelegateSelect: React.FC<SearchableDelegateSelectProps> = ({
                       onSelect(l.id);
                       setIsOpen(false);
                     }}
-                    className={`w-full text-left px-2.5 py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-between gap-2 ${
+                    className={`w-full text-left px-3 py-2.5 rounded-xl text-xs transition-all flex flex-col gap-1 border cursor-pointer ${
                       isAssignedElsewhere
-                        ? 'opacity-40 cursor-not-allowed bg-slate-500/5'
+                        ? 'opacity-40 cursor-not-allowed bg-slate-500/5 border-transparent'
                         : isCurrent
-                        ? 'bg-amber-500/20 text-amber-500 font-bold border border-amber-500/30 cursor-pointer'
-                        : 'hover:bg-slate-500/10 cursor-pointer'
+                        ? 'bg-amber-500/15 text-amber-500 font-bold border-amber-500/40 shadow-xs'
+                        : 'hover:bg-slate-500/10 border-transparent'
                     }`}
                     style={{ color: isCurrent ? undefined : 'var(--text-primary)' }}
                     title={isAssignedElsewhere ? `Already appointed as ${alreadyAssignedRole}` : undefined}
                   >
-                    <div className="truncate flex items-center gap-1.5 min-w-0">
-                      <span className="font-bold truncate">{l.full_name}</span>
-                      {isAssignedElsewhere ? (
-                        <span className="shrink-0 px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-rose-500/15 text-rose-500 border border-rose-500/30">
-                          Already Assigned: {alreadyAssignedRole}
+                    {/* Top Row: Full Name + Constituency Badge */}
+                    <div className="flex items-center justify-between gap-2 w-full">
+                      <span className="font-bold text-xs" style={{ color: isCurrent ? undefined : 'var(--text-primary)' }}>
+                        {l.full_name}
+                      </span>
+                      {l.constituency_number ? (
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20 shrink-0 font-medium">
+                          #{l.constituency_number} {l.constituency_name ? l.constituency_name.split('(')[0].replace(/^[0-9]+\s*-\s*/, '').trim() : ''}
                         </span>
-                      ) : (
-                        <span className="text-[10px] text-slate-400 truncate">
-                          ({getResolvedPartyName(l, parties) || 'Independent'} • {getResolvedLearnerBench(l, parties)})
+                      ) : l.constituency_name ? (
+                        <span className="text-[10px] font-mono text-amber-500 shrink-0">
+                          {l.constituency_name}
+                        </span>
+                      ) : null}
+                    </div>
+
+                    {/* Bottom Row: Party & Bench info + Already Assigned Alert */}
+                    <div className="flex items-center justify-between gap-2 w-full text-[11px] text-slate-400">
+                      <span className="truncate">
+                        {getResolvedPartyName(l, parties) || 'Independent'} • {getResolvedLearnerBench(l, parties)} Bench
+                      </span>
+                      {isAssignedElsewhere && (
+                        <span className="shrink-0 px-2 py-0.5 rounded text-[9px] font-extrabold bg-rose-500/15 text-rose-500 border border-rose-500/30">
+                          Already: {alreadyAssignedRole}
                         </span>
                       )}
                     </div>
-                    <span className="text-[10px] font-mono text-amber-500 shrink-0">
-                      {l.constituency_number ? `#${l.constituency_number} ` : ''}{l.constituency_name || ''}
-                    </span>
                   </button>
                 );
               })

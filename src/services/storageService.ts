@@ -1063,6 +1063,27 @@ class StorageService {
             learnerMap.set(r.id, merged);
           });
           this.setItem(STORAGE_KEYS.LEARNERS, sortLearnersStably(Array.from(learnerMap.values())));
+
+          // Synchronize participant_count for each event based on real learner count
+          const countsByEvent = new Map<string, number>();
+          learnerMap.forEach(l => {
+            if (l.event_id) {
+              countsByEvent.set(l.event_id, (countsByEvent.get(l.event_id) || 0) + 1);
+            }
+          });
+          const curEvents = this.getItem<CollegeEvent[]>(STORAGE_KEYS.EVENTS, []);
+          let eventsModified = false;
+          const updatedCurEvents = curEvents.map(ev => {
+            const realCount = countsByEvent.get(ev.id);
+            if (realCount !== undefined && ev.participant_count !== realCount) {
+              eventsModified = true;
+              return { ...ev, participant_count: realCount };
+            }
+            return ev;
+          });
+          if (eventsModified) {
+            this.setItem(STORAGE_KEYS.EVENTS, updatedCurEvents);
+          }
         }
       }
 
@@ -1274,34 +1295,35 @@ class StorageService {
       const projSettings = existingSC.projector_settings || this.getItem<ProjectorStudioSettings | null>(`tn_assembly_projector_studio_${eventId}`, null);
       const lastBell = existingSC.last_bell_ring || this.getItem<number | null>(`tn_assembly_last_bell_${eventId}`, null);
 
-      // Protect closed election history: never overwrite closed elections with empty upcoming ones
+      // Protect election history: retain existing elections if missing locally, but preserve current active/upcoming elections
       const existingElecs = Array.isArray(existingSC.elections) ? existingSC.elections : [];
-      const closedExisting = existingElecs.filter((e: any) => e.status === 'Closed' || e.winner !== undefined);
-      const elecsWithHistory = elecs.map(e => {
-        if (e.status === 'Closed' || e.winner) return e;
-        const matchingClosed = closedExisting.find((ce: any) =>
-          ce.id === e.id ||
-          (ce.position && e.position && ce.position.toLowerCase() === e.position.toLowerCase()) ||
-          (ce.title && e.title && ce.title.toLowerCase() === e.title.toLowerCase())
-        );
-        return matchingClosed || e;
-      });
-      const mergedElecs = [...elecsWithHistory];
-      closedExisting.forEach((ce: any) => {
-        if (!mergedElecs.some(e => e.id === ce.id || (e.position && ce.position && e.position.toLowerCase() === ce.position.toLowerCase()))) {
-          mergedElecs.push(ce);
+      const elecsMap = new Map<string, Election>(elecs.map(e => [e.id, e]));
+      existingElecs.forEach((ce: any) => {
+        if (ce && ce.id && !elecsMap.has(ce.id)) {
+          elecsMap.set(ce.id, ce);
         }
       });
+      const mergedElecs = Array.from(elecsMap.values()).filter(e => {
+        const isDep = e.type === 'DEPUTY_SPEAKER' ||
+          (e.position && e.position.toLowerCase() === 'deputy speaker') ||
+          (e.title && e.title.toLowerCase().includes('deputy speaker'));
+        return !isDep;
+      });
 
-      // Permanent Guard: Ensure elections for confirmed elected leaders in learners are ALWAYS marked Closed
+      // Permanent Guard: Ensure elections for confirmed elected leaders in learners are marked Closed only if already closed or not actively upcoming/live
       const eventLearners = this.getLearners(eventId);
       const speakerLearner = eventLearners.find(l => isSpeakerRole(l.role));
-      const deputySpeakerLearner = eventLearners.find(l => isDeputySpeakerRole(l.role));
       const cmLearner = eventLearners.find(l => isChiefMinisterRole(l.role));
       const lopLearner = eventLearners.find(l => isLeaderOfOppositionRole(l.role));
 
       const finalElecs = mergedElecs.map(e => {
-        if (e.status === 'Closed' && e.winner) return e;
+        // If an election is actively Live or Upcoming (e.g. coordinator started or reset it), RESPECT IT! Never auto-close!
+        if (e.status === 'Live' || e.status === 'Upcoming') {
+          return e;
+        }
+        if (e.status === 'Closed' && e.winner) {
+          return e;
+        }
         const posLower = (e.position || '').toLowerCase();
         const titleLower = (e.title || '').toLowerCase();
 
@@ -1312,29 +1334,16 @@ class StorageService {
             type: 'SPEAKER' as const,
             position: 'Speaker',
             winner: speakerLearner.full_name,
-            total_votes: e.total_votes > 0 ? e.total_votes : 72,
+            total_votes: e.total_votes > 0 ? e.total_votes : (e.candidates && e.candidates.length > 0 ? e.candidates.reduce((s, c) => s + (c.votes || 0), 0) : 72),
             completed_at: e.completed_at || '2026-09-08T06:00:40.175Z',
-            candidates: (e.candidates && e.candidates.length > 0 && e.candidates[0].votes > 0) ? e.candidates : [
+            candidates: (e.candidates && e.candidates.length > 0) ? e.candidates : [
               { id: speakerLearner.id, learner_id: speakerLearner.id, name: speakerLearner.full_name, party: speakerLearner.party_name || 'Party 2', bench: 'Ruling' as const, votes: 45 },
               { id: 'cand_speaker_opp', name: 'S. Srimathi', party: 'Party 1', bench: 'Opposition' as const, votes: 27 }
             ]
           };
         }
-        if (deputySpeakerLearner && (posLower.includes('deputy') || titleLower.includes('deputy speaker') || titleLower.includes('deputy speaker election'))) {
-          return {
-            ...e,
-            status: 'Closed' as const,
-            type: 'DEPUTY_SPEAKER' as const,
-            position: 'Deputy Speaker',
-            winner: deputySpeakerLearner.full_name,
-            total_votes: e.total_votes > 0 ? e.total_votes : 68,
-            completed_at: e.completed_at || '2026-09-08T06:45:00.000Z',
-            candidates: (e.candidates && e.candidates.length > 0 && e.candidates[0].votes > 0) ? e.candidates : [
-              { id: deputySpeakerLearner.id, learner_id: deputySpeakerLearner.id, name: deputySpeakerLearner.full_name, party: deputySpeakerLearner.party_name || 'Party 1', bench: 'Opposition' as const, votes: 40 },
-              { id: 'cand_deputy_runner', name: 'R. Kavin', party: 'Party 2', bench: 'Ruling' as const, votes: 28 }
-            ]
-          };
-        }
+        // Speaker election winner is Speaker (#1); runner-up is Deputy Speaker (#2)
+        // Deputy Speaker is not a separate election ballot
         if (cmLearner && (posLower.includes('ruling') || titleLower.includes('chief minister') || titleLower.includes('ruling party leader'))) {
           return {
             ...e,
@@ -1342,9 +1351,9 @@ class StorageService {
             type: 'LEADERSHIP' as const,
             position: 'Ruling Party Leader',
             winner: cmLearner.full_name,
-            total_votes: e.total_votes > 0 ? e.total_votes : 48,
+            total_votes: e.total_votes > 0 ? e.total_votes : (e.candidates && e.candidates.length > 0 ? e.candidates.reduce((s, c) => s + (c.votes || 0), 0) : 48),
             completed_at: e.completed_at || '2026-09-08T07:30:15.000Z',
-            candidates: (e.candidates && e.candidates.length > 0 && e.candidates[0].votes > 0) ? e.candidates : [
+            candidates: (e.candidates && e.candidates.length > 0) ? e.candidates : [
               { id: cmLearner.id, learner_id: cmLearner.id, name: cmLearner.full_name, party: cmLearner.party_name || 'Party 3', bench: 'Ruling' as const, votes: 32 },
               { id: 'cand_cm_runner', name: 'Maiyurikha', party: 'Party 4', bench: 'Ruling' as const, votes: 16 }
             ]
@@ -1357,9 +1366,9 @@ class StorageService {
             type: 'LEADERSHIP' as const,
             position: 'Opposition Party Leader',
             winner: lopLearner.full_name,
-            total_votes: e.total_votes > 0 ? e.total_votes : 41,
+            total_votes: e.total_votes > 0 ? e.total_votes : (e.candidates && e.candidates.length > 0 ? e.candidates.reduce((s, c) => s + (c.votes || 0), 0) : 41),
             completed_at: e.completed_at || '2026-09-08T08:15:00.000Z',
-            candidates: (e.candidates && e.candidates.length > 0 && e.candidates[0].votes > 0) ? e.candidates : [
+            candidates: (e.candidates && e.candidates.length > 0) ? e.candidates : [
               { id: lopLearner.id, learner_id: lopLearner.id, name: lopLearner.full_name, party: lopLearner.party_name || 'Party 1', bench: 'Opposition' as const, votes: 28 },
               { id: 'cand_lop_runner', name: 'Mathan', party: 'Party 2', bench: 'Opposition' as const, votes: 13 }
             ]
@@ -4720,12 +4729,13 @@ class StorageService {
     // Self-healing: if learners table has elected leaders, ensure elections reflect Closed with winner
     const learners = targetId ? this.getLearners(targetId) : this.getLearners();
     const speakerLearner = learners.find(l => isSpeakerRole(l.role));
-    const deputySpeakerLearner = learners.find(l => isDeputySpeakerRole(l.role));
     const cmLearner = learners.find(l => isChiefMinisterRole(l.role));
     const lopLearner = learners.find(l => isLeaderOfOppositionRole(l.role));
 
     let modified = false;
     const healedList = list.map(e => {
+      // Respect active coordinator actions: Live and Upcoming elections must NEVER be auto-closed
+      if (e.status === 'Upcoming' || e.status === 'Live') return e;
       if (e.status === 'Closed' && e.winner) return e;
       const posLower = (e.position || '').toLowerCase();
       const titleLower = (e.title || '').toLowerCase();
@@ -4738,30 +4748,15 @@ class StorageService {
           type: 'SPEAKER' as const,
           position: 'Speaker',
           winner: speakerLearner.full_name,
-          total_votes: e.total_votes > 0 ? e.total_votes : 72,
+          total_votes: e.total_votes > 0 ? e.total_votes : (e.candidates && e.candidates.length > 0 ? e.candidates.reduce((s, c) => s + (c.votes || 0), 0) : 72),
           completed_at: e.completed_at || '2026-09-08T06:00:40.175Z',
-          candidates: (e.candidates && e.candidates.length > 0 && e.candidates[0].votes > 0) ? e.candidates : [
+          candidates: (e.candidates && e.candidates.length > 0) ? e.candidates : [
             { id: speakerLearner.id, learner_id: speakerLearner.id, name: speakerLearner.full_name, party: speakerLearner.party_name || 'Party 2', bench: 'Ruling' as const, votes: 45 },
             { id: 'cand_speaker_opp', name: 'S. Srimathi', party: 'Party 1', bench: 'Opposition' as const, votes: 27 }
           ]
         };
       }
-      if (deputySpeakerLearner && (posLower.includes('deputy') || titleLower.includes('deputy speaker') || titleLower.includes('deputy speaker election'))) {
-        modified = true;
-        return {
-          ...e,
-          status: 'Closed' as const,
-          type: 'DEPUTY_SPEAKER' as const,
-          position: 'Deputy Speaker',
-          winner: deputySpeakerLearner.full_name,
-          total_votes: e.total_votes > 0 ? e.total_votes : 68,
-          completed_at: e.completed_at || '2026-09-08T06:45:00.000Z',
-          candidates: (e.candidates && e.candidates.length > 0 && e.candidates[0].votes > 0) ? e.candidates : [
-            { id: deputySpeakerLearner.id, learner_id: deputySpeakerLearner.id, name: deputySpeakerLearner.full_name, party: deputySpeakerLearner.party_name || 'Party 1', bench: 'Opposition' as const, votes: 40 },
-            { id: 'cand_deputy_runner', name: 'R. Kavin', party: 'Party 2', bench: 'Ruling' as const, votes: 28 }
-          ]
-        };
-      }
+      // Deputy Speaker is not a separate election ballot; 2nd highest in Speaker election is Deputy Speaker
       if (cmLearner && (posLower.includes('ruling') || titleLower.includes('chief minister') || titleLower.includes('ruling party leader'))) {
         modified = true;
         return {
@@ -4770,9 +4765,9 @@ class StorageService {
           type: 'LEADERSHIP' as const,
           position: 'Ruling Party Leader',
           winner: cmLearner.full_name,
-          total_votes: e.total_votes > 0 ? e.total_votes : 48,
+          total_votes: e.total_votes > 0 ? e.total_votes : (e.candidates && e.candidates.length > 0 ? e.candidates.reduce((s, c) => s + (c.votes || 0), 0) : 48),
           completed_at: e.completed_at || '2026-09-08T07:30:15.000Z',
-          candidates: (e.candidates && e.candidates.length > 0 && e.candidates[0].votes > 0) ? e.candidates : [
+          candidates: (e.candidates && e.candidates.length > 0) ? e.candidates : [
             { id: cmLearner.id, learner_id: cmLearner.id, name: cmLearner.full_name, party: cmLearner.party_name || 'Party 3', bench: 'Ruling' as const, votes: 32 },
             { id: 'cand_cm_runner', name: 'Maiyurikha', party: 'Party 4', bench: 'Ruling' as const, votes: 16 }
           ]
@@ -4786,9 +4781,9 @@ class StorageService {
           type: 'LEADERSHIP' as const,
           position: 'Opposition Party Leader',
           winner: lopLearner.full_name,
-          total_votes: e.total_votes > 0 ? e.total_votes : 41,
+          total_votes: e.total_votes > 0 ? e.total_votes : (e.candidates && e.candidates.length > 0 ? e.candidates.reduce((s, c) => s + (c.votes || 0), 0) : 41),
           completed_at: e.completed_at || '2026-09-08T08:15:00.000Z',
-          candidates: (e.candidates && e.candidates.length > 0 && e.candidates[0].votes > 0) ? e.candidates : [
+          candidates: (e.candidates && e.candidates.length > 0) ? e.candidates : [
             { id: lopLearner.id, learner_id: lopLearner.id, name: lopLearner.full_name, party: lopLearner.party_name || 'Party 1', bench: 'Opposition' as const, votes: 28 },
             { id: 'cand_lop_runner', name: 'Mathan', party: 'Party 2', bench: 'Opposition' as const, votes: 13 }
           ]
@@ -4803,8 +4798,14 @@ class StorageService {
       this.setItem(STORAGE_KEYS.ELECTIONS, updatedAll);
     }
 
+    const nonDeputyList = healedList.filter(e =>
+      e.type !== 'DEPUTY_SPEAKER' &&
+      e.position !== 'Deputy Speaker' &&
+      !e.title?.toLowerCase().includes('deputy speaker')
+    );
+
     if (role === 'student') {
-      return healedList.map(e => ({
+      return nonDeputyList.map(e => ({
         ...e,
         total_votes: undefined as any,
         voted_delegate_ids: studentId && e.voted_delegate_ids?.includes(studentId) ? [studentId] : [],
@@ -4814,7 +4815,7 @@ class StorageService {
         }))
       }));
     }
-    return healedList;
+    return nonDeputyList;
   }
 
   public addElection(elec: Partial<Election>): Election {
@@ -4922,6 +4923,8 @@ class StorageService {
     let winnerRoleToAssign = '';
     let winnerCandidate: ElectionCandidate | undefined;
 
+    let runnerUpCandidate: ElectionCandidate | undefined;
+
     const all = this.getElectionAll().map(e => {
       if (e.id === electionId) {
         targetEventId = e.event_id;
@@ -4930,10 +4933,11 @@ class StorageService {
         if (win && sorted[0]) {
           winnerCandidate = sorted[0];
           const pos = (e.position || e.title || '').trim();
-          if (isDeputySpeakerRole(pos) || e.type === 'DEPUTY_SPEAKER') {
-            winnerRoleToAssign = CANONICAL_ROLES.DEPUTY_SPEAKER;
-          } else if (isSpeakerRole(pos) || e.type === 'SPEAKER') {
+          if (isSpeakerRole(pos) || e.type === 'SPEAKER') {
             winnerRoleToAssign = CANONICAL_ROLES.SPEAKER;
+            if (sorted.length > 1 && sorted[1]) {
+              runnerUpCandidate = sorted[1];
+            }
           } else if (isChiefMinisterRole(pos)) {
             winnerRoleToAssign = CANONICAL_ROLES.CHIEF_MINISTER;
           } else if (isLeaderOfOppositionRole(pos)) {
@@ -4963,6 +4967,18 @@ class StorageService {
       if (targetLearner) {
         this.assignCabinetRole(targetEventId, targetLearner.id, winnerRoleToAssign);
       }
+      // If Speaker election, assign 2nd highest vote candidate as Deputy Speaker
+      if (winnerRoleToAssign === CANONICAL_ROLES.SPEAKER && runnerUpCandidate) {
+        const runnerCand = runnerUpCandidate as ElectionCandidate;
+        const runnerLearner = allLearners.find(l =>
+          (runnerCand.learner_id && l.id === runnerCand.learner_id) ||
+          (runnerCand.id && l.id === runnerCand.id) ||
+          l.full_name.toLowerCase() === runnerCand.name.toLowerCase()
+        );
+        if (runnerLearner) {
+          this.assignCabinetRole(targetEventId, runnerLearner.id, CANONICAL_ROLES.DEPUTY_SPEAKER);
+        }
+      }
     }
 
     if (targetEventId) this.syncEventStateToSupabase(targetEventId);
@@ -4972,6 +4988,8 @@ class StorageService {
     let targetEventId = '';
     let winnerRoleToAssign = '';
     let winnerCandidate: ElectionCandidate | undefined;
+
+    let runnerUpCandidate: ElectionCandidate | undefined;
 
     const all = this.getElectionAll().map(e => {
       if (e.id === electionId) {
@@ -4984,10 +5002,11 @@ class StorageService {
           if (winner && sorted[0]) {
             winnerCandidate = sorted[0];
             const pos = (e.position || e.title || '').trim();
-            if (isDeputySpeakerRole(pos) || e.type === 'DEPUTY_SPEAKER') {
-              winnerRoleToAssign = CANONICAL_ROLES.DEPUTY_SPEAKER;
-            } else if (isSpeakerRole(pos) || e.type === 'SPEAKER') {
+            if (isSpeakerRole(pos) || e.type === 'SPEAKER') {
               winnerRoleToAssign = CANONICAL_ROLES.SPEAKER;
+              if (sorted.length > 1 && sorted[1]) {
+                runnerUpCandidate = sorted[1];
+              }
             } else if (isChiefMinisterRole(pos)) {
               winnerRoleToAssign = CANONICAL_ROLES.CHIEF_MINISTER;
             } else if (isLeaderOfOppositionRole(pos)) {
@@ -5013,6 +5032,18 @@ class StorageService {
       );
       if (targetLearner) {
         this.assignCabinetRole(targetEventId, targetLearner.id, winnerRoleToAssign);
+      }
+      // If Speaker election, assign 2nd highest vote candidate as Deputy Speaker
+      if (winnerRoleToAssign === CANONICAL_ROLES.SPEAKER && runnerUpCandidate) {
+        const runnerCand = runnerUpCandidate as ElectionCandidate;
+        const runnerLearner = allLearners.find(l =>
+          (runnerCand.learner_id && l.id === runnerCand.learner_id) ||
+          (runnerCand.id && l.id === runnerCand.id) ||
+          l.full_name.toLowerCase() === runnerCand.name.toLowerCase()
+        );
+        if (runnerLearner) {
+          this.assignCabinetRole(targetEventId, runnerLearner.id, CANONICAL_ROLES.DEPUTY_SPEAKER);
+        }
       }
     }
 
