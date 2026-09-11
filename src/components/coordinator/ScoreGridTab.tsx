@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import type { ScoreRecord, Learner } from '../../types';
 import { storageService } from '../../services/storageService';
 import {
@@ -26,7 +26,15 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
 }) => {
   const [isGradeModalOpen, setIsGradeModalOpen] = useState(false);
   const [selectedLearnerId, setSelectedLearnerId] = useState('');
-  const [jurorName, setJurorName] = useState('Adv. K. Balasubramanian');
+  const eventJurors = useMemo(() => storageService.getJury(eventId), [eventId]);
+  const defaultJuror = useMemo(() => eventJurors[0]?.name || '', [eventJurors]);
+  const [jurorName, setJurorName] = useState(() => defaultJuror);
+
+  useEffect(() => {
+    if (!jurorName && defaultJuror) {
+      setJurorName(defaultJuror);
+    }
+  }, [defaultJuror]);
   const [oratory, setOratory] = useState(22);
   const [policy, setPolicy] = useState(23);
   const [conduct, setConduct] = useState(24);
@@ -91,20 +99,26 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
       }
     });
 
-    return Array.from(map.values()).map(item => ({
-      id: item.learner_id,
-      learner_id: item.learner_id,
-      learner_name: item.learner_name,
-      party_name: item.party_name,
-      bench: item.bench,
-      oratory: Math.round(item.oratory / item.evalCount),
-      policy_knowledge: Math.round(item.policy_knowledge / item.evalCount),
-      parliamentary_conduct: Math.round(item.parliamentary_conduct / item.evalCount),
-      rebuttal_debate: Math.round(item.rebuttal_debate / item.evalCount),
-      total: Math.round(item.total / item.evalCount),
-      evalCount: item.evalCount,
-      juror_names: item.juror_names
-    })).sort((a, b) => b.total - a.total);
+    return Array.from(map.values()).map(item => {
+      const avgOrat = Math.round(item.oratory / item.evalCount);
+      const avgPol = Math.round(item.policy_knowledge / item.evalCount);
+      const avgCond = Math.round(item.parliamentary_conduct / item.evalCount);
+      const avgDeb = Math.round(item.rebuttal_debate / item.evalCount);
+      return {
+        id: item.learner_id,
+        learner_id: item.learner_id,
+        learner_name: item.learner_name,
+        party_name: item.party_name,
+        bench: item.bench,
+        oratory: avgOrat,
+        policy_knowledge: avgPol,
+        parliamentary_conduct: avgCond,
+        rebuttal_debate: avgDeb,
+        total: avgOrat + avgPol + avgCond + avgDeb,
+        evalCount: item.evalCount,
+        juror_names: item.juror_names
+      };
+    }).sort((a, b) => b.total - a.total);
   }, [scores, eventId]);
 
   const handleResetScores = () => {
@@ -359,14 +373,49 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
               </div>
 
               <div>
-                <label className="block font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>Evaluating Juror</label>
-                <input
-                  type="text"
-                  value={jurorName}
-                  onChange={(e) => setJurorName(e.target.value)}
-                  className="w-full p-2 rounded-xl border focus:outline-none"
-                  style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
-                />
+                <label className="block font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>Evaluating Juror *</label>
+                {eventJurors.length > 0 ? (
+                  <div className="space-y-1.5">
+                    <select
+                      value={eventJurors.some(j => j.name === jurorName) ? jurorName : '__custom__'}
+                      onChange={(e) => {
+                        if (e.target.value !== '__custom__') {
+                          setJurorName(e.target.value);
+                        } else {
+                          setJurorName('');
+                        }
+                      }}
+                      className="w-full p-2 rounded-xl border focus:outline-none"
+                      style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                    >
+                      {eventJurors.map(j => (
+                        <option key={j.id} value={j.name}>{j.name} ({j.designation || 'Juror'})</option>
+                      ))}
+                      <option value="__custom__">-- Other / Custom Juror Name --</option>
+                    </select>
+                    {!eventJurors.some(j => j.name === jurorName) && (
+                      <input
+                        type="text"
+                        required
+                        placeholder="Enter juror name"
+                        value={jurorName}
+                        onChange={(e) => setJurorName(e.target.value)}
+                        className="w-full p-2 rounded-xl border focus:outline-none"
+                        style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                      />
+                    )}
+                  </div>
+                ) : (
+                  <input
+                    type="text"
+                    required
+                    placeholder="Enter juror name"
+                    value={jurorName}
+                    onChange={(e) => setJurorName(e.target.value)}
+                    className="w-full p-2 rounded-xl border focus:outline-none"
+                    style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                  />
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-2">

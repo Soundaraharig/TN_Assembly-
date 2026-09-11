@@ -610,6 +610,7 @@ class StorageService {
     this.isSyncing = true;
 
     try {
+      const extendedLearnerMap = new Map<string, any>();
       const [
         { data: events, error: eventsErr },
         { data: coordinators, error: coordErr },
@@ -656,6 +657,8 @@ class StorageService {
         let allScores: ScoreRecord[] = [];
         let allDays: EventDay[] = [];
         let allDayAtt: DayAttendanceRecord[] = [];
+        let allChecklist: ChecklistItem[] = [];
+        let allTeam: TeamMember[] = [];
 
         const now = Date.now();
         const lockTimestamps = this.getItem<Record<string, number>>(STORAGE_KEYS.LOCK_UPDATED_AT, {});
@@ -703,6 +706,17 @@ class StorageService {
           }
           if (Array.isArray(sc.day_attendance)) {
             allDayAtt = [...allDayAtt, ...sc.day_attendance];
+          }
+          if (Array.isArray(sc.checklist)) {
+            allChecklist = [...allChecklist, ...sc.checklist];
+          }
+          if (Array.isArray(sc.team)) {
+            allTeam = [...allTeam, ...sc.team];
+          }
+          if (Array.isArray(sc.extended_learners)) {
+            sc.extended_learners.forEach((el: any) => {
+              if (el?.id) extendedLearnerMap.set(el.id, el);
+            });
           }
 
           if (Array.isArray(sc.cabinet_ministries)) {
@@ -813,6 +827,11 @@ class StorageService {
                 ...(remoteE.voted_delegate_ids || [])
               ]));
 
+              const mergedVotesByDelegate: Record<string, string> = {
+                ...((remoteE as any).votes_by_delegate || {}),
+                ...((localE as any).votes_by_delegate || {})
+              };
+
               const candMap = new Map<string, ElectionCandidate>();
               (localE.candidates || []).forEach(c => candMap.set(c.id, { ...c }));
               (remoteE.candidates || []).forEach(rc => {
@@ -828,13 +847,22 @@ class StorageService {
                 }
               });
 
+              // Recount votes from merged voter map to eliminate simultaneous submission loss
+              if (Object.keys(mergedVotesByDelegate).length > 0) {
+                candMap.forEach(cand => {
+                  const verifiedVotes = Object.values(mergedVotesByDelegate).filter(id => id === cand.id).length;
+                  cand.votes = Math.max(cand.votes || 0, verifiedVotes);
+                });
+              }
+
               const mergedCandidates = Array.from(candMap.values());
               const candsTotal = mergedCandidates.reduce((sum, c) => sum + (c.votes || 0), 0);
               const monotonicTotal = Math.max(
                 localE.total_votes || 0,
                 remoteE.total_votes || 0,
                 candsTotal,
-                mergedVoters.length
+                mergedVoters.length,
+                Object.keys(mergedVotesByDelegate).length
               );
 
               let finalStatus = remoteE.status;
@@ -850,9 +878,10 @@ class StorageService {
                 status: finalStatus,
                 candidates: mergedCandidates,
                 voted_delegate_ids: mergedVoters,
+                votes_by_delegate: mergedVotesByDelegate,
                 total_votes: monotonicTotal,
                 winner: localE.winner || remoteE.winner
-              });
+              } as any);
             }
           });
           this.setItem(STORAGE_KEYS.ELECTIONS, Array.from(elecMap.values()));
@@ -949,6 +978,26 @@ class StorageService {
           const attMap = new Map<string, DayAttendanceRecord>();
           allDayAtt.forEach(a => attMap.set(`${a.event_id}:::${a.day_id}:::${a.student_id}`, a));
           this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...retainedLocalAtt, ...Array.from(attMap.values())]);
+
+          if (allChecklist.length > 0) {
+            const localChecklist = this.getItem<ChecklistItem[]>(STORAGE_KEYS.CHECKLIST, []);
+            const checkMap = new Map<string, ChecklistItem>();
+            localChecklist.forEach(c => checkMap.set(c.id, c));
+            allChecklist.forEach(c => {
+              if (!checkMap.has(c.id)) checkMap.set(c.id, c);
+            });
+            this.setItem(STORAGE_KEYS.CHECKLIST, Array.from(checkMap.values()));
+          }
+
+          if (allTeam.length > 0) {
+            const localTeam = this.getItem<TeamMember[]>(STORAGE_KEYS.TEAM, []);
+            const teamMap = new Map<string, TeamMember>();
+            localTeam.forEach(t => teamMap.set(t.id, t));
+            allTeam.forEach(t => {
+              if (!teamMap.has(t.id)) teamMap.set(t.id, t);
+            });
+            this.setItem(STORAGE_KEYS.TEAM, Array.from(teamMap.values()));
+          }
         }
       }
 
@@ -1004,7 +1053,14 @@ class StorageService {
           learners.forEach(r => {
             if (deletedIds.has(r.id)) return;
             const local = localLearnerMap.get(r.id);
-            learnerMap.set(r.id, local ? { ...local, ...(r as Learner) } : (r as Learner));
+            const ext = extendedLearnerMap.get(r.id);
+            const merged = local ? { ...local, ...(r as Learner) } : { ...(r as Learner) };
+            if (ext) {
+              if (ext.school_name && !merged.school_name) merged.school_name = ext.school_name;
+              if (ext.party_group_link && !merged.party_group_link) merged.party_group_link = ext.party_group_link;
+              if (ext.committee_group_link && !merged.committee_group_link) merged.committee_group_link = ext.committee_group_link;
+            }
+            learnerMap.set(r.id, merged);
           });
           this.setItem(STORAGE_KEYS.LEARNERS, sortLearnersStably(Array.from(learnerMap.values())));
         }
@@ -1056,7 +1112,36 @@ class StorageService {
         console.error("Supabase Error [session_agenda]:", agendaErr);
         hasQueryError = true;
       } else if (agenda !== null) {
-        this.setItem(STORAGE_KEYS.AGENDA, agenda);
+        // Event-scoped merge of agenda to preserve local order/status and prevent cross-event is_current stomping
+        const localAgenda = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, []);
+        const localMap = new Map<string, AgendaItem>();
+        localAgenda.forEach(a => localMap.set(a.id, a));
+
+        const agendaByEvent = new Map<string, AgendaItem[]>();
+        agenda.forEach(r => {
+          if (deletedIds.has(r.id)) return;
+          const evId = r.event_id || 'default';
+          if (!agendaByEvent.has(evId)) agendaByEvent.set(evId, []);
+          const local = localMap.get(r.id);
+          agendaByEvent.get(evId)!.push(local ? { ...local, ...r } : (r as unknown as AgendaItem));
+        });
+
+        const mergedAgenda: AgendaItem[] = [];
+        agendaByEvent.forEach(items => {
+          let foundCurrent = false;
+          items.forEach(item => {
+            if (item.is_current) {
+              if (!foundCurrent) {
+                foundCurrent = true;
+              } else {
+                item.is_current = false;
+              }
+            }
+            mergedAgenda.push(item);
+          });
+        });
+
+        this.setItem(STORAGE_KEYS.AGENDA, mergedAgenda);
       }
 
       if (juryErr) {
@@ -1120,6 +1205,14 @@ class StorageService {
   public setupRealtimeSync() {
     if (!supabase || this.realtimeChannel) return;
     try {
+      let realtimeDebounceTimer: any = null;
+      const debouncedSync = () => {
+        if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
+        realtimeDebounceTimer = setTimeout(() => {
+          this.syncFromSupabase();
+        }, 400);
+      };
+
       this.realtimeChannel = supabase.channel('tn_assembly_live_sync')
         .on('broadcast', { event: 'projector_update' }, (msg: any) => {
           if (msg?.payload?.eventId && msg?.payload?.settings) {
@@ -1134,43 +1227,25 @@ class StorageService {
             window.dispatchEvent(new CustomEvent('tn_assembly_speaker_bell', { detail: msg?.payload }));
           }
         })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'college_events' }, () => {
-          this.syncFromSupabase();
-        })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'learners' }, () => {
-          this.syncFromSupabase();
-        })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'political_parties' }, () => {
-          this.syncFromSupabase();
-        })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'committees' }, () => {
-          this.syncFromSupabase();
-        })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'session_agenda' }, () => {
-          this.syncFromSupabase();
-        })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'jury_members' }, () => {
-          this.syncFromSupabase();
-        })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'volunteers' }, () => {
-          this.syncFromSupabase();
-        })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'event_days' }, () => {
-          this.syncFromSupabase();
-        })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'event_day_attendance' }, () => {
-          this.syncFromSupabase();
-        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'college_events' }, debouncedSync)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'learners' }, debouncedSync)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'political_parties' }, debouncedSync)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'committees' }, debouncedSync)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'session_agenda' }, debouncedSync)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'jury_members' }, debouncedSync)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'volunteers' }, debouncedSync)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'event_days' }, debouncedSync)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'event_day_attendance' }, debouncedSync)
         .subscribe();
 
-      // Fast background periodic sync every 2.5 seconds for instant multi-device responsiveness
-      if (typeof window !== 'undefined' && !this.syncTimer) {
-        this.syncTimer = setInterval(() => {
-          if (!document.hidden) {
-            this.syncFromSupabase();
-          }
-        }, 2500);
-      }
+        // Background heartbeat sync every 10 seconds (realtime handles instant updates)
+        if (typeof window !== 'undefined' && !this.syncTimer) {
+          this.syncTimer = setInterval(() => {
+            if (!document.hidden && !this.isSyncing) {
+              this.syncFromSupabase();
+            }
+          }, 10000);
+        }
     } catch (e) {
       console.warn('[Supabase] realtime setup error:', e);
     }
@@ -1293,6 +1368,14 @@ class StorageService {
         vote_audit_log: voteAudit,
         yuva_assignments: yuvaAssignments,
         cabinet_ministries: currentEv?.cabinet_ministries || [],
+        checklist: this.getChecklist(eventId),
+        team: this.getTeam(eventId),
+        extended_learners: this.getLearners(eventId).map(l => ({
+          id: l.id,
+          school_name: l.school_name,
+          party_group_link: l.party_group_link,
+          committee_group_link: l.committee_group_link
+        })).filter(l => l.school_name || l.party_group_link || l.committee_group_link),
         allocation_lock: allocLock,
         registrations_frozen: regFrozen,
         scores_locked: scLocked,
@@ -1397,7 +1480,7 @@ class StorageService {
     if (table === 'college_events') {
       const { cabinet_ministries: _cm, ...clean } = raw;
       const existingEv = validId ? this.getEvents().find(e => e.id === validId) : undefined;
-      const defaultName = (validId === '200fdd74-4d21-44d5-9f63-9a07bf267824') ? 'JKKNCET TN ASSEMBLY 2026' : 'JKKNCET TN ASSEMBLY 2026';
+      const defaultName = (validId === '200fdd74-4d21-44d5-9f63-9a07bf267824') ? 'JKKNCET TN ASSEMBLY 2026' : (clean.college_name || existingEv?.college_name || 'New Assembly');
       const sanitized: Record<string, unknown> = {
         college_name: clean.college_name && clean.college_name !== 'New Assembly' ? clean.college_name : (existingEv?.college_name && existingEv.college_name !== 'New Assembly' ? existingEv.college_name : defaultName),
         event_stage: clean.event_stage || existingEv?.event_stage || 'College Round',
@@ -1919,8 +2002,40 @@ class StorageService {
   }
 
   public deleteEvent(eventId: string) {
+    if (!eventId) return;
     const all = this.getEvents().filter(e => e.id !== eventId);
     this.setItem(STORAGE_KEYS.EVENTS, all);
+
+    // Purge ghost records for this event from localStorage
+    this.setItem(STORAGE_KEYS.LEARNERS, this.getItem<any[]>(STORAGE_KEYS.LEARNERS, []).filter(l => l.event_id !== eventId));
+    this.setItem(STORAGE_KEYS.PARTIES, this.getItem<any[]>(STORAGE_KEYS.PARTIES, []).filter(p => p.event_id !== eventId));
+    this.setItem(STORAGE_KEYS.COMMITTEES, this.getItem<any[]>(STORAGE_KEYS.COMMITTEES, []).filter(c => c.event_id !== eventId));
+    this.setItem(STORAGE_KEYS.AGENDA, this.getItem<any[]>(STORAGE_KEYS.AGENDA, []).filter(a => a.event_id !== eventId));
+    this.setItem(STORAGE_KEYS.NOMINATIONS, this.getItem<any[]>(STORAGE_KEYS.NOMINATIONS, []).filter(n => n.event_id !== eventId));
+    this.setItem(STORAGE_KEYS.ELECTIONS, this.getItem<any[]>(STORAGE_KEYS.ELECTIONS, []).filter(e => e.event_id !== eventId));
+    this.setItem(STORAGE_KEYS.FLASH_VOTES, this.getItem<any[]>(STORAGE_KEYS.FLASH_VOTES, []).filter(f => f.event_id !== eventId));
+    this.setItem(STORAGE_KEYS.PROCEEDINGS, this.getItem<any[]>(STORAGE_KEYS.PROCEEDINGS, []).filter(p => p.event_id !== eventId));
+    this.setItem(STORAGE_KEYS.QUESTIONS, this.getItem<any[]>(STORAGE_KEYS.QUESTIONS, []).filter(q => q.event_id !== eventId));
+    this.setItem(STORAGE_KEYS.SCORES, this.getItem<any[]>(STORAGE_KEYS.SCORES, []).filter(s => s.event_id !== eventId));
+    this.setItem(STORAGE_KEYS.EVENT_DAYS, this.getItem<any[]>(STORAGE_KEYS.EVENT_DAYS, []).filter(d => d.event_id !== eventId));
+    this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, this.getItem<any[]>(STORAGE_KEYS.DAY_ATTENDANCE, []).filter(a => a.event_id !== eventId));
+    this.setItem(STORAGE_KEYS.CHECKLIST, this.getItem<any[]>(STORAGE_KEYS.CHECKLIST, []).filter(c => c.event_id !== eventId));
+    this.setItem(STORAGE_KEYS.TEAM, this.getItem<any[]>(STORAGE_KEYS.TEAM, []).filter(t => t.event_id !== eventId));
+    this.setItem(STORAGE_KEYS.CHAT, this.getItem<any[]>(STORAGE_KEYS.CHAT, []).filter(c => c.event_id !== eventId));
+    this.setItem(STORAGE_KEYS.FEEDBACK, this.getItem<any[]>(STORAGE_KEYS.FEEDBACK, []).filter(f => f.event_id !== eventId));
+
+    // Clear event-specific locks and preferences
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem(`${STORAGE_KEYS.ALLOCATION_LOCK}_${eventId}`);
+        localStorage.removeItem(`${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${eventId}`);
+        localStorage.removeItem(`${STORAGE_KEYS.SCORES_LOCKED}_${eventId}`);
+        localStorage.removeItem(`tn_assembly_projector_studio_${eventId}`);
+        localStorage.removeItem(`tn_assembly_last_bell_${eventId}`);
+        localStorage.removeItem(`${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${eventId}`);
+      }
+    } catch { }
+
     this.sbDelete('college_events', eventId);
     this.notify();
   }
@@ -3946,10 +4061,11 @@ class StorageService {
   public setCurrentAgendaItem(eventId: string, itemId: string) {
     const all = this.getAgenda().map(a => {
       if (a.event_id === eventId) {
+        const wasCurrent = a.is_current;
         const isCurrent = a.id === itemId;
-        const itemStatus: AgendaStatus = isCurrent ? 'In Progress' : a.status || 'Upcoming';
-        const updated = { ...a, is_current: isCurrent, status: itemStatus };
-        if (isCurrent) {
+        const itemStatus: AgendaStatus = isCurrent ? 'In Progress' : (wasCurrent ? 'Completed' : a.status || 'Upcoming');
+        const updated = { ...a, is_current: isCurrent, status: itemStatus, updated_at: new Date().toISOString() };
+        if (isCurrent || wasCurrent) {
           this.sbUpsert('session_agenda', updated as unknown as Record<string, unknown>);
         }
         return updated;
@@ -4416,8 +4532,7 @@ class StorageService {
         n.status !== 'Rejected'
       );
       if (existing) {
-        console.warn(`[storageService] Member ${nom.candidate_name || nom.candidate_learner_id} is already nominated for ${nom.position}`);
-        return existing;
+        throw new Error(`Delegate ${nom.candidate_name || 'selected'} is already nominated for ${nom.position}. Each member is eligible only once per post.`);
       }
     }
 
@@ -4738,6 +4853,10 @@ class StorageService {
     if (delegateId) {
       if (!election.voted_delegate_ids) election.voted_delegate_ids = [];
       election.voted_delegate_ids.push(delegateId);
+
+      const anyElec = election as any;
+      if (!anyElec.votes_by_delegate) anyElec.votes_by_delegate = {};
+      anyElec.votes_by_delegate[delegateId] = candidate.id;
 
       const learners = this.getLearners(election.event_id);
       const voterLearner = learners.find(l => l.id === delegateId);
@@ -6479,18 +6598,19 @@ class StorageService {
   }
 
   // ── PROCEEDINGS QUESTIONS ───────────────────────────────────────────
-  public getProceedingsQuestions(_eventKey?: string): ProceedingsQuestion[] {
+  public getProceedingsQuestions(eventKey?: string): ProceedingsQuestion[] {
     const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
-    // Always return all submitted questions so admin and student portals are 100% in sync
-    return list;
+    if (!eventKey) return list;
+    return list.filter(q => q.event_id === eventKey || q.event_slug === eventKey);
   }
 
   public addProceedingsQuestion(question: Partial<ProceedingsQuestion>): ProceedingsQuestion {
     const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
-    const eventSlug = question.event_slug || question.event_id || 'jkkncet-tn-assembly-2026';
+    const eventSlug = question.event_slug || (question.event_id ? this.getEvents().find(e => e.id === question.event_id)?.slug : undefined) || 'jkkncet-tn-assembly-2026';
+    const eventId = question.event_id || (question.event_slug ? this.getEvents().find(e => e.slug === question.event_slug)?.id : undefined) || eventSlug;
     const newQuestion: ProceedingsQuestion = {
       id: question.id || genUuid(),
-      event_id: eventSlug,
+      event_id: eventId,
       event_slug: eventSlug,
       student_id: question.student_id,
       student_name: question.student_name || 'Hon. Member',

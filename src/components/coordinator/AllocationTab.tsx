@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import type { Learner, Party, Committee, AcademicYear, BenchType } from '../../types';
 import { storageService, getResolvedPartyName, getResolvedCommitteeName, getResolvedLearnerBench } from '../../services/storageService';
 import { DownloadModal } from './DownloadModal';
@@ -59,7 +59,15 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
   const [selectedYear, setSelectedYear] = useState<string>('ALL');
   const [isConfirmResetOpen, setIsConfirmResetOpen] = useState(false);
 
-  const isAllocationLocked = storageService.getAllocationLock(eventId);
+  const [isAllocationLocked, setIsAllocationLocked] = useState(() => storageService.getAllocationLock(eventId));
+
+  useEffect(() => {
+    setIsAllocationLocked(storageService.getAllocationLock(eventId));
+    const unsub = storageService.subscribe(() => {
+      setIsAllocationLocked(storageService.getAllocationLock(eventId));
+    });
+    return unsub;
+  }, [eventId]);
 
   // Delegate currently being manually edited
   const [quickEditLearner, setQuickEditLearner] = useState<Learner | null>(null);

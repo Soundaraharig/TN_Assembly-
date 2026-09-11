@@ -81,10 +81,13 @@ CREATE TABLE learners (
     constituency_name TEXT,
     party_id UUID REFERENCES political_parties(id) ON DELETE SET NULL,
     party_name TEXT,
+    party_group_link TEXT,
     bench bench_type,
     role TEXT,
     committee_id UUID REFERENCES committees(id) ON DELETE SET NULL,
     committee_name TEXT,
+    committee_group_link TEXT,
+    school_name TEXT,
     day1_checked_in BOOLEAN DEFAULT FALSE,
     day2_checked_in BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW()
@@ -537,8 +540,7 @@ CREATE TABLE IF NOT EXISTS event_day_attendance (
     marked_at TIMESTAMPTZ DEFAULT NOW(),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    CONSTRAINT unique_event_day_student UNIQUE (event_id, day_id, student_id),
-    CONSTRAINT unique_event_day_id_student UNIQUE (event_id, event_day_id, student_id)
+    CONSTRAINT unique_event_day_student UNIQUE (event_id, day_id, student_id)
 );
 
 -- Performance Indexes

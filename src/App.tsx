@@ -332,6 +332,34 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
     return activeEvent?.id ? props.dayAttendance.filter(a => a.event_id === activeEvent.id) : props.dayAttendance;
   }, [activeEvent?.id, props.dayAttendance]);
 
+  const currentProceedings = useMemo(() => {
+    return activeEvent?.id ? storageService.getProceedings(activeEvent.id) : props.proceedings;
+  }, [activeEvent?.id, props.proceedings]);
+
+  const currentChatMessages = useMemo(() => {
+    return activeEvent?.id ? storageService.getChatMessages(activeEvent.id) : props.chatMessages;
+  }, [activeEvent?.id, props.chatMessages]);
+
+  const currentFeedback = useMemo(() => {
+    return activeEvent?.id ? storageService.getFeedback(activeEvent.id) : props.feedback;
+  }, [activeEvent?.id, props.feedback]);
+
+  const currentJury = useMemo(() => {
+    return activeEvent?.id ? storageService.getJury(activeEvent.id) : props.jury;
+  }, [activeEvent?.id, props.jury]);
+
+  const currentTeam = useMemo(() => {
+    return activeEvent?.id ? storageService.getTeam(activeEvent.id) : props.team;
+  }, [activeEvent?.id, props.team]);
+
+  const currentChecklist = useMemo(() => {
+    return activeEvent?.id ? storageService.getChecklist(activeEvent.id) : props.checklist;
+  }, [activeEvent?.id, props.checklist]);
+
+  const currentVolunteers = useMemo(() => {
+    return activeEvent?.id ? storageService.getVolunteers(activeEvent.id) : props.volunteers;
+  }, [activeEvent?.id, props.volunteers]);
+
   if (!activeEvent) {
     if (props.events.length > 0) {
       if (props.role === 'student') {
@@ -427,7 +455,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
 
       {activeTabFromPath === 'team' && (
         <TeamTab
-          team={props.team}
+          team={currentTeam}
           eventId={activeEvent.id}
           userRole={props.userSession?.role || props.role}
           onAddMember={(tm) => storageService.addTeamMember(tm)}
@@ -439,7 +467,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
 
       {activeTabFromPath === 'checklist' && (
         <ChecklistTab
-          checklist={props.checklist}
+          checklist={currentChecklist}
           eventId={activeEvent.id}
           userRole={props.userSession?.role || props.role}
           onToggleItem={(id) => storageService.toggleChecklistItem(id)}
@@ -626,7 +654,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
 
       {activeTabFromPath === 'jury' && (
         <JuryTab
-          jury={props.jury}
+          jury={currentJury}
           eventId={activeEvent.id}
           userRole={props.userSession?.role || props.role}
           onAddJury={props.handleAddJury}
@@ -637,7 +665,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
 
       {activeTabFromPath === 'volunteers' && (
         <VolunteersTab
-          volunteers={props.volunteers}
+          volunteers={currentVolunteers}
           eventId={activeEvent.id}
           userRole={props.userSession?.role || props.role}
           parties={currentParties}
@@ -758,7 +786,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
 
       {activeTabFromPath === 'proceedings' && (
         <ProceedingsTab
-          proceedings={props.proceedings}
+          proceedings={currentProceedings}
           learners={currentLearners}
           eventId={activeEvent.id}
           eventSlug={getEventSlug(activeEvent)}
@@ -770,7 +798,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
 
       {activeTabFromPath === 'chat' && (
         <ChatTab
-          messages={props.chatMessages}
+          messages={currentChatMessages}
           eventId={activeEvent.id}
           onSendMessage={(evId, sName, sRole, msg, isAnn) => storageService.sendChatMessage(evId, sName, sRole, msg, isAnn)}
           onShowToast={props.addToast}
@@ -818,7 +846,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
 
       {activeTabFromPath === 'feedback' && (
         <FeedbackTab
-          feedbackList={props.feedback}
+          feedbackList={currentFeedback}
           eventId={activeEvent.id}
           onSubmitFeedback={(fb) => storageService.submitFeedback(fb)}
           onShowToast={props.addToast}

@@ -321,7 +321,12 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
               <h4 className="text-base font-bold">Delete Assembly Event?</h4>
             </div>
             <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-              Are you sure you want to permanently delete this event and all associated delegate allocations?
+              Are you sure you want to permanently delete <strong style={{ color: 'var(--text-primary)' }}>{events.find(e => e.id === deletingEventId)?.college_name || 'this event'}</strong>?
+              {(learners.filter(l => l.event_id === deletingEventId).length > 0 || (events.find(e => e.id === deletingEventId)?.participant_count || 0) > 0) && (
+                <span className="block mt-2 p-2 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400 font-semibold border border-rose-500/20">
+                  ⚠️ This event contains {learners.filter(l => l.event_id === deletingEventId).length || events.find(e => e.id === deletingEventId)?.participant_count} active delegates and recorded data. Deletion is irreversible!
+                </span>
+              )}
             </p>
             <div className="flex items-center justify-end gap-2 pt-2">
               <button
