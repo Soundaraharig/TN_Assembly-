@@ -83,6 +83,39 @@ interface VolunteerDashboardProps {
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
 
+const matchesLearnerConstituency = (l: Learner, query: string): boolean => {
+  if (!query) return true;
+  const q = query.toLowerCase().trim();
+  const rawNum = l.constituency_number !== undefined && l.constituency_number !== null ? String(l.constituency_number) : '';
+  const cleanQ = q.replace(/^[#\s]+/, '').trim();
+
+  if (rawNum) {
+    if (rawNum === q || rawNum === cleanQ) return true;
+    if (`#${rawNum}`.toLowerCase() === q) return true;
+    if (cleanQ && rawNum.includes(cleanQ)) return true;
+    if (`#${rawNum}`.toLowerCase().includes(q)) return true;
+  }
+
+  if (l.constituency_name && l.constituency_name.toLowerCase().includes(q)) return true;
+  if (l.district && l.district.toLowerCase().includes(q)) return true;
+
+  return false;
+};
+
+const formatConstituencyName = (l: Learner): string => {
+  if (!l.constituency_name && (l.constituency_number === undefined || l.constituency_number === null)) {
+    return 'Floor Delegate';
+  }
+  const numStr = l.constituency_number !== undefined && l.constituency_number !== null ? `#${l.constituency_number}` : '';
+  const rawName = (l.constituency_name || '').trim();
+  // Strip out duplicate number prefix like "1 - " or "27 - " or "1. " from rawName
+  const cleanName = l.constituency_number !== undefined && l.constituency_number !== null
+    ? rawName.replace(new RegExp(`^${l.constituency_number}\\s*[-–.]\\s*`, 'i'), '').trim()
+    : rawName;
+  if (numStr && cleanName) return `${numStr} - ${cleanName}`;
+  return numStr || rawName || 'Floor Delegate';
+};
+
 export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   volunteer,
   event,
@@ -203,15 +236,17 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   const filteredAttendanceLearners = useMemo(() => {
     return learners.filter(l => {
       const pName = getResolvedPartyName(l, activeParties);
-      const cName = l.constituency_name || '';
       const query = attendanceSearch.toLowerCase().trim();
       const matchesSearch =
         !query ||
         l.full_name.toLowerCase().includes(query) ||
         (l.access_code && l.access_code.toLowerCase().includes(query)) ||
         (pName && pName.toLowerCase().includes(query)) ||
-        cName.toLowerCase().includes(query) ||
-        (l.department && l.department.toLowerCase().includes(query));
+        matchesLearnerConstituency(l, query) ||
+        (l.department && l.department.toLowerCase().includes(query)) ||
+        (l.academic_year && l.academic_year.toLowerCase().includes(query)) ||
+        (l.role && l.role.toLowerCase().includes(query)) ||
+        (l.bench && l.bench.toLowerCase().includes(query));
 
       const att = activeDayAttMap.get(l.id);
       const isPresent = att ? att.status === 'Present' : false;
@@ -553,13 +588,19 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   // Filter learners for General Check-in Terminal
   const filteredLearners = useMemo(() => {
     const baseList = checkinScope === 'ASSIGNED' ? assignedDeskLearners : learners;
+    const query = search.toLowerCase().trim();
     const filtered = baseList.filter(l => {
       const pName = getResolvedPartyName(l, activeParties);
       const matchesSearch =
-        l.full_name.toLowerCase().includes(search.toLowerCase()) ||
-        l.access_code.toLowerCase().includes(search.toLowerCase()) ||
-        (pName && pName.toLowerCase().includes(search.toLowerCase())) ||
-        (l.constituency_name && l.constituency_name.toLowerCase().includes(search.toLowerCase()));
+        !query ||
+        l.full_name.toLowerCase().includes(query) ||
+        l.access_code.toLowerCase().includes(query) ||
+        (pName && pName.toLowerCase().includes(query)) ||
+        matchesLearnerConstituency(l, query) ||
+        (l.department && l.department.toLowerCase().includes(query)) ||
+        (l.academic_year && l.academic_year.toLowerCase().includes(query)) ||
+        (l.role && l.role.toLowerCase().includes(query)) ||
+        (l.bench && l.bench.toLowerCase().includes(query));
 
       const isPresent = selectedDay === 1 ? l.day1_checked_in : l.day2_checked_in;
       const matchesStatus =
@@ -573,13 +614,19 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   }, [learners, assignedDeskLearners, checkinScope, search, selectedDay, statusFilter, activeParties]);
 
   const filteredYuvaMembers = useMemo(() => {
+    const query = search.toLowerCase().trim();
     const filtered = assignedDeskLearners.filter(l => {
       const pName = getResolvedPartyName(l, activeParties);
       const matchesSearch =
-        l.full_name.toLowerCase().includes(search.toLowerCase()) ||
-        l.access_code.toLowerCase().includes(search.toLowerCase()) ||
-        (pName && pName.toLowerCase().includes(search.toLowerCase())) ||
-        (l.constituency_name && l.constituency_name.toLowerCase().includes(search.toLowerCase()));
+        !query ||
+        l.full_name.toLowerCase().includes(query) ||
+        l.access_code.toLowerCase().includes(query) ||
+        (pName && pName.toLowerCase().includes(query)) ||
+        matchesLearnerConstituency(l, query) ||
+        (l.department && l.department.toLowerCase().includes(query)) ||
+        (l.academic_year && l.academic_year.toLowerCase().includes(query)) ||
+        (l.role && l.role.toLowerCase().includes(query)) ||
+        (l.bench && l.bench.toLowerCase().includes(query));
 
       const isPresent = selectedDay === 1 ? l.day1_checked_in : l.day2_checked_in;
       const matchesStatus =
@@ -1218,7 +1265,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
 
                             <td className="py-3 px-4">
                               <span className="font-medium" style={{ color: 'var(--text-primary)' }}>
-                                {learner.constituency_name ? `#${learner.constituency_number || ''} ${learner.constituency_name}` : 'Floor Delegate'}
+                                {formatConstituencyName(learner)}
                               </span>
                             </td>
 

@@ -368,13 +368,28 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
     if (candidateSearchQuery.trim()) {
       const q = candidateSearchQuery.toLowerCase();
-      pool = pool.filter(l =>
-        l.full_name?.toLowerCase().includes(q) ||
-        getResolvedPartyName(l, parties).toLowerCase().includes(q) ||
-        l.party_name?.toLowerCase().includes(q) ||
-        l.constituency_name?.toLowerCase().includes(q) ||
-        String(l.constituency_number || '').includes(q)
-      );
+      const cleanQ = q.replace(/^[#\s]+/, '').trim();
+
+      pool = pool.filter(l => {
+        const constNumStr = l.constituency_number !== undefined && l.constituency_number !== null ? String(l.constituency_number) : '';
+        const constWithHash = constNumStr ? `#${constNumStr}` : '';
+        const matchesConstNo = Boolean(
+          constNumStr && (
+            constNumStr === q ||
+            constNumStr === cleanQ ||
+            constNumStr.includes(cleanQ) ||
+            constWithHash.toLowerCase().includes(q)
+          )
+        );
+
+        return (
+          l.full_name?.toLowerCase().includes(q) ||
+          getResolvedPartyName(l, parties).toLowerCase().includes(q) ||
+          l.party_name?.toLowerCase().includes(q) ||
+          l.constituency_name?.toLowerCase().includes(q) ||
+          matchesConstNo
+        );
+      });
     }
 
     return pool;

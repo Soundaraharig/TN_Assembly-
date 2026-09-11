@@ -111,9 +111,19 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
     return learners.filter(l => {
       if (searchTerm.trim()) {
         const q = searchTerm.trim().toLowerCase();
+        const cleanQ = q.replace(/^[#\s]+/, '').trim();
+        const constNumStr = l.constituency_number !== undefined && l.constituency_number !== null ? String(l.constituency_number) : '';
+        const constWithHash = constNumStr ? `#${constNumStr}` : '';
         const matchesName = l.full_name.toLowerCase().includes(q);
         const matchesCode = l.access_code.toLowerCase().includes(q);
-        const matchesConstNo = l.constituency_number ? String(l.constituency_number).includes(q) : false;
+        const matchesConstNo = Boolean(
+          constNumStr && (
+            constNumStr === q ||
+            constNumStr === cleanQ ||
+            constNumStr.includes(cleanQ) ||
+            constWithHash.toLowerCase().includes(q)
+          )
+        );
         const matchesConstName = l.constituency_name ? l.constituency_name.toLowerCase().includes(q) : false;
         if (!matchesName && !matchesCode && !matchesConstNo && !matchesConstName) return false;
       }
