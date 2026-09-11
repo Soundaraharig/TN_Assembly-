@@ -148,6 +148,144 @@ function sortLearnersStably(list: Learner[]): Learner[] {
 }
 
 // ---------------------------------------------------------------------------
+// Election Deduplication & Canonical Key Engine
+// ---------------------------------------------------------------------------
+
+export function getElectionCanonicalKey(election: Partial<Election>, partiesList?: Party[]): string | null {
+  const evId = election.event_id || '';
+  const title = (election.title || '').toLowerCase().trim();
+  const pos = (election.position || '').toLowerCase().trim();
+
+  // Deputy Speaker is not a standalone ballot (2nd highest in Speaker election)
+  if (title.includes('deputy') || pos.includes('deputy') || election.type === 'DEPUTY_SPEAKER') {
+    return null;
+  }
+
+  // House Leadership & Constitutional elections
+  if (pos.includes('speaker') || title.includes('speaker')) {
+    return `${evId}:::CONSTITUTIONAL:::SPEAKER`;
+  }
+  if (pos.includes('ruling') || title.includes('chief minister') || title.includes('prime minister') || title.includes('ruling party leader')) {
+    return `${evId}:::CONSTITUTIONAL:::RULING_LEADER`;
+  }
+  if (pos.includes('opposition') || title.includes('leader of opposition') || title.includes('lop') || title.includes('opposition party leader')) {
+    return `${evId}:::CONSTITUTIONAL:::OPPOSITION_LEADER`;
+  }
+
+  // Political Party Leader elections
+  let partyIdentifier = '';
+  if (election.party_id && partiesList && partiesList.length > 0) {
+    const p = partiesList.find(x => x.id === election.party_id);
+    if (p && p.name) {
+      partyIdentifier = p.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+    }
+  }
+  if (!partyIdentifier && election.party_id) {
+    partyIdentifier = election.party_id.toLowerCase().trim();
+  }
+  if (!partyIdentifier && partiesList && partiesList.length > 0) {
+    const p = partiesList.find(x => x.name && title.includes(x.name.toLowerCase()));
+    if (p && p.name) {
+      partyIdentifier = p.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+    }
+  }
+  if (!partyIdentifier) {
+    const pMatch = title.match(/party\s*(\d+)/i);
+    if (pMatch) {
+      partyIdentifier = `party${pMatch[1]}`;
+    } else if (pos === 'party leader' || title.includes('party leader') || title.includes('leader election')) {
+      const ext = title.replace(/\s+leader election$/i, '').replace(/\s+party leader$/i, '').trim();
+      if (ext) {
+        partyIdentifier = ext.toLowerCase().replace(/[^a-z0-9]/g, '');
+      }
+    }
+  }
+
+  if (partyIdentifier) {
+    return `${evId}:::PARTY_LEADER:::${partyIdentifier}`;
+  }
+
+  return `${evId}:::CUSTOM:::${election.id || title.replace(/[^a-z0-9]/g, '')}`;
+}
+
+export function mergeTwoElections(base: Election, other: Election): Election {
+  const statusScore = (s?: string) => (s === 'Closed' ? 3 : s === 'Live' ? 2 : 1);
+  const baseScore = statusScore(base.status) * 100 + (base.total_votes || 0) * 10 + (base.candidates?.length || 0);
+  const otherScore = statusScore(other.status) * 100 + (other.total_votes || 0) * 10 + (other.candidates?.length || 0);
+
+  const primary = baseScore >= otherScore ? base : other;
+  const secondary = baseScore >= otherScore ? other : base;
+
+  const mergedVoters = Array.from(new Set([
+    ...(primary.voted_delegate_ids || []),
+    ...(secondary.voted_delegate_ids || [])
+  ]));
+
+  const mergedVotesByDelegate: Record<string, string> = {
+    ...((secondary as any).votes_by_delegate || {}),
+    ...((primary as any).votes_by_delegate || {})
+  };
+
+  const candMap = new Map<string, ElectionCandidate>();
+  (primary.candidates || []).forEach(c => candMap.set(c.id || c.name, { ...c }));
+  (secondary.candidates || []).forEach(oc => {
+    const key = oc.id || oc.name;
+    const existing = candMap.get(key) || Array.from(candMap.values()).find(c => c.name.toLowerCase() === oc.name.toLowerCase());
+    if (!existing) {
+      candMap.set(key, { ...oc });
+    } else {
+      existing.votes = Math.max(existing.votes || 0, oc.votes || 0);
+      if (oc.learner_id && !existing.learner_id) existing.learner_id = oc.learner_id;
+    }
+  });
+
+  const mergedCandidates = Array.from(candMap.values());
+  const candsTotal = mergedCandidates.reduce((sum, c) => sum + (c.votes || 0), 0);
+  const totalVotes = Math.max(
+    primary.total_votes || 0,
+    secondary.total_votes || 0,
+    candsTotal,
+    mergedVoters.length,
+    Object.keys(mergedVotesByDelegate).length
+  );
+
+  return {
+    ...secondary,
+    ...primary,
+    id: primary.id || secondary.id,
+    event_id: primary.event_id || secondary.event_id,
+    party_id: primary.party_id || secondary.party_id,
+    title: primary.title || secondary.title,
+    position: primary.position || secondary.position,
+    type: primary.type || secondary.type,
+    status: primary.status || secondary.status,
+    candidates: mergedCandidates,
+    voted_delegate_ids: mergedVoters,
+    votes_by_delegate: mergedVotesByDelegate,
+    total_votes: totalVotes,
+    winner: primary.winner || secondary.winner,
+    completed_at: primary.completed_at || secondary.completed_at,
+    created_at: primary.created_at || secondary.created_at
+  };
+}
+
+export function deduplicateElectionList(elections: Election[], partiesList?: Party[]): Election[] {
+  const map = new Map<string, Election>();
+  for (const elec of elections) {
+    if (!elec) continue;
+    const key = getElectionCanonicalKey(elec, partiesList);
+    if (!key) continue; // Skip deputy speaker or invalid
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, elec);
+    } else {
+      map.set(key, mergeTwoElections(existing, elec));
+    }
+  }
+  return Array.from(map.values());
+}
+
+// ---------------------------------------------------------------------------
 // StorageService — hybrid localStorage + Supabase with pub/sub
 // ---------------------------------------------------------------------------
 export type WriteErrorHandler = (table: string, action: string, error: any) => void;
@@ -508,6 +646,22 @@ class StorageService {
       });
       this.setItem(STORAGE_KEYS.LEARNERS, sortLearnersStably(cleanedLearners));
 
+      // 5. DEDUPLICATE & STRICTLY SCOPE ELECTIONS
+      const rawElecs = this.getItem<Election[]>(STORAGE_KEYS.ELECTIONS, INITIAL_ELECTIONS);
+      const allPartiesForElecs = this.getParties();
+      const cleanedElecs = deduplicateElectionList(rawElecs, allPartiesForElecs).filter(e => {
+        let evId = e.event_id && e.event_id.trim() ? e.event_id.trim() : '';
+        if (!evId && defaultEventId) {
+          evId = defaultEventId;
+          e.event_id = defaultEventId;
+        }
+        if (!evId || (!validEventIds.has(evId) && validEventIds.size > 0)) {
+          return false;
+        }
+        return true;
+      });
+      this.setItem(STORAGE_KEYS.ELECTIONS, cleanedElecs);
+
     } catch (e) {
       console.warn('[StorageService] Error during cleanupAndDeduplicateData:', e);
     }
@@ -820,78 +974,28 @@ class StorageService {
           });
           this.setItem(STORAGE_KEYS.NOMINATIONS, Array.from(nomMap.values()));
 
-          // Monotonic Election Merging (Issue #7: vote count can never drop)
+          // Monotonic Election Merging with Canonical Key Deduplication
           const localElecs = this.getItem<Election[]>(STORAGE_KEYS.ELECTIONS, []);
-          const elecMap = new Map<string, Election>();
-          localElecs.forEach(e => elecMap.set(e.id, e));
+          const allPartiesForSync = this.getParties();
+          const elecCanonicalMap = new Map<string, Election>();
+
+          localElecs.forEach(e => {
+            const k = getElectionCanonicalKey(e, allPartiesForSync) || e.id;
+            const existing = elecCanonicalMap.get(k);
+            elecCanonicalMap.set(k, existing ? mergeTwoElections(existing, e) : e);
+          });
+
           allElecs.forEach(remoteE => {
-            const localE = elecMap.get(remoteE.id);
+            const k = getElectionCanonicalKey(remoteE, allPartiesForSync) || remoteE.id;
+            const localE = elecCanonicalMap.get(k);
             if (!localE) {
-              elecMap.set(remoteE.id, remoteE);
+              elecCanonicalMap.set(k, remoteE);
             } else {
-              const mergedVoters = Array.from(new Set([
-                ...(localE.voted_delegate_ids || []),
-                ...(remoteE.voted_delegate_ids || [])
-              ]));
-
-              const mergedVotesByDelegate: Record<string, string> = {
-                ...((remoteE as any).votes_by_delegate || {}),
-                ...((localE as any).votes_by_delegate || {})
-              };
-
-              const candMap = new Map<string, ElectionCandidate>();
-              (localE.candidates || []).forEach(c => candMap.set(c.id, { ...c }));
-              (remoteE.candidates || []).forEach(rc => {
-                const existingCand = candMap.get(rc.id);
-                if (!existingCand) {
-                  candMap.set(rc.id, { ...rc });
-                } else {
-                  candMap.set(rc.id, {
-                    ...existingCand,
-                    ...rc,
-                    votes: Math.max(existingCand.votes || 0, rc.votes || 0)
-                  });
-                }
-              });
-
-              // Recount votes from merged voter map to eliminate simultaneous submission loss
-              if (Object.keys(mergedVotesByDelegate).length > 0) {
-                candMap.forEach(cand => {
-                  const verifiedVotes = Object.values(mergedVotesByDelegate).filter(id => id === cand.id).length;
-                  cand.votes = Math.max(cand.votes || 0, verifiedVotes);
-                });
-              }
-
-              const mergedCandidates = Array.from(candMap.values());
-              const candsTotal = mergedCandidates.reduce((sum, c) => sum + (c.votes || 0), 0);
-              const monotonicTotal = Math.max(
-                localE.total_votes || 0,
-                remoteE.total_votes || 0,
-                candsTotal,
-                mergedVoters.length,
-                Object.keys(mergedVotesByDelegate).length
-              );
-
-              let finalStatus = remoteE.status;
-              if (localE.status === 'Closed' || remoteE.status === 'Closed') {
-                finalStatus = 'Closed';
-              } else if (localE.status === 'Live' || remoteE.status === 'Live') {
-                finalStatus = 'Live';
-              }
-
-              elecMap.set(remoteE.id, {
-                ...remoteE,
-                ...localE,
-                status: finalStatus,
-                candidates: mergedCandidates,
-                voted_delegate_ids: mergedVoters,
-                votes_by_delegate: mergedVotesByDelegate,
-                total_votes: monotonicTotal,
-                winner: localE.winner || remoteE.winner
-              } as any);
+              elecCanonicalMap.set(k, mergeTwoElections(localE, remoteE));
             }
           });
-          this.setItem(STORAGE_KEYS.ELECTIONS, Array.from(elecMap.values()));
+
+          this.setItem(STORAGE_KEYS.ELECTIONS, deduplicateElectionList(Array.from(elecCanonicalMap.values()), allPartiesForSync));
 
           // Monotonic Flash Vote Merging (Issue #7: votes can never drop)
           const localFVotes = this.getItem<LiveFlashVote[]>(STORAGE_KEYS.FLASH_VOTES, []);
@@ -1309,20 +1413,10 @@ class StorageService {
       const projSettings = existingSC.projector_settings || this.getItem<ProjectorStudioSettings | null>(`tn_assembly_projector_studio_${eventId}`, null);
       const lastBell = existingSC.last_bell_ring || this.getItem<number | null>(`tn_assembly_last_bell_${eventId}`, null);
 
-      // Protect election history: retain existing elections if missing locally, but preserve current active/upcoming elections
+      // Protect election history: retain existing elections if missing locally, and deduplicate with current active/upcoming elections
       const existingElecs = Array.isArray(existingSC.elections) ? existingSC.elections : [];
-      const elecsMap = new Map<string, Election>(elecs.map(e => [e.id, e]));
-      existingElecs.forEach((ce: any) => {
-        if (ce && ce.id && !elecsMap.has(ce.id)) {
-          elecsMap.set(ce.id, ce);
-        }
-      });
-      const mergedElecs = Array.from(elecsMap.values()).filter(e => {
-        const isDep = e.type === 'DEPUTY_SPEAKER' ||
-          (e.position && e.position.toLowerCase() === 'deputy speaker') ||
-          (e.title && e.title.toLowerCase().includes('deputy speaker'));
-        return !isDep;
-      });
+      const partiesForSync = this.getParties(eventId);
+      const mergedElecs = deduplicateElectionList([...existingElecs, ...elecs], partiesForSync);
 
       // Permanent Guard: Ensure elections for confirmed elected leaders in learners are marked Closed only if already closed or not actively upcoming/live
       const eventLearners = this.getLearners(eventId);
@@ -4786,7 +4880,9 @@ class StorageService {
   public getElections(eventId?: string, role?: string, studentId?: string): Election[] {
     const all = this.getItem<Election[]>(STORAGE_KEYS.ELECTIONS, INITIAL_ELECTIONS);
     const targetId = eventId || this.getActiveEventId();
-    const list = targetId ? all.filter(e => e.event_id === targetId) : all;
+    const partiesForEvent = targetId ? this.getParties(targetId) : this.getParties();
+    const rawList = targetId ? all.filter(e => e.event_id === targetId) : all;
+    const list = deduplicateElectionList(rawList, partiesForEvent);
 
     // Self-healing: if learners table has elected leaders, ensure elections reflect Closed with winner
     const learners = targetId ? this.getLearners(targetId) : this.getLearners();
@@ -4882,20 +4978,36 @@ class StorageService {
 
   public addElection(elec: Partial<Election>): Election {
     const all = this.getElectionAll();
+    const partiesForEvent = elec.event_id ? this.getParties(elec.event_id) : this.getParties();
+    const key = getElectionCanonicalKey(elec, partiesForEvent);
+
+    if (key) {
+      const existing = all.find(e => getElectionCanonicalKey(e, partiesForEvent) === key);
+      if (existing) {
+        if (elec.party_id && !existing.party_id) {
+          existing.party_id = elec.party_id;
+          this.updateElection(existing);
+        }
+        return existing;
+      }
+    }
+
     const newElec: Election = {
       id: elec.id || uid('elec'),
       event_id: elec.event_id || '',
+      party_id: elec.party_id,
       title: elec.title || 'New Election',
       position: elec.position || 'Assembly Role',
       type: elec.type || 'LEADERSHIP',
-      status: elec.status || 'Live',
+      status: elec.status || 'Upcoming',
       candidates: elec.candidates || [],
       total_votes: elec.total_votes ?? 0,
       voted_delegate_ids: elec.voted_delegate_ids || [],
       created_at: elec.created_at || new Date().toISOString()
     };
     all.unshift(newElec);
-    this.setItem(STORAGE_KEYS.ELECTIONS, all);
+    const deduplicated = deduplicateElectionList(all, partiesForEvent);
+    this.setItem(STORAGE_KEYS.ELECTIONS, deduplicated);
     if (newElec.event_id) this.syncEventStateToSupabase(newElec.event_id);
     return newElec;
   }

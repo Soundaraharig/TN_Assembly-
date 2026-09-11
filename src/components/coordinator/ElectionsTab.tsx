@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import type { Election, LiveFlashVote, Learner, FlashVoteAudience, ElectionCandidate, Nomination, Party } from '../../types';
 import {
   Vote,
@@ -27,7 +27,7 @@ import {
   Tv
 } from 'lucide-react';
 import { getProjectorSettings, saveProjectorSettings } from './ProjectorTab';
-import { getResolvedPartyName } from '../../services/storageService';
+import { getResolvedPartyName, deduplicateElectionList } from '../../services/storageService';
 
 interface ElectionsTabProps {
   elections: Election[];
@@ -117,20 +117,49 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   const [pollQuestion, setPollQuestion] = useState('');
   const [pollMotionType, setPollMotionType] = useState<LiveFlashVote['motion_type']>('Division');
 
+  const isAutoCreatingRef = useRef(false);
+
   // Auto-create standard constitutional election rows & party leader elections if missing
   useEffect(() => {
-    if (eventId) {
-      CONSTITUTIONAL_POSTS.forEach(post => {
-        const exists = elections.some(e =>
-          e.position?.toLowerCase() === post.position.toLowerCase() ||
-          e.title?.toLowerCase() === post.title.toLowerCase()
+    if (!eventId || isAutoCreatingRef.current) return;
+
+    const deduplicated = deduplicateElectionList(elections, parties);
+    const toCreate: Partial<Election>[] = [];
+
+    CONSTITUTIONAL_POSTS.forEach(post => {
+      const exists = deduplicated.some(e =>
+        e.position?.toLowerCase() === post.position.toLowerCase() ||
+        e.title?.toLowerCase() === post.title.toLowerCase()
+      );
+      if (!exists) {
+        toCreate.push({
+          event_id: eventId,
+          title: post.title,
+          position: post.position,
+          type: post.type,
+          status: 'Upcoming',
+          candidates: [],
+          total_votes: 0,
+          voted_delegate_ids: []
+        });
+      }
+    });
+
+    // Auto-create Party Leader Elections for all assigned parties
+    if (parties && parties.length > 0) {
+      parties.forEach(p => {
+        const exists = deduplicated.some(e =>
+          (e.party_id && e.party_id === p.id) ||
+          (p.name && e.title.toLowerCase().includes(p.name.toLowerCase()) &&
+           (e.title.toLowerCase().includes('leader') || e.position?.toLowerCase().includes('leader')))
         );
         if (!exists) {
-          onCreateElection({
+          toCreate.push({
             event_id: eventId,
-            title: post.title,
-            position: post.position,
-            type: post.type,
+            party_id: p.id,
+            title: `${p.name} Leader Election`,
+            position: 'Party Leader',
+            type: 'LEADERSHIP',
             status: 'Upcoming',
             candidates: [],
             total_votes: 0,
@@ -138,30 +167,16 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
           });
         }
       });
+    }
 
-      // Auto-create Party Leader Elections for all assigned parties
-      if (parties && parties.length > 0) {
-        parties.forEach(p => {
-          const exists = elections.some(e =>
-            (e.party_id === p.id) ||
-            (e.title.toLowerCase().includes(p.name.toLowerCase()) &&
-             (e.title.toLowerCase().includes('leader') || e.position?.toLowerCase().includes('leader')))
-          );
-          if (!exists) {
-            onCreateElection({
-              event_id: eventId,
-              party_id: p.id,
-              title: `${p.name} Leader Election`,
-              position: 'Party Leader',
-              type: 'LEADERSHIP',
-              status: 'Upcoming',
-              candidates: [],
-              total_votes: 0,
-              voted_delegate_ids: []
-            });
-          }
-        });
-      }
+    if (toCreate.length > 0) {
+      isAutoCreatingRef.current = true;
+      toCreate.forEach(elec => {
+        onCreateElection(elec);
+      });
+      setTimeout(() => {
+        isAutoCreatingRef.current = false;
+      }, 800);
     }
   }, [elections, eventId, parties]);
 
@@ -217,11 +232,12 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   };
 
   const { constitutionalElections, partyLeaderElections, customElections } = useMemo(() => {
+    const deduplicated = deduplicateElectionList(elections, parties);
     const constitutional: Election[] = [];
     const partyLeaders: Election[] = [];
     const custom: Election[] = [];
 
-    elections.forEach(elec => {
+    deduplicated.forEach(elec => {
       const title = (elec.title || '').toLowerCase();
       const pos = (elec.position || '').toLowerCase();
 

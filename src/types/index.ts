@@ -228,6 +228,7 @@ export interface Election {
   total_votes: number;
   winner?: string;
   voted_delegate_ids?: string[];
+  votes_by_delegate?: Record<string, string>;
   party_id?: string;
   completed_at?: string;
   created_at: string;
