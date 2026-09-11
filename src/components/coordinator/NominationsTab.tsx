@@ -51,6 +51,12 @@ export const ALL_NOMINATION_ROLES: { id: NominationPosition; label: string; desc
     icon: Crown
   },
   {
+    id: 'Deputy Speaker',
+    label: 'Deputy Speaker',
+    description: 'Assists and presides over assembly proceedings in the absence of the Speaker.',
+    icon: Crown
+  },
+  {
     id: 'Leader of Opposition',
     label: 'Leader of Opposition (LOP)',
     description: 'Leads the Opposition benches, holds the Government to account, and offers the alternative.',

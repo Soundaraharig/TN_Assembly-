@@ -1296,6 +1296,7 @@ class StorageService {
       // Permanent Guard: Ensure elections for confirmed elected leaders in learners are ALWAYS marked Closed
       const eventLearners = this.getLearners(eventId);
       const speakerLearner = eventLearners.find(l => isSpeakerRole(l.role));
+      const deputySpeakerLearner = eventLearners.find(l => isDeputySpeakerRole(l.role));
       const cmLearner = eventLearners.find(l => isChiefMinisterRole(l.role));
       const lopLearner = eventLearners.find(l => isLeaderOfOppositionRole(l.role));
 
@@ -1316,6 +1317,21 @@ class StorageService {
             candidates: (e.candidates && e.candidates.length > 0 && e.candidates[0].votes > 0) ? e.candidates : [
               { id: speakerLearner.id, learner_id: speakerLearner.id, name: speakerLearner.full_name, party: speakerLearner.party_name || 'Party 2', bench: 'Ruling' as const, votes: 45 },
               { id: 'cand_speaker_opp', name: 'S. Srimathi', party: 'Party 1', bench: 'Opposition' as const, votes: 27 }
+            ]
+          };
+        }
+        if (deputySpeakerLearner && (posLower.includes('deputy') || titleLower.includes('deputy speaker') || titleLower.includes('deputy speaker election'))) {
+          return {
+            ...e,
+            status: 'Closed' as const,
+            type: 'DEPUTY_SPEAKER' as const,
+            position: 'Deputy Speaker',
+            winner: deputySpeakerLearner.full_name,
+            total_votes: e.total_votes > 0 ? e.total_votes : 68,
+            completed_at: e.completed_at || '2026-09-08T06:45:00.000Z',
+            candidates: (e.candidates && e.candidates.length > 0 && e.candidates[0].votes > 0) ? e.candidates : [
+              { id: deputySpeakerLearner.id, learner_id: deputySpeakerLearner.id, name: deputySpeakerLearner.full_name, party: deputySpeakerLearner.party_name || 'Party 1', bench: 'Opposition' as const, votes: 40 },
+              { id: 'cand_deputy_runner', name: 'R. Kavin', party: 'Party 2', bench: 'Ruling' as const, votes: 28 }
             ]
           };
         }
@@ -4704,6 +4720,7 @@ class StorageService {
     // Self-healing: if learners table has elected leaders, ensure elections reflect Closed with winner
     const learners = targetId ? this.getLearners(targetId) : this.getLearners();
     const speakerLearner = learners.find(l => isSpeakerRole(l.role));
+    const deputySpeakerLearner = learners.find(l => isDeputySpeakerRole(l.role));
     const cmLearner = learners.find(l => isChiefMinisterRole(l.role));
     const lopLearner = learners.find(l => isLeaderOfOppositionRole(l.role));
 
@@ -4726,6 +4743,22 @@ class StorageService {
           candidates: (e.candidates && e.candidates.length > 0 && e.candidates[0].votes > 0) ? e.candidates : [
             { id: speakerLearner.id, learner_id: speakerLearner.id, name: speakerLearner.full_name, party: speakerLearner.party_name || 'Party 2', bench: 'Ruling' as const, votes: 45 },
             { id: 'cand_speaker_opp', name: 'S. Srimathi', party: 'Party 1', bench: 'Opposition' as const, votes: 27 }
+          ]
+        };
+      }
+      if (deputySpeakerLearner && (posLower.includes('deputy') || titleLower.includes('deputy speaker') || titleLower.includes('deputy speaker election'))) {
+        modified = true;
+        return {
+          ...e,
+          status: 'Closed' as const,
+          type: 'DEPUTY_SPEAKER' as const,
+          position: 'Deputy Speaker',
+          winner: deputySpeakerLearner.full_name,
+          total_votes: e.total_votes > 0 ? e.total_votes : 68,
+          completed_at: e.completed_at || '2026-09-08T06:45:00.000Z',
+          candidates: (e.candidates && e.candidates.length > 0 && e.candidates[0].votes > 0) ? e.candidates : [
+            { id: deputySpeakerLearner.id, learner_id: deputySpeakerLearner.id, name: deputySpeakerLearner.full_name, party: deputySpeakerLearner.party_name || 'Party 1', bench: 'Opposition' as const, votes: 40 },
+            { id: 'cand_deputy_runner', name: 'R. Kavin', party: 'Party 2', bench: 'Ruling' as const, votes: 28 }
           ]
         };
       }
@@ -4897,7 +4930,9 @@ class StorageService {
         if (win && sorted[0]) {
           winnerCandidate = sorted[0];
           const pos = (e.position || e.title || '').trim();
-          if (isSpeakerRole(pos) || e.type === 'SPEAKER') {
+          if (isDeputySpeakerRole(pos) || e.type === 'DEPUTY_SPEAKER') {
+            winnerRoleToAssign = CANONICAL_ROLES.DEPUTY_SPEAKER;
+          } else if (isSpeakerRole(pos) || e.type === 'SPEAKER') {
             winnerRoleToAssign = CANONICAL_ROLES.SPEAKER;
           } else if (isChiefMinisterRole(pos)) {
             winnerRoleToAssign = CANONICAL_ROLES.CHIEF_MINISTER;
@@ -4949,7 +4984,9 @@ class StorageService {
           if (winner && sorted[0]) {
             winnerCandidate = sorted[0];
             const pos = (e.position || e.title || '').trim();
-            if (isSpeakerRole(pos) || e.type === 'SPEAKER') {
+            if (isDeputySpeakerRole(pos) || e.type === 'DEPUTY_SPEAKER') {
+              winnerRoleToAssign = CANONICAL_ROLES.DEPUTY_SPEAKER;
+            } else if (isSpeakerRole(pos) || e.type === 'SPEAKER') {
               winnerRoleToAssign = CANONICAL_ROLES.SPEAKER;
             } else if (isChiefMinisterRole(pos)) {
               winnerRoleToAssign = CANONICAL_ROLES.CHIEF_MINISTER;
@@ -6737,6 +6774,7 @@ export function getResolvedCommitteeName(learner: Partial<Learner>, committees: 
 export const CANONICAL_ROLES = {
   CHIEF_MINISTER: 'Chief Minister',
   SPEAKER: 'Assembly Speaker',
+  DEPUTY_SPEAKER: 'Deputy Speaker',
   LEADER_OF_OPPOSITION: 'Leader of Opposition'
 } as const;
 
@@ -6767,6 +6805,9 @@ export function normalizeLeadershipRole(role?: string): string {
   if (r.includes('chief minister') || r === 'cm' || r.includes('leader of the house')) {
     return CANONICAL_ROLES.CHIEF_MINISTER;
   }
+  if (r.includes('deputy speaker')) {
+    return CANONICAL_ROLES.DEPUTY_SPEAKER;
+  }
   if (r.includes('speaker') && !r.includes('deputy')) {
     return CANONICAL_ROLES.SPEAKER;
   }
@@ -6788,6 +6829,12 @@ export function isSpeakerRole(role?: string): boolean {
   return (r === 'assembly speaker' || r === 'speaker' || r.includes('speaker of')) && !r.includes('deputy');
 }
 
+export function isDeputySpeakerRole(role?: string): boolean {
+  if (!role) return false;
+  const r = role.trim().toLowerCase();
+  return r === 'deputy speaker' || r.includes('deputy speaker');
+}
+
 export function isLeaderOfOppositionRole(role?: string): boolean {
   if (!role) return false;
   const r = role.trim().toLowerCase();
@@ -6803,6 +6850,7 @@ export function isLeaderOfOppositionRole(role?: string): boolean {
 export function isAssemblyRoleMatching(currentRole: string | undefined, targetRole: string): boolean {
   if (!currentRole || !targetRole) return false;
   if (isChiefMinisterRole(targetRole) && isChiefMinisterRole(currentRole)) return true;
+  if (isDeputySpeakerRole(targetRole) && isDeputySpeakerRole(currentRole)) return true;
   if (isSpeakerRole(targetRole) && isSpeakerRole(currentRole)) return true;
   if (isLeaderOfOppositionRole(targetRole) && isLeaderOfOppositionRole(currentRole)) return true;
   return currentRole.trim().toLowerCase() === targetRole.trim().toLowerCase();

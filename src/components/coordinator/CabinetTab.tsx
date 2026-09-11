@@ -5,6 +5,7 @@ import {
   getResolvedLearnerBench,
   isChiefMinisterRole,
   isSpeakerRole,
+  isDeputySpeakerRole,
   isLeaderOfOppositionRole,
   isAssemblyRoleMatching,
   CANONICAL_ROLES
@@ -309,6 +310,8 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
           map.set(l.id, CANONICAL_ROLES.CHIEF_MINISTER);
         } else if (isSpeakerRole(l.role)) {
           map.set(l.id, CANONICAL_ROLES.SPEAKER);
+        } else if (isDeputySpeakerRole(l.role)) {
+          map.set(l.id, CANONICAL_ROLES.DEPUTY_SPEAKER);
         } else if (isLeaderOfOppositionRole(l.role)) {
           map.set(l.id, CANONICAL_ROLES.LEADER_OF_OPPOSITION);
         } else if (l.role.startsWith('Minister for') || l.role.startsWith('Shadow Minister for')) {
@@ -610,15 +613,17 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
               <Sparkles className="w-3.5 h-3.5 text-amber-500" /> Key Assembly Leadership Roles
             </h3>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {[
                 { role: CANONICAL_ROLES.SPEAKER, title: 'Assembly Speaker', bench: 'Neutral / Presiding', allowedBench: undefined },
+                { role: CANONICAL_ROLES.DEPUTY_SPEAKER, title: 'Deputy Speaker', bench: 'Neutral / Presiding', allowedBench: undefined },
                 { role: CANONICAL_ROLES.CHIEF_MINISTER, title: 'Chief Minister', bench: 'Ruling Bench', allowedBench: 'Ruling' as const },
                 { role: CANONICAL_ROLES.LEADER_OF_OPPOSITION, title: 'Leader of Opposition', bench: 'Opposition Bench', allowedBench: 'Opposition' as const }
               ].map(item => {
                 const holder = (eventLearners || []).find(l => {
                   if (item.role === CANONICAL_ROLES.CHIEF_MINISTER) return isChiefMinisterRole(l.role);
                   if (item.role === CANONICAL_ROLES.SPEAKER) return isSpeakerRole(l.role);
+                  if (item.role === CANONICAL_ROLES.DEPUTY_SPEAKER) return isDeputySpeakerRole(l.role);
                   if (item.role === CANONICAL_ROLES.LEADER_OF_OPPOSITION) return isLeaderOfOppositionRole(l.role);
                   return false;
                 });

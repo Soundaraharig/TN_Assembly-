@@ -1285,7 +1285,7 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
                 <input
                   type="text"
                   value={quickEditLearner.role || ''}
-                  placeholder="e.g. Chief Minister, Speaker, MLA"
+                  placeholder="e.g. Chief Minister, Speaker, Deputy Speaker, MLA"
                   onChange={(e) => setQuickEditLearner({ ...quickEditLearner, role: e.target.value })}
                   className="w-full p-2 rounded-xl border focus:outline-none"
                   style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}

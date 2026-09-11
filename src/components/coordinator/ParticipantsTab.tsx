@@ -6,6 +6,7 @@ import {
   getResolvedCommitteeName,
   isChiefMinisterRole,
   isSpeakerRole,
+  isDeputySpeakerRole,
   isLeaderOfOppositionRole,
   isAssemblyRoleMatching
 } from '../../services/storageService';
@@ -173,6 +174,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
           if (!isChiefMinisterRole(l.role)) return false;
         } else if (selectedRole === 'Assembly Speaker') {
           if (!isSpeakerRole(l.role)) return false;
+        } else if (selectedRole === 'Deputy Speaker') {
+          if (!isDeputySpeakerRole(l.role)) return false;
         } else if (selectedRole === 'Leader of Opposition') {
           if (!isLeaderOfOppositionRole(l.role)) return false;
         } else if (selectedRole === 'Cabinet Minister') {
@@ -390,6 +393,15 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
       return (
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-black bg-purple-500/15 text-purple-700 dark:text-purple-300 border border-purple-500/40 shadow-xs">
           <Gavel className="w-3.5 h-3.5 text-purple-500 shrink-0" />
+          <span className="truncate">{role}</span>
+        </span>
+      );
+    }
+
+    if (isDeputySpeakerRole(role)) {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-black bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border border-indigo-500/40 shadow-xs">
+          <Gavel className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
           <span className="truncate">{role}</span>
         </span>
       );
@@ -723,6 +735,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
               <option value="ALL">All roles</option>
               <option value="Chief Minister">Chief Minister</option>
               <option value="Assembly Speaker">Assembly Speaker</option>
+              <option value="Deputy Speaker">Deputy Speaker</option>
               <option value="Leader of Opposition">Leader of Opposition</option>
               <option value="Cabinet Minister">Cabinet Ministers</option>
               <option value="Shadow Minister">Shadow Ministers</option>

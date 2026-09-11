@@ -235,16 +235,11 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
       const title = (elec.title || '').toLowerCase();
       const pos = (elec.position || '').toLowerCase();
 
-      // Skip Deputy Speaker election as requested by user
-      if (title.includes('deputy') || pos.includes('deputy')) {
-        return;
-      }
-
       if ((title.includes('party leader') && !title.includes('ruling') && !title.includes('opposition')) || (pos === 'party leader')) {
         partyLeaders.push(elec);
       } else if (
-        pos.includes('speaker') || pos.includes('ruling') || pos.includes('opposition') ||
-        title.includes('speaker') || title.includes('chief minister') || title.includes('prime minister') || title.includes('leader of opposition')
+        pos.includes('speaker') || pos.includes('deputy') || pos.includes('ruling') || pos.includes('opposition') ||
+        title.includes('speaker') || title.includes('deputy') || title.includes('chief minister') || title.includes('prime minister') || title.includes('leader of opposition')
       ) {
         constitutional.push(elec);
       } else {
@@ -252,12 +247,15 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
       }
     });
 
-    const orderMap: Record<string, number> = { 'speaker': 1, 'ruling': 2, 'chief minister': 2, 'prime minister': 2, 'opposition': 3, 'lop': 3 };
-    constitutional.sort((a, b) => {
-      const aKey = Object.keys(orderMap).find(k => (a.title + a.position).toLowerCase().includes(k)) || 'speaker';
-      const bKey = Object.keys(orderMap).find(k => (b.title + b.position).toLowerCase().includes(k)) || 'speaker';
-      return (orderMap[aKey] || 99) - (orderMap[bKey] || 99);
-    });
+    const getConstitutionalOrder = (e: Election) => {
+      const text = ((e.title || '') + ' ' + (e.position || '')).toLowerCase();
+      if (text.includes('deputy')) return 2;
+      if (text.includes('speaker')) return 1;
+      if (text.includes('chief minister') || text.includes('ruling') || text.includes('prime minister')) return 3;
+      if (text.includes('opposition') || text.includes('lop')) return 4;
+      return 99;
+    };
+    constitutional.sort((a, b) => getConstitutionalOrder(a) - getConstitutionalOrder(b));
 
     partyLeaders.sort((a, b) => {
       const pIndexA = parties.findIndex(p => (p.id && p.id === a.party_id) || a.title.toLowerCase().includes(p.name.toLowerCase()));

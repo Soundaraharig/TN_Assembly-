@@ -200,7 +200,7 @@ export const EditLearnerModal: React.FC<EditLearnerModalProps> = ({
               <label className="block text-xs font-bold text-slate-700 mb-1">Role / Position</label>
               <input
                 type="text"
-                placeholder="e.g. MLA, Minister, Speaker"
+                placeholder="e.g. Chief Minister, Speaker, Deputy Speaker, MLA"
                 value={role}
                 onChange={(e) => setRole(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-emerald-600"
