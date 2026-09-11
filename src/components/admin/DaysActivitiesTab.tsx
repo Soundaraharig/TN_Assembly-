@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import type { EventDay, Learner, DayAttendanceRecord, CollegeEvent, Party, Committee, DayAttendanceStatus } from '../../types';
-import { getRecordSessionStatuses } from '../../types';
+import { getRecordSessionStatuses, formatMarkedBy } from '../../types';
 import { EditDayActivitiesModal } from './EditDayActivitiesModal';
 import {
   Plus,
@@ -315,7 +315,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
         ? (l.day2_checked_in ? 'Checked In (D2)' : 'Not Checked In (D2)')
         : 'N/A';
       const markedAt = att?.marked_at ? new Date(att.marked_at).toLocaleString() : 'N/A';
-      const markedBy = att?.marked_by || 'N/A';
+      const markedBy = formatMarkedBy(att?.marked_by) || 'N/A';
 
       return [
         `"${l.full_name}"`,
@@ -1308,7 +1308,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                             {att?.marked_at ? (
                               <div>
                                 <span>{new Date(att.marked_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                                <span className="text-[10px] text-slate-500 block">by {att.marked_by || 'Volunteer'}</span>
+                                <span className="text-[10px] text-slate-500 block">by {formatMarkedBy(att.marked_by)}</span>
                               </div>
                             ) : (
                               <span className="text-slate-500 italic">Unmarked</span>

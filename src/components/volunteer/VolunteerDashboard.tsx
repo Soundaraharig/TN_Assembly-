@@ -36,7 +36,7 @@ import type {
   DayAttendanceRecord,
   DayAttendanceStatus
 } from '../../types';
-import { getRecordSessionStatuses } from '../../types';
+import { getRecordSessionStatuses, formatMarkedBy } from '../../types';
 import { useTheme } from '../../lib/theme';
 import { storageService, getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
 
@@ -1453,7 +1453,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                               {att?.marked_at ? (
                                 <div>
                                   <span>{new Date(att.marked_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                                  <span className="text-[10px] text-slate-500 block">by {att.marked_by || 'Volunteer'}</span>
+                                  <span className="text-[10px] text-slate-500 block">by {formatMarkedBy(att.marked_by)}</span>
                                 </div>
                               ) : (
                                 <span className="text-slate-500 italic">Unmarked</span>

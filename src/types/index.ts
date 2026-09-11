@@ -490,7 +490,7 @@ export interface DayAttendanceRecord {
 
 /**
  * Calculates effective FN, AN, and overall attendance status for a student day record.
- * If legacy records have status === 'Present' with fn/an unset, treats them as Present.
+ * Supports explicit in-memory fields, embedded session tags [FN:...|AN:...], and legacy overall status.
  */
 export function getRecordSessionStatuses(record?: DayAttendanceRecord): {
   fn: DayAttendanceStatus;
@@ -500,11 +500,40 @@ export function getRecordSessionStatuses(record?: DayAttendanceRecord): {
   if (!record) {
     return { fn: 'Absent', an: 'Absent', overall: 'Absent' };
   }
+
+  // 1. Direct in-memory / local properties if present
+  if (record.fn_status && record.an_status) {
+    const fn = record.fn_status;
+    const an = record.an_status;
+    const overall: DayAttendanceStatus = (fn === 'Present' || an === 'Present' || record.status === 'Present') ? 'Present' : 'Absent';
+    return { fn, an, overall };
+  }
+
+  // 2. Check embedded tag in marked_by: [FN:Present|AN:Absent]
+  if (record.marked_by && record.marked_by.includes('[FN:') && record.marked_by.includes('|AN:')) {
+    const fnMatch = record.marked_by.match(/\[FN:(Present|Absent)\|AN:(Present|Absent)\]/);
+    if (fnMatch) {
+      const fn = fnMatch[1] as DayAttendanceStatus;
+      const an = fnMatch[2] as DayAttendanceStatus;
+      const overall: DayAttendanceStatus = (fn === 'Present' || an === 'Present' || record.status === 'Present') ? 'Present' : 'Absent';
+      return { fn, an, overall };
+    }
+  }
+
+  // 3. Fallback based on overall status
   const isOverallPresent = record.status === 'Present';
   const fn: DayAttendanceStatus = record.fn_status || (isOverallPresent ? 'Present' : 'Absent');
   const an: DayAttendanceStatus = record.an_status || (isOverallPresent ? 'Present' : 'Absent');
   const overall: DayAttendanceStatus = (fn === 'Present' || an === 'Present' || isOverallPresent) ? 'Present' : 'Absent';
   return { fn, an, overall };
+}
+
+/**
+ * Strips technical session tags like [FN:Present|AN:Absent] from volunteer marked_by names
+ */
+export function formatMarkedBy(markedBy?: string): string {
+  if (!markedBy) return 'Volunteer';
+  return markedBy.replace(/\s*\[FN:[^\]]+\]/g, '').trim() || 'Volunteer';
 }
 
 export const STANDARD_TN_ACTIVITIES: string[] = [

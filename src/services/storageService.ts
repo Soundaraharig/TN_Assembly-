@@ -765,7 +765,10 @@ class StorageService {
           allDays = [...allDays, ...(rawEventDays as unknown as EventDay[])];
         }
         if (!attendanceErr && Array.isArray(rawAttendance)) {
-          allDayAtt = [...allDayAtt, ...(rawAttendance as unknown as DayAttendanceRecord[])];
+          allDayAtt = [...allDayAtt, ...(rawAttendance as unknown as DayAttendanceRecord[]).map(r => {
+            const { fn, an } = getRecordSessionStatuses(r);
+            return { ...r, fn_status: r.fn_status || fn, an_status: r.an_status || an };
+          })];
         }
 
         if (events.length === 0) {
@@ -980,7 +983,14 @@ class StorageService {
           const localAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
           const retainedLocalAtt = localAtt.filter(a => !remoteEventIds.has(a.event_id));
           const attMap = new Map<string, DayAttendanceRecord>();
-          allDayAtt.forEach(a => attMap.set(`${a.event_id}:::${a.day_id}:::${a.student_id}`, a));
+          allDayAtt.forEach(a => {
+            const { fn, an } = getRecordSessionStatuses(a);
+            attMap.set(`${a.event_id}:::${a.day_id}:::${a.student_id}`, {
+              ...a,
+              fn_status: a.fn_status || fn,
+              an_status: a.an_status || an
+            });
+          });
           this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...retainedLocalAtt, ...Array.from(attMap.values())]);
 
           if (allChecklist.length > 0) {
@@ -3008,6 +3018,18 @@ class StorageService {
     const effectiveStatus: DayAttendanceStatus =
       (nextFnStatus === 'Present' || nextAnStatus === 'Present') ? 'Present' : 'Absent';
 
+    const cleanMarkedBy = (markedBy || prior?.marked_by || 'Volunteer').replace(/\s*\[FN:[^\]]+\]/g, '').trim() || 'Volunteer';
+    const markedByWithTag = `${cleanMarkedBy} [FN:${nextFnStatus}|AN:${nextAnStatus}]`;
+
+    // Strict schema payload for Supabase event_day_attendance table
+    const dbUpdatePayload = {
+      status: effectiveStatus,
+      marked_by: markedByWithTag,
+      marked_by_role: markedByRole,
+      marked_at: timestamp,
+      updated_at: timestamp
+    };
+
     let record: DayAttendanceRecord;
 
     if (remoteRecord || existingLocal) {
@@ -3023,7 +3045,7 @@ class StorageService {
         status: effectiveStatus,
         fn_status: nextFnStatus,
         an_status: nextAnStatus,
-        marked_by: markedBy,
+        marked_by: markedByWithTag,
         marked_by_role: markedByRole,
         marked_at: timestamp,
         updated_at: timestamp
@@ -3039,19 +3061,11 @@ class StorageService {
       if (supabase) {
         let updateSuccessful = false;
 
-        // Try primary key ID update first
+        // Try primary key ID update first with schema-safe payload
         if (targetDbId && isValidUuid(targetDbId)) {
           const { data: upData, error: upErr } = await supabase
             .from('event_day_attendance')
-            .update({
-              status: effectiveStatus,
-              fn_status: nextFnStatus,
-              an_status: nextAnStatus,
-              marked_by: markedBy,
-              marked_by_role: markedByRole,
-              marked_at: timestamp,
-              updated_at: timestamp
-            })
+            .update(dbUpdatePayload)
             .eq('id', targetDbId)
             .select();
 
@@ -3061,19 +3075,11 @@ class StorageService {
           }
         }
 
-        // Fallback to composite key (event_id, day_id, student_id) update
+        // Fallback to composite key (event_id, day_id, student_id) update with schema-safe payload
         if (!updateSuccessful) {
           const { data: compData, error: compErr } = await supabase
             .from('event_day_attendance')
-            .update({
-              status: effectiveStatus,
-              fn_status: nextFnStatus,
-              an_status: nextAnStatus,
-              marked_by: markedBy,
-              marked_by_role: markedByRole,
-              marked_at: timestamp,
-              updated_at: timestamp
-            })
+            .update(dbUpdatePayload)
             .eq('event_id', eventId)
             .eq('day_id', dayId)
             .eq('student_id', studentId)
@@ -3113,7 +3119,7 @@ class StorageService {
         status: effectiveStatus,
         fn_status: nextFnStatus,
         an_status: nextAnStatus,
-        marked_by: markedBy,
+        marked_by: markedByWithTag,
         marked_by_role: markedByRole,
         marked_at: timestamp,
         created_at: timestamp,
@@ -3143,15 +3149,7 @@ class StorageService {
             if (conflictRow) {
               const { data: resolvedData } = await supabase
                 .from('event_day_attendance')
-                .update({
-                  status: effectiveStatus,
-                  fn_status: nextFnStatus,
-                  an_status: nextAnStatus,
-                  marked_by: markedBy,
-                  marked_by_role: markedByRole,
-                  marked_at: timestamp,
-                  updated_at: timestamp
-                })
+                .update(dbUpdatePayload)
                 .eq('id', conflictRow.id)
                 .select();
 
@@ -3278,6 +3276,9 @@ class StorageService {
       }
       const effectiveStatus: DayAttendanceStatus = (nextFn === 'Present' || nextAn === 'Present') ? 'Present' : 'Absent';
 
+      const cleanMarkedBy = (markedBy || prior?.marked_by || 'Volunteer').replace(/\s*\[FN:[^\]]+\]/g, '').trim() || 'Volunteer';
+      const markedByWithTag = `${cleanMarkedBy} [FN:${nextFn}|AN:${nextAn}]`;
+
       if (prior) {
         existingStudentIdsToUpdate.push(stId);
         const updatedRec: DayAttendanceRecord = {
@@ -3285,7 +3286,7 @@ class StorageService {
           status: effectiveStatus,
           fn_status: nextFn,
           an_status: nextAn,
-          marked_by: markedBy,
+          marked_by: markedByWithTag,
           marked_by_role: markedByRole,
           marked_at: timestamp,
           updated_at: timestamp
@@ -3301,7 +3302,7 @@ class StorageService {
           status: effectiveStatus,
           fn_status: nextFn,
           an_status: nextAn,
-          marked_by: markedBy,
+          marked_by: markedByWithTag,
           marked_by_role: markedByRole,
           marked_at: timestamp,
           created_at: timestamp,
@@ -3315,48 +3316,15 @@ class StorageService {
     this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, Array.from(existingMap.values()));
 
     if (supabase) {
-      // 1. Bulk UPDATE existing records by (event_id, day_id, in:student_id)
-      if (existingStudentIdsToUpdate.length > 0) {
-        const isPres = status === 'Present';
-        const { error: updateBatchErr } = await supabase
-          .from('event_day_attendance')
-          .update({
-            status: isPres ? 'Present' : 'Absent',
-            marked_by: markedBy,
-            marked_by_role: markedByRole,
-            marked_at: timestamp,
-            updated_at: timestamp
-          })
-          .eq('event_id', eventId)
-          .eq('day_id', dayId)
-          .in('student_id', existingStudentIdsToUpdate);
-
-        if (updateBatchErr) {
-          console.warn('[StorageService] Bulk update error on existing records, falling back to batch upsert:', updateBatchErr);
-        }
+      const recordsToUpsert = [
+        ...Array.from(existingMap.values()).filter(r => existingStudentIdsToUpdate.includes(r.student_id)),
+        ...newRecordsToInsert
+      ];
+      if (recordsToUpsert.length > 0) {
+        await this.sbUpsertBatch('event_day_attendance', recordsToUpsert as unknown as Record<string, unknown>[]);
       }
 
-      // 2. Insert new records via batch upsert
-      if (newRecordsToInsert.length > 0) {
-        const res = await this.sbUpsertBatch('event_day_attendance', newRecordsToInsert as unknown as Record<string, unknown>[]);
-        if (!res.success) {
-          console.warn('[StorageService] New records batch upsert returned error, executing fallback update to resolve potential conflicts:', res.error);
-          await supabase
-            .from('event_day_attendance')
-            .update({
-              status: status === 'Present' ? 'Present' : 'Absent',
-              marked_by: markedBy,
-              marked_by_role: markedByRole,
-              marked_at: timestamp,
-              updated_at: timestamp
-            })
-            .eq('event_id', eventId)
-            .eq('day_id', dayId)
-            .in('student_id', newRecordsToInsert.map(r => r.student_id));
-        }
-      }
-
-      // 3. Post-batch sync to capture all server IDs
+      // Post-batch sync to capture all server IDs
       try {
         const { data: freshRows } = await supabase
           .from('event_day_attendance')
@@ -3368,10 +3336,11 @@ class StorageService {
           freshRows.forEach(fr => {
             const k = `${fr.event_id}:::${fr.day_id}:::${fr.student_id}`;
             const localRec = existingMap.get(k);
+            const { fn, an } = getRecordSessionStatuses(fr as unknown as DayAttendanceRecord);
             existingMap.set(k, {
               ...(fr as unknown as DayAttendanceRecord),
-              fn_status: localRec?.fn_status,
-              an_status: localRec?.an_status
+              fn_status: localRec?.fn_status || fn,
+              an_status: localRec?.an_status || an
             });
           });
           this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, Array.from(existingMap.values()));
