@@ -4,7 +4,6 @@ import {
   UserCheck,
   Search,
   CheckCircle,
-  CheckCircle2,
   XCircle,
   LogOut,
   Users,
@@ -37,6 +36,7 @@ import type {
   DayAttendanceRecord,
   DayAttendanceStatus
 } from '../../types';
+import { getRecordSessionStatuses } from '../../types';
 import { useTheme } from '../../lib/theme';
 import { storageService, getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
 
@@ -67,13 +67,15 @@ interface VolunteerDashboardProps {
     dayId: string,
     studentId: string,
     status: DayAttendanceStatus,
-    markedBy?: string
+    markedBy?: string,
+    session?: 'FN' | 'AN'
   ) => Promise<DayAttendanceRecord> | void;
   onBatchSetDayAttendance?: (
     dayId: string,
     studentIds: string[],
     status: DayAttendanceStatus,
-    markedBy?: string
+    markedBy?: string,
+    session?: 'FN' | 'AN'
   ) => Promise<void> | void;
   onAddWalkIn?: (learner: Partial<Learner>) => void;
   onCastVote?: (electionId: string, candidateId: string, delegateId?: string) => void;
@@ -147,7 +149,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
 
   // Attendance tab search & filter
   const [attendanceSearch, setAttendanceSearch] = useState('');
-  const [attendanceStatusFilter, setAttendanceStatusFilter] = useState<'ALL' | 'PRESENT' | 'ABSENT'>('ALL');
+  const [attendanceStatusFilter, setAttendanceStatusFilter] = useState<'ALL' | 'FN_PRESENT' | 'AN_PRESENT' | 'BOTH_PRESENT' | 'ABSENT'>('ALL');
 
   // Walk-in form state
   const [walkInName, setWalkInName] = useState('');
@@ -220,12 +222,29 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     return map;
   }, [activeDayAttendance]);
 
-  const activeDayPresentCount = useMemo(() => {
-    return activeDayAttendance.filter(a => a.status === 'Present').length;
-  }, [activeDayAttendance]);
+  const { fnPresentCount, anPresentCount, bothPresentCount } = useMemo(() => {
+    let fn = 0;
+    let an = 0;
+    let both = 0;
 
-  const activeDayAbsentCount = Math.max(0, learners.length - activeDayPresentCount);
-  const activeDayPercentage = learners.length > 0 ? Math.round((activeDayPresentCount / learners.length) * 100) : 0;
+    learners.forEach(l => {
+      const att = activeDayAttMap.get(l.id);
+      const { fn: fnStatus, an: anStatus } = getRecordSessionStatuses(att);
+      if (fnStatus === 'Present') fn++;
+      if (anStatus === 'Present') an++;
+      if (fnStatus === 'Present' && anStatus === 'Present') both++;
+    });
+
+    return {
+      fnPresentCount: fn,
+      anPresentCount: an,
+      bothPresentCount: both
+    };
+  }, [learners, activeDayAttMap]);
+
+  const fnPercentage = learners.length > 0 ? Math.round((fnPresentCount / learners.length) * 100) : 0;
+  const anPercentage = learners.length > 0 ? Math.round((anPresentCount / learners.length) * 100) : 0;
+  const bothPercentage = learners.length > 0 ? Math.round((bothPresentCount / learners.length) * 100) : 0;
 
   // Active parties memo
   const activeParties = useMemo(() => {
@@ -249,36 +268,44 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
         (l.bench && l.bench.toLowerCase().includes(query));
 
       const att = activeDayAttMap.get(l.id);
-      const isPresent = att ? att.status === 'Present' : false;
+      const { fn, an, overall } = getRecordSessionStatuses(att);
 
-      const matchesStatus =
-        attendanceStatusFilter === 'ALL' ||
-        (attendanceStatusFilter === 'PRESENT' && isPresent) ||
-        (attendanceStatusFilter === 'ABSENT' && !isPresent);
+      let matchesStatus = true;
+      if (attendanceStatusFilter === 'FN_PRESENT') {
+        matchesStatus = fn === 'Present';
+      } else if (attendanceStatusFilter === 'AN_PRESENT') {
+        matchesStatus = an === 'Present';
+      } else if (attendanceStatusFilter === 'BOTH_PRESENT') {
+        matchesStatus = fn === 'Present' && an === 'Present';
+      } else if (attendanceStatusFilter === 'ABSENT') {
+        matchesStatus = overall === 'Absent';
+      }
 
       return matchesSearch && matchesStatus;
     });
   }, [learners, activeParties, attendanceSearch, attendanceStatusFilter, activeDayAttMap]);
 
-  const handleMarkStudentAttendance = async (studentId: string, status: DayAttendanceStatus) => {
+  const handleMarkStudentAttendance = async (studentId: string, status: DayAttendanceStatus, session?: 'FN' | 'AN') => {
     if (!activeDay) return;
-    if (processingAttendanceIds.has(studentId)) return; // Prevent race conditions & rapid multi-clicks
+    const lockKey = `${studentId}_${session || 'ALL'}`;
+    if (processingAttendanceIds.has(lockKey)) return;
 
-    setProcessingAttendanceIds(prev => new Set(prev).add(studentId));
+    setProcessingAttendanceIds(prev => new Set(prev).add(lockKey));
     const targetLearner = learners.find(l => l.id === studentId);
     const learnerName = targetLearner?.full_name || 'Delegate';
     const volunteerName = volunteer?.name ? `${volunteer.name} (Volunteer)` : 'Floor Volunteer';
+    const sessionLabel = session === 'FN' ? 'Forenoon (FN)' : session === 'AN' ? 'Afternoon (AN)' : 'Full Day';
 
     try {
       if (onSetStudentDayAttendance) {
-        await onSetStudentDayAttendance(activeDay.id, studentId, status, volunteerName);
+        await onSetStudentDayAttendance(activeDay.id, studentId, status, volunteerName, session);
       } else {
-        await storageService.setStudentDayAttendance(eventId, activeDay.id, studentId, status, volunteerName, 'volunteer');
+        await storageService.setStudentDayAttendance(eventId, activeDay.id, studentId, status, volunteerName, 'volunteer', session);
       }
       setAttendanceRefreshKey(k => k + 1);
       onShowToast?.(
-        status === 'Present' ? 'Marked Present' : 'Marked Absent',
-        `${learnerName} successfully marked ${status} for ${activeDay.name}`,
+        status === 'Present' ? `Marked ${sessionLabel} Present` : `Marked ${sessionLabel} Absent`,
+        `${learnerName} marked ${status} for ${sessionLabel} on ${activeDay.name}`,
         status === 'Present' ? 'success' : 'info'
       );
     } catch (err: any) {
@@ -291,28 +318,29 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     } finally {
       setProcessingAttendanceIds(prev => {
         const next = new Set(prev);
-        next.delete(studentId);
+        next.delete(lockKey);
         return next;
       });
     }
   };
 
-  const handleBatchMarkAttendance = async (status: DayAttendanceStatus) => {
+  const handleBatchMarkAttendance = async (status: DayAttendanceStatus, session?: 'FN' | 'AN') => {
     if (!activeDay || isBatchAttendanceLoading) return;
     setIsBatchAttendanceLoading(true);
     const volunteerName = volunteer?.name ? `${volunteer.name} (Volunteer)` : 'Floor Volunteer';
     const studentIds = learners.map(l => l.id);
+    const sessionLabel = session === 'FN' ? 'Forenoon (FN)' : session === 'AN' ? 'Afternoon (AN)' : 'Full Day';
 
     try {
       if (onBatchSetDayAttendance) {
-        await onBatchSetDayAttendance(activeDay.id, studentIds, status, volunteerName);
+        await onBatchSetDayAttendance(activeDay.id, studentIds, status, volunteerName, session);
       } else {
-        await storageService.batchSetDayAttendance(eventId, activeDay.id, studentIds, status, volunteerName, 'volunteer');
+        await storageService.batchSetDayAttendance(eventId, activeDay.id, studentIds, status, volunteerName, 'volunteer', session);
       }
       setAttendanceRefreshKey(k => k + 1);
       onShowToast?.(
         'Attendance Updated',
-        `Successfully marked all ${learners.length} delegates as ${status} on ${activeDay.name}`,
+        `Successfully marked all ${learners.length} delegates as ${status} (${sessionLabel}) on ${activeDay.name}`,
         'success'
       );
     } catch (err: any) {
@@ -1110,7 +1138,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                 </div>
               </div>
 
-              {/* Attendance Quick Stats */}
+              {/* Attendance Quick Stats with FN & AN breakdown */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
                 <div className="p-3.5 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
                   <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Delegates</p>
@@ -1120,23 +1148,23 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                 </div>
 
                 <div className="p-3.5 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Present Count</p>
-                  <p className="text-xl font-black mt-1 text-emerald-500">
-                    {activeDayPresentCount}
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-amber-400">🌅 Forenoon (FN)</p>
+                  <p className="text-xl font-black mt-1 text-amber-400">
+                    {fnPresentCount} <span className="text-xs font-semibold text-slate-400">({fnPercentage}%)</span>
                   </p>
                 </div>
 
                 <div className="p-3.5 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Absent Count</p>
-                  <p className="text-xl font-black mt-1 text-rose-500">
-                    {activeDayAbsentCount}
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-indigo-400">🌇 Afternoon (AN)</p>
+                  <p className="text-xl font-black mt-1 text-indigo-400">
+                    {anPresentCount} <span className="text-xs font-semibold text-slate-400">({anPercentage}%)</span>
                   </p>
                 </div>
 
                 <div className="p-3.5 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Attendance Rate</p>
-                  <p className="text-xl font-black mt-1 text-amber-500">
-                    {activeDayPercentage}%
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-400">✨ Full Day (Both)</p>
+                  <p className="text-xl font-black mt-1 text-emerald-400">
+                    {bothPresentCount} <span className="text-xs font-semibold text-slate-400">({bothPercentage}%)</span>
                   </p>
                 </div>
               </div>
@@ -1144,7 +1172,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
 
             {/* Search, Filters & Quick Actions */}
             <div
-              className="p-4 rounded-2xl border flex flex-col md:flex-row md:items-center justify-between gap-4"
+              className="p-4 rounded-2xl border flex flex-col lg:flex-row lg:items-center justify-between gap-4"
               style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
             >
               <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-1">
@@ -1160,41 +1188,71 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                   <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
                 </div>
 
-                <div className="flex rounded-xl p-1 border shrink-0" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
-                  {(['ALL', 'PRESENT', 'ABSENT'] as const).map((sf) => (
+                <div className="flex rounded-xl p-1 border shrink-0 flex-wrap gap-1" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
+                  {[
+                    { key: 'ALL', label: 'ALL' },
+                    { key: 'FN_PRESENT', label: '🌅 FN' },
+                    { key: 'AN_PRESENT', label: '🌇 AN' },
+                    { key: 'BOTH_PRESENT', label: '✨ Both' },
+                    { key: 'ABSENT', label: '❌ Absent' }
+                  ].map((sf) => (
                     <button
-                      key={sf}
-                      onClick={() => setAttendanceStatusFilter(sf)}
-                      className={`px-3 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
-                        attendanceStatusFilter === sf ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
+                      key={sf.key}
+                      onClick={() => setAttendanceStatusFilter(sf.key as any)}
+                      className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
+                        attendanceStatusFilter === sf.key ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
                       }`}
                     >
-                      {sf}
+                      {sf.label}
                     </button>
                   ))}
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                <button
+                  onClick={() => handleBatchMarkAttendance('Present', 'FN')}
+                  disabled={isBatchAttendanceLoading}
+                  className={`px-2.5 py-1.5 rounded-xl border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-xs font-bold flex items-center gap-1 transition ${
+                    isBatchAttendanceLoading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                  }`}
+                  title="Mark all delegates present for Forenoon (FN)"
+                >
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  <span>Mark FN</span>
+                </button>
+                <button
+                  onClick={() => handleBatchMarkAttendance('Present', 'AN')}
+                  disabled={isBatchAttendanceLoading}
+                  className={`px-2.5 py-1.5 rounded-xl border border-indigo-500/40 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 text-xs font-bold flex items-center gap-1 transition ${
+                    isBatchAttendanceLoading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                  }`}
+                  title="Mark all delegates present for Afternoon (AN)"
+                >
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  <span>Mark AN</span>
+                </button>
                 <button
                   onClick={() => handleBatchMarkAttendance('Present')}
                   disabled={isBatchAttendanceLoading}
-                  className={`px-3 py-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-xs font-bold flex items-center gap-1.5 transition ${
+                  className={`px-2.5 py-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-xs font-bold flex items-center gap-1 transition ${
                     isBatchAttendanceLoading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
                   }`}
+                  title="Mark all delegates present for Full Day (Both sessions)"
                 >
                   <CheckCircle className="w-3.5 h-3.5" />
-                  <span>Mark All Present</span>
+                  <span>Mark Both</span>
                 </button>
                 <button
                   onClick={() => handleBatchMarkAttendance('Absent')}
                   disabled={isBatchAttendanceLoading}
-                  className={`px-3 py-1.5 rounded-xl border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-xs font-bold flex items-center gap-1.5 transition ${
+                  className={`px-2.5 py-1.5 rounded-xl border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-xs font-bold flex items-center gap-1 transition ${
                     isBatchAttendanceLoading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
                   }`}
+                  title="Reset all delegates to absent for both sessions"
                 >
                   <XCircle className="w-3.5 h-3.5" />
-                  <span>Reset All Absent</span>
+                  <span>Reset All</span>
                 </button>
               </div>
             </div>
@@ -1214,8 +1272,12 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
               </div>
 
               {filteredAttendanceLearners.length === 0 ? (
-                <div className="p-12 text-center text-xs italic text-slate-400">
-                  No student delegates match your search or filter.
+                <div className="p-8 text-center text-slate-400">
+                  <UserCheck className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                  <p className="font-semibold">No student delegates found</p>
+                  <p className="text-xs mt-1 text-slate-500">
+                    Try adjusting your search or filters.
+                  </p>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -1226,16 +1288,24 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                         <th className="py-3 px-4">Access Code</th>
                         <th className="py-3 px-4">Party & Bench</th>
                         <th className="py-3 px-4">Constituency</th>
-                        <th className="py-3 px-4 text-center">Status</th>
-                        <th className="py-3 px-4 text-center">Action</th>
+                        <th className="py-3 px-4 text-center">🌅 Forenoon (FN)</th>
+                        <th className="py-3 px-4 text-center">🌇 Afternoon (AN)</th>
+                        <th className="py-3 px-4 text-center">Day Status</th>
                         <th className="py-3 px-4">Audit Record</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
                       {filteredAttendanceLearners.map((learner) => {
                         const att = activeDayAttMap.get(learner.id);
-                        const isPresent = att ? att.status === 'Present' : false;
+                        const { fn, an } = getRecordSessionStatuses(att);
+                        const isFnPresent = fn === 'Present';
+                        const isAnPresent = an === 'Present';
+                        const isBothPresent = isFnPresent && isAnPresent;
                         const pName = getResolvedPartyName(learner, activeParties);
+
+                        const isFnLoading = processingAttendanceIds.has(`${learner.id}_FN`);
+                        const isAnLoading = processingAttendanceIds.has(`${learner.id}_AN`);
+                        const isAllLoading = processingAttendanceIds.has(`${learner.id}_ALL`);
 
                         return (
                           <tr key={learner.id} className="hover:bg-slate-500/5 transition">
@@ -1269,44 +1339,112 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                               </span>
                             </td>
 
+                            {/* Forenoon (FN) Column */}
                             <td className="py-3 px-4 text-center">
-                              <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${
-                                isPresent
-                                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/40'
-                                  : 'bg-rose-500/15 text-rose-400 border border-rose-500/40'
-                              }`}>
-                                {isPresent ? <CheckCircle2 className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
-                                <span>{isPresent ? 'Present' : 'Absent'}</span>
-                              </span>
+                              <div className="flex flex-col items-center gap-1.5">
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                  isFnPresent
+                                    ? 'bg-amber-500/15 text-amber-400 border border-amber-500/40'
+                                    : 'bg-slate-500/15 text-slate-400 border border-slate-500/30'
+                                }`}>
+                                  {isFnPresent ? '● FN Present' : '○ FN Absent'}
+                                </span>
+                                <div className="inline-flex items-center rounded-lg border border-slate-700/60 p-0.5 bg-slate-900/40">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleMarkStudentAttendance(learner.id, 'Present', 'FN')}
+                                    disabled={isFnLoading || isAllLoading}
+                                    title="Mark Forenoon Present"
+                                    className={`px-2 py-0.5 rounded text-[10px] font-extrabold transition cursor-pointer ${
+                                      isFnPresent ? 'bg-amber-400 text-slate-950 font-black shadow-xs' : 'text-slate-400 hover:text-white'
+                                    }`}
+                                  >
+                                    {isFnLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : 'P'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleMarkStudentAttendance(learner.id, 'Absent', 'FN')}
+                                    disabled={isFnLoading || isAllLoading}
+                                    title="Mark Forenoon Absent"
+                                    className={`px-2 py-0.5 rounded text-[10px] font-extrabold transition cursor-pointer ${
+                                      !isFnPresent ? 'bg-rose-500 text-white font-black shadow-xs' : 'text-slate-400 hover:text-white'
+                                    }`}
+                                  >
+                                    {isFnLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : 'A'}
+                                  </button>
+                                </div>
+                              </div>
                             </td>
 
+                            {/* Afternoon (AN) Column */}
                             <td className="py-3 px-4 text-center">
-                              <div className="inline-flex items-center gap-1.5">
+                              <div className="flex flex-col items-center gap-1.5">
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                  isAnPresent
+                                    ? 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/40'
+                                    : 'bg-slate-500/15 text-slate-400 border border-slate-500/30'
+                                }`}>
+                                  {isAnPresent ? '● AN Present' : '○ AN Absent'}
+                                </span>
+                                <div className="inline-flex items-center rounded-lg border border-slate-700/60 p-0.5 bg-slate-900/40">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleMarkStudentAttendance(learner.id, 'Present', 'AN')}
+                                    disabled={isAnLoading || isAllLoading}
+                                    title="Mark Afternoon Present"
+                                    className={`px-2 py-0.5 rounded text-[10px] font-extrabold transition cursor-pointer ${
+                                      isAnPresent ? 'bg-indigo-400 text-slate-950 font-black shadow-xs' : 'text-slate-400 hover:text-white'
+                                    }`}
+                                  >
+                                    {isAnLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : 'P'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleMarkStudentAttendance(learner.id, 'Absent', 'AN')}
+                                    disabled={isAnLoading || isAllLoading}
+                                    title="Mark Afternoon Absent"
+                                    className={`px-2 py-0.5 rounded text-[10px] font-extrabold transition cursor-pointer ${
+                                      !isAnPresent ? 'bg-rose-500 text-white font-black shadow-xs' : 'text-slate-400 hover:text-white'
+                                    }`}
+                                  >
+                                    {isAnLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : 'A'}
+                                  </button>
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* Day Status & Full Day Toggle Column */}
+                            <td className="py-3 px-4 text-center">
+                              <div className="flex flex-col items-center gap-1.5">
+                                <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold ${
+                                  isBothPresent
+                                    ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/40'
+                                    : isFnPresent
+                                    ? 'bg-amber-500/15 text-amber-400 border border-amber-500/40'
+                                    : isAnPresent
+                                    ? 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/40'
+                                    : 'bg-rose-500/15 text-rose-400 border border-rose-500/40'
+                                }`}>
+                                  {isBothPresent
+                                    ? '✨ Full Day'
+                                    : isFnPresent
+                                    ? '🌅 FN Only'
+                                    : isAnPresent
+                                    ? '🌇 AN Only'
+                                    : '❌ Absent'}
+                                </span>
                                 <button
-                                  onClick={() => handleMarkStudentAttendance(learner.id, 'Present')}
-                                  disabled={processingAttendanceIds.has(learner.id)}
-                                  className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                                    processingAttendanceIds.has(learner.id) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-                                  } ${
-                                    isPresent
-                                      ? 'bg-emerald-500 text-white shadow-sm'
-                                      : 'border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/15'
+                                  type="button"
+                                  onClick={() => handleMarkStudentAttendance(learner.id, isBothPresent ? 'Absent' : 'Present')}
+                                  disabled={isAllLoading}
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer ${
+                                    isBothPresent
+                                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20'
+                                      : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
                                   }`}
+                                  title={isBothPresent ? "Click to clear full day" : "Click to mark both sessions present"}
                                 >
-                                  Present
-                                </button>
-                                <button
-                                  onClick={() => handleMarkStudentAttendance(learner.id, 'Absent')}
-                                  disabled={processingAttendanceIds.has(learner.id)}
-                                  className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                                    processingAttendanceIds.has(learner.id) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-                                  } ${
-                                    !isPresent
-                                      ? 'bg-rose-500 text-white shadow-sm'
-                                      : 'border border-rose-500/40 text-rose-400 hover:bg-rose-500/15'
-                                  }`}
-                                >
-                                  Absent
+                                  {isBothPresent ? '✓ Both' : '+ Both'}
                                 </button>
                               </div>
                             </td>
