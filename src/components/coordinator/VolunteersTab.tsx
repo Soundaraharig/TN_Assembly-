@@ -35,6 +35,7 @@ interface VolunteersTabProps {
 
 export interface YuvaAssignment {
   id: string;
+  eventId?: string;
   volunteerId: string;
   volunteerName: string;
   volunteerPhone: string;
@@ -196,6 +197,7 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
 
     const newAssign: YuvaAssignment = {
       id: `ya_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      eventId: eventId,
       volunteerId: selectedYuvaVolId,
       volunteerName: volName,
       volunteerPhone: volPhone,
@@ -399,7 +401,12 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
 
             <div className="space-y-3">
               {displayPartiesList.map((party, idx) => {
-                const assignedYuvas = yuvaAssignments.filter(a => a.targetType === 'party' && (a.targetId === party.id || a.targetName === party.name));
+                const assignedYuvas = yuvaAssignments.filter(a =>
+                  a.targetType === 'party' &&
+                  (a.targetId === party.id || a.targetName === party.name) &&
+                  (!a.eventId || !eventId || a.eventId === eventId) &&
+                  (!volunteers.length || volunteers.some(v => v.id === a.volunteerId || (v.name && a.volunteerName && v.name.trim().toLowerCase() === a.volunteerName.trim().toLowerCase())))
+                );
 
                 return (
                   <div
@@ -456,7 +463,12 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
 
             <div className="space-y-3">
               {displayCommitteesList.map((comm, idx) => {
-                const assignedYuvas = yuvaAssignments.filter(a => a.targetType === 'committee' && (a.targetId === comm.id || a.targetName === comm.name));
+                const assignedYuvas = yuvaAssignments.filter(a =>
+                  a.targetType === 'committee' &&
+                  (a.targetId === comm.id || a.targetName === comm.name) &&
+                  (!a.eventId || !eventId || a.eventId === eventId) &&
+                  (!volunteers.length || volunteers.some(v => v.id === a.volunteerId || (v.name && a.volunteerName && v.name.trim().toLowerCase() === a.volunteerName.trim().toLowerCase())))
+                );
 
                 return (
                   <div

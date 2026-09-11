@@ -42,6 +42,7 @@ import { storageService, getResolvedPartyName, getResolvedCommitteeName } from '
 
 export interface YuvaAssignment {
   id: string;
+  eventId?: string;
   volunteerId: string;
   volunteerName: string;
   volunteerPhone: string;
@@ -367,6 +368,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     const vRole = (volunteer.role || '').toLowerCase().trim();
 
     const match = yuvaAssignments.filter(a => {
+      if (a.eventId && eventId && a.eventId !== eventId) return false;
       const aName = (a.volunteerName || '').toLowerCase().trim();
       const aPhone = (a.volunteerPhone || '').replace(/\D/g, '');
       const aTarget = (a.targetName || '').toLowerCase().trim();

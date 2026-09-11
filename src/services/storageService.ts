@@ -725,7 +725,10 @@ class StorageService {
           if (Array.isArray(sc.yuva_assignments)) {
             const key = `${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${ev.id}`;
             this.setItem(key, sc.yuva_assignments);
-            this.setItem(STORAGE_KEYS.YUVA_ASSIGNMENTS, sc.yuva_assignments);
+          }
+          // Clean legacy global key to prevent leakage across events
+          if (typeof window !== 'undefined') {
+            try { localStorage.removeItem(STORAGE_KEYS.YUVA_ASSIGNMENTS); } catch {}
           }
 
           // Anti-flicker: Only accept remote lock state if local action timestamp was not set within 4 seconds
@@ -6464,27 +6467,30 @@ class StorageService {
 
   // ── YUVA Desk Assignments ───────────────────────────────────────────────
   getYuvaAssignments(eventId?: string): any[] {
-    const targetEventId = eventId || 'ev_tn_assembly_2026';
-    const key = `${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${targetEventId}`;
+    if (!eventId) {
+      const global = this.getItem<any[] | null>(STORAGE_KEYS.YUVA_ASSIGNMENTS, null);
+      return (global && Array.isArray(global)) ? global : [];
+    }
+    const key = `${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${eventId}`;
     const primary = this.getItem<any[] | null>(key, null);
     if (primary && Array.isArray(primary)) return primary;
-
-    const global = this.getItem<any[] | null>(STORAGE_KEYS.YUVA_ASSIGNMENTS, null);
-    if (global && Array.isArray(global)) return global;
 
     return [];
   }
 
   setYuvaAssignments(assignments: any[], eventId?: string): void {
-    const targetEventId = eventId || 'ev_tn_assembly_2026';
-    const key = `${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${targetEventId}`;
+    if (!eventId) {
+      this.setItem(STORAGE_KEYS.YUVA_ASSIGNMENTS, assignments);
+      this.notify();
+      return;
+    }
+    const key = `${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${eventId}`;
     this.setItem(key, assignments);
-    this.setItem(STORAGE_KEYS.YUVA_ASSIGNMENTS, assignments);
 
     // Persist to Supabase college_events social_coverage JSONB field
     if (supabase) {
       const events = this.getEvents();
-      const ev = events.find(e => e.id === targetEventId) || events[0];
+      const ev = events.find(e => e.id === eventId);
       if (ev) {
         const sc = (ev.social_coverage || {}) as any;
         const updatedEv = {
