@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import type { Learner, Party, Committee, UserRole } from '../../types';
+import type { Learner, Party, Committee, UserRole, EventDay, DayAttendanceRecord } from '../../types';
+import { getRecordSessionStatuses } from '../../types';
 import {
   storageService,
   getResolvedPartyName,
@@ -44,8 +45,10 @@ interface ParticipantsTabProps {
   eventName: string;
   eventId?: string;
   userRole?: UserRole;
-  onToggleCheckIn: (learnerId: string, day: 1 | 2) => void;
-  onCheckInAll: (day: 1 | 2, state: boolean) => void;
+  eventDays?: EventDay[];
+  dayAttendance?: DayAttendanceRecord[];
+  onToggleCheckIn: (learnerId: string, day: 1 | 2, session?: 'FN' | 'AN' | 'BOTH') => void;
+  onCheckInAll: (day: 1 | 2, state: boolean, session?: 'FN' | 'AN') => void;
   onOpenAddWalkIn: () => void;
   onOpenImportCsv: () => void;
   onOpenAllocationModal: () => void;
@@ -63,6 +66,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
   eventName,
   eventId,
   userRole,
+  eventDays,
+  dayAttendance,
   onToggleCheckIn,
   onCheckInAll,
   onOpenAddWalkIn,
@@ -101,10 +106,30 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
   // Loading state tracking for check-in button state transitions
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
 
-  const handleToggleWithLoading = (learnerId: string, day: 1 | 2) => {
-    const key = `${learnerId}_${day}`;
+  const effectiveEventDays = useMemo(() => {
+    if (eventDays && eventDays.length > 0) return eventDays;
+    return eventId ? storageService.getEventDays(eventId) : [];
+  }, [eventDays, eventId]);
+
+  const effectiveDayAttendance = useMemo(() => {
+    if (dayAttendance && dayAttendance.length > 0) return dayAttendance;
+    return eventId ? storageService.getDayAttendance(eventId) : [];
+  }, [dayAttendance, eventId]);
+
+  const mainDay1 = useMemo(() => {
+    return effectiveEventDays.find(d => d.main_day === 1)
+      || (effectiveEventDays.some(d => d.main_day === 1 || d.main_day === 2) ? undefined : effectiveEventDays.find(d => d.day_number === 1));
+  }, [effectiveEventDays]);
+
+  const mainDay2 = useMemo(() => {
+    return effectiveEventDays.find(d => d.main_day === 2)
+      || (effectiveEventDays.some(d => d.main_day === 1 || d.main_day === 2) ? undefined : effectiveEventDays.find(d => d.day_number === 2));
+  }, [effectiveEventDays]);
+
+  const handleToggleWithLoading = (learnerId: string, day: 1 | 2, session?: 'FN' | 'AN' | 'BOTH') => {
+    const key = `${learnerId}_${day}_${session || 'ALL'}`;
     setTogglingIds(prev => new Set(prev).add(key));
-    onToggleCheckIn(learnerId, day);
+    onToggleCheckIn(learnerId, day, session);
     setTimeout(() => {
       setTogglingIds(prev => {
         const next = new Set(prev);
@@ -320,15 +345,12 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
   };
 
   // Batch Check-in for selected
-  const handleBatchCheckIn = (day: 1 | 2) => {
+  const handleBatchCheckIn = (day: 1 | 2, session?: 'FN' | 'AN' | 'BOTH') => {
     selectedLearnerIds.forEach(id => {
-      const target = learners.find(l => l.id === id);
-      if (target) {
-        if (day === 1 && !target.day1_checked_in) onToggleCheckIn(id, 1);
-        if (day === 2 && !target.day2_checked_in) onToggleCheckIn(id, 2);
-      }
+      onToggleCheckIn(id, day, session);
     });
-    onShowToast(`Day ${day} Batch Check-In`, `Updated check-in status for ${selectedLearnerIds.size} delegates`, 'success');
+    const sessionLabel = session === 'FN' ? 'Forenoon (FN)' : session === 'AN' ? 'Afternoon (AN)' : 'Full Day';
+    onShowToast(`Day ${day} Batch Check-In`, `Marked ${sessionLabel} check-in for ${selectedLearnerIds.size} delegates`, 'success');
   };
 
   // Batch Badges for selected
@@ -898,21 +920,63 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
               </select>
             )}
 
-            <button
-              onClick={() => handleBatchCheckIn(1)}
-              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 flex items-center gap-1 transition-colors cursor-pointer"
-            >
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Check-In D1</span>
-            </button>
+            {/* D1 Batch Actions */}
+            <div className="flex items-center rounded-xl bg-slate-800 border border-slate-700/80 p-0.5 text-xs">
+              <button
+                type="button"
+                onClick={() => handleBatchCheckIn(1, 'BOTH')}
+                className="px-2 py-1 hover:bg-slate-700 text-slate-200 font-semibold rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                title="Mark all selected as Day 1 Full Day (Both sessions)"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Check-In D1</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleBatchCheckIn(1, 'FN')}
+                className="px-1.5 py-1 hover:bg-amber-500/20 text-amber-300 font-bold rounded-lg transition-colors cursor-pointer text-[10px]"
+                title="Mark all selected as Day 1 Forenoon (FN) Present"
+              >
+                FN
+              </button>
+              <button
+                type="button"
+                onClick={() => handleBatchCheckIn(1, 'AN')}
+                className="px-1.5 py-1 hover:bg-indigo-500/20 text-indigo-300 font-bold rounded-lg transition-colors cursor-pointer text-[10px]"
+                title="Mark all selected as Day 1 Afternoon (AN) Present"
+              >
+                AN
+              </button>
+            </div>
 
-            <button
-              onClick={() => handleBatchCheckIn(2)}
-              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 flex items-center gap-1 transition-colors cursor-pointer"
-            >
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Check-In D2</span>
-            </button>
+            {/* D2 Batch Actions */}
+            <div className="flex items-center rounded-xl bg-slate-800 border border-slate-700/80 p-0.5 text-xs">
+              <button
+                type="button"
+                onClick={() => handleBatchCheckIn(2, 'BOTH')}
+                className="px-2 py-1 hover:bg-slate-700 text-slate-200 font-semibold rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                title="Mark all selected as Day 2 Full Day (Both sessions)"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Check-In D2</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleBatchCheckIn(2, 'FN')}
+                className="px-1.5 py-1 hover:bg-amber-500/20 text-amber-300 font-bold rounded-lg transition-colors cursor-pointer text-[10px]"
+                title="Mark all selected as Day 2 Forenoon (FN) Present"
+              >
+                FN
+              </button>
+              <button
+                type="button"
+                onClick={() => handleBatchCheckIn(2, 'AN')}
+                className="px-1.5 py-1 hover:bg-indigo-500/20 text-indigo-300 font-bold rounded-lg transition-colors cursor-pointer text-[10px]"
+                title="Mark all selected as Day 2 Afternoon (AN) Present"
+              >
+                AN
+              </button>
+            </div>
 
             <button
               onClick={handleBatchPrintBadges}
@@ -1037,40 +1101,136 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                         />
                       </td>
 
-                      {/* Check-in D1 / D2 Badges */}
+                      {/* Check-in D1 / D2 Badges with FN / AN */}
                       <td className="py-3 px-3 text-center">
-                        <div className="flex items-center justify-center gap-1">
+                        <div className="flex items-center justify-center gap-1.5">
                           {(() => {
-                            const isD1Loading = togglingIds.has(`${learner.id}_1`);
-                            const isD2Loading = togglingIds.has(`${learner.id}_2`);
+                            const isD1Loading = togglingIds.has(`${learner.id}_1_ALL`) || togglingIds.has(`${learner.id}_1_FN`) || togglingIds.has(`${learner.id}_1_AN`);
+                            const isD2Loading = togglingIds.has(`${learner.id}_2_ALL`) || togglingIds.has(`${learner.id}_2_FN`) || togglingIds.has(`${learner.id}_2_AN`);
+
+                            const attD1 = mainDay1 ? effectiveDayAttendance.find(a => a.day_id === mainDay1.id && a.student_id === learner.id) : undefined;
+                            const { fn: fnD1, an: anD1 } = getRecordSessionStatuses(attD1);
+                            const isD1Fn = fnD1 === 'Present' || (!attD1 && learner.day1_checked_in);
+                            const isD1An = anD1 === 'Present' || (!attD1 && learner.day1_checked_in);
+                            const isD1Both = isD1Fn && isD1An;
+                            const isD1Any = isD1Fn || isD1An;
+
+                            const attD2 = mainDay2 ? effectiveDayAttendance.find(a => a.day_id === mainDay2.id && a.student_id === learner.id) : undefined;
+                            const { fn: fnD2, an: anD2 } = getRecordSessionStatuses(attD2);
+                            const isD2Fn = fnD2 === 'Present' || (!attD2 && learner.day2_checked_in);
+                            const isD2An = anD2 === 'Present' || (!attD2 && learner.day2_checked_in);
+                            const isD2Both = isD2Fn && isD2An;
+                            const isD2Any = isD2Fn || isD2An;
+
                             return (
                               <>
-                                <button
-                                  onClick={() => handleToggleWithLoading(learner.id, 1)}
-                                  disabled={isD1Loading}
-                                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all flex items-center gap-1 cursor-pointer ${
-                                    isD1Loading
-                                      ? 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 opacity-90'
-                                      : learner.day1_checked_in
-                                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300'
-                                      : 'bg-slate-100 text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700 hover:border-slate-300'
+                                {/* D1 SESSION CONTROL */}
+                                <div
+                                  className={`inline-flex items-center rounded-lg border p-0.5 text-[10px] transition-all ${
+                                    isD1Both
+                                      ? 'bg-emerald-950/40 border-emerald-500/50 shadow-xs'
+                                      : isD1Any
+                                      ? 'bg-amber-950/40 border-amber-500/40'
+                                      : 'bg-slate-900/40 border-slate-700/60'
                                   }`}
                                 >
-                                  {isD1Loading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : '●'} D1
-                                </button>
-                                <button
-                                  onClick={() => handleToggleWithLoading(learner.id, 2)}
-                                  disabled={isD2Loading}
-                                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all flex items-center gap-1 cursor-pointer ${
-                                    isD2Loading
-                                      ? 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 opacity-90'
-                                      : learner.day2_checked_in
-                                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300'
-                                      : 'bg-slate-100 text-slate-400 border-slate-200 dark:bg-slate-800 dark:border-slate-700 hover:border-slate-300'
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleWithLoading(learner.id, 1, 'BOTH')}
+                                    disabled={isD1Loading}
+                                    title={isD1Both ? "Day 1: Both sessions attended (Click to clear)" : isD1Any ? "Day 1: Partial attendance (Click to mark both)" : "Click to mark Day 1 both sessions"}
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold transition-all flex items-center gap-0.5 cursor-pointer ${
+                                      isD1Both
+                                        ? 'bg-emerald-500 text-white font-black'
+                                        : isD1Any
+                                        ? 'text-amber-300 font-bold'
+                                        : 'text-slate-400 hover:text-slate-200'
+                                    }`}
+                                  >
+                                    {isD1Loading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : '●'} D1
+                                  </button>
+                                  <div className="w-[1px] h-3 bg-slate-700 mx-0.5" />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleWithLoading(learner.id, 1, 'FN')}
+                                    disabled={isD1Loading}
+                                    title={`Day 1 Forenoon (FN): ${isD1Fn ? 'Present (Click to toggle)' : 'Absent (Click to mark present)'}`}
+                                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
+                                      isD1Fn
+                                        ? 'bg-amber-400 text-slate-950 font-black shadow-xs'
+                                        : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                                    }`}
+                                  >
+                                    FN
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleWithLoading(learner.id, 1, 'AN')}
+                                    disabled={isD1Loading}
+                                    title={`Day 1 Afternoon (AN): ${isD1An ? 'Present (Click to toggle)' : 'Absent (Click to mark present)'}`}
+                                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
+                                      isD1An
+                                        ? 'bg-indigo-400 text-slate-950 font-black shadow-xs'
+                                        : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                                    }`}
+                                  >
+                                    AN
+                                  </button>
+                                </div>
+
+                                {/* D2 SESSION CONTROL */}
+                                <div
+                                  className={`inline-flex items-center rounded-lg border p-0.5 text-[10px] transition-all ${
+                                    isD2Both
+                                      ? 'bg-emerald-950/40 border-emerald-500/50 shadow-xs'
+                                      : isD2Any
+                                      ? 'bg-amber-950/40 border-amber-500/40'
+                                      : 'bg-slate-900/40 border-slate-700/60'
                                   }`}
                                 >
-                                  {isD2Loading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : '●'} D2
-                                </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleWithLoading(learner.id, 2, 'BOTH')}
+                                    disabled={isD2Loading}
+                                    title={isD2Both ? "Day 2: Both sessions attended (Click to clear)" : isD2Any ? "Day 2: Partial attendance (Click to mark both)" : "Click to mark Day 2 both sessions"}
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold transition-all flex items-center gap-0.5 cursor-pointer ${
+                                      isD2Both
+                                        ? 'bg-emerald-500 text-white font-black'
+                                        : isD2Any
+                                        ? 'text-amber-300 font-bold'
+                                        : 'text-slate-400 hover:text-slate-200'
+                                    }`}
+                                  >
+                                    {isD2Loading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : '●'} D2
+                                  </button>
+                                  <div className="w-[1px] h-3 bg-slate-700 mx-0.5" />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleWithLoading(learner.id, 2, 'FN')}
+                                    disabled={isD2Loading}
+                                    title={`Day 2 Forenoon (FN): ${isD2Fn ? 'Present (Click to toggle)' : 'Absent (Click to mark present)'}`}
+                                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
+                                      isD2Fn
+                                        ? 'bg-amber-400 text-slate-950 font-black shadow-xs'
+                                        : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                                    }`}
+                                  >
+                                    FN
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleWithLoading(learner.id, 2, 'AN')}
+                                    disabled={isD2Loading}
+                                    title={`Day 2 Afternoon (AN): ${isD2An ? 'Present (Click to toggle)' : 'Absent (Click to mark present)'}`}
+                                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
+                                      isD2An
+                                        ? 'bg-indigo-400 text-slate-950 font-black shadow-xs'
+                                        : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                                    }`}
+                                  >
+                                    AN
+                                  </button>
+                                </div>
                               </>
                             );
                           })()}

@@ -37,6 +37,7 @@ import type {
   EventDayStatus,
   DayAttendanceStatus
 } from '../types';
+import { getRecordSessionStatuses } from '../types';
 import {
   INITIAL_EVENTS,
   INITIAL_COORDINATORS,
@@ -2681,66 +2682,80 @@ class StorageService {
     }
   }
 
-  public toggleCheckIn(learnerId: string, day: 1 | 2) {
-    let updatedLearner: Learner | null = null;
-    const all = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, INITIAL_LEARNERS).map(l => {
-      if (l.id === learnerId) {
-        const nextDay1 = day === 1 ? !l.day1_checked_in : l.day1_checked_in;
-        const nextDay2 = day === 2 ? !l.day2_checked_in : l.day2_checked_in;
-        updatedLearner = {
-          ...l,
-          day1_checked_in: nextDay1,
-          day2_checked_in: nextDay2
-        };
-        return updatedLearner;
+  public async toggleCheckIn(learnerId: string, day: 1 | 2, session?: 'FN' | 'AN' | 'BOTH') {
+    const all = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, INITIAL_LEARNERS);
+    const targetLearner = all.find(l => l.id === learnerId);
+    if (!targetLearner) return;
+
+    const days = this.getEventDays(targetLearner.event_id);
+    const hasAnyMainDay = days.some(d => d.main_day === 1 || d.main_day === 2);
+    const targetDay = days.find(d => d.main_day === day) || (!hasAnyMainDay ? days.find(d => d.day_number === day || d.order_index === (day - 1)) : undefined);
+
+    if (targetDay) {
+      // Find existing DayAttendanceRecord
+      const allAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+      const existingRecord = allAtt.find(a => a.event_id === targetLearner.event_id && a.day_id === targetDay.id && a.student_id === learnerId);
+      const { fn, an } = getRecordSessionStatuses(existingRecord);
+
+      let nextStatus: DayAttendanceStatus = 'Present';
+      let targetSession: 'FN' | 'AN' | undefined = undefined;
+
+      if (session === 'FN') {
+        targetSession = 'FN';
+        nextStatus = fn === 'Present' ? 'Absent' : 'Present';
+      } else if (session === 'AN') {
+        targetSession = 'AN';
+        nextStatus = an === 'Present' ? 'Absent' : 'Present';
+      } else {
+        // 'BOTH' or toggle whole day
+        const isBothPresent = fn === 'Present' && an === 'Present';
+        nextStatus = isBothPresent ? 'Absent' : 'Present';
+        targetSession = undefined;
       }
-      return l;
-    });
-    this.setItem(STORAGE_KEYS.LEARNERS, all);
-    if (updatedLearner) {
-      this.sbUpsert('learners', updatedLearner as unknown as Record<string, unknown>);
-      // Also update multi-day attendance record if event day exists
-      const targetLearner = updatedLearner as Learner;
-      const days = this.getEventDays(targetLearner.event_id);
-      // Prioritize explicit main_day mapping, fallback to legacy day_number only if no days have main_day configured
-      const hasAnyMainDay = days.some(d => d.main_day === 1 || d.main_day === 2);
-      const targetDay = days.find(d => d.main_day === day) || (!hasAnyMainDay ? days.find(d => d.day_number === day || d.order_index === (day - 1)) : undefined);
-      if (targetDay) {
-        const isPres = day === 1 ? targetLearner.day1_checked_in : targetLearner.day2_checked_in;
-        this.setStudentDayAttendance(
-          targetLearner.event_id,
-          targetDay.id,
-          targetLearner.id,
-          isPres ? 'Present' : 'Absent',
-          'Check-in Terminal',
-          'volunteer'
-        );
-      }
+
+      await this.setStudentDayAttendance(
+        targetLearner.event_id,
+        targetDay.id,
+        targetLearner.id,
+        nextStatus,
+        'Check-in Terminal',
+        'coordinator',
+        targetSession
+      );
+    } else {
+      // Fallback if no target day configured
+      const nextDay1 = day === 1 ? !targetLearner.day1_checked_in : targetLearner.day1_checked_in;
+      const nextDay2 = day === 2 ? !targetLearner.day2_checked_in : targetLearner.day2_checked_in;
+      const updated = { ...targetLearner, day1_checked_in: nextDay1, day2_checked_in: nextDay2 };
+      const updatedList = all.map(l => l.id === learnerId ? updated : l);
+      this.setItem(STORAGE_KEYS.LEARNERS, updatedList);
+      this.sbUpsert('learners', updated as unknown as Record<string, unknown>);
     }
   }
 
-  public checkInAll(eventId: string, day: 1 | 2, state: boolean) {
-    const all = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, INITIAL_LEARNERS).map(l => {
-      if (l.event_id === eventId) {
-        const updated = {
-          ...l,
-          day1_checked_in: day === 1 ? state : l.day1_checked_in,
-          day2_checked_in: day === 2 ? state : l.day2_checked_in
-        };
-        this.sbUpsert('learners', updated as unknown as Record<string, unknown>);
-        return updated;
-      }
-      return l;
-    });
-    this.setItem(STORAGE_KEYS.LEARNERS, all);
-
-    // Sync with DayAttendanceRecord
+  public async checkInAll(eventId: string, day: 1 | 2, state: boolean, session?: 'FN' | 'AN') {
     const days = this.getEventDays(eventId);
     const hasAnyMainDay = days.some(d => d.main_day === 1 || d.main_day === 2);
     const targetDay = days.find(d => d.main_day === day) || (!hasAnyMainDay ? days.find(d => d.day_number === day || d.order_index === (day - 1)) : undefined);
+    const all = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, INITIAL_LEARNERS);
+
     if (targetDay) {
       const targetStudentIds = all.filter(l => l.event_id === eventId).map(l => l.id);
-      this.batchSetDayAttendance(eventId, targetDay.id, targetStudentIds, state ? 'Present' : 'Absent', 'Mass Action');
+      await this.batchSetDayAttendance(eventId, targetDay.id, targetStudentIds, state ? 'Present' : 'Absent', 'Mass Action', session);
+    } else {
+      const updatedList = all.map(l => {
+        if (l.event_id === eventId) {
+          const updated = {
+            ...l,
+            day1_checked_in: day === 1 ? state : l.day1_checked_in,
+            day2_checked_in: day === 2 ? state : l.day2_checked_in
+          };
+          this.sbUpsert('learners', updated as unknown as Record<string, unknown>);
+          return updated;
+        }
+        return l;
+      });
+      this.setItem(STORAGE_KEYS.LEARNERS, updatedList);
     }
   }
 

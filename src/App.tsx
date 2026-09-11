@@ -200,8 +200,8 @@ interface EventTabRouteHandlerProps {
   role: UserRole;
   userSession: UserSession | null;
   addToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
-  handleToggleCheckIn: (id: string, day: 1 | 2) => void;
-  handleCheckInAll: (day: 1 | 2, present: boolean) => void;
+  handleToggleCheckIn: (id: string, day: 1 | 2, session?: 'FN' | 'AN' | 'BOTH') => void;
+  handleCheckInAll: (day: 1 | 2, present: boolean, session?: 'FN' | 'AN') => void;
   handleUpdateLearner: (l: Learner) => void;
   handleDeleteLearner: (id: string) => void;
   handleDeleteMultipleLearners: (ids: string[]) => void;
@@ -502,6 +502,8 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           eventName={activeEvent.college_name}
           eventId={activeEvent.id}
           userRole={props.userSession?.role || props.role}
+          eventDays={props.eventDays}
+          dayAttendance={props.dayAttendance}
           onToggleCheckIn={props.handleToggleCheckIn}
           onCheckInAll={props.handleCheckInAll}
           onOpenAddWalkIn={() => props.setIsAddWalkInOpen(true)}
@@ -1504,20 +1506,24 @@ export function App() {
     }
   };
 
-  const handleToggleCheckIn = (id: string, day: 1 | 2) => {
-    storageService.toggleCheckIn(id, day);
+  const handleToggleCheckIn = async (id: string, day: 1 | 2, session?: 'FN' | 'AN' | 'BOTH') => {
+    await storageService.toggleCheckIn(id, day, session);
     if (currentEvent) {
       setLearners(storageService.getLearners(currentEvent.id));
+      setDayAttendance(storageService.getDayAttendance(currentEvent.id));
     } else {
       setLearners(storageService.getLearners());
+      setDayAttendance(storageService.getDayAttendance(''));
     }
   };
 
-  const handleCheckInAll = (day: 1 | 2, present: boolean) => {
+  const handleCheckInAll = async (day: 1 | 2, present: boolean, session?: 'FN' | 'AN') => {
     if (currentEvent) {
-      storageService.checkInAll(currentEvent.id, day, present);
+      await storageService.checkInAll(currentEvent.id, day, present, session);
       setLearners(storageService.getLearners(currentEvent.id));
-      addToast('Check-in Updated', `Day ${day} check-in updated for all delegates`, 'success');
+      setDayAttendance(storageService.getDayAttendance(currentEvent.id));
+      const sessionText = session ? ` (${session === 'FN' ? 'Forenoon' : 'Afternoon'})` : '';
+      addToast('Check-in Updated', `Day ${day}${sessionText} check-in updated for all delegates`, 'success');
     }
   };
 

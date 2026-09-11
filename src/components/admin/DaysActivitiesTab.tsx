@@ -109,20 +109,37 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
       dayAtt.forEach(a => dayAttMap.set(a.student_id, a));
 
       let presentCount = 0;
+      let fnPresentCount = 0;
+      let anPresentCount = 0;
+      let bothPresentCount = 0;
+
       learners.forEach(l => {
         const att = dayAttMap.get(l.id);
-        const { overall } = getRecordSessionStatuses(att);
+        const { fn, an, overall } = getRecordSessionStatuses(att);
         if (overall === 'Present') presentCount++;
+        if (fn === 'Present') fnPresentCount++;
+        if (an === 'Present') anPresentCount++;
+        if (fn === 'Present' && an === 'Present') bothPresentCount++;
       });
 
       const absentCount = Math.max(0, totalStudents - presentCount);
       const percentage = totalStudents > 0 ? Math.round((presentCount / totalStudents) * 100) : 0;
+      const fnPercentage = totalStudents > 0 ? Math.round((fnPresentCount / totalStudents) * 100) : 0;
+      const anPercentage = totalStudents > 0 ? Math.round((anPresentCount / totalStudents) * 100) : 0;
+      const bothPercentage = totalStudents > 0 ? Math.round((bothPresentCount / totalStudents) * 100) : 0;
+
       return {
         day,
         totalStudents,
         presentCount,
         absentCount,
-        percentage
+        percentage,
+        fnPresentCount,
+        fnPercentage,
+        anPresentCount,
+        anPercentage,
+        bothPresentCount,
+        bothPercentage
       };
     });
   }, [sortedDays, dayAttendance, learners]);
@@ -405,14 +422,14 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {overallSummary.map(({ day, totalStudents, presentCount, percentage }) => {
+                  {overallSummary.map(({ day, totalStudents, presentCount, percentage, fnPresentCount, fnPercentage, anPresentCount, anPercentage, bothPresentCount, bothPercentage }) => {
                     const isActive = day.status === 'Active';
                     return (
                       <div
                         key={day.id}
                         onClick={() => handleOpenAttendance(day)}
-                        className={`p-3 rounded-xl border transition cursor-pointer hover:border-amber-500/50 flex flex-col justify-between ${
-                          isActive ? 'ring-1 ring-emerald-500' : ''
+                        className={`p-3.5 rounded-xl border transition cursor-pointer hover:border-amber-500/50 flex flex-col justify-between ${
+                          isActive ? 'ring-1 ring-emerald-500 shadow-sm' : ''
                         }`}
                         style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
                       >
@@ -442,6 +459,25 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                               backgroundColor: isActive ? 'var(--emerald)' : 'var(--amber)'
                             }}
                           />
+                        </div>
+
+                        {/* Session Breakdown Mini Pills */}
+                        <div className="mt-2.5 pt-2 border-t border-slate-700/30 grid grid-cols-3 gap-1 text-center">
+                          <div className="bg-amber-500/10 rounded px-1 py-0.5 border border-amber-500/20">
+                            <div className="text-[9px] font-bold text-amber-400">🌅 FN</div>
+                            <div className="text-[10px] font-black" style={{ color: 'var(--text-primary)' }}>{fnPresentCount}</div>
+                            <div className="text-[8px] text-slate-400">{fnPercentage}%</div>
+                          </div>
+                          <div className="bg-indigo-500/10 rounded px-1 py-0.5 border border-indigo-500/20">
+                            <div className="text-[9px] font-bold text-indigo-400">🌇 AN</div>
+                            <div className="text-[10px] font-black" style={{ color: 'var(--text-primary)' }}>{anPresentCount}</div>
+                            <div className="text-[8px] text-slate-400">{anPercentage}%</div>
+                          </div>
+                          <div className="bg-emerald-500/10 rounded px-1 py-0.5 border border-emerald-500/20">
+                            <div className="text-[9px] font-bold text-emerald-400">✨ Both</div>
+                            <div className="text-[10px] font-black" style={{ color: 'var(--text-primary)' }}>{bothPresentCount}</div>
+                            <div className="text-[8px] text-slate-400">{bothPercentage}%</div>
+                          </div>
                         </div>
                       </div>
                     );
@@ -492,9 +528,28 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                 sortedDays.map((day) => {
                 const isActive = day.status === 'Active';
                 const dayAtt = dayAttendance.filter(a => a.day_id === day.id);
-                const presentCount = dayAtt.filter(a => a.status === 'Present').length;
+                const dayAttMap = new Map<string, DayAttendanceRecord>();
+                dayAtt.forEach(a => dayAttMap.set(a.student_id, a));
+
+                let presentCount = 0;
+                let fnCount = 0;
+                let anCount = 0;
+                let bothCount = 0;
+
+                learners.forEach(l => {
+                  const att = dayAttMap.get(l.id);
+                  const { fn, an, overall } = getRecordSessionStatuses(att);
+                  if (overall === 'Present') presentCount++;
+                  if (fn === 'Present') fnCount++;
+                  if (an === 'Present') anCount++;
+                  if (fn === 'Present' && an === 'Present') bothCount++;
+                });
+
                 const totalStudents = learners.length;
                 const percent = totalStudents > 0 ? Math.round((presentCount / totalStudents) * 100) : 0;
+                const fnPercent = totalStudents > 0 ? Math.round((fnCount / totalStudents) * 100) : 0;
+                const anPercent = totalStudents > 0 ? Math.round((anCount / totalStudents) * 100) : 0;
+                const bothPercent = totalStudents > 0 ? Math.round((bothCount / totalStudents) * 100) : 0;
 
                 return (
                   <div
@@ -616,12 +671,33 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
 
                     {/* Card Footer & Actions */}
                     <div className="pt-3 border-t space-y-3" style={{ borderColor: 'var(--border)' }}>
-                      {/* Attendance Quick Progress */}
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-semibold text-slate-400">Attendance:</span>
-                        <span className="font-bold" style={{ color: 'var(--text-primary)' }}>
-                          {presentCount} / {totalStudents} <span className="text-emerald-500">({percent}%)</span>
-                        </span>
+                      {/* Attendance Quick Progress with FN, AN, Both */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-semibold text-slate-400">Day Attendance:</span>
+                          <span className="font-bold" style={{ color: 'var(--text-primary)' }}>
+                            {presentCount} / {totalStudents} <span className="text-emerald-500 font-extrabold">({percent}%)</span>
+                          </span>
+                        </div>
+
+                        {/* Session Breakdown Grid */}
+                        <div className="grid grid-cols-3 gap-1.5 text-center">
+                          <div className="p-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                            <div className="text-[9px] font-bold text-amber-400 uppercase tracking-wider">🌅 Forenoon</div>
+                            <div className="text-xs font-black" style={{ color: 'var(--text-primary)' }}>{fnCount} / {totalStudents}</div>
+                            <div className="text-[10px] text-amber-500/90 font-bold">{fnPercent}%</div>
+                          </div>
+                          <div className="p-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20">
+                            <div className="text-[9px] font-bold text-indigo-400 uppercase tracking-wider">🌇 Afternoon</div>
+                            <div className="text-xs font-black" style={{ color: 'var(--text-primary)' }}>{anCount} / {totalStudents}</div>
+                            <div className="text-[10px] text-indigo-500/90 font-bold">{anPercent}%</div>
+                          </div>
+                          <div className="p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                            <div className="text-[9px] font-bold text-emerald-400 uppercase tracking-wider">✨ Full Day</div>
+                            <div className="text-xs font-black" style={{ color: 'var(--text-primary)' }}>{bothCount} / {totalStudents}</div>
+                            <div className="text-[10px] text-emerald-500/90 font-bold">{bothPercent}%</div>
+                          </div>
+                        </div>
                       </div>
 
                       {/* Action Buttons */}
