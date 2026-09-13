@@ -148,7 +148,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <span>Active Event</span>
             </span>
             {role === 'super_admin' && (
-              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20">
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
                 Super Admin
               </span>
             )}
@@ -178,16 +178,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
               }}
               title={`Click to copy Event ID: ${eventId}`}
             >
-              <span className="text-[9px] font-bold uppercase tracking-wider text-amber-500/90 font-sans shrink-0">
+              <span className="text-[9px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 font-sans shrink-0">
                 ID
               </span>
-              <span className="font-mono text-[10px] truncate max-w-[130px] text-amber-400 group-hover:text-amber-300 font-semibold select-all">
+              <span className="font-mono text-[10px] truncate max-w-[130px] text-amber-600 dark:text-amber-400 group-hover:text-amber-700 dark:group-hover:text-amber-300 font-semibold select-all">
                 {eventId}
               </span>
               {copiedEventId ? (
-                <Check className="w-3 h-3 text-emerald-400 shrink-0" />
+                <Check className="w-3 h-3 text-emerald-500 shrink-0" />
               ) : (
-                <Copy className="w-3 h-3 text-slate-400 group-hover:text-slate-200 shrink-0 transition-colors" />
+                <Copy className="w-3 h-3 text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-200 shrink-0 transition-colors" />
               )}
             </button>
           )}

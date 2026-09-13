@@ -68,12 +68,18 @@ export const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ learners, parties })
     <div className="space-y-6">
       
       {/* Header Banner */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl">
-        <h3 className="text-lg font-bold text-white flex items-center gap-2">
-          <BarChart3 className="w-5 h-5 text-teal-400" />
+      <div 
+        className="rounded-2xl p-5 shadow-sm border"
+        style={{
+          backgroundColor: 'var(--bg-surface)',
+          borderColor: 'var(--border)',
+        }}
+      >
+        <h3 className="text-lg font-bold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+          <BarChart3 className="w-5 h-5 text-teal-600 dark:text-teal-400" />
           <span>Assembly Analytics & Control Panel</span>
         </h3>
-        <p className="text-xs text-slate-400">
+        <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
           Attendance tracking, bench distribution, academic year balance & committee metrics
         </p>
       </div>
@@ -81,30 +87,42 @@ export const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ learners, parties })
       {/* Metrics Row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg">
-          <span className="text-xs font-semibold text-slate-400">Day 1 Attendance Rate</span>
-          <p className="text-2xl font-extrabold text-emerald-400 mt-2">{day1Rate}%</p>
-          <p className="text-xs text-slate-400 mt-1">{day1Count} of {totalCount} Checked In</p>
+        <div 
+          className="rounded-2xl p-5 shadow-sm border"
+          style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+        >
+          <span className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>Day 1 Attendance Rate</span>
+          <p className="text-2xl font-extrabold text-emerald-600 dark:text-emerald-400 mt-2">{day1Rate}%</p>
+          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{day1Count} of {totalCount} Checked In</p>
         </div>
 
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg">
-          <span className="text-xs font-semibold text-slate-400">Day 2 Attendance Rate</span>
-          <p className="text-2xl font-extrabold text-teal-400 mt-2">{day2Rate}%</p>
-          <p className="text-xs text-slate-400 mt-1">{day2Count} of {totalCount} Checked In</p>
+        <div 
+          className="rounded-2xl p-5 shadow-sm border"
+          style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+        >
+          <span className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>Day 2 Attendance Rate</span>
+          <p className="text-2xl font-extrabold text-teal-600 dark:text-teal-400 mt-2">{day2Rate}%</p>
+          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{day2Count} of {totalCount} Checked In</p>
         </div>
 
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg">
-          <span className="text-xs font-semibold text-slate-400">Bench Ratio (Ruling vs Opp)</span>
-          <p className="text-xl font-extrabold text-amber-300 mt-2">{rulingCount} R / {oppCount} O</p>
-          <p className="text-xs text-slate-400 mt-1">
+        <div 
+          className="rounded-2xl p-5 shadow-sm border"
+          style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+        >
+          <span className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>Bench Ratio (Ruling vs Opp)</span>
+          <p className="text-xl font-extrabold text-amber-600 dark:text-amber-400 mt-2">{rulingCount} R / {oppCount} O</p>
+          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
             {totalCount > 0 ? Math.round((rulingCount / totalCount) * 100) : 0}% Ruling Split
           </p>
         </div>
 
-        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-lg">
-          <span className="text-xs font-semibold text-slate-400">TN Constituencies Mapped</span>
-          <p className="text-2xl font-extrabold text-blue-400 mt-2">{Math.min(totalCount, 234)} / 234</p>
-          <p className="text-xs text-slate-400 mt-1">Zero Duplicate Assignments</p>
+        <div 
+          className="rounded-2xl p-5 shadow-sm border"
+          style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+        >
+          <span className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>TN Constituencies Mapped</span>
+          <p className="text-2xl font-extrabold text-blue-600 dark:text-blue-400 mt-2">{Math.min(totalCount, 234)} / 234</p>
+          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Zero Duplicate Assignments</p>
         </div>
 
       </div>
@@ -113,9 +131,12 @@ export const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ learners, parties })
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         
         {/* Party Seat Breakdown */}
-        <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
-          <h4 className="text-sm font-bold text-white flex items-center gap-2">
-            <Shield className="w-4 h-4 text-emerald-400" /> Political Party Seat Allocation
+        <div 
+          className="rounded-2xl p-5 shadow-sm space-y-4 border"
+          style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+        >
+          <h4 className="text-sm font-bold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+            <Shield className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /> Political Party Seat Allocation
           </h4>
 
           <div className="space-y-3">
@@ -127,13 +148,13 @@ export const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ learners, parties })
               return (
                 <div key={p.id} className="space-y-1">
                   <div className="flex justify-between text-xs font-semibold">
-                    <span className="text-slate-200 flex items-center gap-1.5">
+                    <span className="flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}>
                       <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: p.color }}></span>
                       {p.name}
                     </span>
-                    <span className="text-slate-400">{count} Seats ({pct}%)</span>
+                    <span style={{ color: 'var(--text-secondary)' }}>{count} Seats ({pct}%)</span>
                   </div>
-                  <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden border border-slate-800">
+                  <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700/80">
                     <div
                       className="h-full rounded-full transition-all"
                       style={{ width: `${pct}%`, backgroundColor: p.color }}
@@ -146,9 +167,12 @@ export const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ learners, parties })
         </div>
 
         {/* Academic Year Balance */}
-        <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
-          <h4 className="text-sm font-bold text-white flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-amber-400" /> Academic Year Stratification
+        <div 
+          className="rounded-2xl p-5 shadow-sm space-y-4 border"
+          style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+        >
+          <h4 className="text-sm font-bold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+            <Sparkles className="w-4 h-4 text-amber-500" /> Academic Year Stratification
           </h4>
 
           <div className="space-y-3">
@@ -159,10 +183,10 @@ export const AnalyticsTab: React.FC<AnalyticsTabProps> = ({ learners, parties })
               return (
                 <div key={yr} className="space-y-1">
                   <div className="flex justify-between text-xs font-semibold">
-                    <span className="text-slate-200">{yr} Delegates</span>
-                    <span className="text-amber-400">{count} Students ({pct}%)</span>
+                    <span style={{ color: 'var(--text-primary)' }}>{yr} Delegates</span>
+                    <span className="text-amber-600 dark:text-amber-400 font-bold">{count} Students ({pct}%)</span>
                   </div>
-                  <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden border border-slate-800">
+                  <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700/80">
                     <div
                       className="h-full bg-amber-500 rounded-full transition-all"
                       style={{ width: `${pct}%` }}

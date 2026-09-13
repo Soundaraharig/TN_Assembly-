@@ -855,18 +855,25 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
 
       {/* Floating Selection Action Bar (when rows are selected) */}
       {selectedLearnerIds.size > 0 && (
-        <div className="bg-slate-900 text-white p-3.5 rounded-2xl shadow-xl flex flex-wrap items-center justify-between gap-3 animate-slide-up border border-slate-800">
+        <div 
+          className="p-3.5 rounded-2xl shadow-xl flex flex-wrap items-center justify-between gap-3 animate-slide-up border"
+          style={{
+            backgroundColor: 'var(--bg-elevated)',
+            borderColor: 'var(--border)',
+            color: 'var(--text-primary)',
+          }}
+        >
           <div className="flex items-center gap-2">
             <span className="w-6 h-6 rounded-full bg-amber-500 text-slate-950 font-black text-xs flex items-center justify-center">
               {selectedLearnerIds.size}
             </span>
-            <span className="text-xs font-bold">
+            <span className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>
               {selectedLearnerIds.size} delegate{selectedLearnerIds.size > 1 ? 's' : ''} selected
             </span>
-            <span className="text-slate-400 text-xs">•</span>
+            <span style={{ color: 'var(--text-muted)' }} className="text-xs">•</span>
             <button
               onClick={handleToggleSelectAll}
-              className="text-xs text-amber-400 hover:underline font-semibold cursor-pointer"
+              className="text-xs text-amber-600 dark:text-amber-400 hover:underline font-semibold cursor-pointer"
             >
               {isAllFilteredSelected ? 'Deselect filtered' : `Select all ${filteredLearners.length} filtered`}
             </button>
@@ -874,8 +881,11 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
 
           <div className="flex flex-wrap items-center gap-2">
             {/* Batch Assign Bench */}
-            <div className="flex items-center gap-1 bg-slate-800/90 rounded-xl p-1 border border-slate-700">
-              <span className="text-[11px] font-semibold text-slate-300 px-1.5">Bench:</span>
+            <div 
+              className="flex items-center gap-1 rounded-xl p-1 border"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+            >
+              <span className="text-[11px] font-semibold px-1.5" style={{ color: 'var(--text-secondary)' }}>Bench:</span>
               <button
                 onClick={() => handleBatchAssignBench('Ruling')}
                 className="px-2 py-1 rounded-lg text-[11px] font-bold bg-blue-600 hover:bg-blue-500 text-white transition-colors cursor-pointer"
@@ -892,14 +902,14 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
               </button>
               <button
                 onClick={() => handleBatchAssignBench('Independent')}
-                className="px-2 py-1 rounded-lg text-[11px] font-bold bg-slate-700 hover:bg-slate-600 text-slate-200 transition-colors cursor-pointer"
+                className="px-2 py-1 rounded-lg text-[11px] font-bold bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 transition-colors cursor-pointer"
                 title="Assign Independent"
               >
                 Ind.
               </button>
               <button
                 onClick={() => handleBatchAssignBench('Clear')}
-                className="px-1.5 py-1 text-[11px] text-slate-400 hover:text-white transition-colors cursor-pointer"
+                className="px-1.5 py-1 text-[11px] text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white transition-colors cursor-pointer"
                 title="Clear Bench (—)"
               >
                 Clear
@@ -916,7 +926,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                     e.target.value = '';
                   }
                 }}
-                className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-xl px-2.5 py-1.5 focus:outline-none cursor-pointer"
+                className="border text-xs rounded-xl px-2.5 py-1.5 focus:outline-none cursor-pointer"
+                style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
               >
                 <option value="" disabled>Assign Party...</option>
                 {parties.map(p => (
@@ -935,7 +946,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                     e.target.value = '';
                   }
                 }}
-                className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-xl px-2.5 py-1.5 focus:outline-none cursor-pointer"
+                className="border text-xs rounded-xl px-2.5 py-1.5 focus:outline-none cursor-pointer"
+                style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
               >
                 <option value="" disabled>Assign Committee...</option>
                 {committees.map(c => (
@@ -945,20 +957,24 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
             )}
 
             {/* D1 Batch Actions */}
-            <div className="flex items-center rounded-xl bg-slate-800 border border-slate-700/80 p-0.5 text-xs">
+            <div 
+              className="flex items-center rounded-xl p-0.5 text-xs border"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+            >
               <button
                 type="button"
                 onClick={() => handleBatchCheckIn(1, 'BOTH')}
-                className="px-2 py-1 hover:bg-slate-700 text-slate-200 font-semibold rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                className="px-2 py-1 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                style={{ color: 'var(--text-primary)' }}
                 title="Mark all selected as Day 1 Full Day (Both sessions)"
               >
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
                 <span>Check-In D1</span>
               </button>
               <button
                 type="button"
                 onClick={() => handleBatchCheckIn(1, 'FN')}
-                className="px-1.5 py-1 hover:bg-amber-500/20 text-amber-300 font-bold rounded-lg transition-colors cursor-pointer text-[10px]"
+                className="px-1.5 py-1 hover:bg-amber-100 dark:hover:bg-amber-500/20 text-amber-700 dark:text-amber-300 font-bold rounded-lg transition-colors cursor-pointer text-[10px]"
                 title="Mark all selected as Day 1 Forenoon (FN) Present"
               >
                 FN
@@ -966,7 +982,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
               <button
                 type="button"
                 onClick={() => handleBatchCheckIn(1, 'AN')}
-                className="px-1.5 py-1 hover:bg-indigo-500/20 text-indigo-300 font-bold rounded-lg transition-colors cursor-pointer text-[10px]"
+                className="px-1.5 py-1 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 font-bold rounded-lg transition-colors cursor-pointer text-[10px]"
                 title="Mark all selected as Day 1 Afternoon (AN) Present"
               >
                 AN
@@ -974,20 +990,24 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
             </div>
 
             {/* D2 Batch Actions */}
-            <div className="flex items-center rounded-xl bg-slate-800 border border-slate-700/80 p-0.5 text-xs">
+            <div 
+              className="flex items-center rounded-xl p-0.5 text-xs border"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+            >
               <button
                 type="button"
                 onClick={() => handleBatchCheckIn(2, 'BOTH')}
-                className="px-2 py-1 hover:bg-slate-700 text-slate-200 font-semibold rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                className="px-2 py-1 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                style={{ color: 'var(--text-primary)' }}
                 title="Mark all selected as Day 2 Full Day (Both sessions)"
               >
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
                 <span>Check-In D2</span>
               </button>
               <button
                 type="button"
                 onClick={() => handleBatchCheckIn(2, 'FN')}
-                className="px-1.5 py-1 hover:bg-amber-500/20 text-amber-300 font-bold rounded-lg transition-colors cursor-pointer text-[10px]"
+                className="px-1.5 py-1 hover:bg-amber-100 dark:hover:bg-amber-500/20 text-amber-700 dark:text-amber-300 font-bold rounded-lg transition-colors cursor-pointer text-[10px]"
                 title="Mark all selected as Day 2 Forenoon (FN) Present"
               >
                 FN
@@ -995,7 +1015,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
               <button
                 type="button"
                 onClick={() => handleBatchCheckIn(2, 'AN')}
-                className="px-1.5 py-1 hover:bg-indigo-500/20 text-indigo-300 font-bold rounded-lg transition-colors cursor-pointer text-[10px]"
+                className="px-1.5 py-1 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 font-bold rounded-lg transition-colors cursor-pointer text-[10px]"
                 title="Mark all selected as Day 2 Afternoon (AN) Present"
               >
                 AN
@@ -1004,9 +1024,10 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
 
             <button
               onClick={handleBatchPrintBadges}
-              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 flex items-center gap-1 transition-colors cursor-pointer"
+              className="px-3 py-1.5 rounded-xl border hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
             >
-              <Printer className="w-3.5 h-3.5 text-amber-400" />
+              <Printer className="w-3.5 h-3.5 text-amber-500" />
               <span>Print Badges</span>
             </button>
 
@@ -1025,7 +1046,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
 
             <button
               onClick={handleDeselectAll}
-              className="p-1.5 text-slate-400 hover:text-white rounded-lg transition-colors cursor-pointer"
+              className="p-1.5 rounded-lg transition-colors cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-800"
+              style={{ color: 'var(--text-muted)' }}
               title="Clear selection"
             >
               <X className="w-4 h-4" />
@@ -1167,7 +1189,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                         ? 'bg-emerald-500 text-white font-black'
                                         : isD1Any
                                         ? 'text-sky-700 dark:text-sky-300 font-bold'
-                                        : 'text-rose-400 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/30'
+                                        : 'text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/30'
                                     }`}
                                   >
                                     {isD1Loading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : '●'} D1
@@ -1181,7 +1203,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                     className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
                                       isD1Fn
                                         ? 'bg-sky-500 text-white font-black shadow-2xs'
-                                        : 'text-rose-500 dark:text-rose-400 font-bold hover:bg-rose-100 dark:hover:bg-rose-900/30'
+                                        : 'text-rose-600 dark:text-rose-400 font-bold hover:bg-rose-100 dark:hover:bg-rose-900/30'
                                     }`}
                                   >
                                     FN
@@ -1194,7 +1216,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                     className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
                                       isD1An
                                         ? 'bg-emerald-500 text-white font-black shadow-2xs'
-                                        : 'text-rose-500 dark:text-rose-400 font-bold hover:bg-rose-100 dark:hover:bg-rose-900/30'
+                                        : 'text-rose-600 dark:text-rose-400 font-bold hover:bg-rose-100 dark:hover:bg-rose-900/30'
                                     }`}
                                   >
                                     AN
@@ -1221,7 +1243,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                         ? 'bg-emerald-500 text-white font-black'
                                         : isD2Any
                                         ? 'text-sky-700 dark:text-sky-300 font-bold'
-                                        : 'text-rose-400 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/30'
+                                        : 'text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/30'
                                     }`}
                                   >
                                     {isD2Loading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : '●'} D2
@@ -1235,7 +1257,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                     className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
                                       isD2Fn
                                         ? 'bg-sky-500 text-white font-black shadow-2xs'
-                                        : 'text-rose-500 dark:text-rose-400 font-bold hover:bg-rose-100 dark:hover:bg-rose-900/30'
+                                        : 'text-rose-600 dark:text-rose-400 font-bold hover:bg-rose-100 dark:hover:bg-rose-900/30'
                                     }`}
                                   >
                                     FN
@@ -1248,7 +1270,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                     className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
                                       isD2An
                                         ? 'bg-emerald-500 text-white font-black shadow-2xs'
-                                        : 'text-rose-500 dark:text-rose-400 font-bold hover:bg-rose-100 dark:hover:bg-rose-900/30'
+                                        : 'text-rose-600 dark:text-rose-400 font-bold hover:bg-rose-100 dark:hover:bg-rose-900/30'
                                     }`}
                                   >
                                     AN

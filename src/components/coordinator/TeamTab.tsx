@@ -248,10 +248,13 @@ export const TeamTab: React.FC<TeamTabProps> = ({
             </button>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-950/80 p-4 rounded-2xl border border-amber-500/30">
+          <div 
+            className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 rounded-2xl border"
+            style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+          >
             <div className="space-y-1 text-left w-full sm:w-auto">
-              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Account Login Password</span>
-              <div className="font-mono text-xl font-black text-amber-300 tracking-wider select-all">
+              <span className="text-[10px] uppercase font-bold tracking-wider" style={{ color: 'var(--text-muted)' }}>Account Login Password</span>
+              <div className="font-mono text-xl font-black text-amber-600 dark:text-amber-300 tracking-wider select-all">
                 {createdCredential.password}
               </div>
             </div>
@@ -495,37 +498,51 @@ export const TeamTab: React.FC<TeamTabProps> = ({
             </div>
 
             {/* 5. ROLE INFORMATION UI (Explanatory Permission Panel) */}
-            <div className="rounded-2xl p-5 border bg-slate-950/40 border-slate-800 space-y-3">
-              <div className="flex items-center gap-2 font-extrabold text-xs uppercase tracking-wider text-amber-400">
-                <Info className="w-4 h-4 text-amber-400" />
-                <span>{role} Permissions & Role Overview</span>
+            <div 
+              className="rounded-2xl p-5 border space-y-3"
+              style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+            >
+              <div className="flex items-center gap-2 font-extrabold text-xs uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                <Info className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                <span>{role} Permissions &amp; Role Overview</span>
               </div>
 
               {role === 'Organiser' ? (
-                <div className="space-y-1.5 text-xs text-slate-300 font-medium">
-                  <p className="font-bold text-amber-300 text-sm">Organiser</p>
-                  <ul className="space-y-1 list-disc list-inside text-slate-300">
+                <div className="space-y-1.5 text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+                  <p className="font-bold text-amber-600 dark:text-amber-300 text-sm">Organiser</p>
+                  <ul className="space-y-1 list-disc list-inside">
                     <li>Manage election operations</li>
                     <li>Manage assigned event activities</li>
                     <li>Manage voting/election workflow</li>
                     <li>View and manage permitted operational information</li>
-                    <li className="text-rose-400 font-semibold">Cannot delete critical election data</li>
+                    <li className="text-rose-600 dark:text-rose-400 font-semibold">Cannot delete critical election data</li>
                   </ul>
                 </div>
               ) : (
-                <div className="space-y-1.5 text-xs text-slate-300 font-medium">
-                  <p className="font-bold text-amber-300 text-sm">Coordinator</p>
-                  <ul className="space-y-1 list-disc list-inside text-slate-300">
+                <div className="space-y-1.5 text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+                  <p className="font-bold text-amber-600 dark:text-amber-300 text-sm">Coordinator</p>
+                  <ul className="space-y-1 list-disc list-inside">
                     <li>All Organiser permissions</li>
                     <li>Manage team members</li>
-                    <li>Delete applicable election/event records</li>
-                    <li>Full administrative control over the election workflow</li>
+                    <li>Create &amp; assign passwords</li>
+                    <li>Full election governance</li>
                   </ul>
                 </div>
               )}
             </div>
 
-            {/* Submit Add Button */}
+            {/* 6. SECURITY NOTICE BANNER */}
+            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-start gap-3">
+              <ShieldCheck className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+              <div className="text-xs space-y-1">
+                <p className="font-bold text-amber-600 dark:text-amber-300">Credentials are strictly confidential</p>
+                <p style={{ color: 'var(--text-secondary)' }}>
+                  Provide the password directly to the team member. All actions conducted under their login will be logged under their identity.
+                </p>
+              </div>
+            </div>
+
+            {/* Submit Button */}
             <button
               type="submit"
               className="px-6 py-3 rounded-2xl text-sm font-extrabold text-white shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all hover:scale-102 active:scale-95 w-full sm:w-auto"
@@ -537,10 +554,13 @@ export const TeamTab: React.FC<TeamTabProps> = ({
           </form>
         </div>
       ) : (
-        <div className="p-6 rounded-3xl border bg-slate-900/50 border-slate-800 text-center space-y-2">
+        <div 
+          className="p-6 rounded-3xl border text-center space-y-2"
+          style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+        >
           <ShieldAlert className="w-8 h-8 text-amber-500 mx-auto" />
-          <h4 className="text-sm font-extrabold text-white">Organiser Permission Restricted</h4>
-          <p className="text-xs text-slate-400">
+          <h4 className="text-sm font-extrabold" style={{ color: 'var(--text-primary)' }}>Organiser Permission Restricted</h4>
+          <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
             You are signed in as an Organiser. Only Coordinators can add or delete team members for this election.
           </p>
         </div>
@@ -567,14 +587,17 @@ export const TeamTab: React.FC<TeamTabProps> = ({
               </div>
             </div>
 
-            <div className="p-4 rounded-2xl border bg-slate-900/40 border-slate-800 space-y-1">
-              <p className="text-sm font-bold text-white">{memberToDelete.name}</p>
-              <p className="text-xs text-slate-400">{memberToDelete.email} • Role: {memberToDelete.role}</p>
+            <div 
+              className="p-4 rounded-2xl border space-y-1"
+              style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+            >
+              <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{memberToDelete.name}</p>
+              <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>{memberToDelete.email} • Role: {memberToDelete.role}</p>
             </div>
 
             {/* Safeguard Last Coordinator Error Notice */}
             {deleteError && (
-              <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-bold flex items-center gap-2">
+              <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs font-bold flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 <span>{deleteError}</span>
               </div>
@@ -587,7 +610,8 @@ export const TeamTab: React.FC<TeamTabProps> = ({
                   setMemberToDelete(null);
                   setDeleteError(null);
                 }}
-                className="px-4 py-2.5 rounded-xl text-xs font-bold border border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 cursor-pointer transition-colors"
+                className="px-4 py-2.5 rounded-xl text-xs font-bold border hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
               >
                 Cancel
               </button>

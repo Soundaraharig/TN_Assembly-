@@ -28,10 +28,8 @@ import {
   Smartphone,
   Laptop,
   KeyRound,
-  Download,
   UserCheck,
   UserX,
-  Clock,
   CheckCircle2
 } from 'lucide-react';
 import { getProjectorSettings, saveProjectorSettings } from './ProjectorTab';
@@ -124,11 +122,8 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   const [pollQuestion, setPollQuestion] = useState('');
   const [pollMotionType, setPollMotionType] = useState<LiveFlashVote['motion_type']>('Division');
 
-  // Login records & Device Audit State
+  // Login records (for student device status in voter lists)
   const [loginRecords, setLoginRecords] = useState<LoginRecord[]>(() => storageService.getLoginRecords(eventId));
-  const [isLoginRecordsModalOpen, setIsLoginRecordsModalOpen] = useState(false);
-  const [loginModalRoleFilter, setLoginModalRoleFilter] = useState<'ALL' | 'student' | 'volunteer' | 'jury'>('ALL');
-  const [loginModalSearch, setLoginModalSearch] = useState('');
 
   // Per-election Floor Ballot & Voter Console State
   const [voterConsoleTab, setVoterConsoleTab] = useState<Record<string, 'NON_VOTED' | 'VOTED' | 'QUICK_BALLOT'>>({});
@@ -870,12 +865,15 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                     return (
                       <div
                         key={cand.id}
-                        className={`p-3 rounded-lg border space-y-2 transition-all ${
+                        className={`p-3 rounded-xl border space-y-2 transition-all ${
                           isWinner
-                            ? 'bg-amber-500/10 border-amber-500/40'
-                            : 'border-slate-800'
+                            ? 'bg-amber-500/10 border-amber-500/40 shadow-xs'
+                            : ''
                         }`}
-                        style={{ backgroundColor: isWinner ? undefined : 'var(--bg-surface)' }}
+                        style={{
+                          backgroundColor: isWinner ? undefined : 'var(--bg-elevated)',
+                          borderColor: isWinner ? undefined : 'var(--border)'
+                        }}
                       >
                         <div className="flex items-center justify-between gap-3">
                           <div>
@@ -883,19 +881,19 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                               <span className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>{cand.name}</span>
                               {isWinner && <Trophy className="w-3.5 h-3.5 text-amber-500" />}
                             </div>
-                            <span className="text-[11px] text-slate-400">
-                              {cand.party} • <span className={cand.bench === 'Ruling' ? 'text-emerald-400' : 'text-rose-400'}>{cand.bench} Bench</span>
+                            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                              <span style={{ color: 'var(--text-secondary)' }}>{cand.party}</span> • <span className={`font-semibold ${cand.bench === 'Ruling' ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'}`}>{cand.bench} Bench</span>
                             </span>
                           </div>
 
                           <div className="text-right">
                             <div className="text-xs font-mono font-bold" style={{ color: 'var(--text-primary)' }}>
-                              {cand.votes || 0} <span className="text-[10px] font-normal text-slate-400">({pct}%)</span>
+                              {cand.votes || 0} <span className="text-[10px] font-normal" style={{ color: 'var(--text-muted)' }}>({pct}%)</span>
                             </div>
                             {!isClosed && !isLive && onRemoveCandidate && (
                               <button
                                 onClick={() => onRemoveCandidate(elec.id, cand.id)}
-                                className="text-[10px] text-rose-400 hover:text-rose-300 cursor-pointer"
+                                className="text-[10px] text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
                               >
                                 Remove
                               </button>
@@ -904,7 +902,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                         </div>
 
                         {/* Progress bar */}
-                        <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                        <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--border)' }}>
                           <div
                             className={`h-full transition-all duration-500 ${
                               cand.bench === 'Ruling' ? 'bg-emerald-500' : 'bg-rose-500'
@@ -995,20 +993,23 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                     </div>
 
                     {/* View Switcher Tabs: Non-Voted vs Voted vs Quick Scanner */}
-                    <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-950/40 border border-slate-800/80 self-start sm:self-center">
+                    <div
+                      className="flex items-center gap-1 p-1 rounded-xl border self-start sm:self-center"
+                      style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+                    >
                       <button
                         type="button"
                         onClick={() => setVoterConsoleTab(prev => ({ ...prev, [elec.id]: 'NON_VOTED' }))}
                         className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
                           activeConsoleTab === 'NON_VOTED'
                             ? 'bg-rose-600 text-white shadow-sm'
-                            : 'text-slate-400 hover:text-slate-200'
+                            : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                         }`}
                       >
                         <UserX className="w-3.5 h-3.5" />
                         <span>Non-Voted</span>
                         <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-                          activeConsoleTab === 'NON_VOTED' ? 'bg-black/30 text-white' : 'bg-rose-500/20 text-rose-400'
+                          activeConsoleTab === 'NON_VOTED' ? 'bg-black/30 text-white' : 'bg-rose-100 dark:bg-rose-500/20 text-rose-700 dark:text-rose-300'
                         }`}>
                           {nonVotedLearners.length}
                         </span>
@@ -1020,13 +1021,13 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                         className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
                           activeConsoleTab === 'VOTED'
                             ? 'bg-emerald-600 text-white shadow-sm'
-                            : 'text-slate-400 hover:text-slate-200'
+                            : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                         }`}
                       >
                         <UserCheck className="w-3.5 h-3.5" />
                         <span>Voted</span>
                         <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-                          activeConsoleTab === 'VOTED' ? 'bg-black/30 text-white' : 'bg-emerald-500/20 text-emerald-400'
+                          activeConsoleTab === 'VOTED' ? 'bg-black/30 text-white' : 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300'
                         }`}>
                           {votedLearners.length}
                         </span>
@@ -1039,7 +1040,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                           className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
                             activeConsoleTab === 'QUICK_BALLOT'
                               ? 'bg-amber-500 text-slate-950 font-black shadow-sm'
-                              : 'text-slate-400 hover:text-slate-200'
+                              : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                           }`}
                         >
                           <Zap className="w-3.5 h-3.5" />
@@ -1052,14 +1053,14 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                   {/* Turnout Progress Bar */}
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between text-xs">
-                      <span className="font-semibold text-slate-300">
-                        Floor Turnout: <strong className="text-amber-400 font-bold">{liveTurnoutPct}%</strong> ({liveVotedCount} of {totalEligible} Eligible Delegates Voted)
+                      <span className="font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                        Floor Turnout: <strong className="text-amber-600 dark:text-amber-400 font-bold">{liveTurnoutPct}%</strong> ({liveVotedCount} of {totalEligible} Eligible Delegates Voted)
                       </span>
-                      <span className="text-slate-400 text-[11px] font-mono">
+                      <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
                         {liveRemainingCount} Pending
                       </span>
                     </div>
-                    <div className="w-full h-2 rounded-full bg-slate-800/80 overflow-hidden flex">
+                    <div className="w-full h-2 rounded-full overflow-hidden flex" style={{ backgroundColor: 'var(--border)' }}>
                       <div
                         className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-500"
                         style={{ width: `${liveTurnoutPct}%` }}
@@ -1076,7 +1077,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
                       {/* Search Bar */}
                       <div className="relative sm:col-span-1">
-                        <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
                         <input
                           type="text"
                           placeholder="Search name, code, party..."
@@ -1089,7 +1090,8 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                           <button
                             type="button"
                             onClick={() => setVoterSearch(prev => ({ ...prev, [elec.id]: '' }))}
-                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2"
+                            style={{ color: 'var(--text-muted)' }}
                           >
                             <X className="w-3 h-3" />
                           </button>
@@ -1129,19 +1131,22 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                   {/* SUB-VIEW 1: NON-VOTED DELEGATES */}
                   {activeConsoleTab === 'NON_VOTED' && (
                     <div className="space-y-2 pt-1">
-                      <div className="flex items-center justify-between text-xs text-slate-400 px-1">
-                        <span>Showing <strong>{filteredNonVoted.length}</strong> non-voted delegates</span>
+                      <div className="flex items-center justify-between text-xs px-1" style={{ color: 'var(--text-muted)' }}>
+                        <span>Showing <strong style={{ color: 'var(--text-primary)' }}>{filteredNonVoted.length}</strong> non-voted delegates</span>
                         {isLive && (
-                          <span className="text-amber-400 text-[11px] font-medium flex items-center gap-1">
+                          <span className="text-amber-600 dark:text-amber-400 text-[11px] font-semibold flex items-center gap-1">
                             <Zap className="w-3 h-3" /> Click "Cast Ballot" to vote on behalf of walk-ins
                           </span>
                         )}
                       </div>
 
                       {filteredNonVoted.length === 0 ? (
-                        <div className="p-8 text-center rounded-xl border border-dashed border-slate-800 space-y-2">
+                        <div
+                          className="p-8 text-center rounded-xl border border-dashed space-y-2"
+                          style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-elevated)' }}
+                        >
                           <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
-                          <p className="text-xs font-semibold text-slate-300">
+                          <p className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>
                             {nonVotedLearners.length === 0
                               ? '100% Turnout Achieved! All registered delegates have cast their ballots.'
                               : 'No delegates match the current search or filters.'}
@@ -1159,9 +1164,13 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                                 key={l.id}
                                 className={`p-3 rounded-xl border transition-all ${
                                   isProxyActive
-                                    ? 'border-amber-500/60 bg-amber-500/5 shadow-md ring-1 ring-amber-500/30'
-                                    : 'border-slate-800/80 bg-slate-900/40 hover:border-slate-700'
+                                    ? 'border-amber-500/80 bg-amber-500/10 shadow-md ring-1 ring-amber-500/40'
+                                    : 'hover:shadow-xs'
                                 }`}
+                                style={{
+                                  backgroundColor: isProxyActive ? undefined : 'var(--bg-elevated)',
+                                  borderColor: isProxyActive ? undefined : 'var(--border)'
+                                }}
                               >
                                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                                   {/* Left: Delegate Details */}
@@ -1169,15 +1178,15 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                                     <div className="relative">
                                       <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 ${
                                         l.bench === 'Ruling'
-                                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
-                                          : 'bg-rose-500/10 text-rose-400 border border-rose-500/30'
+                                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/30'
+                                          : 'bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:border-rose-500/30'
                                       }`}>
                                         {l.full_name?.slice(0, 2).toUpperCase() || 'DL'}
                                       </div>
                                       {/* Status Dot */}
                                       <span
                                         title={lastLogin ? `Logged in from ${lastLogin.device_info}` : 'No device login recorded'}
-                                        className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-slate-950 ${
+                                        className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-white dark:ring-slate-950 ${
                                           lastLogin ? 'bg-emerald-500' : 'bg-amber-500'
                                         }`}
                                       />
@@ -1185,24 +1194,24 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
                                     <div className="min-w-0 space-y-1">
                                       <div className="flex flex-wrap items-center gap-1.5">
-                                        <h6 className="text-xs sm:text-sm font-bold text-white truncate">
+                                        <h6 className="text-xs sm:text-sm font-bold truncate" style={{ color: 'var(--text-primary)' }}>
                                           {l.full_name}
                                         </h6>
-                                        <span className="px-1.5 py-0.5 rounded font-mono font-bold text-[10px] bg-indigo-500/10 text-indigo-300 border border-indigo-500/30">
+                                        <span className="px-1.5 py-0.5 rounded font-mono font-bold text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 dark:bg-indigo-500/15 dark:text-indigo-300 dark:border-indigo-500/30">
                                           CODE: {l.access_code}
                                         </span>
                                       </div>
 
-                                      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400">
-                                        <span className={`font-semibold ${l.bench === 'Ruling' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                      <div className="flex flex-wrap items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                        <span className={`font-semibold ${l.bench === 'Ruling' ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'}`}>
                                           {l.bench || 'Delegate'} Bench
                                         </span>
                                         <span>•</span>
-                                        <span>{l.party_name || 'Independent'}</span>
+                                        <span style={{ color: 'var(--text-secondary)' }}>{l.party_name || 'Independent'}</span>
                                         {l.constituency_number !== undefined && (
                                           <>
                                             <span>•</span>
-                                            <span>Const #{l.constituency_number} {l.constituency_name || ''}</span>
+                                            <span style={{ color: 'var(--text-secondary)' }}>Const #{l.constituency_number} {l.constituency_name || ''}</span>
                                           </>
                                         )}
                                       </div>
@@ -1210,17 +1219,19 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                                       {/* Device indicator & eligibility note */}
                                       <div className="flex flex-wrap items-center gap-2 pt-0.5">
                                         {lastLogin ? (
-                                          <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                                            <Smartphone className="w-2.5 h-2.5" /> Logged In ({lastLogin.device_type})
+                                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/15 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-500/30">
+                                            <Smartphone className="w-2.5 h-2.5 text-emerald-600 dark:text-emerald-400" />
+                                            <span>Logged In ({lastLogin.device_type})</span>
                                           </span>
                                         ) : (
-                                          <span className="inline-flex items-center gap-1 text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20 font-medium">
-                                            <Laptop className="w-2.5 h-2.5" /> ⚠️ No Device (Walk-in)
+                                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/15 px-2 py-0.5 rounded-md border border-amber-200 dark:border-amber-500/30">
+                                            <Laptop className="w-2.5 h-2.5 text-amber-600 dark:text-amber-400" />
+                                            <span>No Device (Walk-in)</span>
                                           </span>
                                         )}
 
                                         {!eligibility.eligible && (
-                                          <span className="text-[10px] text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20">
+                                          <span className="text-[10px] font-semibold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-500/15 px-2 py-0.5 rounded border border-rose-200 dark:border-rose-500/30">
                                             {eligibility.reason}
                                           </span>
                                         )}
@@ -1240,17 +1251,17 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                                               [elec.id]: isProxyActive ? null : l.id
                                             }));
                                           }}
-                                          className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                                          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs ${
                                             isProxyActive
                                               ? 'bg-slate-700 text-white'
-                                              : 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md'
+                                              : 'bg-amber-500 hover:bg-amber-400 text-slate-950'
                                           }`}
                                         >
                                           <Vote className="w-3.5 h-3.5" />
                                           <span>{isProxyActive ? 'Cancel' : 'Cast Floor Ballot'}</span>
                                         </button>
                                       ) : (
-                                        <span className="text-[11px] text-slate-500 italic">Ineligible</span>
+                                        <span className="text-[11px] italic font-medium" style={{ color: 'var(--text-muted)' }}>Ineligible</span>
                                       )}
                                     </div>
                                   )}
@@ -1258,12 +1269,12 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
                                 {/* Inline Candidate Voting Drawer for this Delegate */}
                                 {isLive && isProxyActive && (
-                                  <div className="mt-3 pt-3 border-t border-slate-800 space-y-2 animate-fadeIn">
+                                  <div className="mt-3 pt-3 border-t space-y-2 animate-fadeIn" style={{ borderColor: 'var(--border)' }}>
                                     <div className="flex items-center justify-between text-xs">
-                                      <span className="font-semibold text-amber-400">
+                                      <span className="font-bold text-amber-600 dark:text-amber-400">
                                         Select Candidate on behalf of <strong>{l.full_name}</strong>:
                                       </span>
-                                      <span className="text-slate-400 text-[10px]">
+                                      <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
                                         1-click to register official vote
                                       </span>
                                     </div>
@@ -1282,17 +1293,17 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                                               'success'
                                             );
                                           }}
-                                          className="p-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/25 text-left flex items-center justify-between gap-2 transition-all cursor-pointer group"
+                                          className="p-2.5 rounded-xl border border-amber-500/40 bg-amber-50/80 hover:bg-amber-100 dark:bg-amber-500/10 dark:hover:bg-amber-500/25 text-left flex items-center justify-between gap-2 transition-all cursor-pointer group shadow-xs"
                                         >
                                           <div className="min-w-0">
-                                            <div className="text-xs font-bold text-white group-hover:text-amber-300 truncate">
+                                            <div className="text-xs font-bold text-slate-900 dark:text-white group-hover:text-amber-600 dark:group-hover:text-amber-300 truncate">
                                               {cand.name}
                                             </div>
-                                            <div className="text-[10px] text-slate-400">
+                                            <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
                                               {cand.party} • {cand.bench}
                                             </div>
                                           </div>
-                                          <Vote className="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform" />
+                                          <Vote className="w-4 h-4 text-amber-500 shrink-0 group-hover:scale-110 transition-transform" />
                                         </button>
                                       ))}
                                     </div>
@@ -1309,17 +1320,20 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                   {/* SUB-VIEW 2: VOTED DELEGATES */}
                   {activeConsoleTab === 'VOTED' && (
                     <div className="space-y-2 pt-1">
-                      <div className="flex items-center justify-between text-xs text-slate-400 px-1">
-                        <span>Showing <strong>{filteredVoted.length}</strong> ballots recorded</span>
-                        <span className="text-emerald-400 text-[11px] font-medium flex items-center gap-1">
+                      <div className="flex items-center justify-between text-xs px-1" style={{ color: 'var(--text-muted)' }}>
+                        <span>Showing <strong style={{ color: 'var(--text-primary)' }}>{filteredVoted.length}</strong> ballots recorded</span>
+                        <span className="text-emerald-600 dark:text-emerald-400 text-[11px] font-semibold flex items-center gap-1">
                           <CheckCircle2 className="w-3 h-3" /> Certified floor ballots
                         </span>
                       </div>
 
                       {filteredVoted.length === 0 ? (
-                        <div className="p-8 text-center rounded-xl border border-dashed border-slate-800 space-y-2">
-                          <Users className="w-8 h-8 text-slate-600 mx-auto" />
-                          <p className="text-xs font-semibold text-slate-400">
+                        <div
+                          className="p-8 text-center rounded-xl border border-dashed space-y-2"
+                          style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-elevated)' }}
+                        >
+                          <Users className="w-8 h-8 mx-auto" style={{ color: 'var(--text-muted)' }} />
+                          <p className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>
                             No ballots recorded yet for this election.
                           </p>
                         </div>
@@ -1333,33 +1347,37 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                             return (
                               <div
                                 key={l.id}
-                                className="p-3 rounded-xl border border-slate-800/80 bg-slate-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                                className="p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs"
+                                style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
                               >
                                 <div className="flex items-center gap-3 min-w-0">
-                                  <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center font-bold text-xs shrink-0">
+                                  <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/30 flex items-center justify-center font-bold text-xs shrink-0">
                                     <Check className="w-4 h-4" />
                                   </div>
 
                                   <div className="min-w-0 space-y-0.5">
                                     <div className="flex flex-wrap items-center gap-1.5">
-                                      <h6 className="text-xs sm:text-sm font-bold text-white truncate">
+                                      <h6 className="text-xs sm:text-sm font-bold truncate" style={{ color: 'var(--text-primary)' }}>
                                         {l.full_name}
                                       </h6>
-                                      <span className="px-1.5 py-0.5 rounded font-mono font-bold text-[10px] bg-slate-800 text-slate-300">
+                                      <span
+                                        className="px-1.5 py-0.5 rounded font-mono font-bold text-[10px] border"
+                                        style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
+                                      >
                                         {l.access_code}
                                       </span>
                                     </div>
 
-                                    <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400">
-                                      <span className={l.bench === 'Ruling' ? 'text-emerald-400' : 'text-rose-400'}>
+                                    <div className="flex flex-wrap items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                      <span className={`font-semibold ${l.bench === 'Ruling' ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'}`}>
                                         {l.bench} Bench
                                       </span>
                                       <span>•</span>
-                                      <span>{l.party_name || 'Independent'}</span>
+                                      <span style={{ color: 'var(--text-secondary)' }}>{l.party_name || 'Independent'}</span>
                                       {l.constituency_number !== undefined && (
                                         <>
                                           <span>•</span>
-                                          <span>Const #{l.constituency_number}</span>
+                                          <span style={{ color: 'var(--text-secondary)' }}>Const #{l.constituency_number}</span>
                                         </>
                                       )}
                                     </div>
@@ -1369,22 +1387,22 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                                 {/* Right: Ballot Information */}
                                 <div className="flex flex-wrap items-center gap-2 self-end sm:self-center">
                                   {votedCand && (
-                                    <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                                    <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30">
                                       Voted: {votedCand.name}
                                     </span>
                                   )}
 
                                   {lastLogin ? (
-                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20 flex items-center gap-1">
                                       <Smartphone className="w-3 h-3" /> Student Device
                                     </span>
                                   ) : (
-                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 flex items-center gap-1">
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/20 flex items-center gap-1">
                                       <Laptop className="w-3 h-3" /> Floor System Proxy
                                     </span>
                                   )}
 
-                                  <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                                  <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30 flex items-center gap-1">
                                     <CheckCircle2 className="w-3.5 h-3.5" /> Ballot Recorded
                                   </span>
                                 </div>
@@ -1398,9 +1416,12 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
                   {/* SUB-VIEW 3: QUICK SCAN / WALK-IN FLOOR TERMINAL */}
                   {isLive && activeConsoleTab === 'QUICK_BALLOT' && (
-                    <div className="p-4 rounded-xl border border-amber-500/30 bg-amber-500/5 space-y-4 animate-fadeIn">
+                    <div
+                      className="p-4 rounded-xl border space-y-4 animate-fadeIn"
+                      style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+                    >
                       <div className="space-y-1">
-                        <label className="text-xs font-bold text-amber-400 uppercase tracking-wider block">
+                        <label className="text-xs font-bold uppercase tracking-wider block text-amber-600 dark:text-amber-400">
                           Fast Floor Scanner (Enter 6-character Code or Name):
                         </label>
                         <div className="relative">
@@ -1410,23 +1431,31 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                             placeholder="e.g. 89F2A1 or Priya..."
                             value={quickScanCode[elec.id] || ''}
                             onChange={(e) => setQuickScanCode(prev => ({ ...prev, [elec.id]: e.target.value.toUpperCase() }))}
-                            className="w-full bg-slate-950 border border-amber-500/40 rounded-xl pl-10 pr-4 py-2.5 text-sm font-mono font-bold text-amber-300 tracking-wider uppercase focus:outline-none focus:border-amber-400"
+                            className="w-full rounded-xl pl-10 pr-4 py-2.5 text-sm font-mono font-bold tracking-wider uppercase border focus:outline-none"
+                            style={{
+                              backgroundColor: 'var(--bg-surface)',
+                              borderColor: 'var(--border)',
+                              color: 'var(--text-primary)'
+                            }}
                           />
                         </div>
                       </div>
 
                       {/* Matched Delegate Card */}
                       {scannedLearner ? (
-                        <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                        <div
+                          className="p-4 rounded-xl border space-y-3 shadow-xs"
+                          style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+                        >
                           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                             <div>
                               <div className="flex items-center gap-2">
-                                <h6 className="text-sm font-extrabold text-white">{scannedLearner.full_name}</h6>
-                                <span className="px-2 py-0.5 rounded font-mono font-bold text-xs bg-amber-500/20 text-amber-400">
+                                <h6 className="text-sm font-extrabold" style={{ color: 'var(--text-primary)' }}>{scannedLearner.full_name}</h6>
+                                <span className="px-2 py-0.5 rounded font-mono font-bold text-xs bg-amber-500/20 text-amber-500">
                                   {scannedLearner.access_code}
                                 </span>
                               </div>
-                              <p className="text-xs text-slate-400 mt-0.5">
+                              <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
                                 {scannedLearner.bench} Bench • {scannedLearner.party_name || 'Independent'}
                                 {scannedLearner.constituency_number !== undefined ? ` • Constituency #${scannedLearner.constituency_number}` : ''}
                               </p>
@@ -1434,7 +1463,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
                             <div>
                               {scannedHasVoted ? (
-                                <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5">
+                                <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-400 dark:border-emerald-500/30 flex items-center gap-1.5">
                                   <CheckCircle2 className="w-4 h-4" /> Already Voted
                                 </span>
                               ) : scannedEligibility?.eligible ? (
@@ -1545,18 +1574,6 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
           >
             <History className="w-3.5 h-3.5" />
             Election Results & History ({closedElections.length})
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setIsLoginRecordsModalOpen(true)}
-            className="px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer bg-slate-900/90 hover:bg-slate-800 text-amber-400 border border-amber-500/40 shadow-xs"
-          >
-            <KeyRound className="w-3.5 h-3.5 text-amber-400" />
-            <span>Login Records</span>
-            <span className="px-1.5 py-0.2 rounded-full text-[10px] font-black bg-amber-500/20 text-amber-300">
-              {loginRecords.length}
-            </span>
           </button>
         </div>
       </div>
@@ -2246,231 +2263,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
           </div>
         </div>
       )}
-
-      {/* LOGIN RECORDS AUDIT MODAL */}
-      {isLoginRecordsModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fadeIn">
-          <div
-            className="w-full max-w-4xl max-h-[88vh] rounded-3xl border shadow-2xl flex flex-col overflow-hidden animate-scaleIn"
-            style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
-          >
-            {/* Modal Header */}
-            <div className="p-5 sm:p-6 border-b flex items-center justify-between" style={{ borderColor: 'var(--border-soft)' }}>
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-500 to-amber-400 flex items-center justify-center text-slate-950 font-bold shadow-md">
-                  <KeyRound className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base sm:text-lg font-extrabold text-white tracking-tight flex items-center gap-2">
-                    Access Code Login Records & Device Audit
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Audit log of every student and volunteer authentication attempt
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsLoginRecordsModalOpen(false)}
-                className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center cursor-pointer transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Metrics Ribbon */}
-            <div className="px-6 py-3 bg-slate-950/60 border-b flex flex-wrap items-center justify-between gap-3 text-xs" style={{ borderColor: 'var(--border-soft)' }}>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="px-3 py-1 rounded-xl bg-slate-900 border border-slate-800 text-slate-300">
-                  Total Logins: <strong className="text-white font-black">{loginRecords.length}</strong>
-                </span>
-                <span className="px-3 py-1 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-400">
-                  Students: <strong className="text-white font-black">{loginRecords.filter(r => r.role === 'student').length}</strong>
-                </span>
-                <span className="px-3 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
-                  Volunteers: <strong className="text-white font-black">{loginRecords.filter(r => r.role === 'volunteer').length}</strong>
-                </span>
-                <span className="px-3 py-1 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-400">
-                  Jury: <strong className="text-white font-black">{loginRecords.filter(r => r.role === 'jury').length}</strong>
-                </span>
-              </div>
-
-              {/* Export CSV */}
-              <button
-                type="button"
-                onClick={() => {
-                  const headers = ['Timestamp', 'Role', 'Name', 'Access Code', 'Device Type', 'Device Info', 'Details'];
-                  const rows = loginRecords.map(r => [
-                    r.login_at,
-                    r.role,
-                    `"${r.user_name?.replace(/"/g, '""') || ''}"`,
-                    r.access_code,
-                    r.device_type || '',
-                    `"${r.device_info?.replace(/"/g, '""') || ''}"`,
-                    `"${r.details?.replace(/"/g, '""') || ''}"`
-                  ]);
-                  const csvContent = [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
-                  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = `tn_assembly_login_records_${new Date().toISOString().slice(0, 10)}.csv`;
-                  a.click();
-                  URL.revokeObjectURL(url);
-                  onShowToast('CSV Exported', 'Login audit records downloaded successfully', 'success');
-                }}
-                className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer transition-all"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Export CSV</span>
-              </button>
-            </div>
-
-            {/* Filter Toolbar */}
-            <div className="p-4 border-b flex flex-col sm:flex-row items-center justify-between gap-3" style={{ borderColor: 'var(--border-soft)' }}>
-              <div className="relative w-full sm:w-72">
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  placeholder="Filter by name, code, device..."
-                  value={loginModalSearch}
-                  onChange={(e) => setLoginModalSearch(e.target.value)}
-                  className="w-full pl-9 pr-3 py-1.5 rounded-xl border text-xs font-medium focus:outline-none"
-                  style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
-                />
-              </div>
-
-              {/* Role Filter Pills */}
-              <div className="flex items-center gap-1 bg-slate-950/60 p-1 rounded-xl border border-slate-800 self-stretch sm:self-auto justify-center">
-                {(['ALL', 'student', 'volunteer', 'jury'] as const).map(roleOption => (
-                  <button
-                    key={roleOption}
-                    type="button"
-                    onClick={() => setLoginModalRoleFilter(roleOption)}
-                    className={`px-3 py-1 rounded-lg text-xs font-bold capitalize transition-all cursor-pointer ${
-                      loginModalRoleFilter === roleOption
-                        ? 'bg-amber-500 text-slate-950 shadow-xs'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {roleOption === 'ALL' ? 'All Roles' : `${roleOption}s`}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Records List Table */}
-            <div className="p-4 overflow-y-auto flex-1 space-y-2">
-              {(() => {
-                const filtered = loginRecords.filter(r => {
-                  if (loginModalRoleFilter !== 'ALL' && r.role !== loginModalRoleFilter) return false;
-                  if (loginModalSearch.trim()) {
-                    const q = loginModalSearch.trim().toLowerCase();
-                    const mName = (r.user_name || '').toLowerCase().includes(q);
-                    const mCode = (r.access_code || '').toLowerCase().includes(q);
-                    const mDev = (r.device_info || '').toLowerCase().includes(q);
-                    const mDet = (r.details || '').toLowerCase().includes(q);
-                    if (!mName && !mCode && !mDev && !mDet) return false;
-                  }
-                  return true;
-                });
-
-                if (filtered.length === 0) {
-                  return (
-                    <div className="py-16 text-center text-slate-500 text-xs italic">
-                      No login records match the current filter.
-                    </div>
-                  );
-                }
-
-                return (
-                  <div className="space-y-2">
-                    {filtered.map(entry => (
-                      <div
-                        key={entry.id}
-                        className="p-3.5 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors hover:border-slate-700"
-                        style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 ${
-                            entry.role === 'student'
-                              ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/30'
-                              : entry.role === 'volunteer'
-                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
-                              : 'bg-purple-500/10 text-purple-400 border border-purple-500/30'
-                          }`}>
-                            {entry.role === 'student' ? 'ST' : entry.role === 'volunteer' ? 'VOL' : 'JRY'}
-                          </div>
-
-                          <div className="min-w-0 space-y-0.5">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h6 className="text-xs sm:text-sm font-bold text-white truncate">
-                                {entry.user_name}
-                              </h6>
-                              <span className="px-2 py-0.5 rounded font-mono font-bold text-[10px] bg-slate-800 text-amber-400 border border-amber-500/30">
-                                {entry.access_code}
-                              </span>
-                              <span className={`px-2 py-0.2 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                                entry.role === 'student'
-                                  ? 'bg-indigo-500/15 text-indigo-400'
-                                  : entry.role === 'volunteer'
-                                  ? 'bg-emerald-500/15 text-emerald-400'
-                                  : 'bg-purple-500/15 text-purple-400'
-                              }`}>
-                                {entry.role}
-                              </span>
-                            </div>
-
-                            <p className="text-[11px] text-slate-400 truncate">
-                              {entry.details || `${entry.role.toUpperCase()} Authentication`}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-2 sm:self-center">
-                          <span className="px-2 py-1 rounded-lg text-[10px] font-medium bg-slate-800/80 text-slate-300 border border-slate-700 flex items-center gap-1">
-                            {entry.device_type === 'Mobile' ? (
-                              <Smartphone className="w-3 h-3 text-emerald-400" />
-                            ) : (
-                              <Laptop className="w-3 h-3 text-indigo-400" />
-                            )}
-                            <span>{entry.device_info || entry.device_type}</span>
-                          </span>
-
-                          <span className="px-2.5 py-1 rounded-lg text-[11px] font-mono text-slate-400 flex items-center gap-1">
-                            <Clock className="w-3 h-3 text-slate-500" />
-                            {new Date(entry.login_at).toLocaleString([], {
-                              month: 'short',
-                              day: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                              second: '2-digit'
-                            })}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                );
-              })()}
-            </div>
-
-            {/* Modal Footer */}
-            <div className="p-4 border-t flex justify-between items-center bg-slate-950/40" style={{ borderColor: 'var(--border-soft)' }}>
-              <span className="text-[11px] text-slate-400">
-                Data retained locally & synced to cloud Supabase
-              </span>
-              <button
-                type="button"
-                onClick={() => setIsLoginRecordsModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-slate-800 hover:bg-slate-700 cursor-pointer"
-              >
-                Close Audit
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
+

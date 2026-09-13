@@ -173,7 +173,10 @@ export const ProjectorTab: React.FC<ProjectorTabProps> = ({
     <div className="space-y-6 animate-fade-in pb-16">
       
       {/* Studio Mode Switcher Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between bg-slate-900 border border-slate-800 p-2.5 rounded-2xl shadow-lg gap-3">
+      <div 
+        className="flex flex-col sm:flex-row items-center justify-between p-2.5 rounded-2xl shadow-sm gap-3 border"
+        style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+      >
         <div className="flex items-center gap-2 w-full sm:w-auto">
           <button
             type="button"
@@ -181,7 +184,7 @@ export const ProjectorTab: React.FC<ProjectorTabProps> = ({
             className={`flex-1 sm:flex-none px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer ${
               activeViewMode === 'studio'
                 ? 'bg-amber-500 text-slate-950 shadow-md'
-                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700'
             }`}
           >
             <Tv className="w-4 h-4" />
@@ -194,7 +197,7 @@ export const ProjectorTab: React.FC<ProjectorTabProps> = ({
             className={`flex-1 sm:flex-none px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer ${
               activeViewMode === 'presentation'
                 ? 'bg-amber-500 text-slate-950 shadow-md'
-                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700'
             }`}
           >
             <Sparkles className="w-4 h-4" />
@@ -204,7 +207,7 @@ export const ProjectorTab: React.FC<ProjectorTabProps> = ({
 
         <button
           onClick={() => window.open(projectorUrl, '_blank')}
-          className="px-3.5 py-2 rounded-xl text-xs font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 flex items-center gap-1.5 cursor-pointer transition-all w-full sm:w-auto justify-center"
+          className="px-3.5 py-2 rounded-xl text-xs font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 flex items-center gap-1.5 cursor-pointer transition-all w-full sm:w-auto justify-center"
         >
           <ExternalLink className="w-3.5 h-3.5" />
           <span>Launch Unauthenticated Window ↗</span>

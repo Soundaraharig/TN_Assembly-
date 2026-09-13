@@ -1,6 +1,7 @@
-import React, { useState, useMemo } from 'react';
-import type { EventDay, Learner, DayAttendanceRecord, CollegeEvent, Party, Committee, DayAttendanceStatus } from '../../types';
+import React, { useState, useMemo, useEffect } from 'react';
+import type { EventDay, Learner, DayAttendanceRecord, CollegeEvent, Party, Committee, DayAttendanceStatus, LoginRecord } from '../../types';
 import { getRecordSessionStatuses, formatMarkedBy } from '../../types';
+import { storageService } from '../../services/storageService';
 import { EditDayActivitiesModal } from './EditDayActivitiesModal';
 import {
   Plus,
@@ -19,7 +20,13 @@ import {
   CheckSquare,
   Sun,
   Sunset,
-  Star
+  Star,
+  KeyRound,
+  Smartphone,
+  Laptop,
+  Clock,
+  ShieldCheck,
+  X
 } from 'lucide-react';
 
 interface DaysActivitiesTabProps {
@@ -65,9 +72,24 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
   onBatchSetDayAttendance,
   onShowToast
 }) => {
-  // Navigation mode: 'days' (overview of all days) or 'attendance' (drilldown into a specific day)
-  const [viewMode, setViewMode] = useState<'days' | 'attendance'>('days');
+  // Navigation mode: 'days' (overview of all days), 'attendance' (drilldown into day attendance), or 'login_records'
+  const [viewMode, setViewMode] = useState<'days' | 'attendance' | 'login_records'>('days');
   const [selectedDayId, setSelectedDayId] = useState<string>('');
+
+  // Login records & device audit state
+  const [loginRecords, setLoginRecords] = useState<LoginRecord[]>(() => storageService.getLoginRecords(event?.id));
+  const [loginRoleFilter, setLoginRoleFilter] = useState<'ALL' | 'student' | 'volunteer' | 'jury'>('ALL');
+  const [loginDeviceFilter, setLoginDeviceFilter] = useState<'ALL' | 'Mobile' | 'Desktop'>('ALL');
+  const [loginSearchQuery, setLoginSearchQuery] = useState('');
+
+  // Auto-refresh login records every 4s
+  useEffect(() => {
+    setLoginRecords(storageService.getLoginRecords(event?.id));
+    const timer = setInterval(() => {
+      setLoginRecords(storageService.getLoginRecords(event?.id));
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [event?.id]);
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -361,6 +383,79 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
 
   return (
     <div className="space-y-6 animate-fade-in max-w-7xl mx-auto pb-12">
+      {/* Primary Sub-Navigation Bar: Days & Activities vs Session Attendance vs Login Records */}
+      <div
+        className="p-1.5 rounded-2xl border flex flex-wrap items-center justify-between gap-2 shadow-xs"
+        style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+      >
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setViewMode('days')}
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              viewMode === 'days'
+                ? 'bg-amber-500 text-slate-950 shadow-sm'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60'
+            }`}
+          >
+            <Calendar className="w-3.5 h-3.5" />
+            <span>Days &amp; Activities</span>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+              viewMode === 'days' ? 'bg-black/20 text-slate-950' : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+            }`}>
+              {sortedDays.length}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (!selectedDayId) {
+                setSelectedDayId(activeDay?.id || sortedDays[0]?.id || '');
+              }
+              setViewMode('attendance');
+            }}
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              viewMode === 'attendance'
+                ? 'bg-amber-500 text-slate-950 shadow-sm'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>Session Attendance</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setViewMode('login_records')}
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+              viewMode === 'login_records'
+                ? 'bg-amber-500 text-slate-950 shadow-sm'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60'
+            }`}
+          >
+            <KeyRound className="w-3.5 h-3.5 text-amber-500" />
+            <span>Login Records</span>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+              viewMode === 'login_records' ? 'bg-black/20 text-slate-950' : 'bg-amber-100 dark:bg-amber-500/20 text-amber-800 dark:text-amber-300'
+            }`}>
+              {loginRecords.length}
+            </span>
+          </button>
+        </div>
+
+        {viewMode === 'days' && (
+          <button
+            type="button"
+            onClick={handleOpenAddDay}
+            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-xs shadow-md shadow-amber-500/20 flex items-center gap-1.5 transition cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>+ Add Day</span>
+          </button>
+        )}
+      </div>
+
       {/* ─────────────────────────────────────────────────────────────────── */}
       {/* VIEW 1: DAYS & ACTIVITIES OVERVIEW                                   */}
       {/* ─────────────────────────────────────────────────────────────────── */}
@@ -382,7 +477,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                   </span>
                 </div>
                 <h2 className="text-2xl font-black tracking-tight mt-1" style={{ color: 'var(--text-primary)' }}>
-                  Days & Activities
+                  Days &amp; Activities
                 </h2>
                 <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
                   Event: <strong style={{ color: 'var(--text-primary)' }}>{event.college_name}</strong> • Define session days, assign dynamic TN Assembly activities, switch active floor day, and track day-wise attendance.
@@ -1081,7 +1176,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                   Student Attendance List ({filteredLearners.length} displayed)
                 </span>
                 <span className="text-xs text-slate-400 block mt-0.5">
-                  Separate Forenoon (FN) & Afternoon (AN) tracking for {currentAttendanceDay.name}
+                  Separate Forenoon (FN) &amp; Afternoon (AN) tracking for {currentAttendanceDay.name}
                 </span>
               </div>
               {currentAttendanceDay.main_day && (
@@ -1102,7 +1197,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                     <tr className="border-b text-[11px] uppercase font-bold text-slate-400" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-elevated)' }}>
                       <th className="py-3 px-4">Student</th>
                       <th className="py-3 px-4">Access Code / ID</th>
-                      <th className="py-3 px-4">Constituency & Party</th>
+                      <th className="py-3 px-4">Constituency &amp; Party</th>
                       <th className="py-3 px-4 text-center">🌅 Forenoon (FN)</th>
                       <th className="py-3 px-4 text-center">🌇 Afternoon (AN)</th>
                       <th className="py-3 px-4 text-center">Day Status</th>
@@ -1153,10 +1248,10 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                             <div className="flex flex-col items-center gap-1.5">
                               <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
                                 isFnPresent
-                                  ? 'bg-amber-500/15 text-amber-400 border border-amber-500/40'
-                                  : 'bg-slate-500/15 text-slate-400 border border-slate-700/50'
+                                  ? 'bg-amber-50 dark:bg-amber-500/15 text-amber-800 dark:text-amber-400 border border-amber-200 dark:border-amber-500/40'
+                                  : 'bg-slate-100 dark:bg-slate-500/15 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700/50'
                               }`}>
-                                {isFnPresent ? <Sun className="w-3 h-3 text-amber-400" /> : <XCircle className="w-3 h-3 text-slate-400" />}
+                                {isFnPresent ? <Sun className="w-3 h-3 text-amber-600 dark:text-amber-400" /> : <XCircle className="w-3 h-3 text-slate-400" />}
                                 <span>{isFnPresent ? 'Present' : 'Absent'}</span>
                               </span>
 
@@ -1171,8 +1266,8 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                                   }}
                                   className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
                                     isFnPresent
-                                      ? 'bg-amber-500 text-white shadow-sm'
-                                      : 'border border-amber-500/40 text-amber-400 hover:bg-amber-500/15'
+                                      ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
+                                      : 'border border-amber-300 dark:border-amber-500/40 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-500/15'
                                   }`}
                                   title="Mark Forenoon Present"
                                 >
@@ -1188,8 +1283,8 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                                   }}
                                   className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
                                     !isFnPresent
-                                      ? 'bg-rose-500 text-white shadow-sm'
-                                      : 'border border-rose-500/40 text-rose-400 hover:bg-rose-500/15'
+                                      ? 'bg-rose-600 text-white font-black shadow-xs'
+                                      : 'border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/15'
                                   }`}
                                   title="Mark Forenoon Absent"
                                 >
@@ -1204,10 +1299,10 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                             <div className="flex flex-col items-center gap-1.5">
                               <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
                                 isAnPresent
-                                  ? 'bg-sky-500/15 text-sky-400 border border-sky-500/40'
-                                  : 'bg-slate-500/15 text-slate-400 border border-slate-700/50'
+                                  ? 'bg-sky-50 dark:bg-sky-500/15 text-sky-800 dark:text-sky-400 border border-sky-200 dark:border-sky-500/40'
+                                  : 'bg-slate-100 dark:bg-slate-500/15 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700/50'
                               }`}>
-                                {isAnPresent ? <Sunset className="w-3 h-3 text-sky-400" /> : <XCircle className="w-3 h-3 text-slate-400" />}
+                                {isAnPresent ? <Sunset className="w-3 h-3 text-sky-600 dark:text-sky-400" /> : <XCircle className="w-3 h-3 text-slate-400" />}
                                 <span>{isAnPresent ? 'Present' : 'Absent'}</span>
                               </span>
 
@@ -1222,8 +1317,8 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                                   }}
                                   className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
                                     isAnPresent
-                                      ? 'bg-sky-500 text-white shadow-sm'
-                                      : 'border border-sky-500/40 text-sky-400 hover:bg-sky-500/15'
+                                      ? 'bg-sky-500 text-white font-black shadow-xs'
+                                      : 'border border-sky-300 dark:border-sky-500/40 text-sky-700 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-500/15'
                                   }`}
                                   title="Mark Afternoon Present"
                                 >
@@ -1239,8 +1334,8 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                                   }}
                                   className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
                                     !isAnPresent
-                                      ? 'bg-rose-500 text-white shadow-sm'
-                                      : 'border border-rose-500/40 text-rose-400 hover:bg-rose-500/15'
+                                      ? 'bg-rose-600 text-white font-black shadow-xs'
+                                      : 'border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/15'
                                   }`}
                                   title="Mark Afternoon Absent"
                                 >
@@ -1253,22 +1348,22 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                           {/* Day Overall Status */}
                           <td className="py-3 px-4 text-center">
                             {isFnPresent && isAnPresent ? (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black bg-emerald-50 dark:bg-emerald-500/20 text-emerald-800 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/40">
                                 <CheckCircle2 className="w-3.5 h-3.5" />
                                 <span>Full Day (FN+AN)</span>
                               </span>
                             ) : isFnPresent ? (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-500/15 text-amber-400 border border-amber-500/40">
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 dark:bg-amber-500/15 text-amber-800 dark:text-amber-400 border border-amber-200 dark:border-amber-500/40">
                                 <Sun className="w-3.5 h-3.5" />
                                 <span>FN Only</span>
                               </span>
                             ) : isAnPresent ? (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-sky-500/15 text-sky-400 border border-sky-500/40">
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-sky-50 dark:bg-sky-500/15 text-sky-800 dark:text-sky-400 border border-sky-200 dark:border-sky-500/40">
                                 <Sunset className="w-3.5 h-3.5" />
                                 <span>AN Only</span>
                               </span>
                             ) : (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-rose-500/15 text-rose-400 border border-rose-500/40">
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-rose-50 dark:bg-rose-500/15 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-500/40">
                                 <XCircle className="w-3.5 h-3.5" />
                                 <span>Absent</span>
                               </span>
@@ -1321,6 +1416,333 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                 </table>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────────── */}
+      {/* VIEW 3: ACCESS CODE LOGIN RECORDS & DEVICE AUDIT                   */}
+      {/* ─────────────────────────────────────────────────────────────────── */}
+      {viewMode === 'login_records' && (
+        <div className="space-y-6 animate-fade-in">
+          {/* Header Card */}
+          <div
+            className="rounded-2xl p-6 border shadow-sm transition-all"
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+          >
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 to-amber-400 flex items-center justify-center text-slate-950 font-bold shadow-md shadow-amber-500/20 shrink-0">
+                  <KeyRound className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-500">
+                      SECURITY &amp; AUTHENTICATION AUDIT
+                    </span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                      Live Stream Active
+                    </span>
+                  </div>
+                  <h2 className="text-2xl font-black tracking-tight mt-0.5" style={{ color: 'var(--text-primary)' }}>
+                    Access Code Login Records
+                  </h2>
+                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                    Every time a student delegate, volunteer, or jury member signs into the portal using their 6-character access code, a persistent device and timestamp record is captured.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const headers = ['Timestamp', 'Role', 'Name', 'Access Code', 'Device Type', 'Device Info', 'Details'];
+                    const rows = loginRecords.map(r => [
+                      r.login_at,
+                      r.role,
+                      `"${(r.user_name || '').replace(/"/g, '""')}"`,
+                      r.access_code,
+                      r.device_type || '',
+                      `"${(r.device_info || '').replace(/"/g, '""')}"`,
+                      `"${(r.details || '').replace(/"/g, '""')}"`
+                    ]);
+                    const csvContent = [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
+                    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = `${event.college_name.replace(/\s+/g, '_')}_Login_Records_${new Date().toISOString().slice(0, 10)}.csv`;
+                    link.click();
+                    URL.revokeObjectURL(url);
+                    onShowToast('CSV Exported', 'Downloaded complete login records log', 'success');
+                  }}
+                  className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-md shadow-amber-500/20 cursor-pointer transition-all"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Export CSV</span>
+                </button>
+
+                {loginRecords.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm('Are you sure you want to clear the local login audit records for this event?')) {
+                        storageService.clearLoginRecords(event.id);
+                        setLoginRecords([]);
+                        onShowToast('Audit Cleared', 'Cleared local login records', 'info');
+                      }
+                    }}
+                    className="p-2.5 rounded-xl border border-slate-700 hover:border-rose-500/60 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 cursor-pointer transition-colors"
+                    title="Clear login records"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Stat Badges Ribbon */}
+            <div className="mt-5 pt-4 border-t grid grid-cols-2 sm:grid-cols-4 gap-3" style={{ borderColor: 'var(--border)' }}>
+              <div className="p-3.5 rounded-xl border shadow-xs" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
+                <span className="text-[10px] font-bold uppercase tracking-wider block" style={{ color: 'var(--text-muted)' }}>Total Logins</span>
+                <span className="text-xl font-black mt-1 block" style={{ color: 'var(--text-primary)' }}>{loginRecords.length}</span>
+                <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{new Set(loginRecords.map(r => r.user_id)).size} unique individuals</span>
+              </div>
+
+              <div className="p-3.5 rounded-xl border border-indigo-200 dark:border-indigo-500/20 bg-indigo-50/70 dark:bg-indigo-500/5 shadow-xs">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-400 block">Student Delegates</span>
+                <span className="text-xl font-black text-indigo-900 dark:text-indigo-300 mt-1 block">
+                  {loginRecords.filter(r => r.role === 'student').length}
+                </span>
+                <span className="text-[10px] text-indigo-600 dark:text-indigo-400/80">Active on Delegate App</span>
+              </div>
+
+              <div className="p-3.5 rounded-xl border border-emerald-200 dark:border-emerald-500/20 bg-emerald-50/70 dark:bg-emerald-500/5 shadow-xs">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 block">Operations Volunteers</span>
+                <span className="text-xl font-black text-emerald-900 dark:text-emerald-300 mt-1 block">
+                  {loginRecords.filter(r => r.role === 'volunteer').length}
+                </span>
+                <span className="text-[10px] text-emerald-600 dark:text-emerald-400/80">Active on Volunteer Desk</span>
+              </div>
+
+              <div className="p-3.5 rounded-xl border border-purple-200 dark:border-purple-500/20 bg-purple-50/70 dark:bg-purple-500/5 shadow-xs">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-purple-700 dark:text-purple-400 block">Devices: Mobile vs Desktop</span>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-base font-black flex items-center gap-1" style={{ color: 'var(--text-primary)' }}>
+                    <Smartphone className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                    {loginRecords.filter(r => r.device_type === 'Mobile').length}
+                  </span>
+                  <span style={{ color: 'var(--text-muted)' }}>•</span>
+                  <span className="text-base font-black flex items-center gap-1" style={{ color: 'var(--text-primary)' }}>
+                    <Laptop className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                    {loginRecords.filter(r => r.device_type !== 'Mobile').length}
+                  </span>
+                </div>
+                <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Device distribution</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Search and Filters Bar */}
+          <div
+            className="p-4 rounded-2xl border flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs"
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+          >
+            {/* Search Input */}
+            <div className="relative w-full sm:w-80">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+              <input
+                type="text"
+                placeholder="Search delegate name, code, device..."
+                value={loginSearchQuery}
+                onChange={(e) => setLoginSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 rounded-xl border text-xs font-medium focus:outline-none"
+                style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+              />
+              {loginSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setLoginSearchQuery('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Filter Pills */}
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-start sm:justify-end">
+              {/* Role Filter */}
+              <div
+                className="flex items-center gap-1 p-1 rounded-xl border"
+                style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+              >
+                {(['ALL', 'student', 'volunteer', 'jury'] as const).map(roleOpt => (
+                  <button
+                    key={roleOpt}
+                    type="button"
+                    onClick={() => setLoginRoleFilter(roleOpt)}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold capitalize transition-all cursor-pointer ${
+                      loginRoleFilter === roleOpt
+                        ? 'bg-amber-500 text-slate-950 shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {roleOpt === 'ALL' ? 'All Roles' : `${roleOpt}s`}
+                  </button>
+                ))}
+              </div>
+
+              {/* Device Filter */}
+              <div
+                className="flex items-center gap-1 p-1 rounded-xl border"
+                style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+              >
+                {(['ALL', 'Mobile', 'Desktop'] as const).map(devOpt => (
+                  <button
+                    key={devOpt}
+                    type="button"
+                    onClick={() => setLoginDeviceFilter(devOpt)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      loginDeviceFilter === devOpt
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {devOpt === 'ALL' ? 'All Devices' : devOpt}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Records Table / List */}
+          <div
+            className="rounded-2xl border overflow-hidden shadow-xs"
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+          >
+            {(() => {
+              const filtered = loginRecords.filter(r => {
+                if (loginRoleFilter !== 'ALL' && r.role !== loginRoleFilter) return false;
+                if (loginDeviceFilter !== 'ALL' && r.device_type !== loginDeviceFilter) return false;
+                if (loginSearchQuery.trim()) {
+                  const q = loginSearchQuery.trim().toLowerCase();
+                  const mName = (r.user_name || '').toLowerCase().includes(q);
+                  const mCode = (r.access_code || '').toLowerCase().includes(q);
+                  const mDev = (r.device_info || '').toLowerCase().includes(q);
+                  const mDet = (r.details || '').toLowerCase().includes(q);
+                  if (!mName && !mCode && !mDev && !mDet) return false;
+                }
+                return true;
+              });
+
+              if (filtered.length === 0) {
+                return (
+                  <div className="py-20 px-4 text-center space-y-3">
+                    <KeyRound className="w-10 h-10 mx-auto" style={{ color: 'var(--text-muted)' }} />
+                    <h4 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>No login records found</h4>
+                    <p className="text-xs max-w-sm mx-auto" style={{ color: 'var(--text-muted)' }}>
+                      {loginRecords.length === 0
+                        ? 'As students and volunteers log in using their 6-character access codes, their authentication attempts will automatically appear here.'
+                        : 'No logins match the search criteria or filter selected.'}
+                    </p>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="divide-y" style={{ borderColor: 'var(--border-soft)' }}>
+                  <div
+                    className="p-3.5 flex items-center justify-between text-xs font-semibold"
+                    style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
+                  >
+                    <span>Displaying {filtered.length} authentication entries</span>
+                    <span className="text-emerald-600 dark:text-emerald-400 text-[11px] flex items-center gap-1 font-mono">
+                      <ShieldCheck className="w-3.5 h-3.5" /> Synchronized Audit Log
+                    </span>
+                  </div>
+
+                  {filtered.map(entry => (
+                    <div
+                      key={entry.id}
+                      className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50 dark:hover:bg-slate-800/20 transition-colors border-b last:border-b-0"
+                      style={{ borderColor: 'var(--border-soft)' }}
+                    >
+                      <div className="flex items-center gap-3.5 min-w-0">
+                        <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-black text-xs shrink-0 ${
+                          entry.role === 'student'
+                            ? 'bg-indigo-50 text-indigo-700 border border-indigo-200 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-500/30'
+                            : entry.role === 'volunteer'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/30'
+                            : 'bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-500/30'
+                        }`}>
+                          {entry.role === 'student' ? 'ST' : entry.role === 'volunteer' ? 'VOL' : 'JRY'}
+                        </div>
+
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h5 className="text-sm font-bold truncate" style={{ color: 'var(--text-primary)' }}>
+                              {entry.user_name}
+                            </h5>
+                            <span
+                              className="px-2 py-0.5 rounded font-mono font-bold text-[11px] border"
+                              style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--amber)' }}
+                            >
+                              {entry.access_code}
+                            </span>
+                            <span className={`px-2 py-0.2 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                              entry.role === 'student'
+                                ? 'bg-indigo-100 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-400'
+                                : entry.role === 'volunteer'
+                                ? 'bg-emerald-100 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
+                                : 'bg-purple-100 dark:bg-purple-500/15 text-purple-700 dark:text-purple-400'
+                            }`}>
+                              {entry.role}
+                            </span>
+                          </div>
+
+                          <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                            {entry.details || `${entry.role.toUpperCase()} Authentication`}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
+                        <span
+                          className="px-2.5 py-1 rounded-xl text-xs font-medium border flex items-center gap-1.5"
+                          style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
+                        >
+                          {entry.device_type === 'Mobile' ? (
+                            <Smartphone className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                          ) : (
+                            <Laptop className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                          )}
+                          <span>{entry.device_info || entry.device_type}</span>
+                        </span>
+
+                        <span
+                          className="px-2.5 py-1 rounded-xl text-xs font-mono flex items-center gap-1.5 border"
+                          style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-muted)' }}
+                        >
+                          <Clock className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
+                          <span>
+                            {new Date(entry.login_at).toLocaleString([], {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              second: '2-digit'
+                            })}
+                          </span>
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}

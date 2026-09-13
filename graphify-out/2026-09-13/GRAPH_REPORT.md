@@ -1,7 +1,7 @@
 # Graph Report - TN_Assembly-  (2026-09-13)
 
 ## Corpus Check
-- 136 files · ~180,456 words
+- 136 files · ~179,708 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary

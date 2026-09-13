@@ -13609,7 +13609,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/components/coordinator/ParticipantsTab.tsx",
-      "source_location": "L1158",
+      "source_location": "L1136",
       "weight": 1.0
     },
     {
