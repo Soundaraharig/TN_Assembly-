@@ -522,9 +522,9 @@
     "semantic_hash": "a866683017f14bd81bc76c2fd58997d5"
   },
   "src/components/coordinator/ElectionsTab.tsx": {
-    "mtime": 1789281112.1602027,
-    "seen": 1789281184.0078297,
-    "ast_hash": "becc2af5bc05fd2f8d1b80031e8bd519",
+    "mtime": 1789282163.7650163,
+    "seen": 1789282317.9303055,
+    "ast_hash": "864ea1e5a4ca858386f7d22b3f0b520a",
     "semantic_hash": ""
   },
   "src/components/coordinator/FeedbackTab.tsx": {
@@ -666,15 +666,15 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1789273796.4720724,
-    "seen": 1789273873.3411582,
-    "ast_hash": "52054ddf41c8271755bdaee029b0ba69",
+    "mtime": 1789282245.7092319,
+    "seen": 1789282317.953381,
+    "ast_hash": "fed3a3a2dd6865a72de235611274022f",
     "semantic_hash": ""
   },
   "src/types/index.ts": {
-    "mtime": 1789273444.5049086,
-    "seen": 1789273873.3411605,
-    "ast_hash": "07e3f01d945385e00752d825e8a64f5b",
+    "mtime": 1789281904.8792036,
+    "seen": 1789282317.953391,
+    "ast_hash": "40222657975e57f2ee64980eb4214cac",
     "semantic_hash": ""
   },
   "src/utils/accessCodeGenerator.ts": {
