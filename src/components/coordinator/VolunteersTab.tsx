@@ -766,12 +766,12 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
                               className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer ${
                                 v.has_arrived
                                   ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/40'
-                                  : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+                                  : 'bg-rose-600 text-white border border-rose-700'
                               }`}
                               title="Click to toggle arrival status"
                             >
                               <Check className="w-3 h-3" />
-                              <span>{v.has_arrived ? 'Here' : 'Mark Arrived'}</span>
+                              <span>{v.has_arrived ? 'Here' : 'Absent'}</span>
                             </button>
                           </div>
 

@@ -1153,8 +1153,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                     isD1Both
                                       ? 'bg-emerald-500/15 border-emerald-500/40 dark:bg-emerald-950/40 dark:border-emerald-500/50 shadow-2xs'
                                       : isD1Any
-                                      ? 'bg-amber-500/15 border-amber-500/40 dark:bg-amber-950/40 dark:border-amber-500/40'
-                                      : 'bg-slate-100 dark:bg-slate-800/70 border-slate-200 dark:border-slate-700/60'
+                                      ? 'bg-sky-500/15 border-sky-500/40 dark:bg-sky-950/40 dark:border-sky-500/40'
+                                      : 'bg-rose-500/10 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/40'
                                   }`}
                                 >
                                   <button
@@ -1166,8 +1166,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                       isD1Both
                                         ? 'bg-emerald-500 text-white font-black'
                                         : isD1Any
-                                        ? 'text-amber-700 dark:text-amber-300 font-bold'
-                                        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-200'
+                                        ? 'text-sky-700 dark:text-sky-300 font-bold'
+                                        : 'text-rose-400 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/30'
                                     }`}
                                   >
                                     {isD1Loading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : '●'} D1
@@ -1180,8 +1180,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                     title={`Day 1 Forenoon (FN): ${isD1Fn ? 'Present (Click to toggle)' : 'Absent (Click to mark present)'}`}
                                     className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
                                       isD1Fn
-                                        ? 'bg-amber-400 text-slate-950 font-black shadow-2xs'
-                                        : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-200'
+                                        ? 'bg-sky-500 text-white font-black shadow-2xs'
+                                        : 'text-rose-500 dark:text-rose-400 font-bold hover:bg-rose-100 dark:hover:bg-rose-900/30'
                                     }`}
                                   >
                                     FN
@@ -1193,8 +1193,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                     title={`Day 1 Afternoon (AN): ${isD1An ? 'Present (Click to toggle)' : 'Absent (Click to mark present)'}`}
                                     className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
                                       isD1An
-                                        ? 'bg-indigo-400 text-slate-950 font-black shadow-2xs'
-                                        : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-200'
+                                        ? 'bg-emerald-500 text-white font-black shadow-2xs'
+                                        : 'text-rose-500 dark:text-rose-400 font-bold hover:bg-rose-100 dark:hover:bg-rose-900/30'
                                     }`}
                                   >
                                     AN
@@ -1207,8 +1207,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                     isD2Both
                                       ? 'bg-emerald-500/15 border-emerald-500/40 dark:bg-emerald-950/40 dark:border-emerald-500/50 shadow-2xs'
                                       : isD2Any
-                                      ? 'bg-amber-500/15 border-amber-500/40 dark:bg-amber-950/40 dark:border-amber-500/40'
-                                      : 'bg-slate-100 dark:bg-slate-800/70 border-slate-200 dark:border-slate-700/60'
+                                      ? 'bg-sky-500/15 border-sky-500/40 dark:bg-sky-950/40 dark:border-sky-500/40'
+                                      : 'bg-rose-500/10 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/40'
                                   }`}
                                 >
                                   <button
@@ -1220,8 +1220,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                       isD2Both
                                         ? 'bg-emerald-500 text-white font-black'
                                         : isD2Any
-                                        ? 'text-amber-700 dark:text-amber-300 font-bold'
-                                        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-200'
+                                        ? 'text-sky-700 dark:text-sky-300 font-bold'
+                                        : 'text-rose-400 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/30'
                                     }`}
                                   >
                                     {isD2Loading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : '●'} D2
@@ -1234,8 +1234,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                     title={`Day 2 Forenoon (FN): ${isD2Fn ? 'Present (Click to toggle)' : 'Absent (Click to mark present)'}`}
                                     className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
                                       isD2Fn
-                                        ? 'bg-amber-400 text-slate-950 font-black shadow-2xs'
-                                        : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-200'
+                                        ? 'bg-sky-500 text-white font-black shadow-2xs'
+                                        : 'text-rose-500 dark:text-rose-400 font-bold hover:bg-rose-100 dark:hover:bg-rose-900/30'
                                     }`}
                                   >
                                     FN
@@ -1247,8 +1247,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                     title={`Day 2 Afternoon (AN): ${isD2An ? 'Present (Click to toggle)' : 'Absent (Click to mark present)'}`}
                                     className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
                                       isD2An
-                                        ? 'bg-indigo-400 text-slate-950 font-black shadow-2xs'
-                                        : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-200'
+                                        ? 'bg-emerald-500 text-white font-black shadow-2xs'
+                                        : 'text-rose-500 dark:text-rose-400 font-bold hover:bg-rose-100 dark:hover:bg-rose-900/30'
                                     }`}
                                   >
                                     AN

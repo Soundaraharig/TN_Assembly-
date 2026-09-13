@@ -1344,8 +1344,8 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                               <div className="flex flex-col items-center gap-1.5">
                                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
                                   isFnPresent
-                                    ? 'bg-amber-500/15 text-amber-400 border border-amber-500/40'
-                                    : 'bg-slate-500/15 text-slate-400 border border-slate-500/30'
+                                    ? 'bg-sky-500/15 text-sky-400 border border-sky-500/40'
+                                    : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
                                 }`}>
                                   {isFnPresent ? '● FN Present' : '○ FN Absent'}
                                 </span>
@@ -1356,7 +1356,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                                     disabled={isFnLoading || isAllLoading}
                                     title="Mark Forenoon Present"
                                     className={`px-2 py-0.5 rounded text-[10px] font-extrabold transition cursor-pointer ${
-                                      isFnPresent ? 'bg-amber-400 text-slate-950 font-black shadow-xs' : 'text-slate-400 hover:text-white'
+                                      isFnPresent ? 'bg-sky-500 text-white font-black shadow-xs' : 'text-slate-400 hover:text-white'
                                     }`}
                                   >
                                     {isFnLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : 'P'}
@@ -1367,7 +1367,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                                     disabled={isFnLoading || isAllLoading}
                                     title="Mark Forenoon Absent"
                                     className={`px-2 py-0.5 rounded text-[10px] font-extrabold transition cursor-pointer ${
-                                      !isFnPresent ? 'bg-rose-500 text-white font-black shadow-xs' : 'text-slate-400 hover:text-white'
+                                      !isFnPresent ? 'bg-rose-600 text-white font-black shadow-xs' : 'text-slate-400 hover:text-white'
                                     }`}
                                   >
                                     {isFnLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : 'A'}
@@ -1381,8 +1381,8 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                               <div className="flex flex-col items-center gap-1.5">
                                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
                                   isAnPresent
-                                    ? 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/40'
-                                    : 'bg-slate-500/15 text-slate-400 border border-slate-500/30'
+                                    ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/40'
+                                    : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
                                 }`}>
                                   {isAnPresent ? '● AN Present' : '○ AN Absent'}
                                 </span>
@@ -1393,7 +1393,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                                     disabled={isAnLoading || isAllLoading}
                                     title="Mark Afternoon Present"
                                     className={`px-2 py-0.5 rounded text-[10px] font-extrabold transition cursor-pointer ${
-                                      isAnPresent ? 'bg-indigo-400 text-slate-950 font-black shadow-xs' : 'text-slate-400 hover:text-white'
+                                      isAnPresent ? 'bg-emerald-500 text-white font-black shadow-xs' : 'text-slate-400 hover:text-white'
                                     }`}
                                   >
                                     {isAnLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : 'P'}
@@ -1404,7 +1404,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                                     disabled={isAnLoading || isAllLoading}
                                     title="Mark Afternoon Absent"
                                     className={`px-2 py-0.5 rounded text-[10px] font-extrabold transition cursor-pointer ${
-                                      !isAnPresent ? 'bg-rose-500 text-white font-black shadow-xs' : 'text-slate-400 hover:text-white'
+                                      !isAnPresent ? 'bg-rose-600 text-white font-black shadow-xs' : 'text-slate-400 hover:text-white'
                                     }`}
                                   >
                                     {isAnLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : 'A'}
@@ -1691,8 +1691,8 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                                       isToggling
                                         ? 'bg-amber-500 text-white shadow-sm opacity-90 scale-95'
                                         : isPresent
-                                        ? 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700'
-                                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700'
+                                        ? 'bg-sky-500 text-white shadow-sm hover:bg-sky-600'
+                                        : 'bg-rose-600 text-white border border-rose-700 hover:bg-rose-700'
                                     }`}
                                   >
                                     {isToggling ? (
@@ -1705,7 +1705,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                                       </>
                                     ) : (
                                       <>
-                                        <XCircle className="w-3.5 h-3.5 text-slate-400" /> ABSENT
+                                        <XCircle className="w-3.5 h-3.5 text-white" /> ABSENT
                                       </>
                                     )}
                                   </button>
@@ -1861,7 +1861,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                                       ? 'bg-amber-500 text-white shadow-sm opacity-90 scale-95'
                                       : isPresent
                                       ? 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700'
-                                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700'
+                                      : 'bg-rose-600 text-white border border-rose-700 hover:bg-rose-700'
                                   }`}
                                 >
                                   {isToggling ? (
@@ -1874,7 +1874,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                                     </>
                                   ) : (
                                     <>
-                                      <XCircle className="w-3.5 h-3.5 text-slate-400" /> ABSENT
+                                      <XCircle className="w-3.5 h-3.5 text-white" /> ABSENT
                                     </>
                                   )}
                                 </button>
