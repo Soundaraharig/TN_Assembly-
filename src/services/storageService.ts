@@ -372,20 +372,6 @@ export function deduplicateElectionList(elections: Election[], partiesList?: Par
 }
 
 // ---------------------------------------------------------------------------
-// Explicit Minimal Column Projections for Network Egress Optimization
-// ---------------------------------------------------------------------------
-export const COLLEGE_EVENT_COLUMNS = 'id, slug, college_name, chapter, level, location, dates, event_stage, status, participant_count, assigned_coordinator_email, assigned_coordinator_name, elections_count, is_locked, treasury_whatsapp_link, opposition_whatsapp_link, cabinet_ministries, chief_guests, social_coverage, created_at';
-export const COORDINATOR_COLUMNS = 'id, event_id, name, email, role, phone, created_at';
-export const LEARNER_COLUMNS = 'id, event_id, full_name, email, phone, college_name, department, academic_year, roll_number, access_code, role, party_id, party_name, committee_id, committee_name, bench, constituency, day1_checked_in, day2_checked_in, created_at';
-export const PARTY_COLUMNS = 'id, event_id, name, ideology, color, bench, description, logo_url, manifesto_url, created_at';
-export const COMMITTEE_COLUMNS = 'id, event_id, name, topic, description, max_delegates, whatsapp_group_link, created_at';
-export const AGENDA_COLUMNS = 'id, event_id, day, time, title, description, speaker, status, is_enabled, order_index, created_at';
-export const JURY_COLUMNS = 'id, event_id, name, email, phone, college_name, assigned_bench, access_code, created_at';
-export const VOLUNTEER_COLUMNS = 'id, event_id, name, email, phone, station, access_code, created_at';
-export const EVENT_DAY_COLUMNS = 'id, event_id, day_number, date, title, is_active, created_at';
-export const ATTENDANCE_COLUMNS = 'id, event_id, day_id, event_day_id, student_id, fn_status, an_status, marked_by, timestamp, created_at';
-
-// ---------------------------------------------------------------------------
 // StorageService — hybrid localStorage + Supabase with pub/sub
 // ---------------------------------------------------------------------------
 export type WriteErrorHandler = (table: string, action: string, error: any) => void;
@@ -403,11 +389,6 @@ class StorageService {
   private inFlightPromises = new Map<string, Promise<{ success: boolean; error: any; data?: any }>>();
   private failedWriteSignatures = new Map<string, number>();
   private fixedLearnerIdsSynced = new Set<string>();
-
-  // Cached data fetching layer & egress protection
-  private lastSyncedAt: number = 0;
-  private readonly STALE_TIME_MS: number = 7 * 60 * 1000; // 7 minutes cache validity
-  private activeSyncPromise: Promise<void> | null = null;
 
   public setWriteErrorHandler(handler: WriteErrorHandler | null) {
     this.writeErrorHandler = handler;
@@ -860,57 +841,40 @@ class StorageService {
 
   // ── Supabase sync ────────────────────────────────────────────────────────
 
-  public async syncFromSupabase(options?: { force?: boolean; learnerLimit?: number; volunteerLimit?: number }): Promise<void> {
+  public async syncFromSupabase(): Promise<void> {
     if (!supabase) {
       this.isHydrated = true;
       return;
     }
 
-    const force = options?.force ?? false;
-    const now = Date.now();
-    // Cache Guard: Serve from local state if within staleTime unless explicitly forced
-    if (!force && this.lastSyncedAt > 0 && (now - this.lastSyncedAt) < this.STALE_TIME_MS) {
-      this.isHydrated = true;
-      return;
-    }
+    const currentVersion = ++this.syncVersion;
+    this.isSyncing = true;
 
-    // Deduplicate concurrent in-flight sync calls
-    if (this.activeSyncPromise) {
-      return this.activeSyncPromise;
-    }
-
-    this.activeSyncPromise = (async () => {
-      const currentVersion = ++this.syncVersion;
-      this.isSyncing = true;
-
-      try {
-        const extendedLearnerMap = new Map<string, any>();
-        const learnerLimit = options?.learnerLimit ?? 20;
-        const volunteerLimit = options?.volunteerLimit ?? 20;
-
-        const [
-          { data: events, error: eventsErr },
-          { data: coordinators, error: coordErr },
-          { data: learners, error: learnersErr },
-          { data: parties, error: partiesErr },
-          { data: committees, error: commErr },
-          { data: agenda, error: agendaErr },
-          { data: juryMembers, error: juryErr },
-          { data: volunteers, error: volErr },
-          { data: rawEventDays, error: eventDaysErr },
-          { data: rawAttendance, error: attendanceErr }
-        ] = await Promise.all([
-          supabase.from('college_events').select(COLLEGE_EVENT_COLUMNS).order('created_at', { ascending: false }),
-          supabase.from('coordinators').select(COORDINATOR_COLUMNS),
-          supabase.from('learners').select(LEARNER_COLUMNS).order('created_at', { ascending: false }).limit(learnerLimit),
-          supabase.from('political_parties').select(PARTY_COLUMNS),
-          supabase.from('committees').select(COMMITTEE_COLUMNS),
-          supabase.from('session_agenda').select(AGENDA_COLUMNS).order('time', { ascending: true }),
-          supabase.from('jury_members').select(JURY_COLUMNS),
-          supabase.from('volunteers').select(VOLUNTEER_COLUMNS).limit(volunteerLimit),
-          supabase.from('event_days').select(EVENT_DAY_COLUMNS).order('day_number', { ascending: true }),
-          supabase.from('event_day_attendance').select(ATTENDANCE_COLUMNS)
-        ]);
+    try {
+      const extendedLearnerMap = new Map<string, any>();
+      const [
+        { data: events, error: eventsErr },
+        { data: coordinators, error: coordErr },
+        { data: learners, error: learnersErr },
+        { data: parties, error: partiesErr },
+        { data: committees, error: commErr },
+        { data: agenda, error: agendaErr },
+        { data: juryMembers, error: juryErr },
+        { data: volunteers, error: volErr },
+        { data: rawEventDays, error: eventDaysErr },
+        { data: rawAttendance, error: attendanceErr }
+      ] = await Promise.all([
+        supabase.from('college_events').select('*').order('created_at', { ascending: false }),
+        supabase.from('coordinators').select('*'),
+        supabase.from('learners').select('*').order('created_at', { ascending: false }),
+        supabase.from('political_parties').select('*'),
+        supabase.from('committees').select('*'),
+        supabase.from('session_agenda').select('*').order('time', { ascending: true }),
+        supabase.from('jury_members').select('*'),
+        supabase.from('volunteers').select('*'),
+        supabase.from('event_days').select('*').order('day_number', { ascending: true }),
+        supabase.from('event_day_attendance').select('*')
+      ]);
 
       if (currentVersion !== this.syncVersion) {
         return; // Superseded by newer fetch request
@@ -1447,23 +1411,20 @@ class StorageService {
         }
       }
 
-        this.syncError = hasQueryError ? 'Partial query warning' : null;
-        this.cleanupAndDeduplicateData();
-      } catch (err: any) {
-        console.error('Supabase Error [syncFromSupabase]:', err);
-        if (currentVersion === this.syncVersion) {
-          this.syncError = err?.message || 'Sync error';
-        }
-      } finally {
-        this.lastSyncedAt = Date.now();
+      this.isSyncing = false;
+      this.isHydrated = true;
+      this.syncError = hasQueryError ? 'Partial query warning' : null;
+      this.cleanupAndDeduplicateData();
+      this.notify();
+    } catch (err: any) {
+      console.error('Supabase Error [syncFromSupabase]:', err);
+      if (currentVersion === this.syncVersion) {
         this.isSyncing = false;
         this.isHydrated = true;
-        this.activeSyncPromise = null;
+        this.syncError = err?.message || 'Sync error';
         this.notify();
       }
-    })();
-
-    return this.activeSyncPromise;
+    }
   }
 
   public setupRealtimeSync() {
@@ -1473,8 +1434,8 @@ class StorageService {
       const debouncedSync = () => {
         if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
         realtimeDebounceTimer = setTimeout(() => {
-          this.syncFromSupabase({ force: true });
-        }, 1000);
+          this.syncFromSupabase();
+        }, 400);
       };
 
       this.realtimeChannel = supabase.channel('tn_assembly_live_sync')
@@ -1502,14 +1463,14 @@ class StorageService {
         .on('postgres_changes', { event: '*', schema: 'public', table: 'event_day_attendance' }, debouncedSync)
         .subscribe();
 
-      // Gentle background stale-checker (every 7 minutes) - only triggers if data has become stale
-      if (typeof window !== 'undefined' && !this.syncTimer) {
-        this.syncTimer = setInterval(() => {
-          if (!this.isSyncing && (Date.now() - this.lastSyncedAt) >= this.STALE_TIME_MS) {
-            this.syncFromSupabase();
-          }
-        }, this.STALE_TIME_MS);
-      }
+        // Background heartbeat sync every 10 seconds (realtime handles instant updates)
+        if (typeof window !== 'undefined' && !this.syncTimer) {
+          this.syncTimer = setInterval(() => {
+            if (!document.hidden && !this.isSyncing) {
+              this.syncFromSupabase();
+            }
+          }, 10000);
+        }
     } catch (e) {
       console.warn('[Supabase] realtime setup error:', e);
     }
@@ -1890,7 +1851,7 @@ class StorageService {
             const sId = (sanitized.student_id || sanitized.participant_id) as string;
             const { data: existingRow } = await sb
               .from('event_day_attendance')
-              .select('id')
+              .select('*')
               .eq('event_id', eId)
               .eq('day_id', dId)
               .eq('student_id', sId)
@@ -2658,103 +2619,6 @@ class StorageService {
     return sortedAll;
   }
 
-  /**
-   * Paginated fetch for learners directly from Supabase, applying minimal projection (LEARNER_COLUMNS).
-   * Automatically merges newly fetched learners into local cache and notifies subscribers.
-   */
-  public async fetchLearnersPaginated({
-    eventId,
-    page = 1,
-    pageSize = 20
-  }: {
-    eventId?: string;
-    page?: number;
-    pageSize?: number;
-  } = {}): Promise<{ data: Learner[]; totalCount: number }> {
-    if (!supabase) {
-      const local = this.getLearners(eventId);
-      return { data: local.slice((page - 1) * pageSize, page * pageSize), totalCount: local.length };
-    }
-
-    try {
-      const from = (page - 1) * pageSize;
-      const to = from + pageSize - 1;
-
-      let query = supabase
-        .from('learners')
-        .select(LEARNER_COLUMNS, { count: 'exact' })
-        .order('created_at', { ascending: false })
-        .range(from, to);
-
-      if (eventId) {
-        query = query.eq('event_id', eventId);
-      }
-
-      const { data, count, error } = await query;
-      if (error) {
-        console.warn('[StorageService] fetchLearnersPaginated error:', error);
-        const local = this.getLearners(eventId);
-        return { data: local.slice((page - 1) * pageSize, page * pageSize), totalCount: local.length };
-      }
-
-      if (data && Array.isArray(data)) {
-        const existing = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, []);
-        const map = new Map<string, Learner>();
-        existing.forEach(l => { if (l.id) map.set(l.id, l); });
-        data.forEach((l: any) => { if (l.id) map.set(l.id, { ...map.get(l.id), ...l }); });
-        this.setItem(STORAGE_KEYS.LEARNERS, sortLearnersStably(Array.from(map.values())));
-        this.notify();
-      }
-
-      return { data: (data as Learner[]) || [], totalCount: count ?? (data?.length || 0) };
-    } catch (e) {
-      console.warn('[StorageService] fetchLearnersPaginated exception:', e);
-      const local = this.getLearners(eventId);
-      return { data: local.slice((page - 1) * pageSize, page * pageSize), totalCount: local.length };
-    }
-  }
-
-  /**
-   * On-demand complete fetch of all learners for an event, using minimal columns (LEARNER_COLUMNS).
-   */
-  public async fetchAllLearners(eventId?: string): Promise<Learner[]> {
-    if (!supabase) {
-      return this.getLearners(eventId);
-    }
-
-    try {
-      let query = supabase
-        .from('learners')
-        .select(LEARNER_COLUMNS)
-        .order('created_at', { ascending: false });
-
-      if (eventId) {
-        query = query.eq('event_id', eventId);
-      }
-
-      const { data, error } = await query;
-      if (error) {
-        console.warn('[StorageService] fetchAllLearners error:', error);
-        return this.getLearners(eventId);
-      }
-
-      if (data && Array.isArray(data)) {
-        const existing = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, []);
-        const map = new Map<string, Learner>();
-        existing.forEach(l => { if (l.id) map.set(l.id, l); });
-        data.forEach((l: any) => { if (l.id) map.set(l.id, { ...map.get(l.id), ...l }); });
-        this.setItem(STORAGE_KEYS.LEARNERS, sortLearnersStably(Array.from(map.values())));
-        this.notify();
-        return eventId ? (data as Learner[]).filter(l => l.event_id === eventId) : (data as Learner[]);
-      }
-
-      return this.getLearners(eventId);
-    } catch (e) {
-      console.warn('[StorageService] fetchAllLearners exception:', e);
-      return this.getLearners(eventId);
-    }
-  }
-
   public async addLearner(learner: Partial<Learner>): Promise<Learner> {
     const all = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, INITIAL_LEARNERS);
     const newLearner: Learner = {
@@ -3405,7 +3269,7 @@ class StorageService {
       try {
         const { data: dbExisting, error: checkError } = await supabase
           .from('event_day_attendance')
-          .select(ATTENDANCE_COLUMNS)
+          .select('*')
           .eq('event_id', eventId)
           .eq('day_id', dayId)
           .eq('student_id', studentId)
@@ -3560,7 +3424,7 @@ class StorageService {
             console.warn('[StorageService] 409 Conflict caught during attendance insert. Fetching existing record and updating...');
             const { data: conflictRow } = await supabase
               .from('event_day_attendance')
-              .select(ATTENDANCE_COLUMNS)
+              .select('*')
               .eq('event_id', eventId)
               .eq('day_id', dayId)
               .eq('student_id', studentId)
@@ -3661,7 +3525,7 @@ class StorageService {
       try {
         const { data: remoteRows, error: remoteErr } = await supabase
           .from('event_day_attendance')
-          .select(ATTENDANCE_COLUMNS)
+          .select('*')
           .eq('event_id', eventId)
           .eq('day_id', dayId);
 
@@ -3748,7 +3612,7 @@ class StorageService {
       try {
         const { data: freshRows } = await supabase
           .from('event_day_attendance')
-          .select(ATTENDANCE_COLUMNS)
+          .select('*')
           .eq('event_id', eventId)
           .eq('day_id', dayId);
 
@@ -4684,61 +4548,6 @@ class StorageService {
     }
     if (eventId) return sanitized.filter(v => v.event_id === eventId);
     return sanitized;
-  }
-
-  /**
-   * Paginated fetch for volunteers directly from Supabase, applying minimal projection (VOLUNTEER_COLUMNS).
-   * Automatically merges newly fetched volunteers into local cache and notifies subscribers.
-   */
-  public async fetchVolunteersPaginated({
-    eventId,
-    page = 1,
-    pageSize = 20
-  }: {
-    eventId?: string;
-    page?: number;
-    pageSize?: number;
-  } = {}): Promise<{ data: Volunteer[]; totalCount: number }> {
-    if (!supabase) {
-      const local = this.getVolunteers(eventId);
-      return { data: local.slice((page - 1) * pageSize, page * pageSize), totalCount: local.length };
-    }
-
-    try {
-      const from = (page - 1) * pageSize;
-      const to = from + pageSize - 1;
-
-      let query = supabase
-        .from('volunteers')
-        .select(VOLUNTEER_COLUMNS, { count: 'exact' })
-        .range(from, to);
-
-      if (eventId) {
-        query = query.eq('event_id', eventId);
-      }
-
-      const { data, count, error } = await query;
-      if (error) {
-        console.warn('[StorageService] fetchVolunteersPaginated error:', error);
-        const local = this.getVolunteers(eventId);
-        return { data: local.slice((page - 1) * pageSize, page * pageSize), totalCount: local.length };
-      }
-
-      if (data && Array.isArray(data)) {
-        const existing = this.getItem<Volunteer[]>(STORAGE_KEYS.VOLUNTEERS, []);
-        const map = new Map<string, Volunteer>();
-        existing.forEach(v => { if (v.id) map.set(v.id, v); });
-        data.forEach((v: any) => { if (v.id) map.set(v.id, { ...map.get(v.id), ...v }); });
-        this.setItem(STORAGE_KEYS.VOLUNTEERS, Array.from(map.values()));
-        this.notify();
-      }
-
-      return { data: (data as Volunteer[]) || [], totalCount: count ?? (data?.length || 0) };
-    } catch (e) {
-      console.warn('[StorageService] fetchVolunteersPaginated exception:', e);
-      const local = this.getVolunteers(eventId);
-      return { data: local.slice((page - 1) * pageSize, page * pageSize), totalCount: local.length };
-    }
   }
 
   public async addVolunteer(volunteer: Partial<Volunteer>): Promise<Volunteer> {
@@ -7107,7 +6916,7 @@ class StorageService {
    * Explicit cache-busting and re-sync from Supabase.
    */
   public async forceRefresh(): Promise<void> {
-    await this.syncFromSupabase({ force: true });
+    await this.syncFromSupabase();
   }
 
   // ── PARTY / COMMITTEE / JURY COUNTS (Database-sourced) ─────────────────────

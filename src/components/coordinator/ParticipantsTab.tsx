@@ -35,12 +35,7 @@ import {
   Crown,
   Gavel,
   Shield,
-  Award,
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
-  CloudDownload
+  Award
 } from 'lucide-react';
 
 interface ParticipantsTabProps {
@@ -243,40 +238,6 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
       return (a.full_name || '').localeCompare(b.full_name || '');
     });
   }, [learners, parties, committees, searchTerm, statusPill, dayPill, selectedParty, selectedRole, selectedCommittee, selectedBench]);
-
-  // Pagination & Cloud Fetch State
-  const [currentPage, setCurrentPage] = useState<number>(1);
-  const [pageSize, setPageSize] = useState<number>(20);
-  const [isFetchingAll, setIsFetchingAll] = useState<boolean>(false);
-
-  // Reset to first page whenever search, filter, or page size change
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchTerm, statusPill, dayPill, selectedParty, selectedRole, selectedCommittee, selectedBench, pageSize]);
-
-  const totalItems = filteredLearners.length;
-  const totalPages = pageSize === -1 ? 1 : Math.ceil(totalItems / pageSize) || 1;
-  const safePage = Math.min(Math.max(1, currentPage), totalPages);
-
-  const paginatedLearners = useMemo(() => {
-    if (pageSize === -1) return filteredLearners;
-    const start = (safePage - 1) * pageSize;
-    return filteredLearners.slice(start, start + pageSize);
-  }, [filteredLearners, safePage, pageSize]);
-
-  const handleFetchAllFromCloud = async () => {
-    setIsFetchingAll(true);
-    try {
-      onShowToast('Syncing Roster', 'Fetching complete participant list from cloud database...', 'info');
-      await storageService.fetchAllLearners(eventId);
-      onShowToast('Roster Synced', 'All participants successfully loaded from database.', 'success');
-    } catch (e: any) {
-      console.error('Failed to fetch all learners:', e);
-      onShowToast('Sync Failed', e?.message || 'Could not fetch all participants', 'error');
-    } finally {
-      setIsFetchingAll(false);
-    }
-  };
 
   // Selection toggles
   const isAllFilteredSelected = filteredLearners.length > 0 && filteredLearners.every(l => selectedLearnerIds.has(l.id));
@@ -1164,7 +1125,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                   </td>
                 </tr>
               ) : (
-                paginatedLearners.map((learner, idx) => {
+                filteredLearners.map((learner, idx) => {
                   const isRowSelected = selectedLearnerIds.has(learner.id);
 
                   return (
@@ -1340,7 +1301,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
 
                       {/* Serial Number */}
                       <td className="py-3 px-3 text-center font-mono whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
-                        {(pageSize === -1 ? 0 : (safePage - 1) * pageSize) + idx + 1}
+                        {idx + 1}
                       </td>
 
                       {/* Delegate Name & Department */}
@@ -1447,142 +1408,6 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
               )}
             </tbody>
           </table>
-        </div>
-
-        {/* ── PAGINATION CONTROLS & ON-DEMAND DB SYNC ── */}
-        <div
-          className="px-4 py-3 rounded-xl border flex flex-wrap items-center justify-between gap-4 select-none"
-          style={{
-            backgroundColor: 'var(--bg-elevated)',
-            borderColor: 'var(--border-soft)'
-          }}
-        >
-          {/* Left: Summary info & On-Demand Complete Fetch */}
-          <div className="flex flex-wrap items-center gap-3 text-xs" style={{ color: 'var(--text-secondary)' }}>
-            <span>
-              Showing{' '}
-              <strong style={{ color: 'var(--text-primary)' }}>
-                {totalItems === 0 ? 0 : (pageSize === -1 ? 1 : (safePage - 1) * pageSize + 1)}
-              </strong>{' '}
-              to{' '}
-              <strong style={{ color: 'var(--text-primary)' }}>
-                {pageSize === -1 ? totalItems : Math.min(safePage * pageSize, totalItems)}
-              </strong>{' '}
-              of <strong style={{ color: 'var(--text-primary)' }}>{totalItems}</strong> filtered delegates
-              {totalItems !== learners.length && (
-                <span style={{ color: 'var(--text-muted)' }}> (from {learners.length} loaded)</span>
-              )}
-            </span>
-
-            <button
-              onClick={handleFetchAllFromCloud}
-              disabled={isFetchingAll}
-              title="Fetch full roster of all participants from cloud database"
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors disabled:opacity-50"
-              style={{
-                backgroundColor: 'var(--bg-surface)',
-                borderColor: 'var(--border)',
-                color: 'var(--text-primary)'
-              }}
-            >
-              {isFetchingAll ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-500" />
-              ) : (
-                <CloudDownload className="w-3.5 h-3.5 text-emerald-500" />
-              )}
-              <span>{isFetchingAll ? 'Syncing...' : 'Load All from Cloud'}</span>
-            </button>
-          </div>
-
-          {/* Right: Page Size Selector & Pagination Buttons */}
-          <div className="flex items-center gap-4">
-            {/* Page Size Selector */}
-            <div className="flex items-center gap-2 text-xs">
-              <span style={{ color: 'var(--text-muted)' }}>Rows:</span>
-              <select
-                value={pageSize}
-                onChange={(e) => {
-                  const val = Number(e.target.value);
-                  setPageSize(val);
-                  setCurrentPage(1);
-                }}
-                className="px-2 py-1 rounded-lg border text-xs font-medium focus:outline-none cursor-pointer"
-                style={{
-                  backgroundColor: 'var(--bg-surface)',
-                  borderColor: 'var(--border)',
-                  color: 'var(--text-primary)'
-                }}
-              >
-                <option value={20}>20</option>
-                <option value={50}>50</option>
-                <option value={100}>100</option>
-                <option value={-1}>All</option>
-              </select>
-            </div>
-
-            {/* Pagination Navigator */}
-            {pageSize !== -1 && totalPages > 1 && (
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setCurrentPage(1)}
-                  disabled={safePage <= 1}
-                  className="p-1.5 rounded-lg border text-xs font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors"
-                  style={{
-                    backgroundColor: 'var(--bg-surface)',
-                    borderColor: 'var(--border)',
-                    color: 'var(--text-primary)'
-                  }}
-                  title="First Page"
-                >
-                  <ChevronsLeft className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  disabled={safePage <= 1}
-                  className="p-1.5 rounded-lg border text-xs font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors"
-                  style={{
-                    backgroundColor: 'var(--bg-surface)',
-                    borderColor: 'var(--border)',
-                    color: 'var(--text-primary)'
-                  }}
-                  title="Previous Page"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-
-                <div className="px-2 text-xs font-bold whitespace-nowrap" style={{ color: 'var(--text-primary)' }}>
-                  Page {safePage} of {totalPages}
-                </div>
-
-                <button
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                  disabled={safePage >= totalPages}
-                  className="p-1.5 rounded-lg border text-xs font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors"
-                  style={{
-                    backgroundColor: 'var(--bg-surface)',
-                    borderColor: 'var(--border)',
-                    color: 'var(--text-primary)'
-                  }}
-                  title="Next Page"
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => setCurrentPage(totalPages)}
-                  disabled={safePage >= totalPages}
-                  className="p-1.5 rounded-lg border text-xs font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors"
-                  style={{
-                    backgroundColor: 'var(--bg-surface)',
-                    borderColor: 'var(--border)',
-                    color: 'var(--text-primary)'
-                  }}
-                  title="Last Page"
-                >
-                  <ChevronsRight className="w-4 h-4" />
-                </button>
-              </div>
-            )}
-          </div>
         </div>
       </div>
 
