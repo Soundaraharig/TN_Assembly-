@@ -242,6 +242,59 @@ export function getElectionCanonicalKey(election: Partial<Election>, partiesList
 }
 
 export function mergeTwoElections(base: Election, other: Election): Election {
+  const baseReset = base.reset_at ? new Date(base.reset_at).getTime() : 0;
+  const otherReset = other.reset_at ? new Date(other.reset_at).getTime() : 0;
+  const baseActivity = Math.max(
+    new Date(base.updated_at || base.completed_at || base.created_at || 0).getTime(),
+    baseReset
+  );
+  const otherActivity = Math.max(
+    new Date(other.updated_at || other.completed_at || other.created_at || 0).getTime(),
+    otherReset
+  );
+
+  // If base was explicitly reset after other's latest activity/timestamp:
+  // base (the reset election) takes priority and MUST NOT inherit obsolete votes from other
+  if (baseReset > 0 && baseReset >= (otherActivity - 5000) && (!otherReset || baseReset >= otherReset)) {
+    return {
+      ...other,
+      ...base,
+      status: base.status,
+      total_votes: base.total_votes || 0,
+      winner: base.winner,
+      completed_at: base.completed_at,
+      reset_at: base.reset_at,
+      updated_at: base.updated_at || base.reset_at,
+      voted_delegate_ids: base.voted_delegate_ids || [],
+      votes_by_delegate: base.votes_by_delegate || {},
+      candidates: (base.candidates || []).map(c => ({
+        ...c,
+        votes: c.votes || 0
+      }))
+    };
+  }
+
+  // If other was explicitly reset after base's latest activity/timestamp:
+  // other (the reset election) takes priority and MUST NOT inherit obsolete votes from base
+  if (otherReset > 0 && otherReset >= (baseActivity - 5000) && (!baseReset || otherReset >= baseReset)) {
+    return {
+      ...base,
+      ...other,
+      status: other.status,
+      total_votes: other.total_votes || 0,
+      winner: other.winner,
+      completed_at: other.completed_at,
+      reset_at: other.reset_at,
+      updated_at: other.updated_at || other.reset_at,
+      voted_delegate_ids: other.voted_delegate_ids || [],
+      votes_by_delegate: other.votes_by_delegate || {},
+      candidates: (other.candidates || []).map(c => ({
+        ...c,
+        votes: c.votes || 0
+      }))
+    };
+  }
+
   const statusScore = (s?: string) => (s === 'Closed' ? 3 : s === 'Live' ? 2 : 1);
   const baseScore = statusScore(base.status) * 100 + (base.total_votes || 0) * 10 + (base.candidates?.length || 0);
   const otherScore = statusScore(other.status) * 100 + (other.total_votes || 0) * 10 + (other.candidates?.length || 0);
@@ -1449,7 +1502,7 @@ class StorageService {
       // Protect election history: retain existing elections if missing locally, and deduplicate with current active/upcoming elections
       const existingElecs = Array.isArray(existingSC.elections) ? existingSC.elections : [];
       const partiesForSync = this.getParties(eventId);
-      const mergedElecs = deduplicateElectionList([...existingElecs, ...elecs], partiesForSync);
+      const mergedElecs = deduplicateElectionList([...elecs, ...existingElecs], partiesForSync);
 
       // Permanent Guard: Ensure elections for confirmed elected leaders in learners are marked Closed only if already closed or not actively upcoming/live
       const eventLearners = this.getLearners(eventId);
@@ -5223,6 +5276,7 @@ class StorageService {
     if (sorted.length > 0 && sorted[0].votes > 0) {
       election.winner = sorted[0].name;
     }
+    election.updated_at = new Date().toISOString();
 
     this.setItem(STORAGE_KEYS.ELECTIONS, all);
     if (election.event_id) this.syncEventStateToSupabase(election.event_id);
@@ -5259,7 +5313,8 @@ class StorageService {
           ...e,
           status: 'Closed' as const,
           winner: win,
-          completed_at: e.completed_at || new Date().toISOString()
+          completed_at: e.completed_at || new Date().toISOString(),
+          updated_at: new Date().toISOString()
         };
       }
       return e;
@@ -5465,6 +5520,7 @@ class StorageService {
 
   public resetElection(electionId: string) {
     let targetEventId = '';
+    const resetTimestamp = new Date().toISOString();
     const all = this.getElectionAll().map(e => {
       if (e.id === electionId) {
         targetEventId = e.event_id;
@@ -5473,14 +5529,55 @@ class StorageService {
           status: 'Upcoming' as const,
           total_votes: 0,
           winner: undefined,
+          completed_at: undefined,
+          reset_at: resetTimestamp,
+          updated_at: resetTimestamp,
           voted_delegate_ids: [],
-          candidates: e.candidates.map(c => ({ ...c, votes: 0 }))
+          votes_by_delegate: {},
+          candidates: (e.candidates || []).map(c => ({ ...c, votes: 0 }))
         };
       }
       return e;
     });
     this.setItem(STORAGE_KEYS.ELECTIONS, all);
-    if (targetEventId) this.syncEventStateToSupabase(targetEventId);
+
+    // Also clean up vote audit entries for this reset election
+    try {
+      const allAudits = this.getItem<VoteAuditEntry[]>(STORAGE_KEYS.VOTE_AUDIT_LOG, []);
+      const remainingAudits = allAudits.filter(a => a.poll_id !== electionId);
+      this.setItem(STORAGE_KEYS.VOTE_AUDIT_LOG, remainingAudits);
+    } catch (err) {
+      console.warn('Failed to clean vote audit log on reset:', err);
+    }
+
+    if (targetEventId) {
+      // Clear projector if currently showing this election
+      try {
+        const curProj = this.getProjectorSettings(targetEventId);
+        if (curProj && curProj.revealedElectionId === electionId) {
+          this.saveProjectorSettings(targetEventId, {
+            ...curProj,
+            displayScene: curProj.displayScene === 'election_result' || curProj.displayScene === 'election' ? 'auto' : curProj.displayScene,
+            revealedElectionId: undefined
+          });
+        }
+      } catch (err) {
+        console.warn('Failed to reset projector on election reset:', err);
+      }
+
+      // Reset election reveal stage in localStorage
+      if (typeof window !== 'undefined') {
+        try {
+          const key = `tn_assembly_election_reveal_stage_${targetEventId}`;
+          const currentStages = JSON.parse(localStorage.getItem(key) || '{}');
+          delete currentStages[electionId];
+          localStorage.setItem(key, JSON.stringify(currentStages));
+        } catch {}
+      }
+
+      this.syncEventStateToSupabase(targetEventId);
+    }
+    this.notify();
   }
 
   public deleteElection(electionId: string) {

@@ -231,6 +231,8 @@ export interface Election {
   votes_by_delegate?: Record<string, string>;
   party_id?: string;
   completed_at?: string;
+  reset_at?: string;
+  updated_at?: string;
   created_at: string;
 }
 

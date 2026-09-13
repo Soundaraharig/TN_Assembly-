@@ -348,9 +348,9 @@
     "semantic_hash": "a3f9bdf2bec8f9201297c4082dc98e27"
   },
   "src/components/admin/DaysActivitiesTab.tsx": {
-    "mtime": 1789275374.6886117,
-    "seen": 1789275399.8615453,
-    "ast_hash": "e5e00753bbfdaa6e472188141fb573a7",
+    "mtime": 1789277123.1669822,
+    "seen": 1789279470.3032978,
+    "ast_hash": "47c29728b613f03292e30f3b74564662",
     "semantic_hash": ""
   },
   "src/components/admin/EditCoordinatorModal.tsx": {
@@ -402,16 +402,16 @@
     "semantic_hash": "f06936b3942de8a14fa38c47b5b8c6a0"
   },
   "src/components/common/Header.tsx": {
-    "mtime": 1788930505.7376275,
-    "seen": 1789196099.992235,
-    "ast_hash": "f606b304722c4717c387588787a2d02a",
-    "semantic_hash": "f606b304722c4717c387588787a2d02a"
+    "mtime": 1789279388.335997,
+    "seen": 1789279470.3039784,
+    "ast_hash": "d163ca8d81fc6495ca7961f7e45f49f6",
+    "semantic_hash": ""
   },
   "src/components/common/Sidebar.tsx": {
-    "mtime": 1789119101.6524405,
-    "seen": 1789196099.9922357,
-    "ast_hash": "088cdbb8f0d55ee6fcb6e5c6417b6aee",
-    "semantic_hash": "088cdbb8f0d55ee6fcb6e5c6417b6aee"
+    "mtime": 1789279441.0140538,
+    "seen": 1789279470.3039799,
+    "ast_hash": "e7ddc4ef1b026a0e659701e98ffef70f",
+    "semantic_hash": ""
   },
   "src/components/common/StandaloneProjectorDisplay.tsx": {
     "mtime": 1788930505.7387245,
@@ -450,10 +450,10 @@
     "semantic_hash": "86f0fb984a90b4c085bca43fc4306e1d"
   },
   "src/components/coordinator/AnalyticsTab.tsx": {
-    "mtime": 1788930505.742382,
-    "seen": 1789196099.9922402,
-    "ast_hash": "bbd9ae1a12277ce092a806289004825c",
-    "semantic_hash": "bbd9ae1a12277ce092a806289004825c"
+    "mtime": 1789279091.2576523,
+    "seen": 1789279470.304707,
+    "ast_hash": "8bd38d86b13a38ca19ded1336f71bfb0",
+    "semantic_hash": ""
   },
   "src/components/coordinator/AwardsTab.tsx": {
     "mtime": 1788930505.742382,
@@ -522,9 +522,9 @@
     "semantic_hash": "a866683017f14bd81bc76c2fd58997d5"
   },
   "src/components/coordinator/ElectionsTab.tsx": {
-    "mtime": 1789275164.181631,
-    "seen": 1789275252.280743,
-    "ast_hash": "8095927bf65671a864f4b4e1463f0be4",
+    "mtime": 1789281112.1602027,
+    "seen": 1789281184.0078297,
+    "ast_hash": "becc2af5bc05fd2f8d1b80031e8bd519",
     "semantic_hash": ""
   },
   "src/components/coordinator/FeedbackTab.tsx": {
@@ -552,9 +552,9 @@
     "semantic_hash": "9cdf384843f6c6f4f2f06c1988fb03f1"
   },
   "src/components/coordinator/ParticipantsTab.tsx": {
-    "mtime": 1789272286.3291829,
-    "seen": 1789273873.338537,
-    "ast_hash": "8ddb4ffcae2e8be4acc41f43e3d6d099",
+    "mtime": 1789279052.8243444,
+    "seen": 1789279470.3059354,
+    "ast_hash": "200fe83542296f59aee07b07cf5d57c9",
     "semantic_hash": ""
   },
   "src/components/coordinator/PartiesTab.tsx": {
@@ -570,10 +570,10 @@
     "semantic_hash": "2e4ae7104e0eeb960f95c3c373efb530"
   },
   "src/components/coordinator/ProjectorTab.tsx": {
-    "mtime": 1788930505.751096,
-    "seen": 1789196099.9922562,
-    "ast_hash": "cf3c62aed153b741aa33d70b60ce9ad1",
-    "semantic_hash": "cf3c62aed153b741aa33d70b60ce9ad1"
+    "mtime": 1789279240.8676054,
+    "seen": 1789279470.3061469,
+    "ast_hash": "1de094924d80a055c7c133e0e04a9812",
+    "semantic_hash": ""
   },
   "src/components/coordinator/QuestionnaireTab.tsx": {
     "mtime": 1788930505.7516847,
@@ -594,10 +594,10 @@
     "semantic_hash": "234beb0de24d74f2e97c0b73d53002a3"
   },
   "src/components/coordinator/TeamTab.tsx": {
-    "mtime": 1788930505.7529857,
-    "seen": 1789196099.9922588,
-    "ast_hash": "2b0a52d2c2ac91212352bd662b7d15be",
-    "semantic_hash": "2b0a52d2c2ac91212352bd662b7d15be"
+    "mtime": 1789279208.1278038,
+    "seen": 1789279470.3063982,
+    "ast_hash": "ef46485b0bf572647d35fe434c1adc10",
+    "semantic_hash": ""
   },
   "src/components/coordinator/VolunteersTab.tsx": {
     "mtime": 1789272737.4783323,
@@ -630,9 +630,9 @@
     "semantic_hash": "a4e1377583615665e4da3f79f7bde7ce"
   },
   "src/components/volunteer/VolunteerDashboard.tsx": {
-    "mtime": 1789272705.6100502,
-    "seen": 1789273873.340158,
-    "ast_hash": "d18fc19a5f2cd7d872d83a74a33a2cfe",
+    "mtime": 1789277145.994156,
+    "seen": 1789279470.3068137,
+    "ast_hash": "0012e0a67fcc485f778ee134b5cfd401",
     "semantic_hash": ""
   },
   "src/data/initialMockData.ts": {

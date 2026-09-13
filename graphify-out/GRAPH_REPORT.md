@@ -1,16 +1,16 @@
 # Graph Report - TN_Assembly-  (2026-09-13)
 
 ## Corpus Check
-- 136 files · ~180,456 words
+- 136 files · ~181,064 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1083 nodes · 2843 edges · 89 communities (63 shown, 20 thin omitted)
+- 1083 nodes · 2847 edges · 89 communities (63 shown, 20 thin omitted)
 - Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `0269a6dc`
+- Built from commit: `7b595413`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -397,7 +397,7 @@ _Questions this graph is uniquely positioned to answer:_
 - **What connects `$schema`, `npm`, `name` to the rest of the system?**
   _410 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `.setItem` be split into smaller, more focused modules?**
-  _Cohesion score 0.10384068278805121 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.1066066066066066 - nodes in this community are weakly interconnected._
 - **Should `package.json` be split into smaller, more focused modules?**
   _Cohesion score 0.04541062801932367 - nodes in this community are weakly interconnected._
 - **Should `test_bug_9_systemic_audit.cjs` be split into smaller, more focused modules?**

@@ -133,6 +133,30 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   const [proxyVotingLearnerId, setProxyVotingLearnerId] = useState<Record<string, string | null>>({});
   const [quickScanCode, setQuickScanCode] = useState<Record<string, string>>({});
 
+  // Reveal stages for closed elections: 'ready' (Reveal Result) -> 'revealed' (Close Reveal Result) -> 'done' (Done state)
+  const [revealStages, setRevealStages] = useState<Record<string, 'ready' | 'revealed' | 'done'>>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        return JSON.parse(localStorage.getItem(`tn_assembly_election_reveal_stage_${eventId}`) || '{}');
+      } catch {
+        return {};
+      }
+    }
+    return {};
+  });
+
+  const updateRevealStage = (elecId: string, stage: 'ready' | 'revealed' | 'done') => {
+    setRevealStages(prev => {
+      const next = { ...prev, [elecId]: stage };
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(`tn_assembly_election_reveal_stage_${eventId}`, JSON.stringify(next));
+        } catch {}
+      }
+      return next;
+    });
+  };
+
   // Real-time login records refresh
   useEffect(() => {
     setLoginRecords(storageService.getLoginRecords(eventId));
@@ -249,6 +273,23 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
       return { type: 'RULING', label: 'Ruling Bench Only' };
     }
     return { type: 'ALL', label: 'Whole Assembly (All Delegates)' };
+  };
+
+  const isDelegateEligibleForElection = (voter: Learner | null, election: Election): boolean => {
+    if (!voter) return false;
+    const rule = getElectorateRule(election);
+
+    if (rule.type === 'PARTY') {
+      if (rule.partyId && voter.party_id !== rule.partyId && voter.party_name?.toLowerCase() !== rule.partyName?.toLowerCase()) {
+        return false;
+      }
+    } else if (rule.type === 'OPPOSITION' && voter.bench !== 'Opposition') {
+      return false;
+    } else if (rule.type === 'RULING' && voter.bench !== 'Ruling') {
+      return false;
+    }
+
+    return true;
   };
 
   const checkVoterEligibility = (voter: Learner | null, election: Election): { eligible: boolean; reason?: string } => {
@@ -512,6 +553,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   };
 
   const handleProjectResult = (electionId: string, title: string) => {
+    updateRevealStage(electionId, 'revealed');
     try {
       const cur = getProjectorSettings(eventId);
       saveProjectorSettings({
@@ -541,6 +583,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
   const handleCloseElection = (electionId: string, title: string) => {
     onCloseElection(electionId);
+    updateRevealStage(electionId, 'ready');
     try {
       const cur = getProjectorSettings(eventId);
       saveProjectorSettings({
@@ -554,7 +597,23 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
     }
   };
 
-  const handleCloseRevealResult = () => {
+  const handleCloseRevealResult = (electionId?: string) => {
+    if (electionId) {
+      updateRevealStage(electionId, 'done');
+    } else {
+      setRevealStages(prev => {
+        const next = { ...prev };
+        Object.keys(next).forEach(k => {
+          if (next[k] === 'revealed') next[k] = 'done';
+        });
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem(`tn_assembly_election_reveal_stage_${eventId}`, JSON.stringify(next));
+          } catch {}
+        }
+        return next;
+      });
+    }
     try {
       const cur = getProjectorSettings(eventId);
       saveProjectorSettings({
@@ -576,19 +635,18 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
     const sortedCandidates = [...(elec.candidates || [])].sort((a, b) => (b.votes || 0) - (a.votes || 0));
     const leader = sortedCandidates.length > 0 && sortedCandidates[0].votes > 0 ? sortedCandidates[0] : null;
     const rule = getElectorateRule(elec);
-
-    const totalEligible = (() => {
-      if (rule.type === 'PARTY') {
-        return learners.filter(l => l.party_id === rule.partyId || l.party_name?.toLowerCase() === rule.partyName?.toLowerCase()).length;
-      }
-      if (rule.type === 'RULING') return learners.filter(l => l.bench === 'Ruling').length;
-      if (rule.type === 'OPPOSITION') return learners.filter(l => l.bench === 'Opposition').length;
-      return learners.length;
-    })();
+    const eligibleLearners = learners.filter(l => isDelegateEligibleForElection(l, elec));
+    const totalEligible = eligibleLearners.length;
 
     const liveVotedCount = elec.voted_delegate_ids?.length || 0;
     const liveTurnoutPct = totalEligible > 0 ? Math.round((liveVotedCount / totalEligible) * 100) : 0;
     const liveRemainingCount = Math.max(0, totalEligible - liveVotedCount);
+
+    const currentProjector = getProjectorSettings(eventId);
+    const isProjectorRevealingThis = currentProjector?.displayScene === 'election_result' && currentProjector?.revealedElectionId === elec.id;
+    const effectiveRevealStage: 'ready' | 'revealed' | 'done' = isProjectorRevealingThis
+      ? 'revealed'
+      : (revealStages[elec.id] || (elec.completed_at ? 'done' : 'ready'));
 
     return (
       <div
@@ -705,31 +763,50 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
                 {isClosed && (
                   <>
-                    <button
-                      onClick={() => handleProjectResult(elec.id, elec.title)}
-                      className="px-3.5 py-1.5 rounded-lg text-xs font-bold text-slate-950 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 shadow-md flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
-                      title="Project animated winner declaration on auditorium display"
-                    >
-                      <Tv className="w-3.5 h-3.5 text-slate-950" /> Reveal Result on Projector 🎬
-                    </button>
+                    {effectiveRevealStage === 'ready' && (
+                      <button
+                        onClick={() => handleProjectResult(elec.id, elec.title)}
+                        className="px-3.5 py-1.5 rounded-lg text-xs font-bold text-slate-950 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 shadow-md flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
+                        title="Project animated winner declaration on auditorium display"
+                      >
+                        <Tv className="w-3.5 h-3.5 text-slate-950" /> Reveal Result on Projector 🎬
+                      </button>
+                    )}
+
+                    {effectiveRevealStage === 'revealed' && (
+                      <button
+                        onClick={() => handleCloseRevealResult(elec.id)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
+                        title="Close result reveal and return stage screen to normal active agenda display"
+                      >
+                        <XCircle className="w-3.5 h-3.5 text-rose-400" /> Close Reveal Result ✖
+                      </button>
+                    )}
+
+                    {effectiveRevealStage === 'done' && (
+                      <button
+                        onClick={() => handleProjectResult(elec.id, elec.title)}
+                        className="px-3 py-1 rounded-full text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 hover:bg-emerald-500/20 flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
+                        title="Result declared and finalized. Click to re-reveal results on stage screen."
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> Done
+                      </button>
+                    )}
 
                     <button
-                      onClick={handleCloseRevealResult}
-                      className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
-                      title="Close result reveal and return stage screen to normal active agenda display"
+                      onClick={() => {
+                        if (window.confirm(`Reset ballot for "${elec.title}"? This will clear all cast votes and reset the election to Upcoming.`)) {
+                          updateRevealStage(elec.id, 'ready');
+                          if (onResetElection) onResetElection(elec.id);
+                          onShowToast('Ballot Reset', `Reset votes for "${elec.title}".`, 'info');
+                        }
+                      }}
+                      className="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-600 flex items-center gap-1 cursor-pointer transition-all"
+                      title="Reset Ballot and clear all cast votes"
                     >
-                      <XCircle className="w-3.5 h-3.5 text-rose-400" /> Close Reveal Result ✖
+                      <RotateCcw className="w-3.5 h-3.5" /> Reset Ballot
                     </button>
                   </>
-                )}
-
-                {isClosed && (
-                  <button
-                    onClick={() => onResetElection && onResetElection(elec.id)}
-                    className="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-600 flex items-center gap-1 cursor-pointer transition-all"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" /> Reset Ballot
-                  </button>
                 )}
 
                 {onDeleteElection && elec.type !== 'LEADERSHIP' && elec.type !== 'SPEAKER' && elec.type !== 'DEPUTY_SPEAKER' && (
@@ -920,8 +997,9 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
             {/* FLOOR BALLOT & VOTER TURNOUT CONSOLE (Live and Post-Voting Review) */}
             {(isLive || isClosed) && (() => {
               const votedSet = new Set(elec.voted_delegate_ids || []);
-              const votedLearners = learners.filter(l => votedSet.has(l.id));
-              const nonVotedLearners = learners.filter(l => !votedSet.has(l.id));
+              // Strictly limit to delegates who are eligible for this specific election
+              const votedLearners = eligibleLearners.filter(l => votedSet.has(l.id));
+              const nonVotedLearners = eligibleLearners.filter(l => !votedSet.has(l.id));
 
               const activeConsoleTab = voterConsoleTab[elec.id] || 'NON_VOTED';
               const currentQ = (voterSearch[elec.id] || '').trim().toLowerCase();
@@ -1132,7 +1210,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                   {activeConsoleTab === 'NON_VOTED' && (
                     <div className="space-y-2 pt-1">
                       <div className="flex items-center justify-between text-xs px-1" style={{ color: 'var(--text-muted)' }}>
-                        <span>Showing <strong style={{ color: 'var(--text-primary)' }}>{filteredNonVoted.length}</strong> non-voted delegates</span>
+                        <span>Showing <strong style={{ color: 'var(--text-primary)' }}>{filteredNonVoted.length}</strong> non-voted eligible delegates</span>
                         {isLive && (
                           <span className="text-amber-600 dark:text-amber-400 text-[11px] font-semibold flex items-center gap-1">
                             <Zap className="w-3 h-3" /> Click "Cast Ballot" to vote on behalf of walk-ins
@@ -1148,8 +1226,8 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                           <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
                           <p className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>
                             {nonVotedLearners.length === 0
-                              ? '100% Turnout Achieved! All registered delegates have cast their ballots.'
-                              : 'No delegates match the current search or filters.'}
+                              ? '100% Turnout Achieved! All eligible delegates have cast their ballots.'
+                              : 'No eligible delegates match the current search or filters.'}
                           </p>
                         </div>
                       ) : (
@@ -1764,13 +1842,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                 const sortedCandidates = [...(elec.candidates || [])].sort((a, b) => (b.votes || 0) - (a.votes || 0));
                 const leader = sortedCandidates[0] || null;
                 const winnerName = elec.winner || (leader ? leader.name : 'Declared Winner');
-                const rule = getElectorateRule(elec);
-
-                let totalEligible = learners.length;
-                if (rule.type === 'RULING') totalEligible = learners.filter(l => l.bench === 'Ruling').length;
-                else if (rule.type === 'OPPOSITION') totalEligible = learners.filter(l => l.bench === 'Opposition').length;
-                else if (rule.type === 'PARTY' && rule.partyId) totalEligible = learners.filter(l => l.party_id === rule.partyId || l.party_name?.toLowerCase() === rule.partyName?.toLowerCase()).length;
-
+                const totalEligible = learners.filter(l => isDelegateEligibleForElection(l, elec)).length;
                 const totalVotes = elec.total_votes || 0;
                 const turnoutPct = totalEligible > 0 ? Math.round((totalVotes / totalEligible) * 100) : 0;
                 const completedAtText = elec.completed_at ? new Date(elec.completed_at).toLocaleString() : 'Concluded';
@@ -1883,13 +1955,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                 const sorted = [...(selectedHistoryElection.candidates || [])].sort((a, b) => (b.votes || 0) - (a.votes || 0));
                 const top = sorted[0];
                 const totalV = selectedHistoryElection.total_votes || 0;
-                const rule = getElectorateRule(selectedHistoryElection);
-
-                let totalEligible = learners.length;
-                if (rule.type === 'RULING') totalEligible = learners.filter(l => l.bench === 'Ruling').length;
-                else if (rule.type === 'OPPOSITION') totalEligible = learners.filter(l => l.bench === 'Opposition').length;
-                else if (rule.type === 'PARTY' && rule.partyId) totalEligible = learners.filter(l => l.party_id === rule.partyId || l.party_name?.toLowerCase() === rule.partyName?.toLowerCase()).length;
-
+                const totalEligible = learners.filter(l => isDelegateEligibleForElection(l, selectedHistoryElection)).length;
                 const turnout = totalEligible > 0 ? Math.round((totalV / totalEligible) * 100) : 0;
 
                 return (
