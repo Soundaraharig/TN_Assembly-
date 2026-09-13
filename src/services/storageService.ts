@@ -374,16 +374,16 @@ export function deduplicateElectionList(elections: Election[], partiesList?: Par
 // ---------------------------------------------------------------------------
 // Explicit Minimal Column Projections for Network Egress Optimization
 // ---------------------------------------------------------------------------
-export const COLLEGE_EVENT_COLUMNS = 'id, college_name, event_stage, status, created_at, chapter, level, location, dates, assigned_coordinator_email, assigned_coordinator_name, elections_count, is_locked, participant_count, chief_guests, social_coverage, slug, treasury_whatsapp_link, opposition_whatsapp_link, updated_at';
-export const COORDINATOR_COLUMNS = 'id, event_id, name, email, password_hash, raw_temp_password, created_at, updated_at';
-export const LEARNER_COLUMNS = 'id, event_id, access_code, full_name, email, phone, department, academic_year, constituency_number, constituency_name, party_id, party_name, bench, role, committee_id, committee_name, day1_checked_in, day2_checked_in, created_at, district, updated_at, school_name, party_group_link, committee_group_link';
-export const PARTY_COLUMNS = 'id, event_id, name, bench, color, leader, manifesto, created_at, whatsapp_group_link';
-export const COMMITTEE_COLUMNS = 'id, event_id, name, topic, chairperson, max_capacity, created_at';
-export const AGENDA_COLUMNS = 'id, event_id, day, time, title, description, speaker_role, is_current, created_at';
-export const JURY_COLUMNS = 'id, event_id, name, designation, assigned_bench, created_at, access_code, email, phone, status';
-export const VOLUNTEER_COLUMNS = 'id, event_id, name, email, phone, role, created_at, access_code, station, shift, is_yuva, has_arrived';
-export const EVENT_DAY_COLUMNS = 'id, event_id, day_number, name, date, status, activities, is_archived, order_index, created_at, updated_at';
-export const ATTENDANCE_COLUMNS = 'id, event_id, day_id, event_day_id, student_id, participant_id, status, marked_by, marked_by_role, marked_at, created_at, updated_at';
+export const COLLEGE_EVENT_COLUMNS = 'id, slug, college_name, chapter, level, location, dates, event_stage, status, participant_count, assigned_coordinator_email, assigned_coordinator_name, elections_count, is_locked, treasury_whatsapp_link, opposition_whatsapp_link, cabinet_ministries, chief_guests, social_coverage, created_at';
+export const COORDINATOR_COLUMNS = 'id, event_id, name, email, role, phone, created_at';
+export const LEARNER_COLUMNS = 'id, event_id, full_name, email, phone, college_name, department, academic_year, roll_number, access_code, role, party_id, party_name, committee_id, committee_name, bench, constituency, day1_checked_in, day2_checked_in, created_at';
+export const PARTY_COLUMNS = 'id, event_id, name, ideology, color, bench, description, logo_url, manifesto_url, created_at';
+export const COMMITTEE_COLUMNS = 'id, event_id, name, topic, description, max_delegates, whatsapp_group_link, created_at';
+export const AGENDA_COLUMNS = 'id, event_id, day, time, title, description, speaker, status, is_enabled, order_index, created_at';
+export const JURY_COLUMNS = 'id, event_id, name, email, phone, college_name, assigned_bench, access_code, created_at';
+export const VOLUNTEER_COLUMNS = 'id, event_id, name, email, phone, station, access_code, created_at';
+export const EVENT_DAY_COLUMNS = 'id, event_id, day_number, date, title, is_active, created_at';
+export const ATTENDANCE_COLUMNS = 'id, event_id, day_id, event_day_id, student_id, fn_status, an_status, marked_by, timestamp, created_at';
 
 // ---------------------------------------------------------------------------
 // StorageService — hybrid localStorage + Supabase with pub/sub
@@ -997,7 +997,7 @@ class StorageService {
           }
 
           if (Array.isArray(sc.cabinet_ministries)) {
-            (ev as any).cabinet_ministries = sc.cabinet_ministries;
+            ev.cabinet_ministries = sc.cabinet_ministries;
           }
           if (Array.isArray(sc.yuva_assignments)) {
             const key = `${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${ev.id}`;
