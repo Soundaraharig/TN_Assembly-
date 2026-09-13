@@ -546,3 +546,17 @@ export const STANDARD_TN_ACTIVITIES: string[] = [
   'Mock Assembly'
 ];
 
+export interface LoginRecord {
+  id: string;
+  event_id: string;
+  user_id: string;
+  user_name: string;
+  role: 'student' | 'volunteer' | 'jury' | 'coordinator';
+  access_code: string;
+  login_at: string; // ISO string
+  device_type: 'Mobile' | 'Tablet' | 'Desktop' | 'Other';
+  device_info: string;
+  ip_address?: string;
+  details?: string;
+}
+

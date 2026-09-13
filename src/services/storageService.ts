@@ -35,7 +35,8 @@ import type {
   EventDay,
   DayAttendanceRecord,
   EventDayStatus,
-  DayAttendanceStatus
+  DayAttendanceStatus,
+  LoginRecord
 } from '../types';
 import { getRecordSessionStatuses } from '../types';
 import {
@@ -108,10 +109,42 @@ const STORAGE_KEYS = {
   EVENT_DAYS: 'tn_assembly_event_days_v1',
   DAY_ATTENDANCE: 'tn_assembly_day_attendance_v1',
   VOTE_AUDIT_LOG: 'tn_assembly_vote_audit_log_v1',
-  LOCK_UPDATED_AT: 'tn_assembly_lock_updated_at_v1'
+  LOCK_UPDATED_AT: 'tn_assembly_lock_updated_at_v1',
+  LOGIN_RECORDS: 'tn_assembly_login_records_v1'
 };
 
 type Listener = () => void;
+
+function detectDeviceType(): 'Mobile' | 'Tablet' | 'Desktop' | 'Other' {
+  if (typeof window === 'undefined' || !navigator) return 'Other';
+  const ua = (navigator.userAgent || '').toLowerCase();
+  if (/(ipad|tablet|(android(?!.*mobile))|(windows(?!.*phone)(.*touch))|kindle|playbook|silk)/.test(ua)) {
+    return 'Tablet';
+  }
+  if (/(mobi|ipod|phone|android|blackberry|opera mini|fennec|minimo|symbian)/.test(ua)) {
+    return 'Mobile';
+  }
+  return 'Desktop';
+}
+
+function getDeviceInfo(): string {
+  if (typeof window === 'undefined' || !navigator) return 'Web Client';
+  const ua = navigator.userAgent || '';
+  let browser = 'Browser';
+  if (ua.includes('Firefox/')) browser = 'Firefox';
+  else if (ua.includes('Edg/')) browser = 'Edge';
+  else if (ua.includes('Chrome/')) browser = 'Chrome';
+  else if (ua.includes('Safari/')) browser = 'Safari';
+
+  let os = 'Device';
+  if (ua.includes('Win')) os = 'Windows';
+  else if (ua.includes('Android')) os = 'Android';
+  else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS';
+  else if (ua.includes('Mac')) os = 'macOS';
+  else if (ua.includes('Linux')) os = 'Linux';
+
+  return `${browser} (${os})`;
+}
 
 function genUuid(): string {
   try {
@@ -2002,6 +2035,14 @@ class StorageService {
         actor_name: matchedVol.name,
         details: `Volunteer login: ${matchedVol.name} (${matchedVol.access_code})`
       });
+      this.recordLogin({
+        event_id: matchedVol.event_id,
+        user_id: matchedVol.id,
+        user_name: matchedVol.name,
+        role: 'volunteer',
+        access_code: matchedVol.access_code,
+        details: `Volunteer Desk Access (${matchedVol.station || 'Operations'})`
+      });
       console.log(`[Auth Trace] Code: "${accessCode}" -> Matched Record ID: "${matchedVol.id}" -> Event ID: "${matchedVol.event_id}" -> Role: "volunteer" (Name: ${matchedVol.name})`);
       return { role: 'volunteer', user: matchedVol, eventId: matchedVol.event_id };
     }
@@ -2027,6 +2068,14 @@ class StorageService {
         actor_name: matchedJury.name,
         details: `Jury login: ${matchedJury.name} (${matchedJury.access_code})`
       });
+      this.recordLogin({
+        event_id: matchedJury.event_id,
+        user_id: matchedJury.id,
+        user_name: matchedJury.name,
+        role: 'jury',
+        access_code: matchedJury.access_code,
+        details: `Jury Pass Access (${matchedJury.designation || 'Jury Member'})`
+      });
       console.log(`[Auth Trace] Code: "${accessCode}" -> Matched Record ID: "${matchedJury.id}" -> Event ID: "${matchedJury.event_id}" -> Role: "jury" (Name: ${matchedJury.name})`);
       return { role: 'jury', user: matchedJury, eventId: matchedJury.event_id };
     }
@@ -2046,6 +2095,14 @@ class StorageService {
         actor_name: matchedStudent.full_name,
         details: `Delegate login: ${matchedStudent.full_name} (${matchedStudent.access_code})`
       });
+      this.recordLogin({
+        event_id: matchedStudent.event_id,
+        user_id: matchedStudent.id,
+        user_name: matchedStudent.full_name,
+        role: 'student',
+        access_code: matchedStudent.access_code,
+        details: `Delegate App Login (${matchedStudent.bench || 'Delegate'} Bench • ${matchedStudent.party_name || 'Independent'})`
+      });
       console.log(`[Auth Trace] Code: "${accessCode}" -> Matched Record ID: "${matchedStudent.id}" -> Event ID: "${matchedStudent.event_id}" -> Role: "student" (Name: ${matchedStudent.full_name})`);
       return { role: 'student', user: matchedStudent, eventId: matchedStudent.event_id };
     }
@@ -2057,6 +2114,86 @@ class StorageService {
     });
     console.warn(`[Auth Trace] Code: "${accessCode}" -> No matching record found in volunteers, jury, or learners.`);
     return null;
+  }
+
+  // ── LOGIN RECORDS SYSTEM ──────────────────────────────────────────────────
+
+  public recordLogin(record: {
+    event_id: string;
+    user_id: string;
+    user_name: string;
+    role: 'student' | 'volunteer' | 'jury' | 'coordinator';
+    access_code: string;
+    device_type?: 'Mobile' | 'Tablet' | 'Desktop' | 'Other';
+    device_info?: string;
+    ip_address?: string;
+    details?: string;
+  }): LoginRecord {
+    const records = this.getItem<LoginRecord[]>(STORAGE_KEYS.LOGIN_RECORDS, []);
+    const entry: LoginRecord = {
+      id: genUuid(),
+      login_at: new Date().toISOString(),
+      device_type: record.device_type || detectDeviceType(),
+      device_info: record.device_info || getDeviceInfo(),
+      ...record
+    };
+
+    records.unshift(entry);
+    // Keep reasonable history of last 1000 logins
+    if (records.length > 1000) records.pop();
+    this.setItem(STORAGE_KEYS.LOGIN_RECORDS, records);
+
+    // Sync to Supabase if configured (graceful error handling)
+    if (supabase && isSupabaseEnabled) {
+      Promise.resolve(
+        supabase
+          .from('login_records')
+          .insert({
+            id: entry.id,
+            event_id: entry.event_id,
+            user_id: entry.user_id,
+            user_name: entry.user_name,
+            role: entry.role,
+            access_code: entry.access_code,
+            login_at: entry.login_at,
+            device_type: entry.device_type,
+            device_info: entry.device_info,
+            ip_address: entry.ip_address || null,
+            details: entry.details || null
+          })
+      )
+        .then((res: any) => {
+          if (res?.error) {
+            console.warn('[StorageService] Supabase login_records sync error (may need migration):', res.error.message);
+          }
+        })
+        .catch((err: any) => {
+          console.warn('[StorageService] Error syncing login record to Supabase:', err);
+        });
+    }
+
+    console.log(`🔑 [Login Recorded] ${entry.role.toUpperCase()} ${entry.user_name} (${entry.access_code}) from ${entry.device_info} at ${entry.login_at}`);
+    return entry;
+  }
+
+  public getLoginRecords(eventId?: string): LoginRecord[] {
+    const records = this.getItem<LoginRecord[]>(STORAGE_KEYS.LOGIN_RECORDS, []);
+    if (eventId) return records.filter(l => !l.event_id || l.event_id === eventId);
+    return records;
+  }
+
+  public getLatestLoginForUser(userId: string): LoginRecord | null {
+    const records = this.getItem<LoginRecord[]>(STORAGE_KEYS.LOGIN_RECORDS, []);
+    return records.find(r => r.user_id === userId) || null;
+  }
+
+  public clearLoginRecords(eventId?: string): void {
+    if (!eventId) {
+      this.setItem(STORAGE_KEYS.LOGIN_RECORDS, []);
+    } else {
+      const records = this.getItem<LoginRecord[]>(STORAGE_KEYS.LOGIN_RECORDS, []);
+      this.setItem(STORAGE_KEYS.LOGIN_RECORDS, records.filter(r => r.event_id !== eventId));
+    }
   }
 
   // ── AUDIT LOGS ────────────────────────────────────────────────────────────

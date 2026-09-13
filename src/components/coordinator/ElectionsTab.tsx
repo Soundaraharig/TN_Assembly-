@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import type { Election, LiveFlashVote, Learner, FlashVoteAudience, ElectionCandidate, Nomination, Party } from '../../types';
+import type { Election, LiveFlashVote, Learner, FlashVoteAudience, ElectionCandidate, Nomination, Party, LoginRecord } from '../../types';
 import {
   Vote,
   Plus,
@@ -24,10 +24,18 @@ import {
   BarChart3,
   History,
   Trash2,
-  Tv
+  Tv,
+  Smartphone,
+  Laptop,
+  KeyRound,
+  Download,
+  UserCheck,
+  UserX,
+  Clock,
+  CheckCircle2
 } from 'lucide-react';
 import { getProjectorSettings, saveProjectorSettings } from './ProjectorTab';
-import { getResolvedPartyName, deduplicateElectionList } from '../../services/storageService';
+import { storageService, getResolvedPartyName, deduplicateElectionList } from '../../services/storageService';
 
 interface ElectionsTabProps {
   elections: Election[];
@@ -108,7 +116,6 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   const [selectedHistoryElection, setSelectedHistoryElection] = useState<Election | null>(null);
   
   const [expandedElectionIds, setExpandedElectionIds] = useState<Set<string>>(new Set());
-  const [selectedVoterPerElection, setSelectedVoterPerElection] = useState<Record<string, string>>({});
   const [activeNominateElectionId, setActiveNominateElectionId] = useState<string | null>(null);
   const [nominationSourceTab, setNominationSourceTab] = useState<'NOMINATIONS' | 'ALL_DELEGATES'>('NOMINATIONS');
   const [candidateSearchQuery, setCandidateSearchQuery] = useState('');
@@ -116,6 +123,45 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   const [isNewPollOpen, setIsNewPollOpen] = useState(false);
   const [pollQuestion, setPollQuestion] = useState('');
   const [pollMotionType, setPollMotionType] = useState<LiveFlashVote['motion_type']>('Division');
+
+  // Login records & Device Audit State
+  const [loginRecords, setLoginRecords] = useState<LoginRecord[]>(() => storageService.getLoginRecords(eventId));
+  const [isLoginRecordsModalOpen, setIsLoginRecordsModalOpen] = useState(false);
+  const [loginModalRoleFilter, setLoginModalRoleFilter] = useState<'ALL' | 'student' | 'volunteer' | 'jury'>('ALL');
+  const [loginModalSearch, setLoginModalSearch] = useState('');
+
+  // Per-election Floor Ballot & Voter Console State
+  const [voterConsoleTab, setVoterConsoleTab] = useState<Record<string, 'NON_VOTED' | 'VOTED' | 'QUICK_BALLOT'>>({});
+  const [voterSearch, setVoterSearch] = useState<Record<string, string>>({});
+  const [voterBenchFilter, setVoterBenchFilter] = useState<Record<string, 'ALL' | 'RULING' | 'OPPOSITION'>>({});
+  const [voterDeviceFilter, setVoterDeviceFilter] = useState<Record<string, 'ALL' | 'LOGGED_IN' | 'NO_DEVICE'>>({});
+  const [proxyVotingLearnerId, setProxyVotingLearnerId] = useState<Record<string, string | null>>({});
+  const [quickScanCode, setQuickScanCode] = useState<Record<string, string>>({});
+
+  // Real-time login records refresh
+  useEffect(() => {
+    setLoginRecords(storageService.getLoginRecords(eventId));
+    const timer = setInterval(() => {
+      setLoginRecords(storageService.getLoginRecords(eventId));
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [eventId]);
+
+  // Map student IDs and access codes to their most recent login record
+  const studentLoginMap = useMemo(() => {
+    const map = new Map<string, LoginRecord>();
+    loginRecords.forEach(r => {
+      if (r.role === 'student') {
+        if (!map.has(r.user_id)) {
+          map.set(r.user_id, r);
+        }
+        if (r.access_code && !map.has(r.access_code.toUpperCase())) {
+          map.set(r.access_code.toUpperCase(), r);
+        }
+      }
+    });
+    return map;
+  }, [loginRecords]);
 
   const isAutoCreatingRef = useRef(false);
 
@@ -549,11 +595,6 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
     const liveTurnoutPct = totalEligible > 0 ? Math.round((liveVotedCount / totalEligible) * 100) : 0;
     const liveRemainingCount = Math.max(0, totalEligible - liveVotedCount);
 
-    const selectedVoterId = selectedVoterPerElection[elec.id] || (learners[0]?.id || '');
-    const currentVoter = learners.find(l => l.id === selectedVoterId) || learners[0] || null;
-    const voterCheck = checkVoterEligibility(currentVoter, elec);
-    const hasVoted = currentVoter && elec.voted_delegate_ids?.includes(currentVoter.id);
-
     return (
       <div
         key={elec.id}
@@ -878,71 +919,579 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
               )}
             </div>
 
-            {/* LIVE FLOOR VOTING CONSOLE (when Live) */}
-            {isLive && (
-              <div className="p-3.5 rounded-xl border space-y-3" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}>
-                <div className="flex items-center justify-between border-b pb-2" style={{ borderColor: 'var(--border-soft)' }}>
-                  <div className="flex items-center gap-1.5">
-                    <Zap className="w-4 h-4 text-amber-500" />
-                    <h5 className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-primary)' }}>
-                      Cast Floor Ballot
-                    </h5>
-                  </div>
-                  <span className="text-xs text-slate-400 font-mono">
-                    {elec.voted_delegate_ids?.length || 0} / {learners.length} Voted
-                  </span>
-                </div>
+            {/* FLOOR BALLOT & VOTER TURNOUT CONSOLE (Live and Post-Voting Review) */}
+            {(isLive || isClosed) && (() => {
+              const votedSet = new Set(elec.voted_delegate_ids || []);
+              const votedLearners = learners.filter(l => votedSet.has(l.id));
+              const nonVotedLearners = learners.filter(l => !votedSet.has(l.id));
 
-                {/* Delegate Selector */}
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                    Select Voting Delegate:
-                  </label>
-                  <select
-                    value={selectedVoterId}
-                    onChange={(e) => setSelectedVoterPerElection(prev => ({ ...prev, [elec.id]: e.target.value }))}
-                    className="w-full p-2 rounded-lg border text-xs font-medium focus:outline-none"
-                    style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
-                  >
-                    {learners.map(l => (
-                      <option key={l.id} value={l.id}>
-                        {l.full_name} ({l.bench || 'Delegate'} • {l.party_name || 'Ind'}{l.constituency_number !== undefined ? ` • #${l.constituency_number}` : ''})
-                      </option>
-                    ))}
-                  </select>
-                </div>
+              const activeConsoleTab = voterConsoleTab[elec.id] || 'NON_VOTED';
+              const currentQ = (voterSearch[elec.id] || '').trim().toLowerCase();
+              const currentBenchF = voterBenchFilter[elec.id] || 'ALL';
+              const currentDevF = voterDeviceFilter[elec.id] || 'ALL';
 
-                {/* Voter eligibility notice */}
-                {!voterCheck.eligible && (
-                  <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
-                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                    <span>{voterCheck.reason}</span>
-                  </div>
-                )}
+              const filterLearnerList = (list: Learner[]) => {
+                return list.filter(l => {
+                  if (currentBenchF === 'RULING' && l.bench !== 'Ruling') return false;
+                  if (currentBenchF === 'OPPOSITION' && l.bench !== 'Opposition') return false;
 
-                {/* Candidate Voting Buttons */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                  {elec.candidates?.map((cand) => (
-                    <button
-                      key={cand.id}
-                      disabled={!voterCheck.eligible || hasVoted}
-                      onClick={() => onCastVote(elec.id, cand.id, currentVoter?.id)}
-                      className={`p-2.5 rounded-lg border text-left flex items-center justify-between gap-2 transition-all ${
-                        voterCheck.eligible && !hasVoted
-                          ? 'bg-amber-500/10 border-amber-500/40 hover:bg-amber-500/20 text-white cursor-pointer'
-                          : 'opacity-50 cursor-not-allowed border-slate-800'
-                      }`}
-                    >
-                      <div>
-                        <div className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>Vote for {cand.name}</div>
-                        <div className="text-[10px] text-slate-400">{cand.party}</div>
+                  const hasDev = studentLoginMap.has(l.id) || studentLoginMap.has((l.access_code || '').toUpperCase());
+                  if (currentDevF === 'LOGGED_IN' && !hasDev) return false;
+                  if (currentDevF === 'NO_DEVICE' && hasDev) return false;
+
+                  if (currentQ) {
+                    const matchName = (l.full_name || '').toLowerCase().includes(currentQ);
+                    const matchCode = (l.access_code || '').toLowerCase().includes(currentQ);
+                    const matchParty = (l.party_name || '').toLowerCase().includes(currentQ);
+                    const matchConst = (l.constituency_name || '').toLowerCase().includes(currentQ) ||
+                      (l.constituency_number !== undefined && String(l.constituency_number).includes(currentQ));
+                    if (!matchName && !matchCode && !matchParty && !matchConst) return false;
+                  }
+                  return true;
+                });
+              };
+
+              const filteredNonVoted = filterLearnerList(nonVotedLearners);
+              const filteredVoted = filterLearnerList(votedLearners);
+
+              // Quick code search match
+              const scanCode = (quickScanCode[elec.id] || '').trim().toUpperCase();
+              const scannedLearner = scanCode
+                ? learners.find(l => (l.access_code || '').toUpperCase() === scanCode || l.full_name.toLowerCase().includes(scanCode.toLowerCase()))
+                : null;
+              const scannedHasVoted = scannedLearner ? votedSet.has(scannedLearner.id) : false;
+              const scannedEligibility = scannedLearner ? checkVoterEligibility(scannedLearner, elec) : null;
+
+              return (
+                <div
+                  className="p-4 rounded-xl border space-y-4 shadow-sm"
+                  style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}
+                >
+                  {/* Console Header */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3" style={{ borderColor: 'var(--border-soft)' }}>
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-500">
+                        <Users className="w-4 h-4" />
                       </div>
-                      <Vote className="w-3.5 h-3.5 text-amber-500" />
-                    </button>
-                  ))}
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h5 className="text-xs sm:text-sm font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
+                            Delegate Turnout & Floor Ballot
+                          </h5>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider ${
+                            isLive
+                              ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/30 animate-pulse'
+                              : 'bg-slate-500/10 text-slate-400 border border-slate-500/20'
+                          }`}>
+                            {isLive ? 'Floor Live' : 'Archived Log'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                          {isLive
+                            ? 'Manage walk-in delegates without devices & verify floor turnout in real time'
+                            : 'Historical record of delegates who participated and cast ballots'}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* View Switcher Tabs: Non-Voted vs Voted vs Quick Scanner */}
+                    <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-950/40 border border-slate-800/80 self-start sm:self-center">
+                      <button
+                        type="button"
+                        onClick={() => setVoterConsoleTab(prev => ({ ...prev, [elec.id]: 'NON_VOTED' }))}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                          activeConsoleTab === 'NON_VOTED'
+                            ? 'bg-rose-600 text-white shadow-sm'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <UserX className="w-3.5 h-3.5" />
+                        <span>Non-Voted</span>
+                        <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                          activeConsoleTab === 'NON_VOTED' ? 'bg-black/30 text-white' : 'bg-rose-500/20 text-rose-400'
+                        }`}>
+                          {nonVotedLearners.length}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setVoterConsoleTab(prev => ({ ...prev, [elec.id]: 'VOTED' }))}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                          activeConsoleTab === 'VOTED'
+                            ? 'bg-emerald-600 text-white shadow-sm'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <UserCheck className="w-3.5 h-3.5" />
+                        <span>Voted</span>
+                        <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                          activeConsoleTab === 'VOTED' ? 'bg-black/30 text-white' : 'bg-emerald-500/20 text-emerald-400'
+                        }`}>
+                          {votedLearners.length}
+                        </span>
+                      </button>
+
+                      {isLive && (
+                        <button
+                          type="button"
+                          onClick={() => setVoterConsoleTab(prev => ({ ...prev, [elec.id]: 'QUICK_BALLOT' }))}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                            activeConsoleTab === 'QUICK_BALLOT'
+                              ? 'bg-amber-500 text-slate-950 font-black shadow-sm'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          <Zap className="w-3.5 h-3.5" />
+                          <span>Quick Scan</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Turnout Progress Bar */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-slate-300">
+                        Floor Turnout: <strong className="text-amber-400 font-bold">{liveTurnoutPct}%</strong> ({liveVotedCount} of {totalEligible} Eligible Delegates Voted)
+                      </span>
+                      <span className="text-slate-400 text-[11px] font-mono">
+                        {liveRemainingCount} Pending
+                      </span>
+                    </div>
+                    <div className="w-full h-2 rounded-full bg-slate-800/80 overflow-hidden flex">
+                      <div
+                        className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-500"
+                        style={{ width: `${liveTurnoutPct}%` }}
+                      />
+                      <div
+                        className="h-full bg-rose-500/20 transition-all duration-500"
+                        style={{ width: `${100 - liveTurnoutPct}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Search and Filters Toolbar */}
+                  {activeConsoleTab !== 'QUICK_BALLOT' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                      {/* Search Bar */}
+                      <div className="relative sm:col-span-1">
+                        <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          type="text"
+                          placeholder="Search name, code, party..."
+                          value={voterSearch[elec.id] || ''}
+                          onChange={(e) => setVoterSearch(prev => ({ ...prev, [elec.id]: e.target.value }))}
+                          className="w-full pl-9 pr-3 py-1.5 rounded-lg border text-xs font-medium focus:outline-none"
+                          style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                        />
+                        {(voterSearch[elec.id] || '') && (
+                          <button
+                            type="button"
+                            onClick={() => setVoterSearch(prev => ({ ...prev, [elec.id]: '' }))}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Bench Filter */}
+                      <div>
+                        <select
+                          value={currentBenchF}
+                          onChange={(e) => setVoterBenchFilter(prev => ({ ...prev, [elec.id]: e.target.value as any }))}
+                          className="w-full py-1.5 px-2.5 rounded-lg border text-xs font-medium focus:outline-none"
+                          style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                        >
+                          <option value="ALL">All Benches</option>
+                          <option value="RULING">Ruling Bench Only</option>
+                          <option value="OPPOSITION">Opposition Bench Only</option>
+                        </select>
+                      </div>
+
+                      {/* Device / Login Filter */}
+                      <div>
+                        <select
+                          value={currentDevF}
+                          onChange={(e) => setVoterDeviceFilter(prev => ({ ...prev, [elec.id]: e.target.value as any }))}
+                          className="w-full py-1.5 px-2.5 rounded-lg border text-xs font-medium focus:outline-none"
+                          style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                        >
+                          <option value="ALL">All Device Statuses</option>
+                          <option value="LOGGED_IN">📱 Device Active (Logged In)</option>
+                          <option value="NO_DEVICE">⚠️ No Device (Needs Floor Proxy)</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* SUB-VIEW 1: NON-VOTED DELEGATES */}
+                  {activeConsoleTab === 'NON_VOTED' && (
+                    <div className="space-y-2 pt-1">
+                      <div className="flex items-center justify-between text-xs text-slate-400 px-1">
+                        <span>Showing <strong>{filteredNonVoted.length}</strong> non-voted delegates</span>
+                        {isLive && (
+                          <span className="text-amber-400 text-[11px] font-medium flex items-center gap-1">
+                            <Zap className="w-3 h-3" /> Click "Cast Ballot" to vote on behalf of walk-ins
+                          </span>
+                        )}
+                      </div>
+
+                      {filteredNonVoted.length === 0 ? (
+                        <div className="p-8 text-center rounded-xl border border-dashed border-slate-800 space-y-2">
+                          <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
+                          <p className="text-xs font-semibold text-slate-300">
+                            {nonVotedLearners.length === 0
+                              ? '100% Turnout Achieved! All registered delegates have cast their ballots.'
+                              : 'No delegates match the current search or filters.'}
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 gap-2 max-h-96 overflow-y-auto pr-1">
+                          {filteredNonVoted.map(l => {
+                            const lastLogin = studentLoginMap.get(l.id) || studentLoginMap.get((l.access_code || '').toUpperCase());
+                            const eligibility = checkVoterEligibility(l, elec);
+                            const isProxyActive = proxyVotingLearnerId[elec.id] === l.id;
+
+                            return (
+                              <div
+                                key={l.id}
+                                className={`p-3 rounded-xl border transition-all ${
+                                  isProxyActive
+                                    ? 'border-amber-500/60 bg-amber-500/5 shadow-md ring-1 ring-amber-500/30'
+                                    : 'border-slate-800/80 bg-slate-900/40 hover:border-slate-700'
+                                }`}
+                              >
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                  {/* Left: Delegate Details */}
+                                  <div className="flex items-start sm:items-center gap-3 min-w-0">
+                                    <div className="relative">
+                                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 ${
+                                        l.bench === 'Ruling'
+                                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                                          : 'bg-rose-500/10 text-rose-400 border border-rose-500/30'
+                                      }`}>
+                                        {l.full_name?.slice(0, 2).toUpperCase() || 'DL'}
+                                      </div>
+                                      {/* Status Dot */}
+                                      <span
+                                        title={lastLogin ? `Logged in from ${lastLogin.device_info}` : 'No device login recorded'}
+                                        className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-slate-950 ${
+                                          lastLogin ? 'bg-emerald-500' : 'bg-amber-500'
+                                        }`}
+                                      />
+                                    </div>
+
+                                    <div className="min-w-0 space-y-1">
+                                      <div className="flex flex-wrap items-center gap-1.5">
+                                        <h6 className="text-xs sm:text-sm font-bold text-white truncate">
+                                          {l.full_name}
+                                        </h6>
+                                        <span className="px-1.5 py-0.5 rounded font-mono font-bold text-[10px] bg-indigo-500/10 text-indigo-300 border border-indigo-500/30">
+                                          CODE: {l.access_code}
+                                        </span>
+                                      </div>
+
+                                      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400">
+                                        <span className={`font-semibold ${l.bench === 'Ruling' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                          {l.bench || 'Delegate'} Bench
+                                        </span>
+                                        <span>•</span>
+                                        <span>{l.party_name || 'Independent'}</span>
+                                        {l.constituency_number !== undefined && (
+                                          <>
+                                            <span>•</span>
+                                            <span>Const #{l.constituency_number} {l.constituency_name || ''}</span>
+                                          </>
+                                        )}
+                                      </div>
+
+                                      {/* Device indicator & eligibility note */}
+                                      <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                                        {lastLogin ? (
+                                          <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                                            <Smartphone className="w-2.5 h-2.5" /> Logged In ({lastLogin.device_type})
+                                          </span>
+                                        ) : (
+                                          <span className="inline-flex items-center gap-1 text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20 font-medium">
+                                            <Laptop className="w-2.5 h-2.5" /> ⚠️ No Device (Walk-in)
+                                          </span>
+                                        )}
+
+                                        {!eligibility.eligible && (
+                                          <span className="text-[10px] text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20">
+                                            {eligibility.reason}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Right: Proxy Voting Action */}
+                                  {isLive && (
+                                    <div className="shrink-0 self-end sm:self-center">
+                                      {eligibility.eligible ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setProxyVotingLearnerId(prev => ({
+                                              ...prev,
+                                              [elec.id]: isProxyActive ? null : l.id
+                                            }));
+                                          }}
+                                          className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                                            isProxyActive
+                                              ? 'bg-slate-700 text-white'
+                                              : 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md'
+                                          }`}
+                                        >
+                                          <Vote className="w-3.5 h-3.5" />
+                                          <span>{isProxyActive ? 'Cancel' : 'Cast Floor Ballot'}</span>
+                                        </button>
+                                      ) : (
+                                        <span className="text-[11px] text-slate-500 italic">Ineligible</span>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Inline Candidate Voting Drawer for this Delegate */}
+                                {isLive && isProxyActive && (
+                                  <div className="mt-3 pt-3 border-t border-slate-800 space-y-2 animate-fadeIn">
+                                    <div className="flex items-center justify-between text-xs">
+                                      <span className="font-semibold text-amber-400">
+                                        Select Candidate on behalf of <strong>{l.full_name}</strong>:
+                                      </span>
+                                      <span className="text-slate-400 text-[10px]">
+                                        1-click to register official vote
+                                      </span>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                                      {elec.candidates?.map(cand => (
+                                        <button
+                                          key={cand.id}
+                                          type="button"
+                                          onClick={() => {
+                                            onCastVote(elec.id, cand.id, l.id);
+                                            setProxyVotingLearnerId(prev => ({ ...prev, [elec.id]: null }));
+                                            onShowToast(
+                                              'Floor Ballot Cast',
+                                              `Recorded vote for ${cand.name} on behalf of ${l.full_name}`,
+                                              'success'
+                                            );
+                                          }}
+                                          className="p-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/25 text-left flex items-center justify-between gap-2 transition-all cursor-pointer group"
+                                        >
+                                          <div className="min-w-0">
+                                            <div className="text-xs font-bold text-white group-hover:text-amber-300 truncate">
+                                              {cand.name}
+                                            </div>
+                                            <div className="text-[10px] text-slate-400">
+                                              {cand.party} • {cand.bench}
+                                            </div>
+                                          </div>
+                                          <Vote className="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform" />
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* SUB-VIEW 2: VOTED DELEGATES */}
+                  {activeConsoleTab === 'VOTED' && (
+                    <div className="space-y-2 pt-1">
+                      <div className="flex items-center justify-between text-xs text-slate-400 px-1">
+                        <span>Showing <strong>{filteredVoted.length}</strong> ballots recorded</span>
+                        <span className="text-emerald-400 text-[11px] font-medium flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" /> Certified floor ballots
+                        </span>
+                      </div>
+
+                      {filteredVoted.length === 0 ? (
+                        <div className="p-8 text-center rounded-xl border border-dashed border-slate-800 space-y-2">
+                          <Users className="w-8 h-8 text-slate-600 mx-auto" />
+                          <p className="text-xs font-semibold text-slate-400">
+                            No ballots recorded yet for this election.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 gap-2 max-h-96 overflow-y-auto pr-1">
+                          {filteredVoted.map(l => {
+                            const lastLogin = studentLoginMap.get(l.id) || studentLoginMap.get((l.access_code || '').toUpperCase());
+                            const candId = (elec as any).votes_by_delegate?.[l.id];
+                            const votedCand = candId ? elec.candidates?.find(c => c.id === candId) : null;
+
+                            return (
+                              <div
+                                key={l.id}
+                                className="p-3 rounded-xl border border-slate-800/80 bg-slate-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                              >
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center font-bold text-xs shrink-0">
+                                    <Check className="w-4 h-4" />
+                                  </div>
+
+                                  <div className="min-w-0 space-y-0.5">
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      <h6 className="text-xs sm:text-sm font-bold text-white truncate">
+                                        {l.full_name}
+                                      </h6>
+                                      <span className="px-1.5 py-0.5 rounded font-mono font-bold text-[10px] bg-slate-800 text-slate-300">
+                                        {l.access_code}
+                                      </span>
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400">
+                                      <span className={l.bench === 'Ruling' ? 'text-emerald-400' : 'text-rose-400'}>
+                                        {l.bench} Bench
+                                      </span>
+                                      <span>•</span>
+                                      <span>{l.party_name || 'Independent'}</span>
+                                      {l.constituency_number !== undefined && (
+                                        <>
+                                          <span>•</span>
+                                          <span>Const #{l.constituency_number}</span>
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Right: Ballot Information */}
+                                <div className="flex flex-wrap items-center gap-2 self-end sm:self-center">
+                                  {votedCand && (
+                                    <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                                      Voted: {votedCand.name}
+                                    </span>
+                                  )}
+
+                                  {lastLogin ? (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                                      <Smartphone className="w-3 h-3" /> Student Device
+                                    </span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 flex items-center gap-1">
+                                      <Laptop className="w-3 h-3" /> Floor System Proxy
+                                    </span>
+                                  )}
+
+                                  <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                                    <CheckCircle2 className="w-3.5 h-3.5" /> Ballot Recorded
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* SUB-VIEW 3: QUICK SCAN / WALK-IN FLOOR TERMINAL */}
+                  {isLive && activeConsoleTab === 'QUICK_BALLOT' && (
+                    <div className="p-4 rounded-xl border border-amber-500/30 bg-amber-500/5 space-y-4 animate-fadeIn">
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-amber-400 uppercase tracking-wider block">
+                          Fast Floor Scanner (Enter 6-character Code or Name):
+                        </label>
+                        <div className="relative">
+                          <KeyRound className="w-4 h-4 text-amber-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                          <input
+                            type="text"
+                            placeholder="e.g. 89F2A1 or Priya..."
+                            value={quickScanCode[elec.id] || ''}
+                            onChange={(e) => setQuickScanCode(prev => ({ ...prev, [elec.id]: e.target.value.toUpperCase() }))}
+                            className="w-full bg-slate-950 border border-amber-500/40 rounded-xl pl-10 pr-4 py-2.5 text-sm font-mono font-bold text-amber-300 tracking-wider uppercase focus:outline-none focus:border-amber-400"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Matched Delegate Card */}
+                      {scannedLearner ? (
+                        <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h6 className="text-sm font-extrabold text-white">{scannedLearner.full_name}</h6>
+                                <span className="px-2 py-0.5 rounded font-mono font-bold text-xs bg-amber-500/20 text-amber-400">
+                                  {scannedLearner.access_code}
+                                </span>
+                              </div>
+                              <p className="text-xs text-slate-400 mt-0.5">
+                                {scannedLearner.bench} Bench • {scannedLearner.party_name || 'Independent'}
+                                {scannedLearner.constituency_number !== undefined ? ` • Constituency #${scannedLearner.constituency_number}` : ''}
+                              </p>
+                            </div>
+
+                            <div>
+                              {scannedHasVoted ? (
+                                <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5">
+                                  <CheckCircle2 className="w-4 h-4" /> Already Voted
+                                </span>
+                              ) : scannedEligibility?.eligible ? (
+                                <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                                  ✓ Eligible to Vote
+                                </span>
+                              ) : (
+                                <span className="px-3 py-1 rounded-full text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30">
+                                  {scannedEligibility?.reason || 'Ineligible'}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Candidate Voting Buttons if Eligible and Not Voted */}
+                          {!scannedHasVoted && scannedEligibility?.eligible && (
+                            <div className="pt-2 border-t border-slate-800 space-y-2">
+                              <span className="text-xs font-bold text-slate-300">
+                                Select candidate to cast official ballot:
+                              </span>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                                {elec.candidates?.map(cand => (
+                                  <button
+                                    key={cand.id}
+                                    type="button"
+                                    onClick={() => {
+                                      onCastVote(elec.id, cand.id, scannedLearner.id);
+                                      setQuickScanCode(prev => ({ ...prev, [elec.id]: '' }));
+                                      onShowToast(
+                                        'Ballot Successfully Cast',
+                                        `Voted for ${cand.name} on behalf of ${scannedLearner.full_name}`,
+                                        'success'
+                                      );
+                                    }}
+                                    className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/25 text-left flex items-center justify-between gap-2 transition-all cursor-pointer"
+                                  >
+                                    <div>
+                                      <div className="text-xs font-bold text-white">{cand.name}</div>
+                                      <div className="text-[10px] text-slate-400">{cand.party}</div>
+                                    </div>
+                                    <Vote className="w-4 h-4 text-amber-400" />
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ) : scanCode ? (
+                        <p className="text-xs text-rose-400 italic">
+                          No delegate found matching code or name "{scanCode}".
+                        </p>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
         )}
       </div>
@@ -996,6 +1545,18 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
           >
             <History className="w-3.5 h-3.5" />
             Election Results & History ({closedElections.length})
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsLoginRecordsModalOpen(true)}
+            className="px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer bg-slate-900/90 hover:bg-slate-800 text-amber-400 border border-amber-500/40 shadow-xs"
+          >
+            <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+            <span>Login Records</span>
+            <span className="px-1.5 py-0.2 rounded-full text-[10px] font-black bg-amber-500/20 text-amber-300">
+              {loginRecords.length}
+            </span>
           </button>
         </div>
       </div>
@@ -1682,6 +2243,231 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* LOGIN RECORDS AUDIT MODAL */}
+      {isLoginRecordsModalOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div
+            className="w-full max-w-4xl max-h-[88vh] rounded-3xl border shadow-2xl flex flex-col overflow-hidden animate-scaleIn"
+            style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+          >
+            {/* Modal Header */}
+            <div className="p-5 sm:p-6 border-b flex items-center justify-between" style={{ borderColor: 'var(--border-soft)' }}>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-500 to-amber-400 flex items-center justify-center text-slate-950 font-bold shadow-md">
+                  <KeyRound className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-extrabold text-white tracking-tight flex items-center gap-2">
+                    Access Code Login Records & Device Audit
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Audit log of every student and volunteer authentication attempt
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsLoginRecordsModalOpen(false)}
+                className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center cursor-pointer transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Metrics Ribbon */}
+            <div className="px-6 py-3 bg-slate-950/60 border-b flex flex-wrap items-center justify-between gap-3 text-xs" style={{ borderColor: 'var(--border-soft)' }}>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="px-3 py-1 rounded-xl bg-slate-900 border border-slate-800 text-slate-300">
+                  Total Logins: <strong className="text-white font-black">{loginRecords.length}</strong>
+                </span>
+                <span className="px-3 py-1 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-400">
+                  Students: <strong className="text-white font-black">{loginRecords.filter(r => r.role === 'student').length}</strong>
+                </span>
+                <span className="px-3 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
+                  Volunteers: <strong className="text-white font-black">{loginRecords.filter(r => r.role === 'volunteer').length}</strong>
+                </span>
+                <span className="px-3 py-1 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-400">
+                  Jury: <strong className="text-white font-black">{loginRecords.filter(r => r.role === 'jury').length}</strong>
+                </span>
+              </div>
+
+              {/* Export CSV */}
+              <button
+                type="button"
+                onClick={() => {
+                  const headers = ['Timestamp', 'Role', 'Name', 'Access Code', 'Device Type', 'Device Info', 'Details'];
+                  const rows = loginRecords.map(r => [
+                    r.login_at,
+                    r.role,
+                    `"${r.user_name?.replace(/"/g, '""') || ''}"`,
+                    r.access_code,
+                    r.device_type || '',
+                    `"${r.device_info?.replace(/"/g, '""') || ''}"`,
+                    `"${r.details?.replace(/"/g, '""') || ''}"`
+                  ]);
+                  const csvContent = [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
+                  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `tn_assembly_login_records_${new Date().toISOString().slice(0, 10)}.csv`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                  onShowToast('CSV Exported', 'Login audit records downloaded successfully', 'success');
+                }}
+                className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer transition-all"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Export CSV</span>
+              </button>
+            </div>
+
+            {/* Filter Toolbar */}
+            <div className="p-4 border-b flex flex-col sm:flex-row items-center justify-between gap-3" style={{ borderColor: 'var(--border-soft)' }}>
+              <div className="relative w-full sm:w-72">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Filter by name, code, device..."
+                  value={loginModalSearch}
+                  onChange={(e) => setLoginModalSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-1.5 rounded-xl border text-xs font-medium focus:outline-none"
+                  style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                />
+              </div>
+
+              {/* Role Filter Pills */}
+              <div className="flex items-center gap-1 bg-slate-950/60 p-1 rounded-xl border border-slate-800 self-stretch sm:self-auto justify-center">
+                {(['ALL', 'student', 'volunteer', 'jury'] as const).map(roleOption => (
+                  <button
+                    key={roleOption}
+                    type="button"
+                    onClick={() => setLoginModalRoleFilter(roleOption)}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold capitalize transition-all cursor-pointer ${
+                      loginModalRoleFilter === roleOption
+                        ? 'bg-amber-500 text-slate-950 shadow-xs'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {roleOption === 'ALL' ? 'All Roles' : `${roleOption}s`}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Records List Table */}
+            <div className="p-4 overflow-y-auto flex-1 space-y-2">
+              {(() => {
+                const filtered = loginRecords.filter(r => {
+                  if (loginModalRoleFilter !== 'ALL' && r.role !== loginModalRoleFilter) return false;
+                  if (loginModalSearch.trim()) {
+                    const q = loginModalSearch.trim().toLowerCase();
+                    const mName = (r.user_name || '').toLowerCase().includes(q);
+                    const mCode = (r.access_code || '').toLowerCase().includes(q);
+                    const mDev = (r.device_info || '').toLowerCase().includes(q);
+                    const mDet = (r.details || '').toLowerCase().includes(q);
+                    if (!mName && !mCode && !mDev && !mDet) return false;
+                  }
+                  return true;
+                });
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="py-16 text-center text-slate-500 text-xs italic">
+                      No login records match the current filter.
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="space-y-2">
+                    {filtered.map(entry => (
+                      <div
+                        key={entry.id}
+                        className="p-3.5 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors hover:border-slate-700"
+                        style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 ${
+                            entry.role === 'student'
+                              ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/30'
+                              : entry.role === 'volunteer'
+                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                              : 'bg-purple-500/10 text-purple-400 border border-purple-500/30'
+                          }`}>
+                            {entry.role === 'student' ? 'ST' : entry.role === 'volunteer' ? 'VOL' : 'JRY'}
+                          </div>
+
+                          <div className="min-w-0 space-y-0.5">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h6 className="text-xs sm:text-sm font-bold text-white truncate">
+                                {entry.user_name}
+                              </h6>
+                              <span className="px-2 py-0.5 rounded font-mono font-bold text-[10px] bg-slate-800 text-amber-400 border border-amber-500/30">
+                                {entry.access_code}
+                              </span>
+                              <span className={`px-2 py-0.2 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                                entry.role === 'student'
+                                  ? 'bg-indigo-500/15 text-indigo-400'
+                                  : entry.role === 'volunteer'
+                                  ? 'bg-emerald-500/15 text-emerald-400'
+                                  : 'bg-purple-500/15 text-purple-400'
+                              }`}>
+                                {entry.role}
+                              </span>
+                            </div>
+
+                            <p className="text-[11px] text-slate-400 truncate">
+                              {entry.details || `${entry.role.toUpperCase()} Authentication`}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 sm:self-center">
+                          <span className="px-2 py-1 rounded-lg text-[10px] font-medium bg-slate-800/80 text-slate-300 border border-slate-700 flex items-center gap-1">
+                            {entry.device_type === 'Mobile' ? (
+                              <Smartphone className="w-3 h-3 text-emerald-400" />
+                            ) : (
+                              <Laptop className="w-3 h-3 text-indigo-400" />
+                            )}
+                            <span>{entry.device_info || entry.device_type}</span>
+                          </span>
+
+                          <span className="px-2.5 py-1 rounded-lg text-[11px] font-mono text-slate-400 flex items-center gap-1">
+                            <Clock className="w-3 h-3 text-slate-500" />
+                            {new Date(entry.login_at).toLocaleString([], {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              second: '2-digit'
+                            })}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t flex justify-between items-center bg-slate-950/40" style={{ borderColor: 'var(--border-soft)' }}>
+              <span className="text-[11px] text-slate-400">
+                Data retained locally & synced to cloud Supabase
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsLoginRecordsModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-slate-800 hover:bg-slate-700 cursor-pointer"
+              >
+                Close Audit
+              </button>
+            </div>
           </div>
         </div>
       )}
