@@ -375,7 +375,9 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
 
     const performSync = async () => {
       try {
-        await storageService.forceRefresh();
+        if (eventId) {
+          await storageService.fetchVolunteerPortalData(eventId, volunteer?.id || '');
+        }
         if (isMounted && currentVersion === fetchVersionRef.current) {
           const updated = storageService.getYuvaAssignments(eventId);
           setYuvaAssignments(updated);
@@ -400,13 +402,6 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
       }
     });
 
-    // Auto-refresh polling every 8 seconds for background synchronization across tabs/devices
-    const pollInterval = setInterval(() => {
-      if (!document.hidden && isMounted) {
-        performSync();
-      }
-    }, 8000);
-
     // Fallback timer: ensure loading state turns off within 3s even if network is slow or empty
     const safetyTimeout = setTimeout(() => {
       if (isMounted) {
@@ -417,10 +412,9 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     return () => {
       isMounted = false;
       unsubscribe();
-      clearInterval(pollInterval);
       clearTimeout(safetyTimeout);
     };
-  }, [eventId]);
+  }, [eventId, volunteer?.id]);
 
   // Find assignments for logged in volunteer
   const userAssignments = useMemo(() => {

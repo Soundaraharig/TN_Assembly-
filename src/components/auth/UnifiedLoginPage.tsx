@@ -4,8 +4,8 @@ import type { UserSession } from '../../types';
 import type { Theme } from '../../lib/theme';
 
 interface UnifiedLoginPageProps {
-  onLoginCredentials: (email: string, pass: string) => UserSession | null;
-  onLoginAccessCode: (code: string) => any;
+  onLoginCredentials: (email: string, pass: string) => UserSession | null | Promise<UserSession | null>;
+  onLoginAccessCode: (code: string) => any | Promise<any>;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
   theme: Theme;
   onToggleTheme: () => void;
@@ -84,20 +84,25 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
 
   const [showAccessCodePage, setShowAccessCodePage] = useState<boolean>(isJoinUrl());
 
+  // Handle URL changes to dynamically switch forms if user navigates back/forward
   useEffect(() => {
     const handlePopState = () => {
-      setShowAccessCodePage(isJoinUrl());
+      if (typeof window !== 'undefined') {
+        const path = window.location.pathname.toLowerCase();
+        setShowAccessCodePage(path.includes('/join'));
+      }
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  const navigateToJoin = () => {
+  const navigateToAccessCode = () => {
     setShowAccessCodePage(true);
     if (typeof window !== 'undefined' && !window.location.pathname.includes('/join')) {
       window.history.pushState({}, '', '/join');
     }
   };
+  const navigateToJoin = navigateToAccessCode;
 
   const navigateToLogin = () => {
     setShowAccessCodePage(false);
@@ -111,7 +116,7 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
     if (!email.trim() || !password.trim()) return;
     setIsOrganizerLoading(true);
     await new Promise(r => setTimeout(r, 400)); // brief animation
-    const session = onLoginCredentials(email, password);
+    const session = await onLoginCredentials(email, password);
     setIsOrganizerLoading(false);
     if (!session) {
       setCoordError('Invalid credentials. Please try again.');
@@ -130,7 +135,7 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
     if (!accessCode.trim()) return;
     setIsCodeLoading(true);
     await new Promise(r => setTimeout(r, 400));
-    const res = onLoginAccessCode(accessCode);
+    const res = await onLoginAccessCode(accessCode);
     setIsCodeLoading(false);
     if (!res) {
       const nextFailed = failedAttempts + 1;

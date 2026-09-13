@@ -1012,7 +1012,7 @@ export function App() {
       setCurrentStudent(null);
       setCurrentVolunteer(null);
       setCurrentJury(null);
-      storageService.forceRefresh();
+      storageService.invalidateCache();
     } catch (e) {
       console.error('Failed to clear auth session:', e);
     }
@@ -1347,10 +1347,44 @@ export function App() {
     };
   }, []);
 
+  // Role-Based Conditional Fetching: Trigger targeted data fetches only after authenticated session verification
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const eventId = currentEvent?.id || currentEventRef.current?.id;
+    if (!eventId) return;
+
+    if (role === 'coordinator' || role === 'organiser' || role === 'super_admin') {
+      storageService.fetchCoordinatorAdminData(eventId).catch(err =>
+        console.warn('[App] Coordinator data fetch warning:', err)
+      );
+    } else if (role === 'volunteer') {
+      const volId = currentVolunteer?.id || '';
+      storageService.fetchVolunteerPortalData(eventId, volId).catch(err =>
+        console.warn('[App] Volunteer portal fetch warning:', err)
+      );
+    } else if (role === 'jury') {
+      const juryId = currentJury?.id || '';
+      storageService.fetchJuryPortalData(eventId, juryId).catch(err =>
+        console.warn('[App] Jury portal fetch warning:', err)
+      );
+    } else if (role === 'student') {
+      const studentId = currentStudent?.id || '';
+      storageService.fetchStudentPortalData(eventId, studentId).catch(err =>
+        console.warn('[App] Student portal fetch warning:', err)
+      );
+    }
+  }, [isAuthenticated, role, currentEvent?.id, currentStudent?.id, currentVolunteer?.id, currentJury?.id]);
+
   // Handlers for App interactions
   const handleEventChange = (ev: CollegeEvent) => {
     setCurrentEvent(ev);
     currentEventRef.current = ev;
+    if (isAuthenticated && (role === 'coordinator' || role === 'organiser' || role === 'super_admin')) {
+      storageService.fetchCoordinatorAdminData(ev.id).catch(err =>
+        console.warn('[App] Coordinator event change fetch warning:', err)
+      );
+    }
     setLearners(storageService.getLearners(ev.id));
     setParties(storageService.getParties(ev.id));
     setCommittees(storageService.getCommittees(ev.id));
@@ -1945,7 +1979,7 @@ export function App() {
     return (
       <div className="min-h-screen font-sans" style={{ backgroundColor: 'var(--bg-base)' }}>
         <UnifiedLoginPage
-          onLoginCredentials={(emailInput: string, passwordInput: string): UserSession | null => {
+          onLoginCredentials={async (emailInput: string, passwordInput: string): Promise<UserSession | null> => {
             const emailLower = emailInput.trim().toLowerCase();
             const passTrim = passwordInput.trim();
 
@@ -2013,6 +2047,34 @@ export function App() {
               const eventSlugToUse = targetEv ? getEventSlug(targetEv) : 'jkkncet-tn-assembly-2026';
               navigate(`/events/${eventSlugToUse}/overview`);
               return sess;
+            } else {
+              // Remote fallback for coordinator authentication
+              const remoteSess = await storageService.authenticateCoordinatorAsync(emailInput, passTrim);
+              if (remoteSess) {
+                setUserSession(remoteSess);
+                setIsAuthenticated(true);
+                setRole('coordinator');
+                setActiveNavTab('overview');
+
+                const allEvents = storageService.getEvents();
+                const targetEv = allEvents.find(e => remoteSess.assigned_event_ids?.includes(e.id)) || allEvents[0];
+                if (targetEv) {
+                  setCurrentEvent(targetEv);
+                  currentEventRef.current = targetEv;
+                }
+
+                saveSession({
+                  role: 'coordinator',
+                  email: remoteSess.email,
+                  name: remoteSess.name,
+                  assigned_event_ids: remoteSess.assigned_event_ids,
+                  currentEventId: targetEv?.id || (remoteSess.assigned_event_ids ? remoteSess.assigned_event_ids[0] : ''),
+                  activeNavTab: 'overview'
+                });
+                const eventSlugToUse = targetEv ? getEventSlug(targetEv) : 'jkkncet-tn-assembly-2026';
+                navigate(`/events/${eventSlugToUse}/overview`);
+                return remoteSess;
+              }
             }
 
             // 3. Check Other Team Members (e.g. Organiser)
@@ -2059,10 +2121,10 @@ export function App() {
 
             return null;
           }}
-          onLoginAccessCode={(code: string): any => {
+          onLoginAccessCode={async (code: string): Promise<any> => {
             const cleanCode = code.trim().toUpperCase();
             const targetEventId = currentEvent?.id;
-            const authRes = storageService.authenticateAccessCode(cleanCode, targetEventId);
+            const authRes = await storageService.authenticateAccessCodeAsync(cleanCode, targetEventId);
             if (!authRes) return null;
             return handleAccessCodeLogin(authRes);
           }}

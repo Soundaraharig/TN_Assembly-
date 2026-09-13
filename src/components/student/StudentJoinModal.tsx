@@ -20,7 +20,7 @@ export const StudentJoinView: React.FC<StudentJoinViewProps> = ({ onLoginSuccess
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanCode = accessCode.trim().toUpperCase();
     if (!cleanCode) {
@@ -31,8 +31,8 @@ export const StudentJoinView: React.FC<StudentJoinViewProps> = ({ onLoginSuccess
     setIsSubmitting(true);
     setError('');
 
-    setTimeout(() => {
-      const authResult = storageService.authenticateAccessCode(cleanCode, targetEventId);
+    try {
+      const authResult = await storageService.authenticateAccessCodeAsync(cleanCode, targetEventId);
       setIsSubmitting(false);
 
       if (authResult) {
@@ -44,7 +44,11 @@ export const StudentJoinView: React.FC<StudentJoinViewProps> = ({ onLoginSuccess
         setError('Invalid access code. Please check your delegate pass, volunteer code, or jury pass.');
         onShowToast('Authentication Failed', 'Access code not found.', 'error');
       }
-    }, 400);
+    } catch (err) {
+      setIsSubmitting(false);
+      setError('Authentication error occurred. Please try again.');
+      onShowToast('Authentication Error', 'Could not verify access code.', 'error');
+    }
   };
 
   return (

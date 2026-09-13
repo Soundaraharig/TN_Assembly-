@@ -113,6 +113,19 @@ const STORAGE_KEYS = {
   LOGIN_RECORDS: 'tn_assembly_login_records_v1'
 };
 
+export const SUPABASE_COLUMNS = {
+  COLLEGE_EVENTS: 'id, college_name, chapter, level, location, dates, event_stage, status, participant_count, assigned_coordinator_email, assigned_coordinator_name, elections_count, is_locked, slug, social_coverage, created_at',
+  COORDINATORS: 'id, name, email, role, phone, event_id, assigned_event_ids, is_active, created_at',
+  LEARNERS: 'id, event_id, full_name, access_code, email, phone, bench, role, party_id, party_name, committee_id, committee_name, constituency, school_name, department, academic_year, day1_checked_in, day2_checked_in, session1_checked_in, session2_checked_in, created_at',
+  POLITICAL_PARTIES: 'id, event_id, name, short_name, color, ideology, bench, seat_count, leader_name, created_at',
+  COMMITTEES: 'id, event_id, name, topic, description, chair_name, vice_chair_name, room, total_seats, created_at',
+  SESSION_AGENDA: 'id, event_id, day, time, title, speaker, status, description, is_active, created_at',
+  JURY_MEMBERS: 'id, event_id, name, access_code, designation, assigned_bench, organization, phone, email, created_at',
+  VOLUNTEERS: 'id, event_id, name, access_code, station, phone, email, is_arrived, role, created_at',
+  EVENT_DAYS: 'id, event_id, day_number, title, date, is_active, created_at',
+  EVENT_DAY_ATTENDANCE: 'id, event_id, day_id, student_id, status, fn_status, an_status, marked_by, marked_at, notes, updated_at'
+} as const;
+
 type Listener = () => void;
 
 function detectDeviceType(): 'Mobile' | 'Tablet' | 'Desktop' | 'Other' {
@@ -379,7 +392,6 @@ export type WriteErrorHandler = (table: string, action: string, error: any) => v
 class StorageService {
   private listeners: Listener[] = [];
   private realtimeChannel: any = null;
-  private syncTimer: any = null;
   private notifyTimer: ReturnType<typeof setTimeout> | null = null;
   private isHydrated: boolean = false;
   private isSyncing: boolean = false;
@@ -389,6 +401,36 @@ class StorageService {
   private inFlightPromises = new Map<string, Promise<{ success: boolean; error: any; data?: any }>>();
   private failedWriteSignatures = new Map<string, number>();
   private fixedLearnerIdsSynced = new Set<string>();
+
+  // In-Memory Query Cache with 5-minute staleTime
+  private memoryCache = new Map<string, { timestamp: number; data: any }>();
+  private readonly CACHE_STALE_TIME = 5 * 60 * 1000; // 5 minutes
+
+  public getCached<T>(key: string): T | null {
+    const entry = this.memoryCache.get(key);
+    if (!entry) return null;
+    if (Date.now() - entry.timestamp > this.CACHE_STALE_TIME) {
+      this.memoryCache.delete(key);
+      return null;
+    }
+    return entry.data as T;
+  }
+
+  public setCached<T>(key: string, data: T): void {
+    this.memoryCache.set(key, { timestamp: Date.now(), data });
+  }
+
+  public invalidateCache(prefix?: string): void {
+    if (!prefix) {
+      this.memoryCache.clear();
+      return;
+    }
+    for (const k of Array.from(this.memoryCache.keys())) {
+      if (k.startsWith(prefix)) {
+        this.memoryCache.delete(k);
+      }
+    }
+  }
 
   public setWriteErrorHandler(handler: WriteErrorHandler | null) {
     this.writeErrorHandler = handler;
@@ -406,14 +448,9 @@ class StorageService {
 
   constructor() {
     this.initDefaults();
+    this.isHydrated = true;
     if (isSupabaseEnabled) {
-      this.checkSupabaseHealth();
-      this.syncFromSupabase().catch(err =>
-        console.warn('[Supabase] Initial sync failed, using localStorage cache:', err)
-      );
       this.setupRealtimeSync();
-    } else {
-      this.isHydrated = true;
     }
   }
 
@@ -839,19 +876,213 @@ class StorageService {
     }
   }
 
+  private unpackEventState(events: CollegeEvent[]): {
+    openNomMap: Record<string, string[]>;
+    allNoms: Nomination[];
+    allElecs: Election[];
+    allFVotes: LiveFlashVote[];
+    allProcs: BillProceeding[];
+    allQs: ParliamentQuestion[];
+    allScores: ScoreRecord[];
+    allDays: EventDay[];
+    allDayAtt: DayAttendanceRecord[];
+    allChecklist: ChecklistItem[];
+    allTeam: TeamMember[];
+    extendedLearnerMap: Map<string, any>;
+  } {
+    const extendedLearnerMap = new Map<string, any>();
+    const openNomMap: Record<string, string[]> = {};
+    let allNoms: Nomination[] = [];
+    let allElecs: Election[] = [];
+    let allFVotes: LiveFlashVote[] = [];
+    let allProcs: BillProceeding[];
+    let allQs: ParliamentQuestion[];
+    let allScores: ScoreRecord[];
+    let allDays: EventDay[];
+    let allDayAtt: DayAttendanceRecord[];
+    let allChecklist: ChecklistItem[];
+    let allTeam: TeamMember[];
+
+    allElecs = [];
+    allFVotes = [];
+    allProcs = [];
+    allQs = [];
+    allScores = [];
+    allDays = [];
+    allDayAtt = [];
+    allChecklist = [];
+    allTeam = [];
+
+    const now = Date.now();
+    const lockTimestamps = this.getItem<Record<string, number>>(STORAGE_KEYS.LOCK_UPDATED_AT, {});
+
+    events.forEach(ev => {
+      const sc = (ev.social_coverage || {}) as any;
+      if (Array.isArray(sc.open_nominations)) {
+        openNomMap[ev.id] = sc.open_nominations;
+      }
+      if (Array.isArray(sc.nominations)) {
+        const nomsWithEvent = sc.nominations.map((n: any) => ({
+          ...n,
+          event_id: n.event_id || ev.id,
+          status: n.status || 'Approved',
+          nominated_by_name: n.nominated_by_name || n.candidate_name || 'Self',
+          history: Array.isArray(n.history) && n.history.length > 0 ? n.history : [
+            {
+              id: uid('hist'),
+              status: n.status || 'Submitted',
+              changed_by: n.nominated_by_name || n.candidate_name || 'Self',
+              timestamp: n.created_at || new Date().toISOString(),
+              comment: 'Nomination filed'
+            }
+          ]
+        }));
+        allNoms = [...allNoms, ...nomsWithEvent];
+      }
+      if (Array.isArray(sc.elections)) {
+        allElecs = [...allElecs, ...sc.elections];
+      }
+      if (Array.isArray(sc.flash_votes)) {
+        allFVotes = [...allFVotes, ...sc.flash_votes];
+      }
+      if (Array.isArray(sc.proceedings)) {
+        allProcs = [...allProcs, ...sc.proceedings];
+      }
+      if (Array.isArray(sc.questions)) {
+        allQs = [...allQs, ...sc.questions];
+      }
+      if (Array.isArray(sc.scores)) {
+        allScores = [...allScores, ...sc.scores];
+      }
+      if (Array.isArray(sc.event_days)) {
+        allDays = [...allDays, ...sc.event_days];
+      }
+      if (Array.isArray(sc.day_attendance)) {
+        allDayAtt = [...allDayAtt, ...sc.day_attendance];
+      }
+      if (Array.isArray(sc.checklist)) {
+        allChecklist = [...allChecklist, ...sc.checklist];
+      }
+      if (Array.isArray(sc.team)) {
+        allTeam = [...allTeam, ...sc.team];
+      }
+      if (Array.isArray(sc.extended_learners)) {
+        sc.extended_learners.forEach((el: any) => {
+          if (el?.id) extendedLearnerMap.set(el.id, el);
+        });
+      }
+
+      if (Array.isArray(sc.cabinet_ministries)) {
+        ev.cabinet_ministries = sc.cabinet_ministries;
+      }
+      if (Array.isArray(sc.yuva_assignments)) {
+        const key = `${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${ev.id}`;
+        this.setItem(key, sc.yuva_assignments);
+      }
+      if (typeof window !== 'undefined') {
+        try { localStorage.removeItem(STORAGE_KEYS.YUVA_ASSIGNMENTS); } catch {}
+      }
+
+      if (typeof sc.allocation_lock === 'boolean') {
+        const lastAction = lockTimestamps[`alloc_${ev.id}`] || 0;
+        if (now - lastAction > 4000) {
+          this.setItem(`${STORAGE_KEYS.ALLOCATION_LOCK}_${ev.id}`, sc.allocation_lock);
+        }
+      }
+      if (typeof sc.registrations_frozen === 'boolean') {
+        const lastAction = lockTimestamps[`reg_${ev.id}`] || 0;
+        if (now - lastAction > 4000) {
+          this.setItem(`${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${ev.id}`, sc.registrations_frozen);
+        }
+      }
+      if (typeof sc.scores_locked === 'boolean') {
+        const lastAction = lockTimestamps[`score_${ev.id}`] || 0;
+        if (now - lastAction > 4000) {
+          this.setItem(`${STORAGE_KEYS.SCORES_LOCKED}_${ev.id}`, sc.scores_locked);
+        }
+      }
+      if (sc.projector_settings) {
+        this.setItem(`tn_assembly_projector_studio_${ev.id}`, sc.projector_settings);
+        this.setItem('tn_assembly_projector_studio_v1', sc.projector_settings);
+      }
+      if (sc.last_bell_ring) {
+        this.setItem(`tn_assembly_last_bell_${ev.id}`, sc.last_bell_ring);
+      }
+    });
+
+    return {
+      openNomMap,
+      allNoms,
+      allElecs,
+      allFVotes,
+      allProcs,
+      allQs,
+      allScores,
+      allDays,
+      allDayAtt,
+      allChecklist,
+      allTeam,
+      extendedLearnerMap
+    };
+  }
+
   // ── Supabase sync ────────────────────────────────────────────────────────
 
-  public async syncFromSupabase(): Promise<void> {
+  public async syncFromSupabase(targetEventId?: string, force = false): Promise<void> {
     if (!supabase) {
       this.isHydrated = true;
       return;
+    }
+
+    const cacheKey = `sync_${targetEventId || 'global'}`;
+    if (!force) {
+      const cached = this.getCached<boolean>(cacheKey);
+      if (cached) {
+        return;
+      }
     }
 
     const currentVersion = ++this.syncVersion;
     this.isSyncing = true;
 
     try {
-      const extendedLearnerMap = new Map<string, any>();
+      let eventsQuery = supabase.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS);
+      if (targetEventId) {
+        eventsQuery = eventsQuery.eq('id', targetEventId);
+      } else {
+        eventsQuery = eventsQuery.order('created_at', { ascending: false });
+      }
+
+      let coordQuery = supabase.from('coordinators').select(SUPABASE_COLUMNS.COORDINATORS);
+
+      let learnersQuery = supabase.from('learners').select(SUPABASE_COLUMNS.LEARNERS);
+      if (targetEventId) {
+        learnersQuery = learnersQuery.eq('event_id', targetEventId).order('created_at', { ascending: false });
+      } else {
+        learnersQuery = learnersQuery.order('created_at', { ascending: false });
+      }
+
+      let partiesQuery = supabase.from('political_parties').select(SUPABASE_COLUMNS.POLITICAL_PARTIES);
+      if (targetEventId) partiesQuery = partiesQuery.eq('event_id', targetEventId);
+
+      let commQuery = supabase.from('committees').select(SUPABASE_COLUMNS.COMMITTEES);
+      if (targetEventId) commQuery = commQuery.eq('event_id', targetEventId);
+
+      let agendaQuery = supabase.from('session_agenda').select(SUPABASE_COLUMNS.SESSION_AGENDA).order('time', { ascending: true });
+      if (targetEventId) agendaQuery = agendaQuery.eq('event_id', targetEventId);
+
+      let juryQuery = supabase.from('jury_members').select(SUPABASE_COLUMNS.JURY_MEMBERS);
+      if (targetEventId) juryQuery = juryQuery.eq('event_id', targetEventId);
+
+      let volQuery = supabase.from('volunteers').select(SUPABASE_COLUMNS.VOLUNTEERS);
+      if (targetEventId) volQuery = volQuery.eq('event_id', targetEventId);
+
+      let daysQuery = supabase.from('event_days').select(SUPABASE_COLUMNS.EVENT_DAYS).order('day_number', { ascending: true });
+      if (targetEventId) daysQuery = daysQuery.eq('event_id', targetEventId);
+
+      let attQuery = supabase.from('event_day_attendance').select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE);
+      if (targetEventId) attQuery = attQuery.eq('event_id', targetEventId);
+
       const [
         { data: events, error: eventsErr },
         { data: coordinators, error: coordErr },
@@ -864,16 +1095,16 @@ class StorageService {
         { data: rawEventDays, error: eventDaysErr },
         { data: rawAttendance, error: attendanceErr }
       ] = await Promise.all([
-        supabase.from('college_events').select('*').order('created_at', { ascending: false }),
-        supabase.from('coordinators').select('*'),
-        supabase.from('learners').select('*').order('created_at', { ascending: false }),
-        supabase.from('political_parties').select('*'),
-        supabase.from('committees').select('*'),
-        supabase.from('session_agenda').select('*').order('time', { ascending: true }),
-        supabase.from('jury_members').select('*'),
-        supabase.from('volunteers').select('*'),
-        supabase.from('event_days').select('*').order('day_number', { ascending: true }),
-        supabase.from('event_day_attendance').select('*')
+        eventsQuery,
+        coordQuery,
+        learnersQuery,
+        partiesQuery,
+        commQuery,
+        agendaQuery,
+        juryQuery,
+        volQuery,
+        daysQuery,
+        attQuery
       ]);
 
       if (currentVersion !== this.syncVersion) {
@@ -883,122 +1114,26 @@ class StorageService {
       let hasQueryError = false;
 
       const deletedIds = this.getDeletedIds();
+      let extendedLearnerMap = new Map<string, any>();
 
       if (eventsErr) {
         console.error("Supabase Error [college_events]:", eventsErr);
         hasQueryError = true;
       } else if (events !== null) {
         // Unpack event_state (social_coverage)
-        const openNomMap: Record<string, string[]> = {};
-        let allNoms: Nomination[] = [];
-        let allElecs: Election[] = [];
-        let allFVotes: LiveFlashVote[] = [];
-        let allProcs: BillProceeding[] = [];
-        let allQs: ParliamentQuestion[] = [];
-        let allScores: ScoreRecord[] = [];
-        let allDays: EventDay[] = [];
-        let allDayAtt: DayAttendanceRecord[] = [];
-        let allChecklist: ChecklistItem[] = [];
-        let allTeam: TeamMember[] = [];
-
-        const now = Date.now();
-        const lockTimestamps = this.getItem<Record<string, number>>(STORAGE_KEYS.LOCK_UPDATED_AT, {});
-
-        events.forEach(ev => {
-          const sc = (ev.social_coverage || {}) as any;
-          if (Array.isArray(sc.open_nominations)) {
-            openNomMap[ev.id] = sc.open_nominations;
-          }
-          if (Array.isArray(sc.nominations)) {
-            const nomsWithEvent = sc.nominations.map((n: any) => ({
-              ...n,
-              event_id: n.event_id || ev.id,
-              status: n.status || 'Approved',
-              nominated_by_name: n.nominated_by_name || n.candidate_name || 'Self',
-              history: Array.isArray(n.history) && n.history.length > 0 ? n.history : [
-                {
-                  id: uid('hist'),
-                  status: n.status || 'Submitted',
-                  changed_by: n.nominated_by_name || n.candidate_name || 'Self',
-                  timestamp: n.created_at || new Date().toISOString(),
-                  comment: 'Nomination filed'
-                }
-              ]
-            }));
-            allNoms = [...allNoms, ...nomsWithEvent];
-          }
-          if (Array.isArray(sc.elections)) {
-            allElecs = [...allElecs, ...sc.elections];
-          }
-          if (Array.isArray(sc.flash_votes)) {
-            allFVotes = [...allFVotes, ...sc.flash_votes];
-          }
-          if (Array.isArray(sc.proceedings)) {
-            allProcs = [...allProcs, ...sc.proceedings];
-          }
-          if (Array.isArray(sc.questions)) {
-            allQs = [...allQs, ...sc.questions];
-          }
-          if (Array.isArray(sc.scores)) {
-            allScores = [...allScores, ...sc.scores];
-          }
-          if (Array.isArray(sc.event_days)) {
-            allDays = [...allDays, ...sc.event_days];
-          }
-          if (Array.isArray(sc.day_attendance)) {
-            allDayAtt = [...allDayAtt, ...sc.day_attendance];
-          }
-          if (Array.isArray(sc.checklist)) {
-            allChecklist = [...allChecklist, ...sc.checklist];
-          }
-          if (Array.isArray(sc.team)) {
-            allTeam = [...allTeam, ...sc.team];
-          }
-          if (Array.isArray(sc.extended_learners)) {
-            sc.extended_learners.forEach((el: any) => {
-              if (el?.id) extendedLearnerMap.set(el.id, el);
-            });
-          }
-
-          if (Array.isArray(sc.cabinet_ministries)) {
-            ev.cabinet_ministries = sc.cabinet_ministries;
-          }
-          if (Array.isArray(sc.yuva_assignments)) {
-            const key = `${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${ev.id}`;
-            this.setItem(key, sc.yuva_assignments);
-          }
-          // Clean legacy global key to prevent leakage across events
-          if (typeof window !== 'undefined') {
-            try { localStorage.removeItem(STORAGE_KEYS.YUVA_ASSIGNMENTS); } catch {}
-          }
-
-          // Anti-flicker: Only accept remote lock state if local action timestamp was not set within 4 seconds
-          if (typeof sc.allocation_lock === 'boolean') {
-            const lastAction = lockTimestamps[`alloc_${ev.id}`] || 0;
-            if (now - lastAction > 4000) {
-              this.setItem(`${STORAGE_KEYS.ALLOCATION_LOCK}_${ev.id}`, sc.allocation_lock);
-            }
-          }
-          if (typeof sc.registrations_frozen === 'boolean') {
-            const lastAction = lockTimestamps[`reg_${ev.id}`] || 0;
-            if (now - lastAction > 4000) {
-              this.setItem(`${STORAGE_KEYS.REGISTRATIONS_FROZEN}_${ev.id}`, sc.registrations_frozen);
-            }
-          }
-          if (typeof sc.scores_locked === 'boolean') {
-            const lastAction = lockTimestamps[`score_${ev.id}`] || 0;
-            if (now - lastAction > 4000) {
-              this.setItem(`${STORAGE_KEYS.SCORES_LOCKED}_${ev.id}`, sc.scores_locked);
-            }
-          }
-          if (sc.projector_settings) {
-            this.setItem(`tn_assembly_projector_studio_${ev.id}`, sc.projector_settings);
-            this.setItem('tn_assembly_projector_studio_v1', sc.projector_settings);
-          }
-          if (sc.last_bell_ring) {
-            this.setItem(`tn_assembly_last_bell_${ev.id}`, sc.last_bell_ring);
-          }
-        });
+        const unpacked = this.unpackEventState(events as unknown as CollegeEvent[]);
+        const openNomMap = unpacked.openNomMap;
+        let allNoms = unpacked.allNoms;
+        let allElecs = unpacked.allElecs;
+        let allFVotes = unpacked.allFVotes;
+        let allProcs = unpacked.allProcs;
+        let allQs = unpacked.allQs;
+        let allScores = unpacked.allScores;
+        let allDays = unpacked.allDays;
+        let allDayAtt = unpacked.allDayAtt;
+        let allChecklist = unpacked.allChecklist;
+        let allTeam = unpacked.allTeam;
+        extendedLearnerMap = unpacked.extendedLearnerMap;
 
         // Merge authoritative records directly from event_days and event_day_attendance tables
         if (!eventDaysErr && Array.isArray(rawEventDays)) {
@@ -1012,14 +1147,16 @@ class StorageService {
         }
 
         if (events.length === 0) {
-          this.setItem(STORAGE_KEYS.EVENTS, []);
-          this.setItem(STORAGE_KEYS.OPEN_NOMINATIONS, {});
-          this.setItem(STORAGE_KEYS.NOMINATIONS, []);
-          this.setItem(STORAGE_KEYS.ELECTIONS, []);
-          this.setItem(STORAGE_KEYS.FLASH_VOTES, []);
-          this.setItem(STORAGE_KEYS.PROCEEDINGS, []);
-          this.setItem(STORAGE_KEYS.QUESTIONS, []);
-          this.setItem(STORAGE_KEYS.SCORES, []);
+          if (!targetEventId) {
+            this.setItem(STORAGE_KEYS.EVENTS, []);
+            this.setItem(STORAGE_KEYS.OPEN_NOMINATIONS, {});
+            this.setItem(STORAGE_KEYS.NOMINATIONS, []);
+            this.setItem(STORAGE_KEYS.ELECTIONS, []);
+            this.setItem(STORAGE_KEYS.FLASH_VOTES, []);
+            this.setItem(STORAGE_KEYS.PROCEEDINGS, []);
+            this.setItem(STORAGE_KEYS.QUESTIONS, []);
+            this.setItem(STORAGE_KEYS.SCORES, []);
+          }
         } else {
           // Merge local and remote events — remote list is authoritative
           const localEvents = this.getItem<CollegeEvent[]>(STORAGE_KEYS.EVENTS, []);
@@ -1027,6 +1164,11 @@ class StorageService {
           localEvents.forEach(e => localEventMap.set(e.id, e));
 
           const eventMap = new Map<string, CollegeEvent>();
+          if (targetEventId) {
+            localEvents.forEach(e => {
+              if (e.id !== targetEventId) eventMap.set(e.id, e);
+            });
+          }
           events.forEach(remoteEv => {
             if (deletedIds.has(remoteEv.id)) return;
             const local = localEventMap.get(remoteEv.id);
@@ -1414,6 +1556,7 @@ class StorageService {
       this.isSyncing = false;
       this.isHydrated = true;
       this.syncError = hasQueryError ? 'Partial query warning' : null;
+      this.setCached(cacheKey, true);
       this.cleanupAndDeduplicateData();
       this.notify();
     } catch (err: any) {
@@ -1427,17 +1570,322 @@ class StorageService {
     }
   }
 
+  /**
+   * Fetch coordinator/admin tables with 5-minute memory caching.
+   * Only called inside authenticated Coordinator/Admin routes.
+   */
+  public async fetchCoordinatorAdminData(eventId?: string, force = false): Promise<void> {
+    await this.syncFromSupabase(eventId, force);
+  }
+
+  /**
+   * Fetch single event metadata by ID and unpack its social_coverage (proceedings, flash votes, elections).
+   */
+  public async fetchEventMetadata(eventId: string): Promise<CollegeEvent | null> {
+    const cachedEv = this.getEvents().find(e => e.id === eventId);
+    if (cachedEv && cachedEv.social_coverage) return cachedEv;
+
+    if (!supabase) return null;
+    try {
+      const { data: evData } = await supabase
+        .from('college_events')
+        .select(SUPABASE_COLUMNS.COLLEGE_EVENTS)
+        .eq('id', eventId)
+        .limit(1);
+
+      if (evData && evData.length > 0) {
+        const ev = evData[0] as unknown as CollegeEvent;
+        const allEvs = this.getEvents();
+        this.setItem(STORAGE_KEYS.EVENTS, [...allEvs.filter(e => e.id !== ev.id), ev]);
+        this.restoreJkkncetEvent();
+        this.unpackEventState([ev]);
+        this.notify();
+        return ev;
+      }
+    } catch (err) {
+      console.warn('[StorageService] fetchEventMetadata error:', err);
+    }
+    return null;
+  }
+
+  /**
+   * Dedicated fetch for Student/Delegate portal.
+   * Only fetches the student's own event, session agenda, event days, parties,
+   * committees, their own learner record, and their own attendance record.
+   * NEVER fetches coordinators, volunteers, jury members, or other learners.
+   */
+  public async fetchStudentPortalData(eventId: string, studentId: string, force = false): Promise<void> {
+    if (!supabase || !eventId) return;
+    const cacheKey = `portal_student_${eventId}_${studentId}`;
+    if (!force && this.getCached<boolean>(cacheKey)) return;
+
+    try {
+      const [
+        { data: evData },
+        { data: agendaData },
+        { data: daysData },
+        { data: partyData },
+        { data: commData },
+        { data: studentData },
+        { data: attData }
+      ] = await Promise.all([
+        supabase.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS).eq('id', eventId).limit(1),
+        supabase.from('session_agenda').select(SUPABASE_COLUMNS.SESSION_AGENDA).eq('event_id', eventId).order('time', { ascending: true }),
+        supabase.from('event_days').select(SUPABASE_COLUMNS.EVENT_DAYS).eq('event_id', eventId).order('day_number', { ascending: true }),
+        supabase.from('political_parties').select(SUPABASE_COLUMNS.POLITICAL_PARTIES).eq('event_id', eventId),
+        supabase.from('committees').select(SUPABASE_COLUMNS.COMMITTEES).eq('event_id', eventId),
+        studentId ? supabase.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('id', studentId).limit(1) : Promise.resolve({ data: null }),
+        studentId ? supabase.from('event_day_attendance').select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE).eq('event_id', eventId).eq('student_id', studentId) : Promise.resolve({ data: null })
+      ]);
+
+      if (evData && evData.length > 0) {
+        const ev = evData[0] as unknown as CollegeEvent;
+        const curEvs = this.getEvents();
+        this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), ev]);
+        this.restoreJkkncetEvent();
+        this.unpackEventState([ev]);
+      }
+
+      if (agendaData) {
+        const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...(agendaData as unknown as AgendaItem[])]);
+      }
+
+      if (daysData) {
+        const otherDays = this.getEventDays().filter(d => d.event_id && d.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.EVENT_DAYS, [...otherDays, ...(daysData as unknown as EventDay[])]);
+      }
+
+      if (partyData) {
+        const otherParties = this.getParties().filter(p => p.event_id && p.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.PARTIES, [...otherParties, ...(partyData as unknown as Party[])]);
+      }
+
+      if (commData) {
+        const otherComms = this.getCommittees().filter(c => c.event_id && c.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.COMMITTEES, [...otherComms, ...(commData as unknown as Committee[])]);
+      }
+
+      if (studentData && studentData.length > 0) {
+        const st = studentData[0] as unknown as Learner;
+        const curLearners = this.getLearners();
+        this.setItem(STORAGE_KEYS.LEARNERS, [...curLearners.filter(l => l.id !== st.id), st]);
+      }
+
+      if (attData) {
+        const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+        const otherAtt = curAtt.filter(a => !(a.event_id === eventId && a.student_id === studentId));
+        this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...otherAtt, ...(attData as unknown as DayAttendanceRecord[])]);
+      }
+
+      this.setCached(cacheKey, true);
+      this.notify();
+    } catch (e) {
+      console.warn('[StorageService] fetchStudentPortalData error:', e);
+    }
+  }
+
+  /**
+   * Dedicated fetch for Jury Member portal.
+   * Fetches the jury member's event, agenda, days, assigned candidate learners, and parties.
+   * NEVER fetches coordinators, volunteers, or other events.
+   */
+  public async fetchJuryPortalData(eventId: string, juryId: string, force = false): Promise<void> {
+    if (!supabase || !eventId) return;
+    const cacheKey = `portal_jury_${eventId}_${juryId}`;
+    if (!force && this.getCached<boolean>(cacheKey)) return;
+
+    try {
+      const [
+        { data: evData },
+        { data: agendaData },
+        { data: daysData },
+        { data: juryData },
+        { data: learnersData },
+        { data: partyData }
+      ] = await Promise.all([
+        supabase.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS).eq('id', eventId).limit(1),
+        supabase.from('session_agenda').select(SUPABASE_COLUMNS.SESSION_AGENDA).eq('event_id', eventId).order('time', { ascending: true }),
+        supabase.from('event_days').select(SUPABASE_COLUMNS.EVENT_DAYS).eq('event_id', eventId).order('day_number', { ascending: true }),
+        juryId ? supabase.from('jury_members').select(SUPABASE_COLUMNS.JURY_MEMBERS).eq('id', juryId).limit(1) : Promise.resolve({ data: null }),
+        supabase.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('event_id', eventId),
+        supabase.from('political_parties').select(SUPABASE_COLUMNS.POLITICAL_PARTIES).eq('event_id', eventId)
+      ]);
+
+      if (evData && evData.length > 0) {
+        const ev = evData[0] as unknown as CollegeEvent;
+        const curEvs = this.getEvents();
+        this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), ev]);
+        this.restoreJkkncetEvent();
+        this.unpackEventState([ev]);
+      }
+
+      if (agendaData) {
+        const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...(agendaData as unknown as AgendaItem[])]);
+      }
+
+      if (daysData) {
+        const otherDays = this.getEventDays().filter(d => d.event_id && d.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.EVENT_DAYS, [...otherDays, ...(daysData as unknown as EventDay[])]);
+      }
+
+      if (juryData && juryData.length > 0) {
+        const curJury = this.getJury();
+        const jm = juryData[0] as unknown as JuryMember;
+        this.setItem(STORAGE_KEYS.JURY, [...curJury.filter(j => j.id !== jm.id), jm]);
+      }
+
+      if (learnersData) {
+        const otherLearners = this.getLearners().filter(l => l.event_id && l.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.LEARNERS, [...otherLearners, ...(learnersData as unknown as Learner[])]);
+      }
+
+      if (partyData) {
+        const otherParties = this.getParties().filter(p => p.event_id && p.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.PARTIES, [...otherParties, ...(partyData as unknown as Party[])]);
+      }
+
+      this.setCached(cacheKey, true);
+      this.notify();
+    } catch (e) {
+      console.warn('[StorageService] fetchJuryPortalData error:', e);
+    }
+  }
+
+  /**
+   * Dedicated fetch for Volunteer Operations Desk.
+   * Fetches event, event days, learners, attendance, parties, committees, and volunteers for that event.
+   * NEVER fetches coordinators, session agenda, or jury members.
+   */
+  public async fetchVolunteerPortalData(eventId: string, volunteerId: string, force = false): Promise<void> {
+    if (!supabase || !eventId) return;
+    const cacheKey = `portal_volunteer_${eventId}_${volunteerId}`;
+    if (!force && this.getCached<boolean>(cacheKey)) return;
+
+    try {
+      const [
+        { data: evData },
+        { data: daysData },
+        { data: learnersData },
+        { data: attData },
+        { data: partyData },
+        { data: commData },
+        { data: volData }
+      ] = await Promise.all([
+        supabase.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS).eq('id', eventId).limit(1),
+        supabase.from('event_days').select(SUPABASE_COLUMNS.EVENT_DAYS).eq('event_id', eventId).order('day_number', { ascending: true }),
+        supabase.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('event_id', eventId),
+        supabase.from('event_day_attendance').select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE).eq('event_id', eventId),
+        supabase.from('political_parties').select(SUPABASE_COLUMNS.POLITICAL_PARTIES).eq('event_id', eventId),
+        supabase.from('committees').select(SUPABASE_COLUMNS.COMMITTEES).eq('event_id', eventId),
+        supabase.from('volunteers').select(SUPABASE_COLUMNS.VOLUNTEERS).eq('event_id', eventId)
+      ]);
+
+      if (evData && evData.length > 0) {
+        const ev = evData[0] as unknown as CollegeEvent;
+        const curEvs = this.getEvents();
+        this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), ev]);
+        this.restoreJkkncetEvent();
+        this.unpackEventState([ev]);
+      }
+
+      if (daysData) {
+        const otherDays = this.getEventDays().filter(d => d.event_id && d.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.EVENT_DAYS, [...otherDays, ...(daysData as unknown as EventDay[])]);
+      }
+
+      if (learnersData) {
+        const otherLearners = this.getLearners().filter(l => l.event_id && l.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.LEARNERS, [...otherLearners, ...(learnersData as unknown as Learner[])]);
+      }
+
+      if (attData) {
+        const otherAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []).filter(a => a.event_id && a.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...otherAtt, ...(attData as unknown as DayAttendanceRecord[])]);
+      }
+
+      if (partyData) {
+        const otherParties = this.getParties().filter(p => p.event_id && p.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.PARTIES, [...otherParties, ...(partyData as unknown as Party[])]);
+      }
+
+      if (commData) {
+        const otherComms = this.getCommittees().filter(c => c.event_id && c.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.COMMITTEES, [...otherComms, ...(commData as unknown as Committee[])]);
+      }
+
+      if (volData) {
+        const otherVols = this.getVolunteers().filter(v => v.event_id && v.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.VOLUNTEERS, [...otherVols, ...(volData as unknown as Volunteer[])]);
+      }
+
+      this.setCached(cacheKey, true);
+      this.notify();
+    } catch (e) {
+      console.warn('[StorageService] fetchVolunteerPortalData error:', e);
+    }
+  }
+
+  /**
+   * Paginated learner fetch supporting .limit(25) with search/filter parameters.
+   */
+  public async fetchPaginatedLearners(
+    eventId: string,
+    options: { page?: number; limit?: number; search?: string; partyId?: string; committeeId?: string } = {}
+  ): Promise<{ data: Learner[]; total: number }> {
+    if (!supabase || !eventId) {
+      const local = this.getLearners(eventId);
+      return { data: local.slice(0, 25), total: local.length };
+    }
+
+    const page = options.page || 1;
+    const limit = options.limit || 25;
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+
+    try {
+      let query = supabase
+        .from('learners')
+        .select(SUPABASE_COLUMNS.LEARNERS, { count: 'exact' })
+        .eq('event_id', eventId);
+
+      if (options.search && options.search.trim()) {
+        const s = options.search.trim();
+        query = query.or(`full_name.ilike.%${s}%,access_code.ilike.%${s}%,constituency.ilike.%${s}%`);
+      }
+      if (options.partyId) {
+        query = query.eq('party_id', options.partyId);
+      }
+      if (options.committeeId) {
+        query = query.eq('committee_id', options.committeeId);
+      }
+
+      const { data, count, error } = await query
+        .order('created_at', { ascending: false })
+        .range(from, to);
+
+      if (error) {
+        console.warn('[StorageService] fetchPaginatedLearners query error:', error);
+        return { data: [], total: 0 };
+      }
+
+      if (data && data.length > 0) {
+        const local = this.getLearners();
+        const fetchedIds = new Set(data.map((d: any) => d.id));
+        this.setItem(STORAGE_KEYS.LEARNERS, [...local.filter(l => !fetchedIds.has(l.id)), ...(data as unknown as Learner[])]);
+      }
+
+      return { data: (data || []) as unknown as Learner[], total: count || 0 };
+    } catch (err) {
+      console.warn('[StorageService] fetchPaginatedLearners error:', err);
+      return { data: [], total: 0 };
+    }
+  }
+
   public setupRealtimeSync() {
     if (!supabase || this.realtimeChannel) return;
     try {
-      let realtimeDebounceTimer: any = null;
-      const debouncedSync = () => {
-        if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
-        realtimeDebounceTimer = setTimeout(() => {
-          this.syncFromSupabase();
-        }, 400);
-      };
-
       this.realtimeChannel = supabase.channel('tn_assembly_live_sync')
         .on('broadcast', { event: 'projector_update' }, (msg: any) => {
           if (msg?.payload?.eventId && msg?.payload?.settings) {
@@ -1452,25 +1900,17 @@ class StorageService {
             window.dispatchEvent(new CustomEvent('tn_assembly_speaker_bell', { detail: msg?.payload }));
           }
         })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'college_events' }, debouncedSync)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'learners' }, debouncedSync)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'political_parties' }, debouncedSync)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'committees' }, debouncedSync)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'session_agenda' }, debouncedSync)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'jury_members' }, debouncedSync)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'volunteers' }, debouncedSync)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'event_days' }, debouncedSync)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'event_day_attendance' }, debouncedSync)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'college_events' }, () => {
+          this.invalidateCache('events');
+          this.invalidateCache('portal_');
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'learners' }, () => {
+          this.invalidateCache('learners');
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'event_day_attendance' }, () => {
+          this.invalidateCache('attendance');
+        })
         .subscribe();
-
-        // Background heartbeat sync every 10 seconds (realtime handles instant updates)
-        if (typeof window !== 'undefined' && !this.syncTimer) {
-          this.syncTimer = setInterval(() => {
-            if (!document.hidden && !this.isSyncing) {
-              this.syncFromSupabase();
-            }
-          }, 10000);
-        }
     } catch (e) {
       console.warn('[Supabase] realtime setup error:', e);
     }
@@ -1851,7 +2291,7 @@ class StorageService {
             const sId = (sanitized.student_id || sanitized.participant_id) as string;
             const { data: existingRow } = await sb
               .from('event_day_attendance')
-              .select('*')
+              .select('id')
               .eq('event_id', eId)
               .eq('day_id', dId)
               .eq('student_id', sId)
@@ -2166,6 +2606,114 @@ class StorageService {
       details: `Failed access code attempt: ${accessCode}`
     });
     console.warn(`[Auth Trace] Code: "${accessCode}" -> No matching record found in volunteers, jury, or learners.`);
+    return null;
+  }
+
+  public async authenticateCoordinatorAsync(email: string, pass: string): Promise<UserSession | null> {
+    const local = this.authenticateCoordinator(email, pass);
+    if (local) return local;
+
+    if (!supabase) return null;
+    try {
+      const { data } = await supabase
+        .from('coordinators')
+        .select(SUPABASE_COLUMNS.COORDINATORS)
+        .ilike('email', email.trim().toLowerCase())
+        .limit(1);
+
+      if (data && data.length > 0) {
+        const coord = data[0] as unknown as Coordinator;
+        const allCoords = this.getCoordinators();
+        if (!allCoords.some(c => c.id === coord.id)) {
+          this.setItem(STORAGE_KEYS.COORDINATORS, [...allCoords, coord]);
+        }
+        return this.authenticateCoordinator(email, pass);
+      }
+    } catch (e) {
+      console.warn('[StorageService] authenticateCoordinatorAsync error:', e);
+    }
+    return null;
+  }
+
+  public async authenticateAccessCodeAsync(
+    accessCode: string,
+    targetEventId?: string
+  ): Promise<{ role: 'volunteer' | 'jury' | 'student'; user: Volunteer | JuryMember | Learner; eventId: string } | null> {
+    // 1. Try local cache first
+    const localRes = this.authenticateAccessCode(accessCode, targetEventId);
+    if (localRes) return localRes;
+
+    if (!supabase) return null;
+
+    const clean = accessCode.trim().toUpperCase();
+    if (!clean) return null;
+    const normClean = clean.replace(/-/g, '');
+
+    try {
+      // 2. Check Volunteers (small limit)
+      let volQuery = supabase.from('volunteers').select(SUPABASE_COLUMNS.VOLUNTEERS).limit(5);
+      if (targetEventId) volQuery = volQuery.eq('event_id', targetEventId);
+      const { data: vRows } = await volQuery.or(`access_code.ilike.%${normClean}%,access_code.ilike.%${clean}%`);
+      if (vRows && vRows.length > 0) {
+        const matchedVol = vRows.find((v: any) => {
+          const vCode = (v.access_code || '').toUpperCase().replace(/-/g, '');
+          const phoneSuffix = v.phone ? v.phone.replace(/\D/g, '').slice(-4) : '';
+          return vCode === normClean ||
+            (normClean.startsWith('VOL') && vCode === normClean) ||
+            (!normClean.startsWith('VOL') && vCode === `VOL${normClean}`) ||
+            (phoneSuffix && (phoneSuffix === normClean || `VOL${phoneSuffix}` === normClean));
+        }) || vRows[0];
+
+        if (matchedVol) {
+          const vols = this.getVolunteers();
+          if (!vols.some(v => v.id === matchedVol.id)) {
+            this.setItem(STORAGE_KEYS.VOLUNTEERS, [...vols, matchedVol as unknown as Volunteer]);
+          }
+          await this.fetchEventMetadata(matchedVol.event_id);
+          return this.authenticateAccessCode(accessCode, targetEventId);
+        }
+      }
+
+      // 3. Check Jury Members (small limit)
+      let juryQuery = supabase.from('jury_members').select(SUPABASE_COLUMNS.JURY_MEMBERS).limit(5);
+      if (targetEventId) juryQuery = juryQuery.eq('event_id', targetEventId);
+      const { data: jRows } = await juryQuery.or(`access_code.ilike.%${normClean}%,access_code.ilike.%${clean}%`);
+      if (jRows && jRows.length > 0) {
+        const matchedJury = jRows.find((j: any) => {
+          const jCode = (j.access_code || '').toUpperCase().replace(/-/g, '');
+          return jCode === normClean ||
+            (!normClean.startsWith('JURY') && jCode === `JURY${normClean}`) ||
+            (normClean.startsWith('JURY') && jCode === normClean);
+        }) || jRows[0];
+
+        if (matchedJury) {
+          const juries = this.getJury();
+          if (!juries.some(j => j.id === matchedJury.id)) {
+            this.setItem(STORAGE_KEYS.JURY, [...juries, matchedJury as unknown as JuryMember]);
+          }
+          await this.fetchEventMetadata(matchedJury.event_id);
+          return this.authenticateAccessCode(accessCode, targetEventId);
+        }
+      }
+
+      // 4. Check Student / Delegate with strict .limit(1)
+      let learnerQuery = supabase.from('learners').select(SUPABASE_COLUMNS.LEARNERS).limit(1);
+      if (targetEventId) learnerQuery = learnerQuery.eq('event_id', targetEventId);
+      const { data: lRows } = await learnerQuery.ilike('access_code', clean);
+
+      if (lRows && lRows.length > 0) {
+        const matchedLearner = lRows[0] as unknown as Learner;
+        const learners = this.getLearners();
+        if (!learners.some(l => l.id === matchedLearner.id)) {
+          this.setItem(STORAGE_KEYS.LEARNERS, [...learners, matchedLearner]);
+        }
+        await this.fetchEventMetadata(matchedLearner.event_id);
+        return this.authenticateAccessCode(accessCode, targetEventId);
+      }
+    } catch (authErr) {
+      console.warn('[StorageService] Remote access code auth error:', authErr);
+    }
+
     return null;
   }
 
@@ -3269,7 +3817,7 @@ class StorageService {
       try {
         const { data: dbExisting, error: checkError } = await supabase
           .from('event_day_attendance')
-          .select('*')
+          .select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE)
           .eq('event_id', eventId)
           .eq('day_id', dayId)
           .eq('student_id', studentId)
@@ -3424,7 +3972,7 @@ class StorageService {
             console.warn('[StorageService] 409 Conflict caught during attendance insert. Fetching existing record and updating...');
             const { data: conflictRow } = await supabase
               .from('event_day_attendance')
-              .select('*')
+              .select('id')
               .eq('event_id', eventId)
               .eq('day_id', dayId)
               .eq('student_id', studentId)
@@ -3525,7 +4073,7 @@ class StorageService {
       try {
         const { data: remoteRows, error: remoteErr } = await supabase
           .from('event_day_attendance')
-          .select('*')
+          .select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE)
           .eq('event_id', eventId)
           .eq('day_id', dayId);
 
@@ -3612,7 +4160,7 @@ class StorageService {
       try {
         const { data: freshRows } = await supabase
           .from('event_day_attendance')
-          .select('*')
+          .select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE)
           .eq('event_id', eventId)
           .eq('day_id', dayId);
 

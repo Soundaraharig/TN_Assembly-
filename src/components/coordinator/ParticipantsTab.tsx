@@ -239,6 +239,20 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
     });
   }, [learners, parties, committees, searchTerm, statusPill, dayPill, selectedParty, selectedRole, selectedCommittee, selectedBench]);
 
+  // Strict Pagination (Requirement 3: Enforce pagination of 25 delegates per page)
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 25;
+  const totalPages = Math.max(1, Math.ceil(filteredLearners.length / pageSize));
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, statusPill, dayPill, selectedParty, selectedRole, selectedCommittee, selectedBench]);
+
+  const paginatedLearners = useMemo(() => {
+    const from = (currentPage - 1) * pageSize;
+    return filteredLearners.slice(from, from + pageSize);
+  }, [filteredLearners, currentPage, pageSize]);
+
   // Selection toggles
   const isAllFilteredSelected = filteredLearners.length > 0 && filteredLearners.every(l => selectedLearnerIds.has(l.id));
 
@@ -1125,7 +1139,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                   </td>
                 </tr>
               ) : (
-                filteredLearners.map((learner, idx) => {
+                paginatedLearners.map((learner, idx) => {
                   const isRowSelected = selectedLearnerIds.has(learner.id);
 
                   return (
@@ -1409,6 +1423,39 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Controls (Requirement 3: Enforce strict pagination of 25 delegates per page) */}
+        {filteredLearners.length > pageSize && (
+          <div
+            className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t text-xs font-medium"
+            style={{ borderColor: 'var(--border-soft)', backgroundColor: 'var(--bg-surface)' }}
+          >
+            <span style={{ color: 'var(--text-muted)' }}>
+              Showing {Math.min((currentPage - 1) * pageSize + 1, filteredLearners.length)}–{Math.min(currentPage * pageSize, filteredLearners.length)} of {filteredLearners.length} delegates (25 per page)
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-1.5 rounded-lg border text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer hover:opacity-80"
+                style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-elevated)', color: 'var(--text-primary)' }}
+              >
+                Previous
+              </button>
+              <span className="px-2 font-mono font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                Page {currentPage} of {totalPages}
+              </span>
+              <button
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+                className="px-3 py-1.5 rounded-lg border text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer hover:opacity-80"
+                style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-elevated)', color: 'var(--text-primary)' }}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Edit Participant Modal */}
