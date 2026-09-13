@@ -114,16 +114,16 @@ const STORAGE_KEYS = {
 };
 
 export const SUPABASE_COLUMNS = {
-  COLLEGE_EVENTS: 'id, college_name, chapter, level, location, dates, event_stage, status, participant_count, assigned_coordinator_email, assigned_coordinator_name, elections_count, is_locked, slug, social_coverage, created_at',
-  COORDINATORS: 'id, name, email, role, phone, event_id, assigned_event_ids, is_active, created_at',
-  LEARNERS: 'id, event_id, full_name, access_code, email, phone, bench, role, party_id, party_name, committee_id, committee_name, constituency, school_name, department, academic_year, day1_checked_in, day2_checked_in, session1_checked_in, session2_checked_in, created_at',
-  POLITICAL_PARTIES: 'id, event_id, name, short_name, color, ideology, bench, seat_count, leader_name, created_at',
-  COMMITTEES: 'id, event_id, name, topic, description, chair_name, vice_chair_name, room, total_seats, created_at',
-  SESSION_AGENDA: 'id, event_id, day, time, title, speaker, status, description, is_active, created_at',
-  JURY_MEMBERS: 'id, event_id, name, access_code, designation, assigned_bench, organization, phone, email, created_at',
-  VOLUNTEERS: 'id, event_id, name, access_code, station, phone, email, is_arrived, role, created_at',
-  EVENT_DAYS: 'id, event_id, day_number, title, date, is_active, created_at',
-  EVENT_DAY_ATTENDANCE: 'id, event_id, day_id, student_id, status, fn_status, an_status, marked_by, marked_at, notes, updated_at'
+  COLLEGE_EVENTS: 'id, college_name, slug, chapter, level, location, dates, event_stage, status, participant_count, assigned_coordinator_email, assigned_coordinator_name, elections_count, is_locked, social_coverage, treasury_whatsapp_link, opposition_whatsapp_link, chief_guests, created_at, updated_at',
+  COORDINATORS: 'id, event_id, name, email, password_hash, raw_temp_password, created_at, updated_at',
+  LEARNERS: 'id, event_id, access_code, full_name, email, phone, department, academic_year, constituency_number, constituency_name, party_id, party_name, party_group_link, bench, role, committee_id, committee_name, committee_group_link, school_name, day1_checked_in, day2_checked_in, district, created_at, updated_at',
+  POLITICAL_PARTIES: 'id, event_id, name, bench, color, leader, manifesto, whatsapp_group_link, created_at',
+  COMMITTEES: 'id, event_id, name, topic, chairperson, max_capacity, created_at',
+  SESSION_AGENDA: 'id, event_id, day, time, title, description, speaker_role, is_current, created_at',
+  JURY_MEMBERS: 'id, event_id, name, access_code, designation, assigned_bench, email, phone, status, created_at',
+  VOLUNTEERS: 'id, event_id, name, access_code, station, shift, phone, email, is_yuva, has_arrived, role, created_at',
+  EVENT_DAYS: '*',
+  EVENT_DAY_ATTENDANCE: 'id, event_id, day_id, student_id, status, marked_by, marked_by_role, marked_at, created_at, updated_at'
 } as const;
 
 type Listener = () => void;
@@ -1852,7 +1852,7 @@ class StorageService {
 
       if (options.search && options.search.trim()) {
         const s = options.search.trim();
-        query = query.or(`full_name.ilike.%${s}%,access_code.ilike.%${s}%,constituency.ilike.%${s}%`);
+        query = query.or(`full_name.ilike.%${s}%,access_code.ilike.%${s}%,constituency_name.ilike.%${s}%`);
       }
       if (options.partyId) {
         query = query.eq('party_id', options.partyId);
