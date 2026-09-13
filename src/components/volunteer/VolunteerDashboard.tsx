@@ -1349,30 +1349,38 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                                 }`}>
                                   {isFnPresent ? '● FN Present' : '○ FN Absent'}
                                 </span>
-                                <div className="inline-flex items-center rounded-lg border border-slate-700/60 p-0.5 bg-slate-900/40">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleMarkStudentAttendance(learner.id, 'Present', 'FN')}
-                                    disabled={isFnLoading || isAllLoading}
-                                    title="Mark Forenoon Present"
-                                    className={`px-2 py-0.5 rounded text-[10px] font-extrabold transition cursor-pointer ${
-                                      isFnPresent ? 'bg-sky-500 text-white font-black shadow-xs' : 'text-slate-400 hover:text-white'
-                                    }`}
-                                  >
-                                    {isFnLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : 'P'}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleMarkStudentAttendance(learner.id, 'Absent', 'FN')}
-                                    disabled={isFnLoading || isAllLoading}
-                                    title="Mark Forenoon Absent"
-                                    className={`px-2 py-0.5 rounded text-[10px] font-extrabold transition cursor-pointer ${
-                                      !isFnPresent ? 'bg-rose-600 text-white font-black shadow-xs' : 'text-slate-400 hover:text-white'
-                                    }`}
-                                  >
-                                    {isFnLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : 'A'}
-                                  </button>
-                                </div>
+                                {/* Single toggle switch */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleMarkStudentAttendance(learner.id, isFnPresent ? 'Absent' : 'Present', 'FN')}
+                                  disabled={isFnLoading || isAllLoading}
+                                  title={isFnPresent ? 'Click to mark FN Absent' : 'Click to mark FN Present'}
+                                  className={`relative inline-flex items-center h-6 w-12 rounded-full transition-all duration-300 cursor-pointer focus:outline-none disabled:opacity-50 ${
+                                    isFnPresent
+                                      ? 'bg-sky-500'
+                                      : 'bg-rose-600'
+                                  }`}
+                                >
+                                  {/* Track label left */}
+                                  <span className={`absolute left-1 text-[9px] font-black text-white transition-opacity duration-200 ${
+                                    isFnPresent ? 'opacity-100' : 'opacity-0'
+                                  }`}>P</span>
+                                  {/* Thumb */}
+                                  <span className={`absolute top-0.5 bottom-0.5 w-5 rounded-full bg-white shadow-md transition-all duration-300 flex items-center justify-center ${
+                                    isFnPresent ? 'left-6' : 'left-0.5'
+                                  }`}>
+                                    {isFnLoading
+                                      ? <Loader2 className="w-3 h-3 animate-spin text-slate-400" />
+                                      : isFnPresent
+                                        ? <span className="text-[8px] font-black text-sky-500">P</span>
+                                        : <span className="text-[8px] font-black text-rose-600">A</span>
+                                    }
+                                  </span>
+                                  {/* Track label right */}
+                                  <span className={`absolute right-1 text-[9px] font-black text-white transition-opacity duration-200 ${
+                                    !isFnPresent ? 'opacity-100' : 'opacity-0'
+                                  }`}>A</span>
+                                </button>
                               </div>
                             </td>
 
@@ -1386,30 +1394,35 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                                 }`}>
                                   {isAnPresent ? '● AN Present' : '○ AN Absent'}
                                 </span>
-                                <div className="inline-flex items-center rounded-lg border border-slate-700/60 p-0.5 bg-slate-900/40">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleMarkStudentAttendance(learner.id, 'Present', 'AN')}
-                                    disabled={isAnLoading || isAllLoading}
-                                    title="Mark Afternoon Present"
-                                    className={`px-2 py-0.5 rounded text-[10px] font-extrabold transition cursor-pointer ${
-                                      isAnPresent ? 'bg-emerald-500 text-white font-black shadow-xs' : 'text-slate-400 hover:text-white'
-                                    }`}
-                                  >
-                                    {isAnLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : 'P'}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleMarkStudentAttendance(learner.id, 'Absent', 'AN')}
-                                    disabled={isAnLoading || isAllLoading}
-                                    title="Mark Afternoon Absent"
-                                    className={`px-2 py-0.5 rounded text-[10px] font-extrabold transition cursor-pointer ${
-                                      !isAnPresent ? 'bg-rose-600 text-white font-black shadow-xs' : 'text-slate-400 hover:text-white'
-                                    }`}
-                                  >
-                                    {isAnLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : 'A'}
-                                  </button>
-                                </div>
+                                {/* Single toggle switch */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleMarkStudentAttendance(learner.id, isAnPresent ? 'Absent' : 'Present', 'AN')}
+                                  disabled={isAnLoading || isAllLoading}
+                                  title={isAnPresent ? 'Click to mark AN Absent' : 'Click to mark AN Present'}
+                                  className={`relative inline-flex items-center h-6 w-12 rounded-full transition-all duration-300 cursor-pointer focus:outline-none disabled:opacity-50 ${
+                                    isAnPresent
+                                      ? 'bg-emerald-500'
+                                      : 'bg-rose-600'
+                                  }`}
+                                >
+                                  <span className={`absolute left-1 text-[9px] font-black text-white transition-opacity duration-200 ${
+                                    isAnPresent ? 'opacity-100' : 'opacity-0'
+                                  }`}>P</span>
+                                  <span className={`absolute top-0.5 bottom-0.5 w-5 rounded-full bg-white shadow-md transition-all duration-300 flex items-center justify-center ${
+                                    isAnPresent ? 'left-6' : 'left-0.5'
+                                  }`}>
+                                    {isAnLoading
+                                      ? <Loader2 className="w-3 h-3 animate-spin text-slate-400" />
+                                      : isAnPresent
+                                        ? <span className="text-[8px] font-black text-emerald-600">P</span>
+                                        : <span className="text-[8px] font-black text-rose-600">A</span>
+                                    }
+                                  </span>
+                                  <span className={`absolute right-1 text-[9px] font-black text-white transition-opacity duration-200 ${
+                                    !isAnPresent ? 'opacity-100' : 'opacity-0'
+                                  }`}>A</span>
+                                </button>
                               </div>
                             </td>
 

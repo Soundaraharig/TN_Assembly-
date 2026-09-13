@@ -760,18 +760,23 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
                               </span>
                             )}
 
+                            {/* Arrival toggle switch */}
                             <button
                               type="button"
                               onClick={() => onToggleArrival && onToggleArrival(v.id)}
-                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer ${
-                                v.has_arrived
-                                  ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/40'
-                                  : 'bg-rose-600 text-white border border-rose-700'
+                              title={v.has_arrived ? 'Click to mark Absent' : 'Click to mark Arrived'}
+                              className={`relative inline-flex items-center h-5 w-10 rounded-full transition-all duration-300 cursor-pointer focus:outline-none ${
+                                v.has_arrived ? 'bg-emerald-500' : 'bg-rose-600'
                               }`}
-                              title="Click to toggle arrival status"
                             >
-                              <Check className="w-3 h-3" />
-                              <span>{v.has_arrived ? 'Here' : 'Absent'}</span>
+                              <span className={`absolute left-1 text-[8px] font-black text-white transition-opacity duration-200 ${v.has_arrived ? 'opacity-100' : 'opacity-0'}`}>P</span>
+                              <span className={`absolute top-0.5 bottom-0.5 w-4 rounded-full bg-white shadow-md transition-all duration-300 flex items-center justify-center ${v.has_arrived ? 'left-5' : 'left-0.5'}`}>
+                                {v.has_arrived
+                                  ? <span className="text-[7px] font-black text-emerald-600">P</span>
+                                  : <span className="text-[7px] font-black text-rose-600">A</span>
+                                }
+                              </span>
+                              <span className={`absolute right-1 text-[8px] font-black text-white transition-opacity duration-200 ${!v.has_arrived ? 'opacity-100' : 'opacity-0'}`}>A</span>
                             </button>
                           </div>
 
