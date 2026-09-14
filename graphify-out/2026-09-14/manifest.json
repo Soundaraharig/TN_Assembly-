@@ -630,9 +630,9 @@
     "semantic_hash": "a4e1377583615665e4da3f79f7bde7ce"
   },
   "src/components/volunteer/VolunteerDashboard.tsx": {
-    "mtime": 1789289864.8034477,
-    "seen": 1789290726.828495,
-    "ast_hash": "8fb8817451d42a4fcd6dc30e982b8178",
+    "mtime": 1789387814.2786508,
+    "seen": 1789388040.0288727,
+    "ast_hash": "49d797428a3d8e0651137eae25aca22f",
     "semantic_hash": ""
   },
   "src/data/initialMockData.ts": {
@@ -666,9 +666,9 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1789375056.6847289,
-    "seen": 1789375320.1214368,
-    "ast_hash": "01d7604e0fdd7193697714397450db5f",
+    "mtime": 1789387937.7198944,
+    "seen": 1789388040.0293512,
+    "ast_hash": "ca14e70defdb5b4c73c9d7707bfcdc12",
     "semantic_hash": ""
   },
   "src/types/index.ts": {

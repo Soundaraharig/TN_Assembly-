@@ -117,13 +117,11 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
   }, [dayAttendance, eventId]);
 
   const mainDay1 = useMemo(() => {
-    return effectiveEventDays.find(d => d.main_day === 1)
-      || (effectiveEventDays.some(d => d.main_day === 1 || d.main_day === 2) ? undefined : effectiveEventDays.find(d => d.day_number === 1));
+    return effectiveEventDays.find(d => d.main_day === 1);
   }, [effectiveEventDays]);
 
   const mainDay2 = useMemo(() => {
-    return effectiveEventDays.find(d => d.main_day === 2)
-      || (effectiveEventDays.some(d => d.main_day === 1 || d.main_day === 2) ? undefined : effectiveEventDays.find(d => d.day_number === 2));
+    return effectiveEventDays.find(d => d.main_day === 2);
   }, [effectiveEventDays]);
 
   const handleToggleWithLoading = (learnerId: string, day: 1 | 2, session?: 'FN' | 'AN' | 'BOTH') => {
@@ -360,6 +358,14 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
 
   // Batch Check-in for selected
   const handleBatchCheckIn = (day: 1 | 2, session?: 'FN' | 'AN' | 'BOTH') => {
+    if (day === 1 && !mainDay1) {
+      onShowToast('Main Day 1 Not Configured', 'Please mark an event day as Main Day 1 (D1) in Days & Activities tab first.', 'info');
+      return;
+    }
+    if (day === 2 && !mainDay2) {
+      onShowToast('Main Day 2 Not Configured', 'Please mark an event day as Main Day 2 (D2) in Days & Activities tab first.', 'info');
+      return;
+    }
     selectedLearnerIds.forEach(id => {
       onToggleCheckIn(id, day, session);
     });
@@ -541,9 +547,15 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
             </span>
           )}
           <div className="flex items-center gap-2 text-xs font-semibold" style={{ color: 'var(--accent)' }}>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--accent)' }}></span> Day 1: {day1CheckedCount}</span>
+            <span className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: mainDay1 ? 'var(--accent)' : 'var(--text-muted)' }}></span>
+              {mainDay1 ? `${mainDay1.name || 'Day 1'}: ${day1CheckedCount}` : 'Day 1: Not Set'}
+            </span>
             <span>•</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--accent)' }}></span> Day 2: {day2CheckedCount} of {learners.length}</span>
+            <span className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: mainDay2 ? 'var(--accent)' : 'var(--text-muted)' }}></span>
+              {mainDay2 ? `${mainDay2.name || 'Day 2'}: ${day2CheckedCount}` : 'Day 2: Not Set'} of {learners.length}
+            </span>
           </div>
         </div>
 
@@ -552,25 +564,41 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
           
           <button
             onClick={() => {
+              if (!mainDay1) {
+                onShowToast('Main Day 1 Not Configured', 'Please mark an event day as Main Day 1 in Days & Activities tab first.', 'info');
+                return;
+              }
               onCheckInAll(1, true);
-              onShowToast('Day 1 Attendance Updated', 'Checked in all delegates for Day 1', 'success');
+              onShowToast('Day 1 Attendance Updated', `Checked in all delegates for ${mainDay1.name || 'Day 1'}`, 'success');
             }}
-            className="px-3 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+            disabled={!mainDay1}
+            title={mainDay1 ? `Check in all delegates for ${mainDay1.name || 'Day 1'}` : "Mark a day as Main Day 1 in Days & Activities tab to enable"}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition-colors shadow-xs ${
+              !mainDay1 ? 'opacity-40 cursor-not-allowed border-dashed' : 'cursor-pointer'
+            }`}
             style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
           >
-            <CheckCircle2 className="w-3.5 h-3.5" style={{ color: 'var(--accent)' }} />
+            <CheckCircle2 className="w-3.5 h-3.5" style={{ color: mainDay1 ? 'var(--accent)' : 'var(--text-muted)' }} />
             <span>Check In All - Day 1</span>
           </button>
 
           <button
             onClick={() => {
+              if (!mainDay2) {
+                onShowToast('Main Day 2 Not Configured', 'Please mark an event day as Main Day 2 in Days & Activities tab first.', 'info');
+                return;
+              }
               onCheckInAll(2, true);
-              onShowToast('Day 2 Attendance Updated', 'Checked in all delegates for Day 2', 'success');
+              onShowToast('Day 2 Attendance Updated', `Checked in all delegates for ${mainDay2.name || 'Day 2'}`, 'success');
             }}
-            className="px-3 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+            disabled={!mainDay2}
+            title={mainDay2 ? `Check in all delegates for ${mainDay2.name || 'Day 2'}` : "Mark a day as Main Day 2 in Days & Activities tab to enable"}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition-colors shadow-xs ${
+              !mainDay2 ? 'opacity-40 cursor-not-allowed border-dashed' : 'cursor-pointer'
+            }`}
             style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
           >
-            <CheckCircle2 className="w-3.5 h-3.5" style={{ color: 'var(--accent)' }} />
+            <CheckCircle2 className="w-3.5 h-3.5" style={{ color: mainDay2 ? 'var(--accent)' : 'var(--text-muted)' }} />
             <span>Check In All - Day 2</span>
           </button>
 
@@ -1003,13 +1031,52 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
               </button>
             </div>
 
-            {/* D2 Batch Actions */}
+            {/* D1 Batch Actions */}
             <div 
-              className="flex items-center rounded-xl p-0.5 text-xs border"
+              className={`flex items-center rounded-xl p-0.5 text-xs border ${!mainDay1 ? 'opacity-40 pointer-events-none border-dashed' : ''}`}
               style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+              title={!mainDay1 ? "Main Day 1 not configured in Days & Activities" : undefined}
             >
               <button
                 type="button"
+                disabled={!mainDay1}
+                onClick={() => handleBatchCheckIn(1, 'BOTH')}
+                className="px-2 py-1 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                style={{ color: 'var(--text-primary)' }}
+                title="Mark all selected as Day 1 Full Day (Both sessions)"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                <span>Check-In D1</span>
+              </button>
+              <button
+                type="button"
+                disabled={!mainDay1}
+                onClick={() => handleBatchCheckIn(1, 'FN')}
+                className="px-1.5 py-1 hover:bg-amber-100 dark:hover:bg-amber-500/20 text-amber-700 dark:text-amber-300 font-bold rounded-lg transition-colors cursor-pointer text-[10px]"
+                title="Mark all selected as Day 1 Forenoon (FN) Present"
+              >
+                FN
+              </button>
+              <button
+                type="button"
+                disabled={!mainDay1}
+                onClick={() => handleBatchCheckIn(1, 'AN')}
+                className="px-1.5 py-1 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 font-bold rounded-lg transition-colors cursor-pointer text-[10px]"
+                title="Mark all selected as Day 1 Afternoon (AN) Present"
+              >
+                AN
+              </button>
+            </div>
+
+            {/* D2 Batch Actions */}
+            <div 
+              className={`flex items-center rounded-xl p-0.5 text-xs border ${!mainDay2 ? 'opacity-40 pointer-events-none border-dashed' : ''}`}
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+              title={!mainDay2 ? "Main Day 2 not configured in Days & Activities" : undefined}
+            >
+              <button
+                type="button"
+                disabled={!mainDay2}
                 onClick={() => handleBatchCheckIn(2, 'BOTH')}
                 className="px-2 py-1 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
                 style={{ color: 'var(--text-primary)' }}
@@ -1020,6 +1087,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
               </button>
               <button
                 type="button"
+                disabled={!mainDay2}
                 onClick={() => handleBatchCheckIn(2, 'FN')}
                 className="px-1.5 py-1 hover:bg-amber-100 dark:hover:bg-amber-500/20 text-amber-700 dark:text-amber-300 font-bold rounded-lg transition-colors cursor-pointer text-[10px]"
                 title="Mark all selected as Day 2 Forenoon (FN) Present"
@@ -1028,6 +1096,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
               </button>
               <button
                 type="button"
+                disabled={!mainDay2}
                 onClick={() => handleBatchCheckIn(2, 'AN')}
                 className="px-1.5 py-1 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 font-bold rounded-lg transition-colors cursor-pointer text-[10px]"
                 title="Mark all selected as Day 2 Afternoon (AN) Present"
@@ -1170,15 +1239,15 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
 
                             const attD1 = mainDay1 ? effectiveDayAttendance.find(a => a.day_id === mainDay1.id && a.student_id === learner.id) : undefined;
                             const { fn: fnD1, an: anD1 } = getRecordSessionStatuses(attD1);
-                            const isD1Fn = fnD1 === 'Present' || (!attD1 && learner.day1_checked_in);
-                            const isD1An = anD1 === 'Present' || (!attD1 && learner.day1_checked_in);
+                            const isD1Fn = Boolean(mainDay1 && (fnD1 === 'Present' || (!attD1 && learner.day1_checked_in)));
+                            const isD1An = Boolean(mainDay1 && (anD1 === 'Present' || (!attD1 && learner.day1_checked_in)));
                             const isD1Both = isD1Fn && isD1An;
                             const isD1Any = isD1Fn || isD1An;
 
                             const attD2 = mainDay2 ? effectiveDayAttendance.find(a => a.day_id === mainDay2.id && a.student_id === learner.id) : undefined;
                             const { fn: fnD2, an: anD2 } = getRecordSessionStatuses(attD2);
-                            const isD2Fn = fnD2 === 'Present' || (!attD2 && learner.day2_checked_in);
-                            const isD2An = anD2 === 'Present' || (!attD2 && learner.day2_checked_in);
+                            const isD2Fn = Boolean(mainDay2 && (fnD2 === 'Present' || (!attD2 && learner.day2_checked_in)));
+                            const isD2An = Boolean(mainDay2 && (anD2 === 'Present' || (!attD2 && learner.day2_checked_in)));
                             const isD2Both = isD2Fn && isD2An;
                             const isD2Any = isD2Fn || isD2An;
                             return (
@@ -1186,24 +1255,29 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                 {/* D1 SESSION CONTROL */}
                                 <div
                                   className={`inline-flex items-center rounded-lg border p-0.5 text-[10px] transition-all ${
-                                    isD1Both
+                                    !mainDay1
+                                      ? 'opacity-35 grayscale border-dashed border-slate-300 dark:border-slate-700 pointer-events-none'
+                                      : isD1Both
                                       ? 'bg-emerald-500/15 border-emerald-500/40 dark:bg-emerald-950/40 dark:border-emerald-500/50 shadow-2xs'
                                       : isD1Any
                                       ? 'bg-sky-500/15 border-sky-500/40 dark:bg-sky-950/40 dark:border-sky-500/40'
                                       : 'bg-rose-500/10 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/40'
                                   }`}
+                                  title={!mainDay1 ? "Main Day 1 (D1) is not configured in Days & Activities tab" : undefined}
                                 >
                                   <button
                                     type="button"
                                     onClick={() => handleToggleWithLoading(learner.id, 1, 'BOTH')}
-                                    disabled={isD1Loading}
-                                    title={isD1Both ? "Day 1: Both sessions attended (Click to clear)" : isD1Any ? "Day 1: Partial attendance (Click to mark both)" : "Click to mark Day 1 both sessions"}
-                                    className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold transition-all flex items-center gap-0.5 cursor-pointer ${
-                                      isD1Both
-                                        ? 'bg-emerald-500 text-white font-black'
+                                    disabled={!mainDay1 || isD1Loading}
+                                    title={!mainDay1 ? "Main Day 1 is not configured" : isD1Both ? "Day 1: Both sessions attended (Click to clear)" : isD1Any ? "Day 1: Partial attendance (Click to mark both)" : "Click to mark Day 1 both sessions"}
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold transition-all flex items-center gap-0.5 ${
+                                      !mainDay1
+                                        ? 'text-slate-400 cursor-not-allowed'
+                                        : isD1Both
+                                        ? 'bg-emerald-500 text-white font-black cursor-pointer'
                                         : isD1Any
-                                        ? 'text-sky-700 dark:text-sky-300 font-bold'
-                                        : 'text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/30'
+                                        ? 'text-sky-700 dark:text-sky-300 font-bold cursor-pointer'
+                                        : 'text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/30 cursor-pointer'
                                     }`}
                                   >
                                     {isD1Loading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : '●'} D1
@@ -1212,12 +1286,14 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                   <button
                                     type="button"
                                     onClick={() => handleToggleWithLoading(learner.id, 1, 'FN')}
-                                    disabled={isD1Loading}
-                                    title={`Day 1 Forenoon (FN): ${isD1Fn ? 'Present (Click to toggle)' : 'Absent (Click to mark present)'}`}
-                                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
-                                      isD1Fn
-                                        ? 'bg-sky-500 text-white font-black shadow-2xs'
-                                        : 'text-rose-600 dark:text-rose-400 font-bold hover:bg-rose-100 dark:hover:bg-rose-900/30'
+                                    disabled={!mainDay1 || isD1Loading}
+                                    title={!mainDay1 ? "Main Day 1 is not configured" : `Day 1 Forenoon (FN): ${isD1Fn ? 'Present (Click to toggle)' : 'Absent (Click to mark present)'}`}
+                                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all ${
+                                      !mainDay1
+                                        ? 'text-slate-400 cursor-not-allowed'
+                                        : isD1Fn
+                                        ? 'bg-sky-500 text-white font-black shadow-2xs cursor-pointer'
+                                        : 'text-rose-600 dark:text-rose-400 font-bold hover:bg-rose-100 dark:hover:bg-rose-900/30 cursor-pointer'
                                     }`}
                                   >
                                     FN
@@ -1225,12 +1301,14 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                   <button
                                     type="button"
                                     onClick={() => handleToggleWithLoading(learner.id, 1, 'AN')}
-                                    disabled={isD1Loading}
-                                    title={`Day 1 Afternoon (AN): ${isD1An ? 'Present (Click to toggle)' : 'Absent (Click to mark present)'}`}
-                                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
-                                      isD1An
-                                        ? 'bg-emerald-500 text-white font-black shadow-2xs'
-                                        : 'text-rose-600 dark:text-rose-400 font-bold hover:bg-rose-100 dark:hover:bg-rose-900/30'
+                                    disabled={!mainDay1 || isD1Loading}
+                                    title={!mainDay1 ? "Main Day 1 is not configured" : `Day 1 Afternoon (AN): ${isD1An ? 'Present (Click to toggle)' : 'Absent (Click to mark present)'}`}
+                                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all ${
+                                      !mainDay1
+                                        ? 'text-slate-400 cursor-not-allowed'
+                                        : isD1An
+                                        ? 'bg-emerald-500 text-white font-black shadow-2xs cursor-pointer'
+                                        : 'text-rose-600 dark:text-rose-400 font-bold hover:bg-rose-100 dark:hover:bg-rose-900/30 cursor-pointer'
                                     }`}
                                   >
                                     AN
@@ -1240,24 +1318,29 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                 {/* D2 SESSION CONTROL */}
                                 <div
                                   className={`inline-flex items-center rounded-lg border p-0.5 text-[10px] transition-all ${
-                                    isD2Both
+                                    !mainDay2
+                                      ? 'opacity-35 grayscale border-dashed border-slate-300 dark:border-slate-700 pointer-events-none'
+                                      : isD2Both
                                       ? 'bg-emerald-500/15 border-emerald-500/40 dark:bg-emerald-950/40 dark:border-emerald-500/50 shadow-2xs'
                                       : isD2Any
                                       ? 'bg-sky-500/15 border-sky-500/40 dark:bg-sky-950/40 dark:border-sky-500/40'
                                       : 'bg-rose-500/10 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/40'
                                   }`}
+                                  title={!mainDay2 ? "Main Day 2 (D2) is not configured in Days & Activities tab" : undefined}
                                 >
                                   <button
                                     type="button"
                                     onClick={() => handleToggleWithLoading(learner.id, 2, 'BOTH')}
-                                    disabled={isD2Loading}
-                                    title={isD2Both ? "Day 2: Both sessions attended (Click to clear)" : isD2Any ? "Day 2: Partial attendance (Click to mark both)" : "Click to mark Day 2 both sessions"}
-                                    className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold transition-all flex items-center gap-0.5 cursor-pointer ${
-                                      isD2Both
-                                        ? 'bg-emerald-500 text-white font-black'
+                                    disabled={!mainDay2 || isD2Loading}
+                                    title={!mainDay2 ? "Main Day 2 is not configured" : isD2Both ? "Day 2: Both sessions attended (Click to clear)" : isD2Any ? "Day 2: Partial attendance (Click to mark both)" : "Click to mark Day 2 both sessions"}
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold transition-all flex items-center gap-0.5 ${
+                                      !mainDay2
+                                        ? 'text-slate-400 cursor-not-allowed'
+                                        : isD2Both
+                                        ? 'bg-emerald-500 text-white font-black cursor-pointer'
                                         : isD2Any
-                                        ? 'text-sky-700 dark:text-sky-300 font-bold'
-                                        : 'text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/30'
+                                        ? 'text-sky-700 dark:text-sky-300 font-bold cursor-pointer'
+                                        : 'text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/30 cursor-pointer'
                                     }`}
                                   >
                                     {isD2Loading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : '●'} D2
@@ -1266,12 +1349,14 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                   <button
                                     type="button"
                                     onClick={() => handleToggleWithLoading(learner.id, 2, 'FN')}
-                                    disabled={isD2Loading}
-                                    title={`Day 2 Forenoon (FN): ${isD2Fn ? 'Present (Click to toggle)' : 'Absent (Click to mark present)'}`}
-                                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
-                                      isD2Fn
-                                        ? 'bg-sky-500 text-white font-black shadow-2xs'
-                                        : 'text-rose-600 dark:text-rose-400 font-bold hover:bg-rose-100 dark:hover:bg-rose-900/30'
+                                    disabled={!mainDay2 || isD2Loading}
+                                    title={!mainDay2 ? "Main Day 2 is not configured" : `Day 2 Forenoon (FN): ${isD2Fn ? 'Present (Click to toggle)' : 'Absent (Click to mark present)'}`}
+                                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all ${
+                                      !mainDay2
+                                        ? 'text-slate-400 cursor-not-allowed'
+                                        : isD2Fn
+                                        ? 'bg-sky-500 text-white font-black shadow-2xs cursor-pointer'
+                                        : 'text-rose-600 dark:text-rose-400 font-bold hover:bg-rose-100 dark:hover:bg-rose-900/30 cursor-pointer'
                                     }`}
                                   >
                                     FN
@@ -1279,12 +1364,14 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                                   <button
                                     type="button"
                                     onClick={() => handleToggleWithLoading(learner.id, 2, 'AN')}
-                                    disabled={isD2Loading}
-                                    title={`Day 2 Afternoon (AN): ${isD2An ? 'Present (Click to toggle)' : 'Absent (Click to mark present)'}`}
-                                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
-                                      isD2An
-                                        ? 'bg-emerald-500 text-white font-black shadow-2xs'
-                                        : 'text-rose-600 dark:text-rose-400 font-bold hover:bg-rose-100 dark:hover:bg-rose-900/30'
+                                    disabled={!mainDay2 || isD2Loading}
+                                    title={!mainDay2 ? "Main Day 2 is not configured" : `Day 2 Afternoon (AN): ${isD2An ? 'Present (Click to toggle)' : 'Absent (Click to mark present)'}`}
+                                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all ${
+                                      !mainDay2
+                                        ? 'text-slate-400 cursor-not-allowed'
+                                        : isD2An
+                                        ? 'bg-emerald-500 text-white font-black shadow-2xs cursor-pointer'
+                                        : 'text-rose-600 dark:text-rose-400 font-bold hover:bg-rose-100 dark:hover:bg-rose-900/30 cursor-pointer'
                                     }`}
                                   >
                                     AN

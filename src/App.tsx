@@ -1564,10 +1564,11 @@ export function App() {
   };
 
   const handleToggleCheckIn = async (id: string, day: 1 | 2, session?: 'FN' | 'AN' | 'BOTH') => {
+    const activeEv = extractEventFromUrl(events) || currentEvent;
     await storageService.toggleCheckIn(id, day, session);
-    if (currentEvent) {
-      setLearners(storageService.getLearners(currentEvent.id));
-      setDayAttendance(storageService.getDayAttendance(currentEvent.id));
+    if (activeEv) {
+      setLearners(storageService.getLearners(activeEv.id));
+      setDayAttendance(storageService.getDayAttendance(activeEv.id));
     } else {
       setLearners(storageService.getLearners());
       setDayAttendance(storageService.getDayAttendance(''));
@@ -1575,10 +1576,11 @@ export function App() {
   };
 
   const handleCheckInAll = async (day: 1 | 2, present: boolean, session?: 'FN' | 'AN') => {
-    if (currentEvent) {
-      await storageService.checkInAll(currentEvent.id, day, present, session);
-      setLearners(storageService.getLearners(currentEvent.id));
-      setDayAttendance(storageService.getDayAttendance(currentEvent.id));
+    const activeEv = extractEventFromUrl(events) || currentEvent;
+    if (activeEv) {
+      await storageService.checkInAll(activeEv.id, day, present, session);
+      setLearners(storageService.getLearners(activeEv.id));
+      setDayAttendance(storageService.getDayAttendance(activeEv.id));
       const sessionText = session ? ` (${session === 'FN' ? 'Forenoon' : 'Afternoon'})` : '';
       addToast('Check-in Updated', `Day ${day}${sessionText} check-in updated for all delegates`, 'success');
     }
@@ -1665,6 +1667,8 @@ export function App() {
     if (!activeEv) throw new Error('No active event');
     const newDay = await storageService.addEventDay(activeEv.id, dayData);
     setEventDays(storageService.getEventDays(activeEv.id));
+    setLearners(storageService.getLearners(activeEv.id));
+    setDayAttendance(storageService.getDayAttendance(activeEv.id));
     addToast('Day Added', `Created ${newDay.day_number || newDay.name}`, 'success');
     return newDay;
   };
@@ -1674,6 +1678,8 @@ export function App() {
     if (!activeEv) throw new Error('No active event');
     const updated = await storageService.updateEventDay(day);
     setEventDays(storageService.getEventDays(activeEv.id));
+    setLearners(storageService.getLearners(activeEv.id));
+    setDayAttendance(storageService.getDayAttendance(activeEv.id));
     addToast('Day Updated', `Saved changes for ${day.day_number || day.name}`, 'success');
     return updated;
   };
@@ -1687,6 +1693,7 @@ export function App() {
       return res;
     }
     setEventDays(storageService.getEventDays(activeEv.id));
+    setLearners(storageService.getLearners(activeEv.id));
     setDayAttendance(storageService.getDayAttendance(activeEv.id));
     addToast('Day Deleted', 'Event day removed successfully', 'info');
     return res;
