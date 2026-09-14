@@ -69,6 +69,7 @@ import { StudentDashboard } from './components/student/StudentDashboard';
 import { StudentJoinView } from './components/student/StudentJoinModal';
 import { JuryDashboard } from './components/jury/JuryDashboard';
 import { VolunteerDashboard } from './components/volunteer/VolunteerDashboard';
+import { presenceService, type PresenceUser } from './services/presenceService';
 
 const SESSION_KEY = 'tn_assembly_auth_session';
 
@@ -1013,6 +1014,7 @@ export function App() {
       setCurrentVolunteer(null);
       setCurrentJury(null);
       storageService.invalidateCache();
+      presenceService.leave().catch(() => {});
     } catch (e) {
       console.error('Failed to clear auth session:', e);
     }
@@ -1402,6 +1404,70 @@ export function App() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [isAuthenticated, role, currentEvent?.id, currentStudent?.id, currentVolunteer?.id, currentJury?.id]);
+
+  // Supabase Realtime Presence Tracking (100% Zero-Egress WebSocket channel)
+  useEffect(() => {
+    if (!isAuthenticated) {
+      presenceService.leave().catch(() => {});
+      return;
+    }
+
+    const eventId = currentEvent?.id || currentEventRef.current?.id;
+    if (!eventId) return;
+
+    let presenceUser: PresenceUser | null = null;
+
+    if (role === 'student' && currentStudent) {
+      presenceUser = {
+        userId: currentStudent.id,
+        name: currentStudent.full_name,
+        role: 'student',
+        accessCode: currentStudent.access_code,
+        onlineAt: new Date().toISOString()
+      };
+    } else if (role === 'volunteer' && currentVolunteer) {
+      presenceUser = {
+        userId: currentVolunteer.id,
+        name: currentVolunteer.name,
+        role: 'volunteer',
+        accessCode: currentVolunteer.access_code,
+        onlineAt: new Date().toISOString()
+      };
+    } else if (role === 'jury' && currentJury) {
+      presenceUser = {
+        userId: currentJury.id,
+        name: currentJury.name,
+        role: 'jury',
+        accessCode: currentJury.access_code,
+        onlineAt: new Date().toISOString()
+      };
+    } else if (role === 'coordinator' || role === 'organiser' || role === 'super_admin') {
+      const coordId = currentCoordinator?.id || 'admin_coord';
+      const coordName = currentCoordinator?.name || (role === 'super_admin' ? 'Super Admin' : 'Coordinator');
+      presenceUser = {
+        userId: coordId,
+        name: coordName,
+        role: role,
+        accessCode: null,
+        onlineAt: new Date().toISOString()
+      };
+    }
+
+    if (presenceUser) {
+      presenceService.join(eventId, presenceUser).catch(err =>
+        console.warn('[App] Presence join warning:', err)
+      );
+    }
+
+    const handleBeforeUnload = () => {
+      presenceService.leave().catch(() => {});
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [isAuthenticated, role, currentEvent?.id, currentStudent?.id, currentVolunteer?.id, currentJury?.id, currentCoordinator?.id]);
 
   // Handlers for App interactions
   const handleEventChange = (ev: CollegeEvent) => {

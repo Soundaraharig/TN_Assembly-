@@ -39,6 +39,7 @@ import type {
 import { getRecordSessionStatuses, formatMarkedBy } from '../../types';
 import { useTheme } from '../../lib/theme';
 import { storageService, getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
+import { presenceService } from '../../services/presenceService';
 
 export interface YuvaAssignment {
   id: string;
@@ -163,6 +164,14 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   const [isCheckInAllLoading, setIsCheckInAllLoading] = useState(false);
   const [isResetAllLoading, setIsResetAllLoading] = useState(false);
 
+  // Realtime Presence tracking state
+  const [activePresenceKeys, setActivePresenceKeys] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    return presenceService.subscribe((keys) => {
+      setActivePresenceKeys(keys);
+    });
+  }, []);
+
   // Loading state tracking for attendance buttons
   const [processingAttendanceIds, setProcessingAttendanceIds] = useState<Set<string>>(new Set());
   const [isBatchAttendanceLoading, setIsBatchAttendanceLoading] = useState(false);
@@ -245,6 +254,12 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   const fnPercentage = learners.length > 0 ? Math.round((fnPresentCount / learners.length) * 100) : 0;
   const anPercentage = learners.length > 0 ? Math.round((anPresentCount / learners.length) * 100) : 0;
   const bothPercentage = learners.length > 0 ? Math.round((bothPresentCount / learners.length) * 100) : 0;
+
+  const activeOnlineCount = useMemo(() => {
+    return learners.filter(l =>
+      activePresenceKeys.has(l.id) || (Boolean(l.access_code) && activePresenceKeys.has(l.access_code.toUpperCase()))
+    ).length;
+  }, [learners, activePresenceKeys]);
 
   // Active parties memo
   const activeParties = useMemo(() => {
@@ -1137,8 +1152,14 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
                 <div className="p-3.5 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
                   <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Delegates</p>
-                  <p className="text-xl font-black mt-1" style={{ color: 'var(--text-primary)' }}>
-                    {learners.length}
+                  <p className="text-xl font-black mt-1 flex items-baseline gap-2" style={{ color: 'var(--text-primary)' }}>
+                    <span>{learners.length}</span>
+                    {activeOnlineCount > 0 && (
+                      <span className="text-xs font-bold text-emerald-500 inline-flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        {activeOnlineCount} active
+                      </span>
+                    )}
                   </p>
                 </div>
 
@@ -1302,11 +1323,24 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                         const isAnLoading = processingAttendanceIds.has(`${learner.id}_AN`);
                         const isAllLoading = processingAttendanceIds.has(`${learner.id}_ALL`);
 
+                        const isOnline = activePresenceKeys.has(learner.id) || (Boolean(learner.access_code) && activePresenceKeys.has(learner.access_code.toUpperCase()));
+
                         return (
                           <tr key={learner.id} className="hover:bg-slate-500/5 transition">
                             <td className="py-3 px-4">
-                              <div className="font-bold" style={{ color: 'var(--text-primary)' }}>
-                                {learner.full_name}
+                              <div className="font-bold flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}>
+                                <span
+                                  className={`inline-block w-2 h-2 rounded-full shrink-0 transition-colors ${
+                                    isOnline ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50' : 'bg-slate-300 dark:bg-slate-600'
+                                  }`}
+                                  title={isOnline ? 'Active online' : 'Offline'}
+                                />
+                                <span>{learner.full_name}</span>
+                                {isOnline && (
+                                  <span className="text-[9px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-full leading-none">
+                                    Active
+                                  </span>
+                                )}
                               </div>
                               <div className="text-[11px] text-slate-400">
                                 {learner.department} • {learner.academic_year}
@@ -1669,13 +1703,22 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                     ) : (
                       filteredYuvaMembers.map(learner => {
                         const isPresent = selectedDay === 1 ? learner.day1_checked_in : learner.day2_checked_in;
+                        const isOnline = activePresenceKeys.has(learner.id) || (Boolean(learner.access_code) && activePresenceKeys.has(learner.access_code.toUpperCase()));
                         return (
                           <tr key={learner.id} className="hover:opacity-90">
                             <td className="py-3 px-3 font-mono font-bold" style={{ color: 'var(--amber)' }}>
                               {learner.constituency_number !== undefined ? `#${learner.constituency_number}` : '-'}
                             </td>
                             <td className="py-3 px-3 font-bold" style={{ color: 'var(--text-primary)' }}>
-                              {learner.full_name}
+                              <div className="flex items-center gap-1.5">
+                                <span
+                                  className={`inline-block w-2 h-2 rounded-full shrink-0 transition-colors ${
+                                    isOnline ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50' : 'bg-slate-300 dark:bg-slate-600'
+                                  }`}
+                                  title={isOnline ? 'Active online' : 'Offline'}
+                                />
+                                <span>{learner.full_name}</span>
+                              </div>
                             </td>
                             <td className="py-3 px-3" style={{ color: 'var(--text-secondary)' }}>
                               <span className="font-semibold">{learner.party_name || 'Independent'}</span>
@@ -1843,13 +1886,22 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                   ) : (
                     filteredLearners.map(learner => {
                       const isPresent = selectedDay === 1 ? learner.day1_checked_in : learner.day2_checked_in;
+                        const isOnline = activePresenceKeys.has(learner.id) || (Boolean(learner.access_code) && activePresenceKeys.has(learner.access_code.toUpperCase()));
                       return (
                         <tr key={learner.id} className="hover:opacity-90">
                           <td className="py-3 px-3 font-mono font-bold" style={{ color: 'var(--amber)' }}>
                             {learner.constituency_number !== undefined ? `#${learner.constituency_number}` : '-'}
                           </td>
                           <td className="py-3 px-3 font-bold" style={{ color: 'var(--text-primary)' }}>
-                            {learner.full_name}
+                            <div className="flex items-center gap-1.5">
+                              <span
+                                className={`inline-block w-2 h-2 rounded-full shrink-0 transition-colors ${
+                                  isOnline ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50' : 'bg-slate-300 dark:bg-slate-600'
+                                }`}
+                                title={isOnline ? 'Active online' : 'Offline'}
+                              />
+                              <span>{learner.full_name}</span>
+                            </div>
                           </td>
                           <td className="py-3 px-3" style={{ color: 'var(--text-secondary)' }}>
                             {learner.party_name || 'Independent'} ({learner.bench || 'Ruling'})

@@ -336,9 +336,9 @@
     "semantic_hash": "5b4bc0f8532cd2bd90daced81d45749a"
   },
   "src/App.tsx": {
-    "mtime": 1789390064.757896,
-    "seen": 1789390125.113106,
-    "ast_hash": "3eab00841dc837ac56459e5514ebbf25",
+    "mtime": 1789392686.9472408,
+    "seen": 1789392720.6067183,
+    "ast_hash": "16c43d2e6bc0199962c6b1479470a82c",
     "semantic_hash": ""
   },
   "src/components/admin/CreateEventModal.tsx": {
@@ -552,9 +552,9 @@
     "semantic_hash": "9cdf384843f6c6f4f2f06c1988fb03f1"
   },
   "src/components/coordinator/ParticipantsTab.tsx": {
-    "mtime": 1789389336.980991,
-    "seen": 1789389482.214756,
-    "ast_hash": "95b545cef3ec8d367f2321a8497fe51a",
+    "mtime": 1789392624.779098,
+    "seen": 1789392720.6104872,
+    "ast_hash": "19b8a42d5e2b9527bf6a26905d5981b2",
     "semantic_hash": ""
   },
   "src/components/coordinator/PartiesTab.tsx": {
@@ -630,9 +630,9 @@
     "semantic_hash": "a4e1377583615665e4da3f79f7bde7ce"
   },
   "src/components/volunteer/VolunteerDashboard.tsx": {
-    "mtime": 1789387814.2786508,
-    "seen": 1789388040.0288727,
-    "ast_hash": "49d797428a3d8e0651137eae25aca22f",
+    "mtime": 1789392640.8053832,
+    "seen": 1789392720.6116896,
+    "ast_hash": "0bde40c73e25ea2464a2d25157c5b9de",
     "semantic_hash": ""
   },
   "src/data/initialMockData.ts": {
@@ -831,6 +831,12 @@
     "mtime": 1788930505.7220855,
     "seen": 1789273873.3428502,
     "ast_hash": "6d5180a782d64c8cf51ba01c2a2184d8",
+    "semantic_hash": ""
+  },
+  "src/services/presenceService.ts": {
+    "mtime": 1789392238.178351,
+    "seen": 1789392720.6122892,
+    "ast_hash": "e2be6404bdbc78c8844ee3cd47d1283c",
     "semantic_hash": ""
   }
 }

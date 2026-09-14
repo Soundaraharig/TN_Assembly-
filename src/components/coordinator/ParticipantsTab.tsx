@@ -11,6 +11,7 @@ import {
   isLeaderOfOppositionRole,
   isAssemblyRoleMatching
 } from '../../services/storageService';
+import { presenceService } from '../../services/presenceService';
 import { canDelete } from '../../utils/permissions';
 import { generateDelegateBadgesPDF } from '../../utils/pdfExport';
 import { EditLearnerModal } from './EditLearnerModal';
@@ -103,6 +104,14 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
   // Multi-Selection State for Mass Actions
   const [selectedLearnerIds, setSelectedLearnerIds] = useState<Set<string>>(new Set());
 
+  // Realtime Presence tracking state
+  const [activePresenceKeys, setActivePresenceKeys] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    return presenceService.subscribe((keys) => {
+      setActivePresenceKeys(keys);
+    });
+  }, []);
+
   // Loading state tracking for check-in button state transitions
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
 
@@ -166,6 +175,11 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
 
   const day1CheckedCount = learners.filter(l => l.day1_checked_in).length;
   const day2CheckedCount = learners.filter(l => l.day2_checked_in).length;
+  const activeLearnersCount = useMemo(() => {
+    return learners.filter(l =>
+      activePresenceKeys.has(l.id) || (Boolean(l.access_code) && activePresenceKeys.has(l.access_code.toUpperCase()))
+    ).length;
+  }, [learners, activePresenceKeys]);
 
   const filteredLearners = useMemo(() => {
     return learners.filter(l => {
@@ -533,9 +547,17 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
       {/* Header Metric Badges */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <h3 className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
-            Participants ({learners.length})
-          </h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>
+              Participants ({learners.length})
+            </h3>
+            {activeLearnersCount > 0 && (
+              <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5 shadow-2xs">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                {activeLearnersCount} Online
+              </span>
+            )}
+          </div>
           {isRegistrationsFrozen && (
             <span className="px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-amber-500/10 text-amber-600 border border-amber-500/30 flex items-center gap-1">
               <Lock className="w-3 h-3 text-amber-500" /> Registrations Frozen
@@ -1407,16 +1429,34 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
 
                       {/* Delegate Name & Department */}
                       <td className="py-3 px-4 whitespace-nowrap">
-                        <div>
-                          <strong className="block font-bold text-sm" style={{ color: 'var(--text-primary)' }}>
-                            {learner.full_name}
-                          </strong>
-                          {(learner.department || learner.academic_year) ? (
-                            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                              {[learner.department, learner.academic_year].filter(Boolean).join(' • ')}
-                            </span>
-                          ) : null}
-                        </div>
+                        {(() => {
+                          const isOnline = activePresenceKeys.has(learner.id) || (Boolean(learner.access_code) && activePresenceKeys.has(learner.access_code.toUpperCase()));
+                          return (
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span
+                                  className={`inline-block w-2 h-2 rounded-full shrink-0 transition-colors ${
+                                    isOnline ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50' : 'bg-slate-300 dark:bg-slate-600'
+                                  }`}
+                                  title={isOnline ? 'Active online' : 'Offline'}
+                                />
+                                <strong className="font-bold text-sm" style={{ color: 'var(--text-primary)' }}>
+                                  {learner.full_name}
+                                </strong>
+                                {isOnline && (
+                                  <span className="text-[9px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-full leading-none">
+                                    Active
+                                  </span>
+                                )}
+                              </div>
+                              {(learner.department || learner.academic_year) ? (
+                                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                  {[learner.department, learner.academic_year].filter(Boolean).join(' • ')}
+                                </span>
+                              ) : null}
+                            </div>
+                          );
+                        })()}
                       </td>
 
                       {/* Party */}
