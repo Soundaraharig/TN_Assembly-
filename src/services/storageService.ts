@@ -452,6 +452,19 @@ class StorageService {
     if (isSupabaseEnabled) {
       this.setupRealtimeSync();
     }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('storage', (event) => {
+        if (
+          event.key === STORAGE_KEYS.ELECTIONS ||
+          event.key === STORAGE_KEYS.FLASH_VOTES ||
+          event.key === STORAGE_KEYS.NOMINATIONS ||
+          event.key === STORAGE_KEYS.EVENTS ||
+          event.key === STORAGE_KEYS.DAY_ATTENDANCE
+        ) {
+          this.notify();
+        }
+      });
+    }
   }
 
   public async checkSupabaseHealth(): Promise<{ isConnected: boolean; error?: string }> {
@@ -1023,6 +1036,165 @@ class StorageService {
       allChecklist,
       allTeam,
       extendedLearnerMap
+    };
+  }
+
+  /**
+   * Unpacks social_coverage from events AND applies all elections, nominations, flash votes,
+   * proceedings, questions, scores, checklist, and team to localStorage state.
+   */
+  public unpackAndApplyEventState(events: CollegeEvent[], targetEventId?: string): {
+    openNomMap: Record<string, string[]>;
+    allNoms: Nomination[];
+    allElecs: Election[];
+    allFVotes: LiveFlashVote[];
+  } {
+    const unpacked = this.unpackEventState(events);
+    const { openNomMap, allNoms, allElecs, allFVotes, allProcs, allQs, allScores, allChecklist, allTeam } = unpacked;
+
+    // 1. Open Nominations
+    if (openNomMap && Object.keys(openNomMap).length > 0) {
+      const existingOpen = this.getItem<Record<string, string[]>>(STORAGE_KEYS.OPEN_NOMINATIONS, {});
+      this.setItem(STORAGE_KEYS.OPEN_NOMINATIONS, { ...existingOpen, ...openNomMap });
+    }
+
+    // 2. Nominations
+    if (allNoms && allNoms.length > 0) {
+      const localNoms = this.getItem<Nomination[]>(STORAGE_KEYS.NOMINATIONS, []);
+      const nomMap = new Map<string, Nomination>();
+      localNoms.forEach(n => nomMap.set(n.id, n));
+      allNoms.forEach(remoteN => {
+        const local = nomMap.get(remoteN.id);
+        if (!local) {
+          nomMap.set(remoteN.id, remoteN);
+        } else {
+          const combinedHist = [...(local.history || [])];
+          (remoteN.history || []).forEach((rh: NominationHistoryEntry) => {
+            if (!combinedHist.some(h => h.id === rh.id)) combinedHist.push(rh);
+          });
+          nomMap.set(remoteN.id, {
+            ...remoteN,
+            ...local,
+            history: combinedHist.length > 0 ? combinedHist : remoteN.history
+          });
+        }
+      });
+      this.setItem(STORAGE_KEYS.NOMINATIONS, Array.from(nomMap.values()));
+    }
+
+    // 3. Elections
+    if (allElecs && allElecs.length > 0) {
+      const localElecs = this.getItem<Election[]>(STORAGE_KEYS.ELECTIONS, []);
+      const allPartiesForSync = targetEventId ? this.getParties(targetEventId) : this.getParties();
+      const elecCanonicalMap = new Map<string, Election>();
+
+      localElecs.forEach(e => {
+        const k = getElectionCanonicalKey(e, allPartiesForSync) || e.id;
+        const existing = elecCanonicalMap.get(k);
+        elecCanonicalMap.set(k, existing ? mergeTwoElections(existing, e) : e);
+      });
+
+      allElecs.forEach(remoteE => {
+        const k = getElectionCanonicalKey(remoteE, allPartiesForSync) || remoteE.id;
+        const localE = elecCanonicalMap.get(k);
+        if (!localE) {
+          elecCanonicalMap.set(k, remoteE);
+        } else {
+          elecCanonicalMap.set(k, mergeTwoElections(localE, remoteE));
+        }
+      });
+
+      this.setItem(STORAGE_KEYS.ELECTIONS, deduplicateElectionList(Array.from(elecCanonicalMap.values()), allPartiesForSync));
+    }
+
+    // 4. Flash Votes
+    if (allFVotes && allFVotes.length > 0) {
+      const localFVotes = this.getItem<LiveFlashVote[]>(STORAGE_KEYS.FLASH_VOTES, []);
+      const fvoteMap = new Map<string, LiveFlashVote>();
+      localFVotes.forEach(fv => fvoteMap.set(fv.id, fv));
+      allFVotes.forEach(remoteFV => {
+        const localFV = fvoteMap.get(remoteFV.id);
+        if (!localFV) {
+          fvoteMap.set(remoteFV.id, remoteFV);
+        } else {
+          const voteByLearner = new Map<string, any>();
+          (localFV.votes || []).forEach(v => voteByLearner.set(v.learner_id, v));
+          (remoteFV.votes || []).forEach(v => {
+            if (!voteByLearner.has(v.learner_id)) {
+              voteByLearner.set(v.learner_id, v);
+            }
+          });
+
+          const mergedVotes = Array.from(voteByLearner.values());
+          const ayes = mergedVotes.filter(v => v.vote === 'AYE').length;
+          const noes = mergedVotes.filter(v => v.vote === 'NO').length;
+          const abstains = mergedVotes.filter(v => v.vote === 'ABSTAIN').length;
+          const mergedVoterIds = Array.from(new Set([
+            ...(localFV.voter_ids || []),
+            ...(remoteFV.voter_ids || []),
+            ...mergedVotes.map(v => v.learner_id)
+          ]));
+
+          fvoteMap.set(remoteFV.id, {
+            ...remoteFV,
+            ...localFV,
+            status: (localFV.status === 'CLOSED' || remoteFV.status === 'CLOSED') ? 'CLOSED' : remoteFV.status,
+            votes: mergedVotes,
+            voter_ids: mergedVoterIds,
+            ayes_count: Math.max(ayes, localFV.ayes_count || 0, remoteFV.ayes_count || 0),
+            noes_count: Math.max(noes, localFV.noes_count || 0, remoteFV.noes_count || 0),
+            abstain_count: Math.max(abstains, localFV.abstain_count || 0, remoteFV.abstain_count || 0)
+          });
+        }
+      });
+      this.setItem(STORAGE_KEYS.FLASH_VOTES, Array.from(fvoteMap.values()));
+    }
+
+    // 5. Proceedings & Questions
+    if (allProcs && allProcs.length > 0) {
+      const localProcs = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, []);
+      const procMap = new Map<string, BillProceeding>();
+      localProcs.forEach(p => procMap.set(p.id, p));
+      allProcs.forEach(p => procMap.set(p.id, p));
+      this.setItem(STORAGE_KEYS.PROCEEDINGS, Array.from(procMap.values()));
+    }
+    if (allQs && allQs.length > 0) {
+      const localQs = this.getItem<ParliamentQuestion[]>(STORAGE_KEYS.QUESTIONS, []);
+      const qMap = new Map<string, ParliamentQuestion>();
+      localQs.forEach(q => qMap.set(q.id, q));
+      allQs.forEach(q => qMap.set(q.id, q));
+      this.setItem(STORAGE_KEYS.QUESTIONS, Array.from(qMap.values()));
+    }
+    if (allScores && allScores.length > 0) {
+      const localScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
+      const scoreMap = new Map<string, ScoreRecord>();
+      localScores.forEach(s => {
+        const key = `${s.event_id || ''}_${s.learner_id || ''}_${s.jury_id || ''}`;
+        scoreMap.set(key, s);
+      });
+      allScores.forEach(remoteS => {
+        const key = `${remoteS.event_id || ''}_${remoteS.learner_id || ''}_${remoteS.jury_id || ''}`;
+        const local = scoreMap.get(key);
+        if (!local) {
+          scoreMap.set(key, remoteS);
+        } else {
+          scoreMap.set(key, { ...remoteS, ...local });
+        }
+      });
+      this.setItem(STORAGE_KEYS.SCORES, Array.from(scoreMap.values()));
+    }
+    if (allChecklist && allChecklist.length > 0) {
+      this.setItem(STORAGE_KEYS.CHECKLIST, allChecklist);
+    }
+    if (allTeam && allTeam.length > 0) {
+      this.setItem(STORAGE_KEYS.TEAM, allTeam);
+    }
+
+    return {
+      openNomMap,
+      allNoms,
+      allElecs,
+      allFVotes
     };
   }
 
@@ -1598,7 +1770,7 @@ class StorageService {
         const allEvs = this.getEvents();
         this.setItem(STORAGE_KEYS.EVENTS, [...allEvs.filter(e => e.id !== ev.id), ev]);
         this.restoreJkkncetEvent();
-        this.unpackEventState([ev]);
+        this.unpackAndApplyEventState([ev], eventId);
         this.notify();
         return ev;
       }
@@ -1643,7 +1815,7 @@ class StorageService {
         const curEvs = this.getEvents();
         this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), ev]);
         this.restoreJkkncetEvent();
-        this.unpackEventState([ev]);
+        this.unpackAndApplyEventState([ev], eventId);
       }
 
       if (agendaData) {
@@ -1717,7 +1889,7 @@ class StorageService {
         const curEvs = this.getEvents();
         this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), ev]);
         this.restoreJkkncetEvent();
-        this.unpackEventState([ev]);
+        this.unpackAndApplyEventState([ev], eventId);
       }
 
       if (agendaData) {
@@ -1787,7 +1959,7 @@ class StorageService {
         const curEvs = this.getEvents();
         this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), ev]);
         this.restoreJkkncetEvent();
-        this.unpackEventState([ev]);
+        this.unpackAndApplyEventState([ev], eventId);
       }
 
       if (daysData) {
@@ -1900,9 +2072,53 @@ class StorageService {
             window.dispatchEvent(new CustomEvent('tn_assembly_speaker_bell', { detail: msg?.payload }));
           }
         })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'college_events' }, () => {
+        .on('broadcast', { event: 'election_update' }, (msg: any) => {
+          if (msg?.payload?.eventId && Array.isArray(msg?.payload?.elections)) {
+            const evId = msg.payload.eventId;
+            const allPartiesForSync = this.getParties(evId);
+            const localElecs = this.getItem<Election[]>(STORAGE_KEYS.ELECTIONS, []);
+            const elecCanonicalMap = new Map<string, Election>();
+            localElecs.forEach(e => {
+              const k = getElectionCanonicalKey(e, allPartiesForSync) || e.id;
+              elecCanonicalMap.set(k, e);
+            });
+            msg.payload.elections.forEach((remoteE: Election) => {
+              const k = getElectionCanonicalKey(remoteE, allPartiesForSync) || remoteE.id;
+              const localE = elecCanonicalMap.get(k);
+              elecCanonicalMap.set(k, localE ? mergeTwoElections(localE, remoteE) : remoteE);
+            });
+            this.setItem(STORAGE_KEYS.ELECTIONS, deduplicateElectionList(Array.from(elecCanonicalMap.values()), allPartiesForSync));
+            this.invalidateCache('portal_');
+            this.notify();
+            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+          }
+        })
+        .on('broadcast', { event: 'flash_vote_update' }, (msg: any) => {
+          if (msg?.payload?.eventId && Array.isArray(msg?.payload?.flashVotes)) {
+            const localFVotes = this.getItem<LiveFlashVote[]>(STORAGE_KEYS.FLASH_VOTES, []);
+            const fvoteMap = new Map<string, LiveFlashVote>();
+            localFVotes.forEach(fv => fvoteMap.set(fv.id, fv));
+            msg.payload.flashVotes.forEach((remoteFV: LiveFlashVote) => {
+              fvoteMap.set(remoteFV.id, remoteFV);
+            });
+            this.setItem(STORAGE_KEYS.FLASH_VOTES, Array.from(fvoteMap.values()));
+            this.invalidateCache('portal_');
+            this.notify();
+            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+          }
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'college_events' }, (payload: any) => {
           this.invalidateCache('events');
           this.invalidateCache('portal_');
+          if (payload?.new && payload.new.id) {
+            const ev = payload.new as CollegeEvent;
+            const curEvs = this.getEvents();
+            this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), ev]);
+            this.restoreJkkncetEvent();
+            this.unpackAndApplyEventState([ev], ev.id);
+            this.notify();
+            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+          }
         })
         .on('postgres_changes', { event: '*', schema: 'public', table: 'learners' }, () => {
           this.invalidateCache('learners');
@@ -1913,6 +2129,24 @@ class StorageService {
         .subscribe();
     } catch (e) {
       console.warn('[Supabase] realtime setup error:', e);
+    }
+  }
+
+  public async broadcast(event: string, payload: any): Promise<void> {
+    if (!supabase) return;
+    if (!this.realtimeChannel) {
+      this.setupRealtimeSync();
+    }
+    if (this.realtimeChannel) {
+      try {
+        await this.realtimeChannel.send({
+          type: 'broadcast',
+          event,
+          payload
+        });
+      } catch (e) {
+        console.warn(`[StorageService] Broadcast ${event} failed:`, e);
+      }
     }
   }
 
@@ -2048,6 +2282,24 @@ class StorageService {
       }
 
       await supabase.from('college_events').update({ social_coverage: payload }).eq('id', eventId);
+
+      // Push-based Realtime broadcast to all connected clients (zero-REST egress)
+      if (this.realtimeChannel) {
+        try {
+          await this.realtimeChannel.send({
+            type: 'broadcast',
+            event: 'election_update',
+            payload: { eventId, elections: finalElecs }
+          });
+          await this.realtimeChannel.send({
+            type: 'broadcast',
+            event: 'flash_vote_update',
+            payload: { eventId, flashVotes: fvotes }
+          });
+        } catch (bErr) {
+          console.warn('[Supabase] Broadcast election/flash_vote failed:', bErr);
+        }
+      }
     } catch (e) {
       console.warn('[Supabase] syncEventStateToSupabase error:', e);
     }
@@ -3620,7 +3872,26 @@ class StorageService {
 
   public getActiveEventDay(eventId: string): EventDay | undefined {
     const days = this.getEventDays(eventId);
-    return days.find(d => d.status === 'Active') || days[0];
+    if (days && days.length > 0) {
+      return days.find(d => d.status === 'Active') || days[0];
+    }
+    // Fallback default Day 1 to guarantee attendance operations never fail if event_days hasn't loaded yet
+    if (eventId) {
+      return {
+        id: '11111111-1111-4111-8111-111111111111',
+        event_id: eventId,
+        day_number: 1,
+        name: 'Day 1',
+        date: new Date().toISOString().split('T')[0],
+        status: 'Active',
+        activities: [],
+        order_index: 0,
+        main_day: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+    }
+    return undefined;
   }
 
   public async addEventDay(eventId: string, dayData: Partial<EventDay>): Promise<EventDay> {
@@ -5746,7 +6017,12 @@ class StorageService {
     all.unshift(newElec);
     const deduplicated = deduplicateElectionList(all, partiesForEvent);
     this.setItem(STORAGE_KEYS.ELECTIONS, deduplicated);
-    if (newElec.event_id) this.syncEventStateToSupabase(newElec.event_id);
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+    if (newElec.event_id) {
+      this.broadcast('election_update', { eventId: newElec.event_id, elections: this.getElections(newElec.event_id) });
+      this.syncEventStateToSupabase(newElec.event_id);
+    }
     return newElec;
   }
 
@@ -5827,7 +6103,12 @@ class StorageService {
     election.updated_at = new Date().toISOString();
 
     this.setItem(STORAGE_KEYS.ELECTIONS, all);
-    if (election.event_id) this.syncEventStateToSupabase(election.event_id);
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+    if (election.event_id) {
+      this.broadcast('election_update', { eventId: election.event_id, elections: this.getElections(election.event_id) });
+      this.syncEventStateToSupabase(election.event_id);
+    }
     return true;
   }
 
@@ -5868,6 +6149,8 @@ class StorageService {
       return e;
     });
     this.setItem(STORAGE_KEYS.ELECTIONS, all);
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
 
     // Sync winner leadership role to learner record
     if (targetEventId && winnerRoleToAssign && winnerCandidate) {
@@ -5895,7 +6178,10 @@ class StorageService {
       }
     }
 
-    if (targetEventId) this.syncEventStateToSupabase(targetEventId);
+    if (targetEventId) {
+      this.broadcast('election_update', { eventId: targetEventId, elections: this.getElections(targetEventId) });
+      this.syncEventStateToSupabase(targetEventId);
+    }
   }
 
   public setElectionStatus(electionId: string, status: 'Upcoming' | 'Live' | 'Closed') {
@@ -5934,6 +6220,8 @@ class StorageService {
       return e;
     });
     this.setItem(STORAGE_KEYS.ELECTIONS, all);
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
 
     // Sync winner leadership role to learner record
     if (targetEventId && winnerRoleToAssign && winnerCandidate) {
@@ -5961,7 +6249,10 @@ class StorageService {
       }
     }
 
-    if (targetEventId) this.syncEventStateToSupabase(targetEventId);
+    if (targetEventId) {
+      this.broadcast('election_update', { eventId: targetEventId, elections: this.getElections(targetEventId) });
+      this.syncEventStateToSupabase(targetEventId);
+    }
   }
 
   public getPartyLeaderElectionParty(election: Election): Party | null {

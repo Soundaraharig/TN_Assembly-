@@ -1354,26 +1354,49 @@ export function App() {
     const eventId = currentEvent?.id || currentEventRef.current?.id;
     if (!eventId) return;
 
-    if (role === 'coordinator' || role === 'organiser' || role === 'super_admin') {
-      storageService.fetchCoordinatorAdminData(eventId).catch(err =>
-        console.warn('[App] Coordinator data fetch warning:', err)
-      );
-    } else if (role === 'volunteer') {
-      const volId = currentVolunteer?.id || '';
-      storageService.fetchVolunteerPortalData(eventId, volId).catch(err =>
-        console.warn('[App] Volunteer portal fetch warning:', err)
-      );
-    } else if (role === 'jury') {
-      const juryId = currentJury?.id || '';
-      storageService.fetchJuryPortalData(eventId, juryId).catch(err =>
-        console.warn('[App] Jury portal fetch warning:', err)
-      );
-    } else if (role === 'student') {
-      const studentId = currentStudent?.id || '';
-      storageService.fetchStudentPortalData(eventId, studentId).catch(err =>
-        console.warn('[App] Student portal fetch warning:', err)
-      );
-    }
+    const performRoleFetch = (force = false) => {
+      if (role === 'coordinator' || role === 'organiser' || role === 'super_admin') {
+        storageService.fetchCoordinatorAdminData(eventId, force).catch(err =>
+          console.warn('[App] Coordinator data fetch warning:', err)
+        );
+      } else if (role === 'volunteer') {
+        const volId = currentVolunteer?.id || '';
+        storageService.fetchVolunteerPortalData(eventId, volId, force).catch(err =>
+          console.warn('[App] Volunteer portal fetch warning:', err)
+        );
+      } else if (role === 'jury') {
+        const juryId = currentJury?.id || '';
+        storageService.fetchJuryPortalData(eventId, juryId, force).catch(err =>
+          console.warn('[App] Jury portal fetch warning:', err)
+        );
+      } else if (role === 'student') {
+        const studentId = currentStudent?.id || '';
+        storageService.fetchStudentPortalData(eventId, studentId, force).catch(err =>
+          console.warn('[App] Student portal fetch warning:', err)
+        );
+      }
+    };
+
+    // Initial fetch on mount or session change (uses cache if fresh)
+    performRoleFetch(false);
+
+    // Smart Visibility Re-fetch (Zero polling heartbeat to prevent Supabase egress overages)
+    // Only re-fetch when student/user returns to tab, throttled to at most once every 60 seconds
+    let lastVisibilityFetch = Date.now();
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        const now = Date.now();
+        if (now - lastVisibilityFetch >= 60000) {
+          lastVisibilityFetch = now;
+          performRoleFetch(true);
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [isAuthenticated, role, currentEvent?.id, currentStudent?.id, currentVolunteer?.id, currentJury?.id]);
 
   // Handlers for App interactions
@@ -1684,9 +1707,9 @@ export function App() {
     markedBy?: string,
     session?: 'FN' | 'AN'
   ): Promise<DayAttendanceRecord> => {
-    const activeEv = extractEventFromUrl(events) || currentEvent;
+    const activeEv = extractEventFromUrl(events) || currentEvent || events.find(e => e.id === currentVolunteer?.event_id) || events[0];
     if (!activeEv) throw new Error('No active event');
-    const rec = await storageService.setStudentDayAttendance(activeEv.id, dayId, studentId, status, markedBy || userSession?.name || role, 'coordinator', session);
+    const rec = await storageService.setStudentDayAttendance(activeEv.id, dayId, studentId, status, markedBy || userSession?.name || role, role === 'volunteer' ? 'volunteer' : 'coordinator', session);
     setDayAttendance(storageService.getDayAttendance(activeEv.id));
     setLearners(storageService.getLearners(activeEv.id));
     return rec;
@@ -1699,7 +1722,7 @@ export function App() {
     markedBy?: string,
     session?: 'FN' | 'AN'
   ): Promise<void> => {
-    const activeEv = extractEventFromUrl(events) || currentEvent;
+    const activeEv = extractEventFromUrl(events) || currentEvent || events.find(e => e.id === currentVolunteer?.event_id) || events[0];
     if (!activeEv) return;
     await storageService.batchSetDayAttendance(
       activeEv.id,
@@ -1707,7 +1730,7 @@ export function App() {
       studentIds,
       status,
       markedBy || userSession?.name || role,
-      'coordinator',
+      role === 'volunteer' ? 'volunteer' : 'coordinator',
       session
     );
     setDayAttendance(storageService.getDayAttendance(activeEv.id));

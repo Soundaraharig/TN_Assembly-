@@ -94,21 +94,46 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
 
 
+  // Live synced elections and flash votes (driven by storageService.subscribe for zero-latency live updates)
+  const [syncedElections, setSyncedElections] = useState<Election[]>(elections);
+  const [syncedFlashVotes, setSyncedFlashVotes] = useState<LiveFlashVote[]>(flashVotes);
+  const [syncedNominations, setSyncedNominations] = useState<Nomination[]>(nominations);
+
   useEffect(() => {
-    const refreshQuestionsAndDeadline = () => {
-      if (eventSlug || targetEventId) {
-        setDeadline(storageService.getEventDeadline(eventSlug) || storageService.getEventDeadline(targetEventId));
-        const allQ = [...storageService.getProceedingsQuestions(eventSlug), ...storageService.getProceedingsQuestions(targetEventId)];
+    setSyncedElections(elections);
+  }, [elections]);
+
+  useEffect(() => {
+    setSyncedFlashVotes(flashVotes);
+  }, [flashVotes]);
+
+  useEffect(() => {
+    setSyncedNominations(nominations);
+  }, [nominations]);
+
+  useEffect(() => {
+    const refreshLiveState = () => {
+      const resolvedEventId = event?.id || storageService.getEvents().find(e => getEventSlug(e) === eventSlug)?.id || targetEventId;
+      if (eventSlug || resolvedEventId) {
+        setDeadline(storageService.getEventDeadline(eventSlug) || storageService.getEventDeadline(resolvedEventId));
+        const allQ = [...storageService.getProceedingsQuestions(eventSlug), ...storageService.getProceedingsQuestions(resolvedEventId)];
         const uniqueQ = Array.from(new Map(allQ.map(q => [q.id, q])).values());
         setStudentQuestions(uniqueQ.filter(q => q.student_id === student.id || q.student_name === student.full_name));
+
+        const updatedElecs = storageService.getElections(resolvedEventId, 'student', student.id);
+        setSyncedElections(updatedElecs);
+        const updatedFV = storageService.getFlashVotes(resolvedEventId, 'student', student.id);
+        setSyncedFlashVotes(updatedFV);
+        const updatedNoms = storageService.getNominations(resolvedEventId, 'student', student.id);
+        setSyncedNominations(updatedNoms);
       }
     };
-    refreshQuestionsAndDeadline();
+    refreshLiveState();
     const unsub = storageService.subscribe(() => {
-      refreshQuestionsAndDeadline();
+      refreshLiveState();
     });
     return () => unsub();
-  }, [eventSlug, targetEventId, student.id, student.full_name]);
+  }, [eventSlug, targetEventId, student.id, student.full_name, event?.id]);
 
   const isQuestionWindowOpen = useMemo(() => {
     if (deadline.is_open !== undefined) return deadline.is_open;
@@ -139,14 +164,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       question_type: questionType,
       question_text: questionText.trim(),
       status: 'Submitted',
-      created_at: new Date().toISOString(),
-      queue_order: studentQuestions.length + 1
+      created_at: new Date().toISOString()
     };
 
     storageService.addProceedingsQuestion(newQ);
-    setStudentQuestions(prev => [...prev, newQ]);
     setQuestionText('');
-    onShowToast('Question Submitted', 'Your question has been added to the parliamentary proceedings queue.', 'success');
+    onShowToast('Question Submitted', 'Your parliamentary question has been submitted to the Speaker desk.', 'success');
   };
 
   // Check if current student is assigned as Speaker or Deputy Speaker
@@ -155,7 +178,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     if (roleLower.includes('speaker')) return true;
 
     // Also check if winner of an election for Speaker / Deputy Speaker
-    const isElectedPresiding = elections.some(e => {
+    const isElectedPresiding = syncedElections.some(e => {
       const isPresidingType =
         e.type === 'SPEAKER' ||
         e.type === 'DEPUTY_SPEAKER' ||
@@ -171,14 +194,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     });
 
     return isElectedPresiding;
-  }, [student.role, student.id, student.full_name, elections]);
+  }, [student.role, student.id, student.full_name, syncedElections]);
 
   // Student's own filed nominations
   const myNominations = useMemo(() => {
-    return nominations.filter(
+    return syncedNominations.filter(
       n => n.candidate_learner_id === student.id || (n.candidate_name && n.candidate_name.toLowerCase() === student.full_name.toLowerCase())
     );
-  }, [nominations, student.id, student.full_name]);
+  }, [syncedNominations, student.id, student.full_name]);
 
   const myNominatedPositions = useMemo(() => {
     return new Set(
@@ -235,8 +258,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     return { eligible: true };
   };
 
-  const liveElections = elections.filter(e => e.status === 'Live');
-  const activeFlashVotes = flashVotes.filter(f => f.status === 'ACTIVE');
+  const liveElections = syncedElections.filter(e => e.status === 'Live');
+  const activeFlashVotes = syncedFlashVotes.filter(f => f.status === 'ACTIVE');
 
   const handleRequestFloor = () => {
     setFloorRequested(true);
