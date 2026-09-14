@@ -398,6 +398,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     const unsubscribe = storageService.subscribe(() => {
       if (isMounted) {
         setYuvaAssignments(storageService.getYuvaAssignments(eventId));
+        setAttendanceRefreshKey(k => k + 1);
         setIsInitialLoading(false);
       }
     });
