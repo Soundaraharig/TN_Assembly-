@@ -336,9 +336,9 @@
     "semantic_hash": "5b4bc0f8532cd2bd90daced81d45749a"
   },
   "src/App.tsx": {
-    "mtime": 1789375213.1908948,
-    "seen": 1789375320.1168387,
-    "ast_hash": "30f7c4353a3c4454f6188d2fe94b4a7d",
+    "mtime": 1789389213.317132,
+    "seen": 1789389482.211666,
+    "ast_hash": "4963f3d91956b2746fdf729eb31e2bb8",
     "semantic_hash": ""
   },
   "src/components/admin/CreateEventModal.tsx": {
@@ -552,9 +552,9 @@
     "semantic_hash": "9cdf384843f6c6f4f2f06c1988fb03f1"
   },
   "src/components/coordinator/ParticipantsTab.tsx": {
-    "mtime": 1789290317.0809007,
-    "seen": 1789290726.82686,
-    "ast_hash": "3a5172f1bf684fbfef968c40dbe9871e",
+    "mtime": 1789389336.980991,
+    "seen": 1789389482.214756,
+    "ast_hash": "95b545cef3ec8d367f2321a8497fe51a",
     "semantic_hash": ""
   },
   "src/components/coordinator/PartiesTab.tsx": {
@@ -666,9 +666,9 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1789387937.7198944,
-    "seen": 1789388040.0293512,
-    "ast_hash": "ca14e70defdb5b4c73c9d7707bfcdc12",
+    "mtime": 1789389184.9742258,
+    "seen": 1789389482.2164354,
+    "ast_hash": "0bef0eee227d4cb1814e133c91aa8467",
     "semantic_hash": ""
   },
   "src/types/index.ts": {

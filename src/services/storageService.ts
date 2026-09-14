@@ -75,6 +75,17 @@ import { supabase, isSupabaseEnabled } from '../lib/supabase';
 import { getEventSlug } from '../utils/slug';
 
 // ---------------------------------------------------------------------------
+// Cache versioning & Stale-While-Revalidate metadata
+// ---------------------------------------------------------------------------
+export const CACHE_VERSION = 'v2.1_clean_sync';
+export const CACHE_VERSION_KEY = 'app_cache_version';
+
+export interface CacheEntry<T = any> {
+  data: T;
+  cachedAt: number;
+}
+
+// ---------------------------------------------------------------------------
 // Local-storage keys (cache layer)
 // ---------------------------------------------------------------------------
 const STORAGE_KEYS = {
@@ -402,22 +413,80 @@ class StorageService {
   private failedWriteSignatures = new Map<string, number>();
   private fixedLearnerIdsSynced = new Set<string>();
 
-  // In-Memory Query Cache with 5-minute staleTime
-  private memoryCache = new Map<string, { timestamp: number; data: any }>();
-  private readonly CACHE_STALE_TIME = 5 * 60 * 1000; // 5 minutes
+  // ── SWR Cache & Schema Versioning ───────────────────────────────────────
+  public wasCacheMigrated: boolean = false;
+  private memoryCache = new Map<string, CacheEntry<any>>();
+  private readonly CACHE_STALE_TIME = 5 * 60 * 1000; // 5 minutes TTL
+
+  /**
+   * Retrieve cached entry from memory or localStorage.
+   */
+  public getCacheEntry<T>(key: string): CacheEntry<T> | null {
+    const mem = this.memoryCache.get(key);
+    if (mem) return mem as CacheEntry<T>;
+
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const raw = localStorage.getItem(`tn_cache_${key}`);
+        if (raw) {
+          const parsed = JSON.parse(raw) as CacheEntry<T>;
+          if (parsed && typeof parsed.cachedAt === 'number') {
+            this.memoryCache.set(key, parsed);
+            return parsed;
+          }
+        }
+      }
+    } catch { }
+
+    return null;
+  }
+
+  /**
+   * Persist cached entry with timestamp to memory and localStorage.
+   */
+  public setCacheEntry<T>(key: string, data: T): void {
+    const entry: CacheEntry<T> = {
+      data,
+      cachedAt: Date.now()
+    };
+    this.memoryCache.set(key, entry);
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        localStorage.setItem(`tn_cache_${key}`, JSON.stringify(entry));
+      }
+    } catch (e) {
+      console.warn('[StorageService] setCacheEntry quota warning:', e);
+    }
+  }
+
+  /**
+   * Evaluate cache status: 'fresh' (< 5m), 'stale' (> 5m), or 'miss' (not found).
+   */
+  public getCacheStatus<T>(key: string, ttl = this.CACHE_STALE_TIME): {
+    status: 'fresh' | 'stale' | 'miss';
+    entry: CacheEntry<T> | null;
+  } {
+    const entry = this.getCacheEntry<T>(key);
+    if (!entry) {
+      return { status: 'miss', entry: null };
+    }
+    const age = Date.now() - entry.cachedAt;
+    if (age <= ttl) {
+      return { status: 'fresh', entry };
+    }
+    return { status: 'stale', entry };
+  }
 
   public getCached<T>(key: string): T | null {
-    const entry = this.memoryCache.get(key);
-    if (!entry) return null;
-    if (Date.now() - entry.timestamp > this.CACHE_STALE_TIME) {
-      this.memoryCache.delete(key);
-      return null;
+    const status = this.getCacheStatus<T>(key);
+    if (status.status === 'fresh') {
+      return status.entry!.data;
     }
-    return entry.data as T;
+    return null;
   }
 
   public setCached<T>(key: string, data: T): void {
-    this.memoryCache.set(key, { timestamp: Date.now(), data });
+    this.setCacheEntry(key, data);
   }
 
   // In-flight read promises map to coalesce concurrent duplicate fetches into a single promise
@@ -441,13 +510,37 @@ class StorageService {
   public invalidateCache(prefix?: string): void {
     if (!prefix) {
       this.memoryCache.clear();
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          const toRemove: string[] = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && (k.startsWith('tn_cache_') || k.startsWith('portal_') || k.startsWith('sync_') || k.startsWith('meta_'))) {
+              toRemove.push(k);
+            }
+          }
+          toRemove.forEach(k => localStorage.removeItem(k));
+        }
+      } catch { }
       return;
     }
     for (const k of Array.from(this.memoryCache.keys())) {
-      if (k.startsWith(prefix)) {
+      if (k.startsWith(prefix) || k.startsWith(`tn_cache_${prefix}`)) {
         this.memoryCache.delete(k);
       }
     }
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const toRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && (k.startsWith(prefix) || k.startsWith(`tn_cache_${prefix}`))) {
+            toRemove.push(k);
+          }
+        }
+        toRemove.forEach(k => localStorage.removeItem(k));
+      }
+    } catch { }
   }
 
   public setWriteErrorHandler(handler: WriteErrorHandler | null) {
@@ -464,7 +557,72 @@ class StorageService {
     }
   }
 
+  /**
+   * Automatic Schema & Cache Versioning Migration:
+   * Compares localStorage 'app_cache_version' with CACHE_VERSION ('v2.1_clean_sync').
+   * If version differs, purges stale event and portal storage keys while preserving auth sessions,
+   * updates the stored version, and triggers a clean background fetch from Supabase.
+   */
+  private checkAndMigrateCacheVersion(): void {
+    try {
+      if (typeof window === 'undefined' || !window.localStorage) return;
+      const storedVersion = localStorage.getItem(CACHE_VERSION_KEY);
+      if (storedVersion !== CACHE_VERSION) {
+        console.log(`[StorageService] Cache version mismatch (current: "${storedVersion}", target: "${CACHE_VERSION}"). Automatically purging stale cache...`);
+        this.wasCacheMigrated = true;
+
+        // Keys that must be preserved: session / auth tokens / theme
+        const preserveKeys = new Set<string>([
+          'tn_assembly_auth_session',
+          'user_session',
+          'tn_theme'
+        ]);
+
+        const allStorageKeys = new Set(Object.values(STORAGE_KEYS));
+        const keysToRemove: string[] = [];
+
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (!key) continue;
+
+          // Never delete preserved auth / session / theme keys
+          if (preserveKeys.has(key)) continue;
+          if (key.includes('auth_token') || key.includes('sb-') || key.endsWith('-auth-token')) continue;
+
+          // Clear stale event and portal storage keys
+          if (
+            allStorageKeys.has(key) ||
+            key.startsWith('tn_assembly_') ||
+            key.startsWith('tn_cache_') ||
+            key.startsWith('portal_') ||
+            key.startsWith('sync_') ||
+            key.startsWith('meta_')
+          ) {
+            keysToRemove.push(key);
+          }
+        }
+
+        keysToRemove.forEach(k => localStorage.removeItem(k));
+        localStorage.setItem(CACHE_VERSION_KEY, CACHE_VERSION);
+        this.invalidateCache();
+        console.log(`[StorageService] Stale cache purged (${keysToRemove.length} keys removed). Version updated to ${CACHE_VERSION}`);
+
+        // Force a clean initial fetch from Supabase if connected
+        if (isSupabaseEnabled && supabase) {
+          setTimeout(() => {
+            this.syncFromSupabase(undefined, true).catch(err =>
+              console.warn('[StorageService] Initial post-migration fetch warning:', err)
+            );
+          }, 0);
+        }
+      }
+    } catch (e) {
+      console.warn('[StorageService] checkAndMigrateCacheVersion error:', e);
+    }
+  }
+
   constructor() {
+    this.checkAndMigrateCacheVersion();
     this.initDefaults();
     this.isHydrated = true;
     if (isSupabaseEnabled) {
@@ -533,15 +691,17 @@ class StorageService {
         const keysToRemove: string[] = [];
         for (let i = 0; i < localStorage.length; i++) {
           const k = localStorage.key(i);
-          if (k && (k.startsWith('tn_assembly_') || k.includes('auth_session') || k.includes('user_session'))) {
+          if (k && (k.startsWith('tn_assembly_') || k.startsWith('tn_cache_') || k.startsWith('portal_') || k.startsWith('sync_') || k.startsWith('meta_') || k.includes('auth_session') || k.includes('user_session'))) {
             keysToRemove.push(k);
           }
         }
         keysToRemove.forEach(k => localStorage.removeItem(k));
+        localStorage.setItem(CACHE_VERSION_KEY, CACHE_VERSION);
       }
     } catch (e) {
       console.warn('Error wiping local cache:', e);
     }
+    this.invalidateCache();
     this.initDefaults();
     this.notify();
   }
@@ -1267,15 +1427,26 @@ class StorageService {
 
     const cacheKey = `sync_${targetEventId || 'global'}`;
     if (!force) {
-      const cached = this.getCached<boolean>(cacheKey);
-      if (cached) {
+      const cacheStatus = this.getCacheStatus(cacheKey);
+      if (cacheStatus.status === 'fresh') {
+        return;
+      }
+      if (cacheStatus.status === 'stale') {
+        // Stale-While-Revalidate: Trigger background fetch to update stale cache automatically
+        this.dedupeInFlight(cacheKey, () => this.executeSyncFromSupabase(targetEventId, cacheKey))
+          .catch(err => console.warn('[StorageService] SWR background sync error:', err));
         return;
       }
     }
 
-    return this.dedupeInFlight(cacheKey, async () => {
-      const currentVersion = ++this.syncVersion;
-      this.isSyncing = true;
+    return this.dedupeInFlight(cacheKey, () => this.executeSyncFromSupabase(targetEventId, cacheKey));
+  }
+
+  private async executeSyncFromSupabase(targetEventId?: string, cacheKey?: string): Promise<void> {
+    const sb = supabase;
+    if (!sb) return;
+    const currentVersion = ++this.syncVersion;
+    this.isSyncing = true;
 
     try {
       let eventsQuery = sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS);
@@ -1810,9 +1981,16 @@ class StorageService {
       this.isSyncing = false;
       this.isHydrated = true;
       this.syncError = hasQueryError ? 'Partial query warning' : null;
-      this.setCached(cacheKey, true);
+      if (cacheKey) {
+        this.setCacheEntry(cacheKey, {
+          targetEventId,
+          eventsCount: events?.length || 0,
+          learnersCount: learners?.length || 0
+        });
+      }
       this.cleanupAndDeduplicateData();
       this.notify();
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
     } catch (err: any) {
       console.error('Supabase Error [syncFromSupabase]:', err);
       if (currentVersion === this.syncVersion) {
@@ -1822,7 +2000,6 @@ class StorageService {
         this.notify();
       }
     }
-    });
   }
 
   /**
@@ -1833,6 +2010,9 @@ class StorageService {
     await this.syncFromSupabase(eventId, force);
   }
 
+  /**
+   * Fetch single event metadata by ID and unpack its social_coverage (proceedings, flash votes, elections).
+   */
   /**
    * Fetch single event metadata by ID and unpack its social_coverage (proceedings, flash votes, elections).
    */
@@ -1858,7 +2038,9 @@ class StorageService {
           this.setItem(STORAGE_KEYS.EVENTS, [...allEvs.filter(e => e.id !== ev.id), ev]);
           this.restoreJkkncetEvent();
           this.unpackAndApplyEventState([ev], eventId);
+          this.setCacheEntry(cacheKey, ev);
           this.notify();
+          if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
           return ev;
         }
       } catch (err) {
@@ -1873,227 +2055,287 @@ class StorageService {
    * Only fetches the student's own event, session agenda, event days, parties,
    * committees, their own learner record, and their own attendance record.
    * NEVER fetches coordinators, volunteers, jury members, or other learners.
+   * Utilizes Stale-While-Revalidate with 5-minute TTL.
    */
   public async fetchStudentPortalData(eventId: string, studentId: string, force = false): Promise<void> {
     const sb = supabase;
     if (!sb || !eventId) return;
     const cacheKey = `portal_student_${eventId}_${studentId}`;
-    if (!force && this.getCached<boolean>(cacheKey)) return;
 
-    return this.dedupeInFlight(cacheKey, async () => {
-      try {
-        const [
-          { data: evData },
-          { data: agendaData },
-          { data: daysData },
-          { data: partyData },
-          { data: commData },
-          { data: studentData },
-          { data: attData }
-        ] = await Promise.all([
-          sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS).eq('id', eventId).limit(1),
-          sb.from('session_agenda').select(SUPABASE_COLUMNS.SESSION_AGENDA).eq('event_id', eventId).order('time', { ascending: true }),
-          sb.from('event_days').select(SUPABASE_COLUMNS.EVENT_DAYS).eq('event_id', eventId).order('day_number', { ascending: true }),
-          sb.from('political_parties').select(SUPABASE_COLUMNS.POLITICAL_PARTIES).eq('event_id', eventId),
-          sb.from('committees').select(SUPABASE_COLUMNS.COMMITTEES).eq('event_id', eventId),
-          studentId ? sb.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('id', studentId).limit(1) : Promise.resolve({ data: null }),
-          studentId ? sb.from('event_day_attendance').select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE).eq('event_id', eventId).eq('student_id', studentId) : Promise.resolve({ data: null })
-        ]);
-
-        if (evData && evData.length > 0) {
-          const ev = evData[0] as unknown as CollegeEvent;
-          const curEvs = this.getEvents();
-          this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), ev]);
-          this.restoreJkkncetEvent();
-          this.unpackAndApplyEventState([ev], eventId);
-        }
-
-        if (agendaData) {
-          const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== eventId);
-          this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...(agendaData as unknown as AgendaItem[])]);
-        }
-
-        if (daysData) {
-          const otherDays = this.getEventDays().filter(d => d.event_id && d.event_id !== eventId);
-          this.setItem(STORAGE_KEYS.EVENT_DAYS, [...otherDays, ...(daysData as unknown as EventDay[])]);
-        }
-
-        if (partyData) {
-          const otherParties = this.getParties().filter(p => p.event_id && p.event_id !== eventId);
-          this.setItem(STORAGE_KEYS.PARTIES, [...otherParties, ...(partyData as unknown as Party[])]);
-        }
-
-        if (commData) {
-          const otherComms = this.getCommittees().filter(c => c.event_id && c.event_id !== eventId);
-          this.setItem(STORAGE_KEYS.COMMITTEES, [...otherComms, ...(commData as unknown as Committee[])]);
-        }
-
-        if (studentData && studentData.length > 0) {
-          const st = studentData[0] as unknown as Learner;
-          const curLearners = this.getLearners();
-          this.setItem(STORAGE_KEYS.LEARNERS, [...curLearners.filter(l => l.id !== st.id), st]);
-        }
-
-        if (attData) {
-          const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
-          const otherAtt = curAtt.filter(a => !(a.event_id === eventId && a.student_id === studentId));
-          this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...otherAtt, ...(attData as unknown as DayAttendanceRecord[])]);
-        }
-
-        this.setCached(cacheKey, true);
-        this.notify();
-      } catch (e) {
-        console.warn('[StorageService] fetchStudentPortalData error:', e);
+    if (!force) {
+      const cacheStatus = this.getCacheStatus(cacheKey);
+      if (cacheStatus.status === 'fresh') return;
+      if (cacheStatus.status === 'stale') {
+        // Stale-While-Revalidate: Trigger background fetch to update stale data automatically
+        this.dedupeInFlight(cacheKey, () => this.executeStudentPortalFetch(eventId, studentId, cacheKey))
+          .catch(err => console.warn('[StorageService] SWR background student fetch error:', err));
+        return;
       }
-    });
+    }
+
+    return this.dedupeInFlight(cacheKey, () => this.executeStudentPortalFetch(eventId, studentId, cacheKey));
+  }
+
+  private async executeStudentPortalFetch(eventId: string, studentId: string, cacheKey: string): Promise<void> {
+    const sb = supabase;
+    if (!sb || !eventId) return;
+    try {
+      const [
+        { data: evData },
+        { data: agendaData },
+        { data: daysData },
+        { data: partyData },
+        { data: commData },
+        { data: studentData },
+        { data: attData }
+      ] = await Promise.all([
+        sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS).eq('id', eventId).limit(1),
+        sb.from('session_agenda').select(SUPABASE_COLUMNS.SESSION_AGENDA).eq('event_id', eventId).order('time', { ascending: true }),
+        sb.from('event_days').select(SUPABASE_COLUMNS.EVENT_DAYS).eq('event_id', eventId).order('day_number', { ascending: true }),
+        sb.from('political_parties').select(SUPABASE_COLUMNS.POLITICAL_PARTIES).eq('event_id', eventId),
+        sb.from('committees').select(SUPABASE_COLUMNS.COMMITTEES).eq('event_id', eventId),
+        studentId ? sb.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('id', studentId).limit(1) : Promise.resolve({ data: null }),
+        studentId ? sb.from('event_day_attendance').select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE).eq('event_id', eventId).eq('student_id', studentId) : Promise.resolve({ data: null })
+      ]);
+
+      if (evData && evData.length > 0) {
+        const ev = evData[0] as unknown as CollegeEvent;
+        const curEvs = this.getEvents();
+        this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), ev]);
+        this.restoreJkkncetEvent();
+        this.unpackAndApplyEventState([ev], eventId);
+      }
+
+      if (agendaData) {
+        const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...(agendaData as unknown as AgendaItem[])]);
+      }
+
+      if (daysData) {
+        const otherDays = this.getEventDays().filter(d => d.event_id && d.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.EVENT_DAYS, [...otherDays, ...(daysData as unknown as EventDay[])]);
+      }
+
+      if (partyData) {
+        const otherParties = this.getParties().filter(p => p.event_id && p.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.PARTIES, [...otherParties, ...(partyData as unknown as Party[])]);
+      }
+
+      if (commData) {
+        const otherComms = this.getCommittees().filter(c => c.event_id && c.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.COMMITTEES, [...otherComms, ...(commData as unknown as Committee[])]);
+      }
+
+      if (studentData && studentData.length > 0) {
+        const st = studentData[0] as unknown as Learner;
+        const curLearners = this.getLearners();
+        this.setItem(STORAGE_KEYS.LEARNERS, [...curLearners.filter(l => l.id !== st.id), st]);
+      }
+
+      if (attData) {
+        const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+        const otherAtt = curAtt.filter(a => !(a.event_id === eventId && a.student_id === studentId));
+        this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...otherAtt, ...(attData as unknown as DayAttendanceRecord[])]);
+      }
+
+      this.setCacheEntry(cacheKey, {
+        eventId,
+        studentId,
+        hasEvent: !!(evData && evData.length > 0)
+      });
+      this.notify();
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+    } catch (e) {
+      console.warn('[StorageService] fetchStudentPortalData error:', e);
+    }
   }
 
   /**
    * Dedicated fetch for Jury Member portal.
    * Fetches the jury member's event, agenda, days, assigned candidate learners, and parties.
    * NEVER fetches coordinators, volunteers, or other events.
+   * Utilizes Stale-While-Revalidate with 5-minute TTL.
    */
   public async fetchJuryPortalData(eventId: string, juryId: string, force = false): Promise<void> {
     const sb = supabase;
     if (!sb || !eventId) return;
     const cacheKey = `portal_jury_${eventId}_${juryId}`;
-    if (!force && this.getCached<boolean>(cacheKey)) return;
 
-    return this.dedupeInFlight(cacheKey, async () => {
-      try {
-        const [
-          { data: evData },
-          { data: agendaData },
-          { data: daysData },
-          { data: juryData },
-          { data: learnersData },
-          { data: partyData }
-        ] = await Promise.all([
-          sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS).eq('id', eventId).limit(1),
-          sb.from('session_agenda').select(SUPABASE_COLUMNS.SESSION_AGENDA).eq('event_id', eventId).order('time', { ascending: true }),
-          sb.from('event_days').select(SUPABASE_COLUMNS.EVENT_DAYS).eq('event_id', eventId).order('day_number', { ascending: true }),
-          juryId ? sb.from('jury_members').select(SUPABASE_COLUMNS.JURY_MEMBERS).eq('id', juryId).limit(1) : Promise.resolve({ data: null }),
-          sb.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('event_id', eventId),
-          sb.from('political_parties').select(SUPABASE_COLUMNS.POLITICAL_PARTIES).eq('event_id', eventId)
-        ]);
-
-        if (evData && evData.length > 0) {
-          const ev = evData[0] as unknown as CollegeEvent;
-          const curEvs = this.getEvents();
-          this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), ev]);
-          this.restoreJkkncetEvent();
-          this.unpackAndApplyEventState([ev], eventId);
-        }
-
-        if (agendaData) {
-          const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== eventId);
-          this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...(agendaData as unknown as AgendaItem[])]);
-        }
-
-        if (daysData) {
-          const otherDays = this.getEventDays().filter(d => d.event_id && d.event_id !== eventId);
-          this.setItem(STORAGE_KEYS.EVENT_DAYS, [...otherDays, ...(daysData as unknown as EventDay[])]);
-        }
-
-        if (juryData && juryData.length > 0) {
-          const curJury = this.getJury();
-          const jm = juryData[0] as unknown as JuryMember;
-          this.setItem(STORAGE_KEYS.JURY, [...curJury.filter(j => j.id !== jm.id), jm]);
-        }
-
-        if (learnersData) {
-          const otherLearners = this.getLearners().filter(l => l.event_id && l.event_id !== eventId);
-          this.setItem(STORAGE_KEYS.LEARNERS, [...otherLearners, ...(learnersData as unknown as Learner[])]);
-        }
-
-        if (partyData) {
-          const otherParties = this.getParties().filter(p => p.event_id && p.event_id !== eventId);
-          this.setItem(STORAGE_KEYS.PARTIES, [...otherParties, ...(partyData as unknown as Party[])]);
-        }
-
-        this.setCached(cacheKey, true);
-        this.notify();
-      } catch (e) {
-        console.warn('[StorageService] fetchJuryPortalData error:', e);
+    if (!force) {
+      const cacheStatus = this.getCacheStatus(cacheKey);
+      if (cacheStatus.status === 'fresh') return;
+      if (cacheStatus.status === 'stale') {
+        // Stale-While-Revalidate: Trigger background fetch to update stale data automatically
+        this.dedupeInFlight(cacheKey, () => this.executeJuryPortalFetch(eventId, juryId, cacheKey))
+          .catch(err => console.warn('[StorageService] SWR background jury fetch error:', err));
+        return;
       }
-    });
+    }
+
+    return this.dedupeInFlight(cacheKey, () => this.executeJuryPortalFetch(eventId, juryId, cacheKey));
+  }
+
+  private async executeJuryPortalFetch(eventId: string, juryId: string, cacheKey: string): Promise<void> {
+    const sb = supabase;
+    if (!sb || !eventId) return;
+    try {
+      const [
+        { data: evData },
+        { data: agendaData },
+        { data: daysData },
+        { data: juryData },
+        { data: learnersData },
+        { data: partyData }
+      ] = await Promise.all([
+        sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS).eq('id', eventId).limit(1),
+        sb.from('session_agenda').select(SUPABASE_COLUMNS.SESSION_AGENDA).eq('event_id', eventId).order('time', { ascending: true }),
+        sb.from('event_days').select(SUPABASE_COLUMNS.EVENT_DAYS).eq('event_id', eventId).order('day_number', { ascending: true }),
+        juryId ? sb.from('jury_members').select(SUPABASE_COLUMNS.JURY_MEMBERS).eq('id', juryId).limit(1) : Promise.resolve({ data: null }),
+        sb.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('event_id', eventId),
+        sb.from('political_parties').select(SUPABASE_COLUMNS.POLITICAL_PARTIES).eq('event_id', eventId)
+      ]);
+
+      if (evData && evData.length > 0) {
+        const ev = evData[0] as unknown as CollegeEvent;
+        const curEvs = this.getEvents();
+        this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), ev]);
+        this.restoreJkkncetEvent();
+        this.unpackAndApplyEventState([ev], eventId);
+      }
+
+      if (agendaData) {
+        const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...(agendaData as unknown as AgendaItem[])]);
+      }
+
+      if (daysData) {
+        const otherDays = this.getEventDays().filter(d => d.event_id && d.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.EVENT_DAYS, [...otherDays, ...(daysData as unknown as EventDay[])]);
+      }
+
+      if (juryData && juryData.length > 0) {
+        const curJury = this.getJury();
+        const jm = juryData[0] as unknown as JuryMember;
+        this.setItem(STORAGE_KEYS.JURY, [...curJury.filter(j => j.id !== jm.id), jm]);
+      }
+
+      if (learnersData) {
+        const otherLearners = this.getLearners().filter(l => l.event_id && l.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.LEARNERS, [...otherLearners, ...(learnersData as unknown as Learner[])]);
+      }
+
+      if (partyData) {
+        const otherParties = this.getParties().filter(p => p.event_id && p.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.PARTIES, [...otherParties, ...(partyData as unknown as Party[])]);
+      }
+
+      this.setCacheEntry(cacheKey, {
+        eventId,
+        juryId,
+        hasEvent: !!(evData && evData.length > 0)
+      });
+      this.notify();
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+    } catch (e) {
+      console.warn('[StorageService] fetchJuryPortalData error:', e);
+    }
   }
 
   /**
    * Dedicated fetch for Volunteer Operations Desk.
    * Fetches event, event days, learners, attendance, parties, committees, and volunteers for that event.
    * NEVER fetches coordinators, session agenda, or jury members.
+   * Utilizes Stale-While-Revalidate with 5-minute TTL.
    */
   public async fetchVolunteerPortalData(eventId: string, volunteerId: string, force = false): Promise<void> {
     const sb = supabase;
     if (!sb || !eventId) return;
     const cacheKey = `portal_volunteer_${eventId}_${volunteerId}`;
-    if (!force && this.getCached<boolean>(cacheKey)) return;
 
-    return this.dedupeInFlight(cacheKey, async () => {
-      try {
-        const [
-          { data: evData },
-          { data: daysData },
-          { data: learnersData },
-          { data: attData },
-          { data: partyData },
-          { data: commData },
-          { data: volData }
-        ] = await Promise.all([
-          sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS).eq('id', eventId).limit(1),
-          sb.from('event_days').select(SUPABASE_COLUMNS.EVENT_DAYS).eq('event_id', eventId).order('day_number', { ascending: true }),
-          sb.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('event_id', eventId),
-          sb.from('event_day_attendance').select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE).eq('event_id', eventId),
-          sb.from('political_parties').select(SUPABASE_COLUMNS.POLITICAL_PARTIES).eq('event_id', eventId),
-          sb.from('committees').select(SUPABASE_COLUMNS.COMMITTEES).eq('event_id', eventId),
-          sb.from('volunteers').select(SUPABASE_COLUMNS.VOLUNTEERS).eq('event_id', eventId)
-        ]);
-
-        if (evData && evData.length > 0) {
-          const ev = evData[0] as unknown as CollegeEvent;
-          const curEvs = this.getEvents();
-          this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), ev]);
-          this.restoreJkkncetEvent();
-          this.unpackAndApplyEventState([ev], eventId);
-        }
-
-        if (daysData) {
-          const otherDays = this.getEventDays().filter(d => d.event_id && d.event_id !== eventId);
-          this.setItem(STORAGE_KEYS.EVENT_DAYS, [...otherDays, ...(daysData as unknown as EventDay[])]);
-        }
-
-        if (learnersData) {
-          const otherLearners = this.getLearners().filter(l => l.event_id && l.event_id !== eventId);
-          this.setItem(STORAGE_KEYS.LEARNERS, [...otherLearners, ...(learnersData as unknown as Learner[])]);
-        }
-
-        if (attData) {
-          const otherAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []).filter(a => a.event_id && a.event_id !== eventId);
-          this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...otherAtt, ...(attData as unknown as DayAttendanceRecord[])]);
-        }
-
-        if (partyData) {
-          const otherParties = this.getParties().filter(p => p.event_id && p.event_id !== eventId);
-          this.setItem(STORAGE_KEYS.PARTIES, [...otherParties, ...(partyData as unknown as Party[])]);
-        }
-
-        if (commData) {
-          const otherComms = this.getCommittees().filter(c => c.event_id && c.event_id !== eventId);
-          this.setItem(STORAGE_KEYS.COMMITTEES, [...otherComms, ...(commData as unknown as Committee[])]);
-        }
-
-        if (volData) {
-          const otherVols = this.getVolunteers().filter(v => v.event_id && v.event_id !== eventId);
-          this.setItem(STORAGE_KEYS.VOLUNTEERS, [...otherVols, ...(volData as unknown as Volunteer[])]);
-        }
-
-        this.setCached(cacheKey, true);
-        this.notify();
-      } catch (e) {
-        console.warn('[StorageService] fetchVolunteerPortalData error:', e);
+    if (!force) {
+      const cacheStatus = this.getCacheStatus(cacheKey);
+      if (cacheStatus.status === 'fresh') return;
+      if (cacheStatus.status === 'stale') {
+        // Stale-While-Revalidate: Trigger background fetch to update stale data automatically
+        this.dedupeInFlight(cacheKey, () => this.executeVolunteerPortalFetch(eventId, volunteerId, cacheKey))
+          .catch(err => console.warn('[StorageService] SWR background volunteer fetch error:', err));
+        return;
       }
-    });
+    }
+
+    return this.dedupeInFlight(cacheKey, () => this.executeVolunteerPortalFetch(eventId, volunteerId, cacheKey));
+  }
+
+  private async executeVolunteerPortalFetch(eventId: string, volunteerId: string, cacheKey: string): Promise<void> {
+    const sb = supabase;
+    if (!sb || !eventId) return;
+    try {
+      const [
+        { data: evData },
+        { data: daysData },
+        { data: learnersData },
+        { data: attData },
+        { data: partyData },
+        { data: commData },
+        { data: volData }
+      ] = await Promise.all([
+        sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS).eq('id', eventId).limit(1),
+        sb.from('event_days').select(SUPABASE_COLUMNS.EVENT_DAYS).eq('event_id', eventId).order('day_number', { ascending: true }),
+        sb.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('event_id', eventId),
+        sb.from('event_day_attendance').select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE).eq('event_id', eventId),
+        sb.from('political_parties').select(SUPABASE_COLUMNS.POLITICAL_PARTIES).eq('event_id', eventId),
+        sb.from('committees').select(SUPABASE_COLUMNS.COMMITTEES).eq('event_id', eventId),
+        sb.from('volunteers').select(SUPABASE_COLUMNS.VOLUNTEERS).eq('event_id', eventId)
+      ]);
+
+      if (evData && evData.length > 0) {
+        const ev = evData[0] as unknown as CollegeEvent;
+        const curEvs = this.getEvents();
+        this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), ev]);
+        this.restoreJkkncetEvent();
+        this.unpackAndApplyEventState([ev], eventId);
+      }
+
+      if (daysData) {
+        const otherDays = this.getEventDays().filter(d => d.event_id && d.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.EVENT_DAYS, [...otherDays, ...(daysData as unknown as EventDay[])]);
+      }
+
+      if (learnersData) {
+        const otherLearners = this.getLearners().filter(l => l.event_id && l.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.LEARNERS, [...otherLearners, ...(learnersData as unknown as Learner[])]);
+      }
+
+      if (attData) {
+        const otherAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []).filter(a => a.event_id && a.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...otherAtt, ...(attData as unknown as DayAttendanceRecord[])]);
+      }
+
+      if (partyData) {
+        const otherParties = this.getParties().filter(p => p.event_id && p.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.PARTIES, [...otherParties, ...(partyData as unknown as Party[])]);
+      }
+
+      if (commData) {
+        const otherComms = this.getCommittees().filter(c => c.event_id && c.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.COMMITTEES, [...otherComms, ...(commData as unknown as Committee[])]);
+      }
+
+      if (volData) {
+        const otherVols = this.getVolunteers().filter(v => v.event_id && v.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.VOLUNTEERS, [...otherVols, ...(volData as unknown as Volunteer[])]);
+      }
+
+      this.setCacheEntry(cacheKey, {
+        eventId,
+        volunteerId,
+        hasEvent: !!(evData && evData.length > 0)
+      });
+      this.notify();
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+    } catch (e) {
+      console.warn('[StorageService] fetchVolunteerPortalData error:', e);
+    }
   }
 
   /**
@@ -2207,6 +2449,8 @@ class StorageService {
         .on('postgres_changes', { event: '*', schema: 'public', table: 'college_events' }, (payload: any) => {
           this.invalidateCache('events');
           this.invalidateCache('portal_');
+          this.invalidateCache('sync_');
+          this.invalidateCache('meta_');
           if (payload?.new && payload.new.id) {
             const ev = payload.new as CollegeEvent;
             const curEvs = this.getEvents();
@@ -2217,11 +2461,29 @@ class StorageService {
             if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
           }
         })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'learners' }, () => {
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'learners' }, (payload: any) => {
           this.invalidateCache('learners');
+          this.invalidateCache('portal_');
+          this.invalidateCache('sync_');
+          if (payload?.new && payload.new.id) {
+            const st = payload.new as Learner;
+            const curLearners = this.getLearners();
+            this.setItem(STORAGE_KEYS.LEARNERS, [...curLearners.filter(l => l.id !== st.id), st]);
+            this.notify();
+            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+          }
         })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'event_day_attendance' }, () => {
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'event_day_attendance' }, (payload: any) => {
           this.invalidateCache('attendance');
+          this.invalidateCache('portal_');
+          this.invalidateCache('sync_');
+          if (payload?.new && payload.new.id) {
+            const rec = payload.new as DayAttendanceRecord;
+            const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+            this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...curAtt.filter(a => a.id !== rec.id), rec]);
+            this.notify();
+            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+          }
         })
         .subscribe();
     } catch (e) {

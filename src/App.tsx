@@ -1377,8 +1377,12 @@ export function App() {
       }
     };
 
-    // Initial fetch on mount or session change (uses cache if fresh)
-    performRoleFetch(false);
+    // Initial fetch on mount or session change (uses cache if fresh, forces clean if cache was migrated)
+    const shouldForce = storageService.wasCacheMigrated;
+    performRoleFetch(shouldForce);
+    if (shouldForce) {
+      storageService.wasCacheMigrated = false;
+    }
 
     // Smart Visibility Re-fetch (Zero polling heartbeat to prevent Supabase egress overages)
     // Only re-fetch when student/user returns to tab, throttled to at most once every 60 seconds
