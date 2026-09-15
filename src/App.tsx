@@ -70,6 +70,7 @@ import { StudentJoinView } from './components/student/StudentJoinModal';
 import { JuryDashboard } from './components/jury/JuryDashboard';
 import { VolunteerDashboard } from './components/volunteer/VolunteerDashboard';
 import { presenceService, type PresenceUser } from './services/presenceService';
+import { isSupabaseEnabled } from './lib/supabase';
 
 const SESSION_KEY = 'tn_assembly_auth_session';
 
@@ -1042,7 +1043,7 @@ export function App() {
 
     const urlEvent = extractEventFromUrl(evs);
     const activeId = targetEventId || urlEvent?.id || currentEventRef.current?.id || savedEventId;
-    let activeEv = evs.find(e => e.id === activeId) || urlEvent || evs[0];
+    let activeEv = evs.find(e => e.id === activeId) || urlEvent || evs.find(e => (e as any).is_active) || evs[0];
 
     if (activeEv) {
       setCurrentEvent(activeEv);
@@ -1112,6 +1113,16 @@ export function App() {
     const unsubscribe = storageService.subscribe(() => {
       loadState();
     });
+
+    // Unconditional initial sync: fetch events from Supabase on mount
+    // regardless of auth state, so the events list is populated before login
+    if (isSupabaseEnabled) {
+      storageService.syncFromSupabase(undefined, true).then(() => {
+        loadState();
+      }).catch(err => {
+        console.warn('[App] Initial Supabase sync warning:', err);
+      });
+    }
 
     storageService.setWriteErrorHandler((table, action, error) => {
       const friendlyTable = table.replace(/_/g, ' ');
@@ -2101,6 +2112,12 @@ export function App() {
               saveSession({ role: 'super_admin', email: emailInput, name: 'Super Admin', activeNavTab: 'overview' });
               setActiveNavTab('events_dashboard');
               saveSession({ role: 'super_admin', email: emailInput, name: 'Super Admin', activeNavTab: 'events_dashboard' });
+              // Force sync events from Supabase immediately after super admin login
+              if (isSupabaseEnabled) {
+                storageService.syncFromSupabase(undefined, true).then(() => {
+                  loadState();
+                }).catch(err => console.warn('[App] Super admin sync warning:', err));
+              }
               return sess;
             }
 
@@ -2224,9 +2241,15 @@ export function App() {
           }}
           onLoginAccessCode={async (code: string): Promise<any> => {
             const cleanCode = code.trim().toUpperCase();
-            const targetEventId = currentEvent?.id;
-            const authRes = await storageService.authenticateAccessCodeAsync(cleanCode, targetEventId);
+            // Don't filter by undefined eventId — let the access code
+            // query search across ALL events in Supabase
+            const authRes = await storageService.authenticateAccessCodeAsync(cleanCode, currentEvent?.id);
             if (!authRes) return null;
+            // Ensure the matched event is fully loaded into state
+            if (authRes.eventId && isSupabaseEnabled) {
+              await storageService.syncFromSupabase(authRes.eventId, true);
+              loadState(authRes.eventId);
+            }
             return handleAccessCodeLogin(authRes);
           }}
           onShowToast={addToast}

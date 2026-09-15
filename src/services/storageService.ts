@@ -655,6 +655,13 @@ class StorageService {
     this.isHydrated = true;
     if (isSupabaseEnabled) {
       this.setupRealtimeSync();
+      // Always trigger an initial background fetch so events are populated from Supabase
+      // even on first visit with empty localStorage (INITIAL_EVENTS is [])
+      setTimeout(() => {
+        this.syncFromSupabase(undefined, false).catch(err =>
+          console.warn('[StorageService] Initial background sync warning:', err)
+        );
+      }, 0);
     }
     if (typeof window !== 'undefined') {
       window.addEventListener('storage', (event) => {
@@ -3420,6 +3427,10 @@ class StorageService {
             this.setItem(STORAGE_KEYS.VOLUNTEERS, [...vols, matchedVol as unknown as Volunteer]);
           }
           await this.fetchEventMetadata(matchedVol.event_id);
+          // Ensure the event and its associated data are fully loaded
+          if (!this.getEvents().some(e => e.id === matchedVol.event_id)) {
+            await this.syncFromSupabase(matchedVol.event_id, true);
+          }
           return this.authenticateAccessCode(accessCode, targetEventId);
         }
       }
@@ -3442,6 +3453,10 @@ class StorageService {
             this.setItem(STORAGE_KEYS.JURY, [...juries, matchedJury as unknown as JuryMember]);
           }
           await this.fetchEventMetadata(matchedJury.event_id);
+          // Ensure the event and its associated data are fully loaded
+          if (!this.getEvents().some(e => e.id === matchedJury.event_id)) {
+            await this.syncFromSupabase(matchedJury.event_id, true);
+          }
           return this.authenticateAccessCode(accessCode, targetEventId);
         }
       }
@@ -3458,6 +3473,10 @@ class StorageService {
           this.setItem(STORAGE_KEYS.LEARNERS, [...learners, matchedLearner]);
         }
         await this.fetchEventMetadata(matchedLearner.event_id);
+        // Ensure the event and its associated data are fully loaded
+        if (!this.getEvents().some(e => e.id === matchedLearner.event_id)) {
+          await this.syncFromSupabase(matchedLearner.event_id, true);
+        }
         return this.authenticateAccessCode(accessCode, targetEventId);
       }
     } catch (authErr) {
