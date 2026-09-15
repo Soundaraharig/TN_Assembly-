@@ -264,7 +264,10 @@ interface EventTabRouteHandlerProps {
 function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
   const { eventSlug, tab } = useParams<{ eventSlug: string; tab: string }>();
   const preferredEventId = props.userSession?.assigned_event_ids?.[0] || props.currentEvent?.id;
-  const matchedEvent = findEventBySlug(props.events, eventSlug, preferredEventId);
+  const allKnownEvents = props.events.length > 0 ? props.events : storageService.getEvents();
+  const matchedEvent = findEventBySlug(allKnownEvents, eventSlug, preferredEventId);
+  const isUuid = Boolean(eventSlug && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(eventSlug));
+  const activeEventId = matchedEvent?.id || (isUuid ? eventSlug : undefined) || props.currentEvent?.id || preferredEventId;
 
   useEffect(() => {
     if (props.events.length > 0 && !matchedEvent) {
@@ -291,17 +294,17 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
 
   // SAFE fallback: only use matchedEvent or currentEvent; NEVER blindly pick events[0]
   // to prevent cross-event contamination (e.g. showing JKKN ARTS data in JKKNCET view)
-  const activeEvent = matchedEvent || props.currentEvent || props.events.find(e => e.id === preferredEventId);
-  const hydratedEventsRef = useRef<Set<string>>(new Set());
+  const activeEvent = matchedEvent || props.events.find(e => e.id === activeEventId) || props.currentEvent || storageService.getEvents().find(e => e.id === activeEventId);
 
   useEffect(() => {
-    if (activeEvent?.id && isSupabaseEnabled) {
-      if (!hydratedEventsRef.current.has(activeEvent.id) && !storageService.isEventHydrated(activeEvent.id)) {
-        hydratedEventsRef.current.add(activeEvent.id);
-        storageService.hydrateFullEventData(activeEvent.id);
+    if (activeEventId && isSupabaseEnabled) {
+      storageService.fetchEventLearners(activeEventId);
+      const currentDelegates = storageService.getLearners(activeEventId);
+      if (currentDelegates.length === 0 || !storageService.isEventHydrated(activeEventId)) {
+        storageService.hydrateFullEventData(activeEventId);
       }
     }
-  }, [activeEvent?.id]);
+  }, [activeEventId]);
 
   // Strictly event-scoped records computed synchronously so child views and tabs NEVER cross-bleed data across events
   const currentLearners = useMemo(() => {
@@ -450,7 +453,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
       {activeTabFromPath === 'overview' && (
         <EventOverviewTab
           event={activeEvent}
-          participantCount={storageService.getTotalAssignedCount(activeEvent.id || '')}
+          participantCount={currentLearners.length || storageService.getLearners(activeEvent.id || '').length || activeEvent.participant_count || 0}
           electionsCount={props.elections.filter(e => e.event_id === activeEvent.id || !e.event_id).length || activeEvent.elections_count || 3}
           onUpdateEvent={(upd) => {
             storageService.updateEvent(upd);

@@ -2087,6 +2087,65 @@ class StorageService {
   }
 
   /**
+   * Directly fetches learners for an event from Supabase, including legacy/unassigned delegates.
+   * Commits them to reactive storage (STORAGE_KEYS.LEARNERS) and notifies subscribers.
+   */
+  public async fetchEventLearners(eventId: string, force = false): Promise<Learner[]> {
+    const sb = supabase;
+    if (!sb || !eventId) return this.getLearners(eventId);
+
+    if (!force && this.getLearners(eventId).length > 0) {
+      return this.getLearners(eventId);
+    }
+
+    const cacheKey = `fetch_learners_${eventId}`;
+    return this.dedupeInFlight(cacheKey, async () => {
+      try {
+        let learnersData: any[] | null = null;
+        // Query learners for this event, including legacy delegates with null event_id
+        const { data, error } = await sb
+          .from('learners')
+          .select('*')
+          .or(`event_id.eq.${eventId},event_id.is.null`);
+
+        if (!error && data && Array.isArray(data)) {
+          learnersData = data;
+        } else {
+          if (error) {
+            console.warn('[StorageService] fetchEventLearners .or query warning, falling back to eq:', error.message);
+          }
+          const { data: eqData, error: eqErr } = await sb
+            .from('learners')
+            .select('*')
+            .eq('event_id', eventId);
+          if (!eqErr && eqData && Array.isArray(eqData)) {
+            learnersData = eqData;
+          }
+        }
+
+        if (learnersData && Array.isArray(learnersData)) {
+          // Normalize null event_id to this eventId
+          const normalized: Learner[] = learnersData.map((l: any) => ({
+            ...l,
+            event_id: l.event_id || eventId
+          }));
+
+          const curLearners = this.getLearners();
+          const otherLearners = curLearners.filter(l => l.event_id && l.event_id !== eventId);
+          const merged = sortLearnersStably([...otherLearners, ...normalized]);
+          this.setItem(STORAGE_KEYS.LEARNERS, merged);
+          this.notify();
+          if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+          return this.getLearners(eventId);
+        }
+      } catch (err) {
+        console.error('[StorageService] fetchEventLearners fatal error:', err);
+      }
+      return this.getLearners(eventId);
+    });
+  }
+
+  /**
    * Complete event hydration on selection (Part 2):
    * Fetches ALL child data matching this eventId from Supabase:
    * - learners
@@ -2103,7 +2162,8 @@ class StorageService {
     const sb = supabase;
     if (!sb || !eventId) return false;
 
-    if (!force && this.hydratedEventIds.has(eventId)) {
+    const existingLearners = this.getLearners(eventId);
+    if (!force && this.hydratedEventIds.has(eventId) && existingLearners.length > 0) {
       return true;
     }
 
@@ -2117,15 +2177,21 @@ class StorageService {
 
     const cacheKey = `hydrate_full_${eventId}`;
     return this.dedupeInFlight(cacheKey, async () => {
-      if (!force && this.hydratedEventIds.has(eventId)) {
+      if (!force && this.hydratedEventIds.has(eventId) && this.getLearners(eventId).length > 0) {
         return true;
       }
       try {
         // Fetch event metadata to unpack social_coverage
         const eventPromise = sb.from('college_events').select('*').eq('id', eventId).maybeSingle();
 
-        // Fetch all delegates/participants
-        const learnersPromise = sb.from('learners').select('*').eq('event_id', eventId);
+        // Fetch all delegates/participants (including legacy delegates with null event_id)
+        const learnersPromise = (async () => {
+          try {
+            const res = await sb.from('learners').select('*').or(`event_id.eq.${eventId},event_id.is.null`);
+            if (!res.error && res.data) return res;
+          } catch {}
+          return await sb.from('learners').select('*').eq('event_id', eventId);
+        })();
 
         // Fetch agenda schedule
         const agendaPromise = sb.from('session_agenda').select('*').eq('event_id', eventId);
@@ -2175,8 +2241,12 @@ class StorageService {
 
         // 2. Commit delegates/learners
         if (learnersData && Array.isArray(learnersData)) {
+          const normalized = (learnersData as any[]).map(l => ({
+            ...l,
+            event_id: l.event_id || eventId
+          }));
           const otherLearners = this.getLearners().filter(l => l.event_id && l.event_id !== eventId);
-          const mergedLearners = [...otherLearners, ...(learnersData as unknown as Learner[])];
+          const mergedLearners = [...otherLearners, ...(normalized as unknown as Learner[])];
           this.setItem(STORAGE_KEYS.LEARNERS, sortLearnersStably(mergedLearners));
         }
 

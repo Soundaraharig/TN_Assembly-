@@ -1,6 +1,7 @@
 import React from 'react';
 import type { CollegeEvent } from '../../types';
 import { Calendar, MapPin, Users, Vote, Lock, Play, CheckCircle2, Zap, Shield, Sparkles } from 'lucide-react';
+import { storageService } from '../../services/storageService';
 
 interface EventOverviewTabProps {
   event: CollegeEvent;
@@ -19,6 +20,26 @@ export const EventOverviewTab: React.FC<EventOverviewTabProps> = ({
   onNavigateTab,
   onShowToast
 }) => {
+  const [delegatesCount, setDelegatesCount] = React.useState<number>(() => {
+    const direct = storageService.getLearners(event?.id).length;
+    return direct || participantCount || event?.participant_count || 0;
+  });
+
+  React.useEffect(() => {
+    if (event?.id) {
+      const updateCount = () => {
+        const direct = storageService.getLearners(event.id).length;
+        setDelegatesCount(direct || event.participant_count || participantCount || 0);
+      };
+      updateCount();
+      storageService.fetchEventLearners(event.id).then(() => {
+        updateCount();
+      });
+      const unsub = storageService.subscribe(updateCount);
+      return unsub;
+    }
+  }, [event?.id, participantCount, event?.participant_count]);
+
   const handleToggleLock = (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     const updated = { ...event, is_locked: !event.is_locked };
@@ -36,7 +57,7 @@ export const EventOverviewTab: React.FC<EventOverviewTabProps> = ({
     onShowToast('House in Session', 'Day 1 of the Youth Parliament has commenced!', 'success');
   };
 
-  const displayCount = participantCount;
+  const displayCount = delegatesCount;
 
   return (
     <div className="space-y-6 animate-fade-in">

@@ -92,6 +92,12 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
     const unsub = storageService.subscribe(updateLocks);
     return unsub;
   }, [eventId]);
+
+  useEffect(() => {
+    if (eventId) {
+      storageService.fetchEventLearners(eventId);
+    }
+  }, [eventId]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusPill, setStatusPill] = useState<'ALL' | 'CHECKED_IN' | 'NOT_CHECKED_IN'>('ALL');
   const [dayPill, setDayPill] = useState<'Day 1' | 'Day 2' | 'Either'>('Day 1');
