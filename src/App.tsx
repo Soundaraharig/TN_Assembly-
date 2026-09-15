@@ -725,6 +725,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           flashVotes={currentFlashVotes}
           learners={currentLearners}
           parties={currentParties}
+          committees={currentCommittees}
           nominations={currentNominations}
           eventId={activeEvent.id}
           onCastVote={(elecId, candId, delId) => {

@@ -143,8 +143,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   }, [eventSlug, targetEventId, student.id, student.full_name, event?.id]);
 
   // Derived live voting lists
-  const liveElections = useMemo(() => syncedElections.filter(e => e.status === 'Live'), [syncedElections]);
-  const activeFlashVotes = useMemo(() => syncedFlashVotes.filter(f => f.status === 'ACTIVE'), [syncedFlashVotes]);
+  const liveElections = useMemo(() => syncedElections.filter(e => e.status === 'Live' || e.status === 'live'), [syncedElections]);
+  const activeFlashVotes = useMemo(() => syncedFlashVotes.filter(f => f.status === 'ACTIVE' || (f.status as string) === 'active'), [syncedFlashVotes]);
 
   const hasLiveVoting = useMemo(() => {
     return liveElections.length > 0 || activeFlashVotes.length > 0;
@@ -239,13 +239,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   // Open positions that this student has NOT yet nominated for (1 nomination per member per post)
   const availableNominationPositions = useMemo(() => {
-    return openNominationPositions.filter(pos => !myNominatedPositions.has(pos as NominationPosition));
+    return openNominationPositions.filter(pos => !myNominatedPositions.has(pos as any));
   }, [openNominationPositions, myNominatedPositions]);
 
-  // Synchronize selected position whenever available positions list updates
+  // Default selected nomination position to the first available open position
   useEffect(() => {
-    if (availableNominationPositions && availableNominationPositions.length > 0) {
-      if (!availableNominationPositions.includes(selectedNomPosition)) {
+    if (availableNominationPositions.length > 0) {
+      if (!selectedNomPosition || !availableNominationPositions.includes(selectedNomPosition)) {
         setSelectedNomPosition(availableNominationPositions[0]);
       }
     }
@@ -255,6 +255,41 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   // Check electorate eligibility for a student
   const isStudentEligibleForElection = (elec: Election): { eligible: boolean; reason?: string } => {
+    // 1. Explicit Eligibility Filter configured on ballot
+    if (elec.eligibility) {
+      if (elec.eligibility.scope === 'all') {
+        return { eligible: true };
+      }
+      if (elec.eligibility.scope === 'party') {
+        const matchesParty = student.party_id
+          ? student.party_id === elec.eligibility.targetId
+          : student.party_name && elec.eligibility.targetName && student.party_name.toLowerCase() === elec.eligibility.targetName.toLowerCase();
+        if (matchesParty) {
+          return { eligible: true };
+        }
+        const targetDesc = elec.eligibility.targetName || 'the assigned political party';
+        return {
+          eligible: false,
+          reason: `Active Ballot in Progress: Restricted to ${targetDesc}. Your bench is not participating in this vote.`
+        };
+      }
+      if (elec.eligibility.scope === 'committee') {
+        const studentCommitteeId = (student as any).committee_id;
+        const studentCommitteeName = (student as any).committee_name;
+        const matchesCommittee = studentCommitteeId
+          ? studentCommitteeId === elec.eligibility.targetId
+          : studentCommitteeName && elec.eligibility.targetName && studentCommitteeName.toLowerCase() === elec.eligibility.targetName.toLowerCase();
+        if (matchesCommittee) {
+          return { eligible: true };
+        }
+        const targetDesc = elec.eligibility.targetName || 'the assigned committee';
+        return {
+          eligible: false,
+          reason: `Active Ballot in Progress: Restricted to ${targetDesc}. Your bench is not participating in this vote.`
+        };
+      }
+    }
+
     const title = (elec.title || '').toLowerCase();
     const pos = (elec.position || '').toLowerCase();
 
@@ -263,19 +298,29 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       if (student.party_name && title.includes(student.party_name.toLowerCase())) {
         return { eligible: true };
       }
-      return { eligible: false, reason: 'Restricted to members of that specific political party.' };
+      const pMatch = elec.title.replace(/\s+leader election$/i, '').replace(/\s+party leader$/i, '').trim();
+      return {
+        eligible: false,
+        reason: `Active Ballot in Progress: Restricted to ${pMatch || 'Party'}. Your bench is not participating in this vote.`
+      };
     }
 
     if (pos.includes('opposition') || title.includes('opposition') || title.includes('lop')) {
       if (student.bench !== 'Opposition') {
-        return { eligible: false, reason: 'Restricted to Opposition Bench MLAs only.' };
+        return {
+          eligible: false,
+          reason: 'Active Ballot in Progress: Restricted to Opposition Bench MLAs. Your bench is not participating in this vote.'
+        };
       }
       return { eligible: true };
     }
 
     if (pos.includes('ruling') || title.includes('ruling') || title.includes('chief minister') || title.includes('prime minister')) {
       if (student.bench !== 'Ruling') {
-        return { eligible: false, reason: 'Restricted to Ruling Bench MLAs only.' };
+        return {
+          eligible: false,
+          reason: 'Active Ballot in Progress: Restricted to Ruling Bench MLAs. Your bench is not participating in this vote.'
+        };
       }
       return { eligible: true };
     }
@@ -565,7 +610,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <div className="space-y-6">
                 {liveElections.map((elec) => {
                   const eligibleCheck = isStudentEligibleForElection(elec);
-                  const hasVoted = elec.voted_delegate_ids?.includes(student.id);
+                  const hasVoted = elec.voted_delegate_ids?.includes(student.id) || (elec as any).votedLearnerIds?.includes(student.id);
 
                   return (
                     <div
@@ -594,61 +639,61 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                             </span>
                           ) : (
                             <span className="px-3 py-1 rounded-full text-xs font-semibold bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-700">
-                              Ineligible
+                              Restricted Ballot
                             </span>
                           )}
                         </div>
                       </div>
 
                       {!eligibleCheck.eligible && (
-                        <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 flex items-center gap-2">
-                          <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                        <div className="p-4 rounded-xl bg-amber-500/10 dark:bg-amber-950/30 border border-amber-500/30 text-xs text-amber-800 dark:text-amber-300 flex items-center gap-3 font-semibold">
+                          <AlertCircle className="w-5 h-5 text-amber-500 flex-shrink-0" />
                           <span>{eligibleCheck.reason}</span>
                         </div>
                       )}
 
-                      {/* Candidate Ballot Options */}
-                      {(!elec.candidates || elec.candidates.length === 0) ? (
-                        <div className="p-4 text-center rounded-xl bg-slate-100 dark:bg-slate-900 text-xs text-slate-500 italic">
-                          Candidates for this election are being finalized by the Presiding Officer.
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          {elec.candidates.map((cand) => (
-                            <div
-                              key={cand.id}
-                              className={`p-4 rounded-xl border space-y-3 transition-all ${
-                                hasVoted
-                                  ? 'bg-slate-100/80 dark:bg-slate-900/60 border-slate-200 dark:border-slate-800/80 opacity-80'
-                                  : eligibleCheck.eligible
-                                  ? 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 hover:border-amber-500/60'
-                                  : 'bg-slate-100/50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800 opacity-60'
-                              }`}
-                            >
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <h5 className="text-sm font-bold text-slate-900 dark:text-white">{cand.name}</h5>
-                                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                                    {cand.party} • <span className={cand.bench === 'Ruling' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>{cand.bench} Bench</span>
-                                  </p>
+                      {/* Candidate Ballot Options - Only visible if eligible or already voted */}
+                      {(eligibleCheck.eligible || hasVoted) && (
+                        (!elec.candidates || elec.candidates.length === 0) ? (
+                          <div className="p-4 text-center rounded-xl bg-slate-100 dark:bg-slate-900 text-xs text-slate-500 italic">
+                            Candidates for this election are being finalized by the Presiding Officer.
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {elec.candidates.map((cand) => (
+                              <div
+                                key={cand.id}
+                                className={`p-4 rounded-xl border space-y-3 transition-all ${
+                                  hasVoted
+                                    ? 'bg-slate-100/80 dark:bg-slate-900/60 border-slate-200 dark:border-slate-800/80 opacity-80'
+                                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 hover:border-amber-500/60'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <h5 className="text-sm font-bold text-slate-900 dark:text-white">{cand.name}</h5>
+                                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                                      {cand.party} • <span className={cand.bench === 'Ruling' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>{cand.bench} Bench</span>
+                                    </p>
+                                  </div>
                                 </div>
-                              </div>
 
-                              {eligibleCheck.eligible && !hasVoted && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    onCastVote(elec.id, cand.id, student.id);
-                                    onShowToast('Vote Recorded', `You voted for ${cand.name} in ${elec.title}`, 'success');
-                                  }}
-                                  className="w-full py-2.5 rounded-xl text-xs font-bold text-white bg-amber-500 hover:bg-amber-600 shadow-md flex items-center justify-center gap-1.5 cursor-pointer transition-all"
-                                >
-                                  <Vote className="w-4 h-4" /> Vote for {cand.name}
-                                </button>
-                              )}
-                            </div>
-                          ))}
-                        </div>
+                                {eligibleCheck.eligible && !hasVoted && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      onCastVote(elec.id, cand.id, student.id);
+                                      onShowToast('Vote Recorded', `You voted for ${cand.name} in ${elec.title}`, 'success');
+                                    }}
+                                    className="w-full py-2.5 rounded-xl text-xs font-bold text-white bg-amber-500 hover:bg-amber-600 shadow-md flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+                                  >
+                                    <Vote className="w-4 h-4" /> Vote for {cand.name}
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )
                       )}
                     </div>
                   );

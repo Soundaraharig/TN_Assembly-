@@ -223,37 +223,54 @@ export function getElectionCanonicalKey(election: Partial<Election>, partiesList
     return `${evId}:::CONSTITUTIONAL:::OPPOSITION_LEADER`;
   }
 
-  // Political Party Leader elections
-  let partyIdentifier = '';
-  if (election.party_id && partiesList && partiesList.length > 0) {
-    const p = partiesList.find(x => x.id === election.party_id);
-    if (p && p.name) {
-      partyIdentifier = p.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-    }
-  }
-  if (!partyIdentifier && election.party_id) {
-    partyIdentifier = election.party_id.toLowerCase().trim();
-  }
-  if (!partyIdentifier && partiesList && partiesList.length > 0) {
-    const p = partiesList.find(x => x.name && title.includes(x.name.toLowerCase()));
-    if (p && p.name) {
-      partyIdentifier = p.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-    }
-  }
-  if (!partyIdentifier) {
-    const pMatch = title.match(/party\s*(\d+)/i);
-    if (pMatch) {
-      partyIdentifier = `party${pMatch[1]}`;
-    } else if (pos === 'party leader' || title.includes('party leader') || title.includes('leader election')) {
-      const ext = title.replace(/\s+leader election$/i, '').replace(/\s+party leader$/i, '').trim();
-      if (ext) {
-        partyIdentifier = ext.toLowerCase().replace(/[^a-z0-9]/g, '');
-      }
-    }
+  // If this election has an explicit non-leadership category or custom eligibility (e.g. Quick Launch Ballot)
+  if (
+    (election.category && election.category.toLowerCase() !== 'leadership') ||
+    election.eligibility ||
+    election.type === 'COMMITTEE'
+  ) {
+    return `${evId}:::CUSTOM:::${election.id || title.replace(/[^a-z0-9]/g, '')}`;
   }
 
-  if (partyIdentifier) {
-    return `${evId}:::PARTY_LEADER:::${partyIdentifier}`;
+  // Political Party Leader elections (only if explicitly a Party Leader election)
+  const isExplicitPartyLeaderElection =
+    pos === 'party leader' ||
+    title.includes('party leader') ||
+    title.endsWith('leader election') ||
+    (title.includes('leader') && !title.includes('whip') && !title.includes('chair') && !title.includes('division'));
+
+  if (isExplicitPartyLeaderElection) {
+    let partyIdentifier = '';
+    if (election.party_id && partiesList && partiesList.length > 0) {
+      const p = partiesList.find(x => x.id === election.party_id);
+      if (p && p.name) {
+        partyIdentifier = p.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      }
+    }
+    if (!partyIdentifier && election.party_id) {
+      partyIdentifier = election.party_id.toLowerCase().trim();
+    }
+    if (!partyIdentifier && partiesList && partiesList.length > 0) {
+      const p = partiesList.find(x => x.name && title.includes(x.name.toLowerCase()));
+      if (p && p.name) {
+        partyIdentifier = p.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      }
+    }
+    if (!partyIdentifier) {
+      const pMatch = title.match(/party\s*(\d+)/i);
+      if (pMatch) {
+        partyIdentifier = `party${pMatch[1]}`;
+      } else if (pos === 'party leader' || title.includes('party leader') || title.includes('leader election')) {
+        const ext = title.replace(/\s+leader election$/i, '').replace(/\s+party leader$/i, '').trim();
+        if (ext) {
+          partyIdentifier = ext.toLowerCase().replace(/[^a-z0-9]/g, '');
+        }
+      }
+    }
+
+    if (partyIdentifier) {
+      return `${evId}:::PARTY_LEADER:::${partyIdentifier}`;
+    }
   }
 
   return `${evId}:::CUSTOM:::${election.id || title.replace(/[^a-z0-9]/g, '')}`;
@@ -278,12 +295,16 @@ export function mergeTwoElections(base: Election, other: Election): Election {
       ...other,
       ...base,
       status: base.status,
+      category: base.category || other.category,
+      eligibility: base.eligibility || other.eligibility,
+      eventId: base.eventId || other.eventId || base.event_id || other.event_id,
       total_votes: base.total_votes || 0,
       winner: base.winner,
       completed_at: base.completed_at,
       reset_at: base.reset_at,
       updated_at: base.updated_at || base.reset_at,
       voted_delegate_ids: base.voted_delegate_ids || [],
+      votedLearnerIds: base.votedLearnerIds || other.votedLearnerIds || base.voted_delegate_ids || [],
       votes_by_delegate: base.votes_by_delegate || {},
       candidates: (base.candidates || []).map(c => ({
         ...c,
@@ -299,12 +320,16 @@ export function mergeTwoElections(base: Election, other: Election): Election {
       ...base,
       ...other,
       status: other.status,
+      category: other.category || base.category,
+      eligibility: other.eligibility || base.eligibility,
+      eventId: other.eventId || base.eventId || other.event_id || base.event_id,
       total_votes: other.total_votes || 0,
       winner: other.winner,
       completed_at: other.completed_at,
       reset_at: other.reset_at,
       updated_at: other.updated_at || other.reset_at,
       voted_delegate_ids: other.voted_delegate_ids || [],
+      votedLearnerIds: other.votedLearnerIds || base.votedLearnerIds || other.voted_delegate_ids || [],
       votes_by_delegate: other.votes_by_delegate || {},
       candidates: (other.candidates || []).map(c => ({
         ...c,
@@ -322,7 +347,9 @@ export function mergeTwoElections(base: Election, other: Election): Election {
 
   const mergedVoters = Array.from(new Set([
     ...(primary.voted_delegate_ids || []),
-    ...(secondary.voted_delegate_ids || [])
+    ...(primary.votedLearnerIds || []),
+    ...(secondary.voted_delegate_ids || []),
+    ...(secondary.votedLearnerIds || [])
   ]));
 
   const mergedVotesByDelegate: Record<string, string> = {
@@ -340,6 +367,7 @@ export function mergeTwoElections(base: Election, other: Election): Election {
     } else {
       existing.votes = Math.max(existing.votes || 0, oc.votes || 0);
       if (oc.learner_id && !existing.learner_id) existing.learner_id = oc.learner_id;
+      if (oc.learnerId && !existing.learnerId) existing.learnerId = oc.learnerId;
     }
   });
 
@@ -358,18 +386,23 @@ export function mergeTwoElections(base: Election, other: Election): Election {
     ...primary,
     id: primary.id || secondary.id,
     event_id: primary.event_id || secondary.event_id,
+    eventId: primary.eventId || secondary.eventId || primary.event_id || secondary.event_id,
     party_id: primary.party_id || secondary.party_id,
     title: primary.title || secondary.title,
     position: primary.position || secondary.position,
     type: primary.type || secondary.type,
+    category: primary.category || secondary.category,
+    eligibility: primary.eligibility || secondary.eligibility,
     status: primary.status || secondary.status,
     candidates: mergedCandidates,
     voted_delegate_ids: mergedVoters,
+    votedLearnerIds: mergedVoters,
     votes_by_delegate: mergedVotesByDelegate,
     total_votes: totalVotes,
     winner: primary.winner || secondary.winner,
     completed_at: primary.completed_at || secondary.completed_at,
-    created_at: primary.created_at || secondary.created_at
+    created_at: primary.created_at || secondary.created_at,
+    createdAt: primary.createdAt || secondary.createdAt || primary.created_at || secondary.created_at
   };
 }
 
@@ -6553,16 +6586,21 @@ class StorageService {
 
     const newElec: Election = {
       id: elec.id || uid('elec'),
-      event_id: elec.event_id || '',
+      event_id: elec.event_id || elec.eventId || '',
+      eventId: elec.eventId || elec.event_id || '',
       party_id: elec.party_id,
       title: elec.title || 'New Election',
       position: elec.position || 'Assembly Role',
       type: elec.type || 'LEADERSHIP',
+      category: elec.category,
+      eligibility: elec.eligibility,
       status: elec.status || 'Upcoming',
       candidates: elec.candidates || [],
       total_votes: elec.total_votes ?? 0,
-      voted_delegate_ids: elec.voted_delegate_ids || [],
-      created_at: elec.created_at || new Date().toISOString()
+      voted_delegate_ids: elec.voted_delegate_ids || elec.votedLearnerIds || [],
+      votedLearnerIds: elec.votedLearnerIds || elec.voted_delegate_ids || [],
+      created_at: elec.created_at || elec.createdAt || new Date().toISOString(),
+      createdAt: elec.createdAt || elec.created_at || new Date().toISOString()
     };
     all.unshift(newElec);
     const deduplicated = deduplicateElectionList(all, partiesForEvent);
@@ -6593,17 +6631,44 @@ class StorageService {
   public castVoteInElection(electionId: string, candidateId: string, delegateId?: string): boolean {
     const all = this.getElectionAll();
     const election = all.find(e => e.id === electionId);
-    if (!election || election.status !== 'Live') return false;
+    if (!election || (election.status !== 'Live' && election.status !== 'live')) return false;
 
     if (delegateId) {
-      if (election.voted_delegate_ids?.includes(delegateId)) {
+      if (election.voted_delegate_ids?.includes(delegateId) || election.votedLearnerIds?.includes(delegateId)) {
         return false; // Already voted
+      }
+
+      // Check custom eligibility if defined
+      if (election.eligibility) {
+        const learners = this.getLearners(election.event_id);
+        const voterLearner = learners.find(l => l.id === delegateId);
+        if (voterLearner) {
+          if (election.eligibility.scope === 'party') {
+            const matchesParty = voterLearner.party_id
+              ? voterLearner.party_id === election.eligibility.targetId
+              : voterLearner.party_name && election.eligibility.targetName && voterLearner.party_name.toLowerCase() === election.eligibility.targetName.toLowerCase();
+            if (!matchesParty) {
+              console.warn(`[StorageService] Rejected vote: Delegate ${voterLearner.full_name} is not in eligible party ${election.eligibility.targetName || election.eligibility.targetId}.`);
+              return false;
+            }
+          } else if (election.eligibility.scope === 'committee') {
+            const voterCommId = (voterLearner as any).committee_id;
+            const voterCommName = (voterLearner as any).committee_name;
+            const matchesComm = voterCommId
+              ? voterCommId === election.eligibility.targetId
+              : voterCommName && election.eligibility.targetName && voterCommName.toLowerCase() === election.eligibility.targetName.toLowerCase();
+            if (!matchesComm) {
+              console.warn(`[StorageService] Rejected vote: Delegate ${voterLearner.full_name} is not in eligible committee ${election.eligibility.targetName || election.eligibility.targetId}.`);
+              return false;
+            }
+          }
+        }
       }
 
       // Server-Side Voter Eligibility Enforcement for Political Party Leader Elections
       const partyLeaderParty = this.getPartyLeaderElectionParty(election);
       if (partyLeaderParty) {
-        const learners = this.getLearners();
+        const learners = this.getLearners(election.event_id);
         const voterLearner = learners.find(l => l.id === delegateId);
         if (voterLearner) {
           const isPartyMatch = voterLearner.party_id
@@ -6617,7 +6682,7 @@ class StorageService {
       }
     }
 
-    const candidate = election.candidates.find(c => c.id === candidateId);
+    const candidate = election.candidates.find(c => c.id === candidateId || (c as any).learnerId === candidateId || c.learner_id === candidateId);
     if (!candidate) return false;
 
     candidate.votes += 1;
@@ -6625,6 +6690,8 @@ class StorageService {
     if (delegateId) {
       if (!election.voted_delegate_ids) election.voted_delegate_ids = [];
       election.voted_delegate_ids.push(delegateId);
+      if (!election.votedLearnerIds) election.votedLearnerIds = [];
+      election.votedLearnerIds.push(delegateId);
 
       const anyElec = election as any;
       if (!anyElec.votes_by_delegate) anyElec.votes_by_delegate = {};

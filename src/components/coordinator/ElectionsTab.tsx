@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import type { Election, LiveFlashVote, Learner, FlashVoteAudience, ElectionCandidate, Nomination, Party, LoginRecord } from '../../types';
+import type { Election, LiveFlashVote, Learner, FlashVoteAudience, ElectionCandidate, Nomination, Party, LoginRecord, Committee } from '../../types';
 import {
   Vote,
   Plus,
@@ -40,6 +40,7 @@ interface ElectionsTabProps {
   flashVotes: LiveFlashVote[];
   learners: Learner[];
   parties?: Party[];
+  committees?: Committee[];
   nominations?: Nomination[];
   eventId: string;
   onCastVote: (electionId: string, candidateId: string, delegateId?: string) => void;
@@ -95,6 +96,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   flashVotes,
   learners,
   parties = [],
+  committees = [],
   nominations = [],
   eventId,
   onCastVote,
@@ -121,6 +123,114 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   const [isNewPollOpen, setIsNewPollOpen] = useState(false);
   const [pollQuestion, setPollQuestion] = useState('');
   const [pollMotionType, setPollMotionType] = useState<LiveFlashVote['motion_type']>('Division');
+
+  // Quick Launch Ballot Modal State
+  const [isQuickLaunchModalOpen, setIsQuickLaunchModalOpen] = useState(false);
+  const [quickBallotTitle, setQuickBallotTitle] = useState('');
+  const [quickCategory, setQuickCategory] = useState<'Leadership' | 'Floor Division' | 'Committee Ballot' | 'Flash Vote'>('Leadership');
+  const [selectedCandidateLearnerIds, setSelectedCandidateLearnerIds] = useState<string[]>([]);
+  const [quickCandidateSearch, setQuickCandidateSearch] = useState('');
+  const [quickEligibilityScope, setQuickEligibilityScope] = useState<'all' | 'party' | 'committee'>('all');
+  const [quickEligibilityTargetId, setQuickEligibilityTargetId] = useState<string>('');
+
+  const eventCommittees = useMemo(() => {
+    return committees && committees.length > 0 ? committees : storageService.getCommittees(eventId);
+  }, [committees, eventId]);
+
+  useEffect(() => {
+    if (quickEligibilityScope === 'party' && !quickEligibilityTargetId && parties.length > 0) {
+      setQuickEligibilityTargetId(parties[0].id);
+    } else if (quickEligibilityScope === 'committee' && !quickEligibilityTargetId && eventCommittees.length > 0) {
+      setQuickEligibilityTargetId(eventCommittees[0].id);
+    }
+  }, [quickEligibilityScope, parties, eventCommittees, quickEligibilityTargetId]);
+
+  const resetQuickLaunchModal = () => {
+    setIsQuickLaunchModalOpen(false);
+    setQuickBallotTitle('');
+    setQuickCategory('Leadership');
+    setSelectedCandidateLearnerIds([]);
+    setQuickCandidateSearch('');
+    setQuickEligibilityScope('all');
+    setQuickEligibilityTargetId('');
+  };
+
+  const handleLaunchQuickBallot = (isLive: boolean) => {
+    if (!quickBallotTitle.trim()) {
+      onShowToast('Missing Ballot Title', 'Please provide a title for the ballot.', 'error');
+      return;
+    }
+    if (selectedCandidateLearnerIds.length < 2) {
+      onShowToast('Nominees Required', 'Please select at least 2 delegates as candidate options.', 'error');
+      return;
+    }
+
+    const candidateObjects: ElectionCandidate[] = selectedCandidateLearnerIds.map(learnerId => {
+      const learner = learners.find(l => l.id === learnerId);
+      return {
+        id: `cand_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        learner_id: learnerId,
+        learnerId: learnerId,
+        name: learner?.full_name || 'Unknown Candidate',
+        party: learner?.party_name || 'Independent',
+        bench: learner?.bench || 'Ruling',
+        constituency: learner?.constituency_name || '',
+        votes: 0
+      };
+    });
+
+    let targetName: string | undefined = undefined;
+    if (quickEligibilityScope === 'party') {
+      targetName = parties.find(p => p.id === quickEligibilityTargetId)?.name || quickEligibilityTargetId;
+    } else if (quickEligibilityScope === 'committee') {
+      targetName = eventCommittees.find(c => c.id === quickEligibilityTargetId)?.name || quickEligibilityTargetId;
+    }
+
+    const ballotId = `quick_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const newElection: Partial<Election> = {
+      id: ballotId,
+      event_id: eventId,
+      eventId: eventId,
+      title: quickBallotTitle.trim(),
+      position: quickCategory === 'Leadership' ? 'Leadership Role' : quickCategory === 'Committee Ballot' ? 'Committee Chairperson' : 'Floor Division',
+      type: quickCategory === 'Committee Ballot' ? 'COMMITTEE' : 'LEADERSHIP',
+      category: quickCategory,
+      status: isLive ? 'Live' : 'Upcoming',
+      candidates: candidateObjects,
+      total_votes: 0,
+      voted_delegate_ids: [],
+      votedLearnerIds: [],
+      eligibility: {
+        scope: quickEligibilityScope,
+        targetId: quickEligibilityScope === 'all' ? undefined : quickEligibilityTargetId,
+        targetName
+      },
+      created_at: new Date().toISOString(),
+      createdAt: new Date().toISOString()
+    };
+
+    onCreateElection(newElection);
+
+    if (isLive) {
+      storageService.broadcast('election_update', {
+        eventId,
+        elections: storageService.getElections(eventId)
+      });
+      onShowToast(
+        '🚀 Quick Ballot Launched Live!',
+        `"${newElection.title}" is now open for voting by ${quickEligibilityScope === 'all' ? 'all House delegates' : (targetName || 'eligible delegates')}.`,
+        'success'
+      );
+    } else {
+      onShowToast(
+        'Ballot Saved as Draft',
+        `"${newElection.title}" saved. You can start live voting whenever ready.`,
+        'info'
+      );
+    }
+
+    resetQuickLaunchModal();
+  };
 
   // Login records (for student device status in voter lists)
   const [loginRecords, setLoginRecords] = useState<LoginRecord[]>(() => storageService.getLoginRecords(eventId));
@@ -257,7 +367,21 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
     });
   };
 
-  const getElectorateRule = (election: Election): { type: 'ALL' | 'RULING' | 'OPPOSITION' | 'PARTY'; partyId?: string; partyName?: string; label: string } => {
+  const getElectorateRule = (election: Election): { type: 'ALL' | 'RULING' | 'OPPOSITION' | 'PARTY' | 'COMMITTEE'; partyId?: string; partyName?: string; committeeId?: string; committeeName?: string; label: string } => {
+    if (election.eligibility) {
+      if (election.eligibility.scope === 'all') {
+        return { type: 'ALL', label: 'Whole Assembly (All Delegates)' };
+      }
+      if (election.eligibility.scope === 'party') {
+        const pName = election.eligibility.targetName || parties.find(p => p.id === election.eligibility?.targetId)?.name || 'Party';
+        return { type: 'PARTY', partyId: election.eligibility.targetId, partyName: pName, label: `${pName} Members Only` };
+      }
+      if (election.eligibility.scope === 'committee') {
+        const cName = election.eligibility.targetName || eventCommittees.find(c => c.id === election.eligibility?.targetId)?.name || 'Committee';
+        return { type: 'COMMITTEE', committeeId: election.eligibility.targetId, committeeName: cName, label: `${cName} Members Only` };
+      }
+    }
+
     const partyLeaderParty = getPartyLeaderElectionParty(election);
     if (partyLeaderParty) {
       return { type: 'PARTY', partyId: partyLeaderParty.id, partyName: partyLeaderParty.name, label: `${partyLeaderParty.name} Members Only` };
@@ -277,10 +401,26 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
   const isDelegateEligibleForElection = (voter: Learner | null, election: Election): boolean => {
     if (!voter) return false;
+    if (election.eligibility) {
+      if (election.eligibility.scope === 'all') return true;
+      if (election.eligibility.scope === 'party') {
+        return voter.party_id === election.eligibility.targetId ||
+          (!!election.eligibility.targetName && voter.party_name?.toLowerCase() === election.eligibility.targetName.toLowerCase());
+      }
+      if (election.eligibility.scope === 'committee') {
+        return (voter as any).committee_id === election.eligibility.targetId ||
+          (!!election.eligibility.targetName && (voter as any).committee_name?.toLowerCase() === election.eligibility.targetName.toLowerCase());
+      }
+    }
+
     const rule = getElectorateRule(election);
 
     if (rule.type === 'PARTY') {
       if (rule.partyId && voter.party_id !== rule.partyId && voter.party_name?.toLowerCase() !== rule.partyName?.toLowerCase()) {
+        return false;
+      }
+    } else if (rule.type === 'COMMITTEE') {
+      if (rule.committeeId && (voter as any).committee_id !== rule.committeeId && (voter as any).committee_name?.toLowerCase() !== rule.committeeName?.toLowerCase()) {
         return false;
       }
     } else if (rule.type === 'OPPOSITION' && voter.bench !== 'Opposition') {
@@ -294,11 +434,31 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
   const checkVoterEligibility = (voter: Learner | null, election: Election): { eligible: boolean; reason?: string } => {
     if (!voter) return { eligible: false, reason: 'No voter selected' };
+    if (election.eligibility) {
+      if (election.eligibility.scope === 'party') {
+        const matchesParty = voter.party_id === election.eligibility.targetId ||
+          (!!election.eligibility.targetName && voter.party_name?.toLowerCase() === election.eligibility.targetName.toLowerCase());
+        if (!matchesParty) {
+          return { eligible: false, reason: `Active Ballot in Progress: Restricted to ${election.eligibility.targetName || 'the assigned political party'}. Your bench is not participating in this vote.` };
+        }
+      } else if (election.eligibility.scope === 'committee') {
+        const matchesComm = (voter as any).committee_id === election.eligibility.targetId ||
+          (!!election.eligibility.targetName && (voter as any).committee_name?.toLowerCase() === election.eligibility.targetName.toLowerCase());
+        if (!matchesComm) {
+          return { eligible: false, reason: `Active Ballot in Progress: Restricted to ${election.eligibility.targetName || 'the assigned committee'}. Your bench is not participating in this vote.` };
+        }
+      }
+    }
+
     const rule = getElectorateRule(election);
 
     if (rule.type === 'PARTY') {
       if (rule.partyId && voter.party_id !== rule.partyId && voter.party_name?.toLowerCase() !== rule.partyName?.toLowerCase()) {
         return { eligible: false, reason: `This election is restricted to ${rule.partyName || 'Party'} delegates only.` };
+      }
+    } else if (rule.type === 'COMMITTEE') {
+      if (rule.committeeId && (voter as any).committee_id !== rule.committeeId && (voter as any).committee_name?.toLowerCase() !== rule.committeeName?.toLowerCase()) {
+        return { eligible: false, reason: `This ballot is restricted to ${rule.committeeName || 'Committee'} members only.` };
       }
     } else if (rule.type === 'OPPOSITION' && voter.bench !== 'Opposition') {
       return { eligible: false, reason: 'Restricted to Opposition Bench delegates only.' };
@@ -306,7 +466,8 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
       return { eligible: false, reason: 'Restricted to Ruling Bench delegates only.' };
     }
 
-    if (election.voted_delegate_ids?.includes(voter.id)) {
+    const hasVoted = election.voted_delegate_ids?.includes(voter.id) || (election as any).votedLearnerIds?.includes(voter.id);
+    if (hasVoted) {
       return { eligible: false, reason: `${voter.full_name} has already voted in this election.` };
     }
 
@@ -681,13 +842,27 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
             )}
 
             {/* Election Icon + Title */}
-            <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-center gap-2 min-w-0 flex-wrap">
               <span className="text-amber-500 shrink-0">
                 <Crown className="w-4 h-4" />
               </span>
               <span className="font-semibold text-sm sm:text-base tracking-tight truncate" style={{ color: 'var(--text-primary)' }}>
                 {elec.title}
               </span>
+              {elec.category && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                  {elec.category}
+                </span>
+              )}
+              {elec.eligibility && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-500/15 text-blue-400 border border-blue-500/30">
+                  {elec.eligibility.scope === 'all'
+                    ? 'All Delegates'
+                    : elec.eligibility.scope === 'party'
+                    ? `Party: ${elec.eligibility.targetName || 'Restricted'}`
+                    : `Committee: ${elec.eligibility.targetName || 'Restricted'}`}
+                </span>
+              )}
             </div>
           </div>
 
@@ -809,7 +984,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                   </>
                 )}
 
-                {onDeleteElection && elec.type !== 'LEADERSHIP' && elec.type !== 'SPEAKER' && elec.type !== 'DEPUTY_SPEAKER' && (
+                {onDeleteElection && !CONSTITUTIONAL_POSTS.some(p => p.position === elec.position || p.type === elec.type) && (
                   <button
                     onClick={() => {
                       if (window.confirm(`Are you sure you want to delete the "${elec.title}" ballot?`)) {
@@ -1618,41 +1793,52 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
           </p>
         </div>
 
-        {/* Sub-tabs */}
-        <div className="flex items-center gap-1.5 p-1 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)' }}>
+        {/* Action button + Sub-tabs */}
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() => setActiveTabSection('ELECTIONS')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-              activeTabSection === 'ELECTIONS'
-                ? 'bg-amber-500 text-slate-950 shadow-sm font-bold'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
+            type="button"
+            onClick={() => setIsQuickLaunchModalOpen(true)}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md flex items-center gap-1.5 transition-all cursor-pointer hover:scale-[1.02] active:scale-95 shrink-0"
           >
-            <Crown className="w-3.5 h-3.5" />
-            Leadership Ballots ({elections.length})
+            <Plus className="w-4 h-4" />
+            <span>+ Quick Launch Ballot</span>
           </button>
-          <button
-            onClick={() => setActiveTabSection('FLASH_VOTES')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-              activeTabSection === 'FLASH_VOTES'
-                ? 'bg-amber-500 text-slate-950 shadow-sm font-bold'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Zap className="w-3.5 h-3.5" />
-            Floor Divisions ({flashVotes.length})
-          </button>
-          <button
-            onClick={() => setActiveTabSection('HISTORY')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-              activeTabSection === 'HISTORY'
-                ? 'bg-amber-500 text-slate-950 shadow-sm font-bold'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <History className="w-3.5 h-3.5" />
-            Election Results & History ({closedElections.length})
-          </button>
+
+          <div className="flex items-center gap-1.5 p-1 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)' }}>
+            <button
+              onClick={() => setActiveTabSection('ELECTIONS')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                activeTabSection === 'ELECTIONS'
+                  ? 'bg-amber-500 text-slate-950 shadow-sm font-bold'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Crown className="w-3.5 h-3.5" />
+              Leadership Ballots ({elections.length})
+            </button>
+            <button
+              onClick={() => setActiveTabSection('FLASH_VOTES')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                activeTabSection === 'FLASH_VOTES'
+                  ? 'bg-amber-500 text-slate-950 shadow-sm font-bold'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Zap className="w-3.5 h-3.5" />
+              Floor Divisions ({flashVotes.length})
+            </button>
+            <button
+              onClick={() => setActiveTabSection('HISTORY')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                activeTabSection === 'HISTORY'
+                  ? 'bg-amber-500 text-slate-950 shadow-sm font-bold'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <History className="w-3.5 h-3.5" />
+              Election Results & History ({closedElections.length})
+            </button>
+          </div>
         </div>
       </div>
 
@@ -2326,6 +2512,424 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* QUICK LAUNCH BALLOT MODAL */}
+      {isQuickLaunchModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div
+            className="w-full max-w-2xl rounded-2xl border shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-scaleIn"
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}
+          >
+            {/* Modal Header */}
+            <div className="p-5 border-b flex items-center justify-between" style={{ borderColor: 'var(--border-soft)' }}>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-500 border border-amber-500/30 flex items-center justify-center">
+                  <Vote className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
+                    Quick Launch Instant Ballot
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Deploy spontaneous elections, caucus votes, or committee chair ballots on the fly.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={resetQuickLaunchModal}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-5">
+              {/* Ballot Title */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block">
+                  Ballot Title *
+                </label>
+                <input
+                  type="text"
+                  value={quickBallotTitle}
+                  onChange={(e) => setQuickBallotTitle(e.target.value)}
+                  placeholder="e.g., Party 1 Internal Whip, Committee 2 Chair Election, Sudden Floor Division"
+                  className="w-full p-3 rounded-xl border text-xs font-medium focus:outline-none focus:border-amber-500"
+                  style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                  required
+                />
+                {/* Quick Title Suggestions */}
+                <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                  <span className="text-[10px] text-slate-400 font-semibold">Suggestions:</span>
+                  {[
+                    'Party 1 Internal Whip',
+                    'Party 2 Internal Whip',
+                    'Committee 1 Chair Election',
+                    'Committee 2 Chair Election',
+                    'Sudden Floor Division'
+                  ].map((sug) => (
+                    <button
+                      key={sug}
+                      type="button"
+                      onClick={() => setQuickBallotTitle(sug)}
+                      className="text-[10px] px-2 py-0.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors cursor-pointer"
+                    >
+                      {sug}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Category */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block">
+                  Ballot Category *
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {(['Leadership', 'Floor Division', 'Committee Ballot', 'Flash Vote'] as const).map((cat) => {
+                    const isSelected = quickCategory === cat;
+                    return (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => setQuickCategory(cat)}
+                        className={`p-2.5 rounded-xl border text-xs font-bold text-center transition-all cursor-pointer ${
+                          isSelected
+                            ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-sm'
+                            : 'bg-slate-800/60 hover:bg-slate-800 text-slate-300 border-slate-700'
+                        }`}
+                      >
+                        {cat}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Who Can Vote? (Voter Eligibility Filter) */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block">
+                  Who Can Vote? (Voter Eligibility Filter) *
+                </label>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  {/* All House */}
+                  <label
+                    onClick={() => setQuickEligibilityScope('all')}
+                    className={`p-3 rounded-xl border flex flex-col justify-between gap-1 cursor-pointer transition-all ${
+                      quickEligibilityScope === 'all'
+                        ? 'bg-amber-500/15 border-amber-500/50 text-amber-300'
+                        : 'bg-slate-800/40 border-slate-700/60 text-slate-300 hover:bg-slate-800/70'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="eligibilityScope"
+                        checked={quickEligibilityScope === 'all'}
+                        onChange={() => setQuickEligibilityScope('all')}
+                        className="accent-amber-500 cursor-pointer"
+                      />
+                      <span className="font-bold text-xs">All House Delegates</span>
+                    </div>
+                    <span className="text-[10px] text-slate-400 pl-5">
+                      Everyone can participate and vote.
+                    </span>
+                  </label>
+
+                  {/* Specific Party */}
+                  <label
+                    onClick={() => {
+                      setQuickEligibilityScope('party');
+                      if (!quickEligibilityTargetId && parties.length > 0) {
+                        setQuickEligibilityTargetId(parties[0].id);
+                      }
+                    }}
+                    className={`p-3 rounded-xl border flex flex-col justify-between gap-1 cursor-pointer transition-all ${
+                      quickEligibilityScope === 'party'
+                        ? 'bg-amber-500/15 border-amber-500/50 text-amber-300'
+                        : 'bg-slate-800/40 border-slate-700/60 text-slate-300 hover:bg-slate-800/70'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="eligibilityScope"
+                        checked={quickEligibilityScope === 'party'}
+                        onChange={() => {
+                          setQuickEligibilityScope('party');
+                          if (!quickEligibilityTargetId && parties.length > 0) {
+                            setQuickEligibilityTargetId(parties[0].id);
+                          }
+                        }}
+                        className="accent-amber-500 cursor-pointer"
+                      />
+                      <span className="font-bold text-xs">Specific Party Only</span>
+                    </div>
+                    <span className="text-[10px] text-slate-400 pl-5">
+                      Restricted to a selected party.
+                    </span>
+                  </label>
+
+                  {/* Specific Committee */}
+                  <label
+                    onClick={() => {
+                      setQuickEligibilityScope('committee');
+                      if (!quickEligibilityTargetId && eventCommittees.length > 0) {
+                        setQuickEligibilityTargetId(eventCommittees[0].id);
+                      }
+                    }}
+                    className={`p-3 rounded-xl border flex flex-col justify-between gap-1 cursor-pointer transition-all ${
+                      quickEligibilityScope === 'committee'
+                        ? 'bg-amber-500/15 border-amber-500/50 text-amber-300'
+                        : 'bg-slate-800/40 border-slate-700/60 text-slate-300 hover:bg-slate-800/70'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="eligibilityScope"
+                        checked={quickEligibilityScope === 'committee'}
+                        onChange={() => {
+                          setQuickEligibilityScope('committee');
+                          if (!quickEligibilityTargetId && eventCommittees.length > 0) {
+                            setQuickEligibilityTargetId(eventCommittees[0].id);
+                          }
+                        }}
+                        className="accent-amber-500 cursor-pointer"
+                      />
+                      <span className="font-bold text-xs">Specific Committee Only</span>
+                    </div>
+                    <span className="text-[10px] text-slate-400 pl-5">
+                      Restricted to committee delegates.
+                    </span>
+                  </label>
+                </div>
+
+                {/* Sub-selector for Party */}
+                {quickEligibilityScope === 'party' && (
+                  <div className="p-3 rounded-xl bg-slate-800/60 border border-slate-700 space-y-1.5 animate-fadeIn">
+                    <label className="text-[11px] font-bold text-slate-300 block">
+                      Select Eligible Political Party:
+                    </label>
+                    <select
+                      value={quickEligibilityTargetId}
+                      onChange={(e) => setQuickEligibilityTargetId(e.target.value)}
+                      className="w-full p-2.5 rounded-lg bg-slate-900 border border-slate-700 text-xs font-semibold text-white focus:outline-none focus:border-amber-500"
+                    >
+                      {parties.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({p.bench} Bench)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* Sub-selector for Committee */}
+                {quickEligibilityScope === 'committee' && (
+                  <div className="p-3 rounded-xl bg-slate-800/60 border border-slate-700 space-y-1.5 animate-fadeIn">
+                    <label className="text-[11px] font-bold text-slate-300 block">
+                      Select Eligible Committee:
+                    </label>
+                    {eventCommittees.length === 0 ? (
+                      <p className="text-xs text-amber-400">
+                        No committees found for this event. You can configure committees in the Committees tab.
+                      </p>
+                    ) : (
+                      <select
+                        value={quickEligibilityTargetId}
+                        onChange={(e) => setQuickEligibilityTargetId(e.target.value)}
+                        className="w-full p-2.5 rounded-lg bg-slate-900 border border-slate-700 text-xs font-semibold text-white focus:outline-none focus:border-amber-500"
+                      >
+                        {eventCommittees.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name} {c.topic ? `(${c.topic})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Choose Nominees / Candidates (Multi-Select from Delegates) */}
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-300 block">
+                    Choose Nominees / Candidates *
+                  </label>
+                  <span className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded-full ${
+                    selectedCandidateLearnerIds.length >= 2
+                      ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                      : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                  }`}>
+                    {selectedCandidateLearnerIds.length} Selected (Min 2 required)
+                  </span>
+                </div>
+
+                {/* Selected Candidates Badges */}
+                {selectedCandidateLearnerIds.length > 0 && (
+                  <div className="flex items-center gap-1.5 flex-wrap p-2.5 rounded-xl bg-slate-800/50 border border-slate-700">
+                    {selectedCandidateLearnerIds.map((lid) => {
+                      const l = learners.find((item) => item.id === lid);
+                      if (!l) return null;
+                      return (
+                        <span
+                          key={l.id}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                        >
+                          <span>{l.full_name}</span>
+                          <span className="text-[10px] text-amber-400/80 font-mono">({l.access_code})</span>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedCandidateLearnerIds((prev) => prev.filter((id) => id !== lid))}
+                            className="p-0.5 hover:bg-amber-500/30 rounded text-amber-200 cursor-pointer"
+                            title="Remove candidate"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Search Delegate List */}
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                  <input
+                    type="text"
+                    value={quickCandidateSearch}
+                    onChange={(e) => setQuickCandidateSearch(e.target.value)}
+                    placeholder="Search delegates by name, student ID / access code, party, or constituency..."
+                    className="w-full pl-9 pr-3 py-2.5 rounded-xl border text-xs focus:outline-none focus:border-amber-500"
+                    style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                  />
+                </div>
+
+                {/* Scrollable Delegate Picker List */}
+                <div
+                  className="rounded-xl border divide-y max-h-56 overflow-y-auto"
+                  style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)' }}
+                >
+                  {(() => {
+                    const q = quickCandidateSearch.toLowerCase().trim();
+                    const filtered = learners.filter((l) => {
+                      if (!q) return true;
+                      const nameMatch = (l.full_name || '').toLowerCase().includes(q);
+                      const codeMatch = (l.access_code || '').toLowerCase().includes(q);
+                      const partyMatch = (l.party_name || '').toLowerCase().includes(q);
+                      const constMatch = (l.constituency_name || '').toLowerCase().includes(q);
+                      return nameMatch || codeMatch || partyMatch || constMatch;
+                    });
+
+                    if (filtered.length === 0) {
+                      return (
+                        <div className="p-6 text-center text-xs text-slate-400 italic">
+                          No delegates found matching "{quickCandidateSearch}".
+                        </div>
+                      );
+                    }
+
+                    return filtered.map((l) => {
+                      const isSelected = selectedCandidateLearnerIds.includes(l.id);
+                      return (
+                        <div
+                          key={l.id}
+                          onClick={() => {
+                            setSelectedCandidateLearnerIds((prev) =>
+                              isSelected ? prev.filter((id) => id !== l.id) : [...prev, l.id]
+                            );
+                          }}
+                          className={`p-2.5 sm:p-3 flex items-center justify-between gap-3 cursor-pointer transition-colors ${
+                            isSelected ? 'bg-amber-500/10' : 'hover:bg-slate-800/40'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => {}} // Handled by parent div
+                              className="accent-amber-500 rounded cursor-pointer"
+                            />
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-xs text-white truncate">{l.full_name}</span>
+                                <span className="px-1.5 py-0.2 rounded text-[10px] font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700">
+                                  {l.access_code}
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-slate-400 flex items-center gap-2">
+                                <span>{getResolvedPartyName(l, parties) || l.party_name || 'Independent'}</span>
+                                {l.constituency_name && <span>• {l.constituency_name}</span>}
+                              </div>
+                            </div>
+                          </div>
+
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border shrink-0 ${
+                            l.bench === 'Ruling'
+                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                              : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                          }`}>
+                            {l.bench || 'Delegate'}
+                          </span>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t flex flex-col sm:flex-row sm:items-center justify-between gap-3" style={{ borderColor: 'var(--border-soft)' }}>
+              <div className="text-xs text-slate-400">
+                {selectedCandidateLearnerIds.length < 2 ? (
+                  <span className="text-amber-400 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    Select at least 2 delegates to enable launch.
+                  </span>
+                ) : (
+                  <span className="text-emerald-400 flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                    Ready to deploy ballot.
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={resetQuickLaunchModal}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={selectedCandidateLearnerIds.length < 2 || !quickBallotTitle.trim()}
+                  onClick={() => handleLaunchQuickBallot(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all"
+                >
+                  Save as Draft
+                </button>
+                <button
+                  type="button"
+                  disabled={selectedCandidateLearnerIds.length < 2 || !quickBallotTitle.trim()}
+                  onClick={() => handleLaunchQuickBallot(true)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-950 bg-amber-500 hover:bg-amber-400 shadow-md disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all flex items-center gap-1.5"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>Launch Live Now</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -208,33 +208,48 @@ export interface Nomination {
   history?: NominationHistoryEntry[];
 }
 
+export interface ElectionEligibility {
+  scope: 'all' | 'party' | 'committee';
+  targetId?: string; // party_id or committee_id if scoped
+  targetName?: string;
+}
+
 export interface ElectionCandidate {
   id: string;
   learner_id?: string;
+  learnerId?: string;
   name: string;
   party: string;
   bench: BenchType;
+  constituency?: string;
   votes: number;
 }
 
 export interface Election {
   id: string;
   event_id: string;
+  eventId?: string;
   title: string;
   position: string;
-  type: 'LEADERSHIP' | 'SPEAKER' | 'DEPUTY_SPEAKER' | 'COMMITTEE';
-  status: 'Upcoming' | 'Live' | 'Closed';
+  type: 'LEADERSHIP' | 'SPEAKER' | 'DEPUTY_SPEAKER' | 'COMMITTEE' | string;
+  category?: 'leadership' | 'division' | 'committee' | 'flash' | 'Leadership' | 'Floor Division' | 'Committee Ballot' | 'Flash Vote' | string;
+  status: 'Upcoming' | 'Live' | 'Closed' | 'draft' | 'live' | 'closed' | string;
   candidates: ElectionCandidate[];
   total_votes: number;
   winner?: string;
   voted_delegate_ids?: string[];
+  votedLearnerIds?: string[];
   votes_by_delegate?: Record<string, string>;
   party_id?: string;
+  eligibility?: ElectionEligibility;
   completed_at?: string;
   reset_at?: string;
   updated_at?: string;
   created_at: string;
+  createdAt?: string;
 }
+
+export type AssemblyElection = Election;
 
 export type FlashVoteAudience = 'ALL' | 'MINISTERS' | 'RULING' | 'OPPOSITION' | 'MLAS';
 
