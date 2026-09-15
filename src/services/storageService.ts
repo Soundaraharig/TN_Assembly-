@@ -5507,20 +5507,40 @@ class StorageService {
     const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA);
     if (eventId) {
       const eventItems = all.filter(a => a.event_id === eventId);
-      // Auto-seed default fresh agenda if no items exist yet or less than 2 items exist for this event
-      if (eventItems.length < 2) {
-        return this.resetEventAgendaToDefault(eventId);
-      }
       return [...eventItems].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
     }
     return [...all].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
   }
 
-  public resetEventAgendaToDefault(eventId: string): AgendaItem[] {
-    if (!eventId) return [];
+  public async clearEventAgenda(eventId: string): Promise<boolean> {
+    if (!eventId) return false;
+    // 1. Remove from local storage
     const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA);
     const remaining = all.filter(a => a.event_id !== eventId);
     this.setItem(STORAGE_KEYS.AGENDA, remaining);
+
+    // 2. Clear from Supabase session_agenda table
+    if (supabase) {
+      try {
+        const { error } = await supabase.from('session_agenda').delete().eq('event_id', eventId);
+        if (error) {
+          console.warn('[Supabase] clearEventAgenda error:', error.message);
+        } else {
+          console.log(`✅ [Supabase] Cleared all agenda items for event ${eventId}`);
+        }
+      } catch (err) {
+        console.error('[Supabase] clearEventAgenda exception:', err);
+      }
+    }
+
+    // 3. Notify listeners
+    this.notify();
+    return true;
+  }
+
+  public async resetEventAgendaToDefault(eventId: string): Promise<AgendaItem[]> {
+    if (!eventId) return [];
+    await this.clearEventAgenda(eventId);
     return this.seedDefaultAgendaForEvent(eventId);
   }
 

@@ -97,12 +97,21 @@ export const AgendaTab: React.FC<AgendaTabProps> = ({
 
   // Auto-seed if agenda is completely empty for this event
   const currentEventAgenda = useMemo(() => {
-    const items = agenda.filter(a => a.event_id === eventId);
-    if (items.length === 0 && eventId) {
-      return storageService.getAgenda(eventId);
-    }
-    return items;
+    return agenda.filter(a => a.event_id === eventId);
   }, [agenda, eventId]);
+
+  const handleClearAllAgenda = async () => {
+    const confirmed = window.confirm("Are you sure you want to clear all agenda items for this event? This action cannot be undone.");
+    if (!confirmed) return;
+
+    try {
+      await storageService.clearEventAgenda(eventId);
+      onShowToast("All agenda items cleared successfully.", undefined, "success");
+    } catch (err) {
+      console.error("Failed to clear agenda items:", err);
+      onShowToast("Failed to clear agenda", "Please try again.", "error");
+    }
+  };
 
   // Filter items by active tab day, search, status, and category
   const activeDayItems = useMemo(() => {
@@ -434,8 +443,17 @@ export const AgendaTab: React.FC<AgendaTabProps> = ({
           </div>
 
           <button
-            onClick={() => {
-              storageService.resetEventAgendaToDefault(eventId);
+            onClick={handleClearAllAgenda}
+            className="bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 dark:bg-red-950/40 dark:text-red-400 dark:border-red-900/50 dark:hover:bg-red-900/40 px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 transition-all cursor-pointer shrink-0"
+            title="Clear all agenda items for this event"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span>Clear All Agenda</span>
+          </button>
+
+          <button
+            onClick={async () => {
+              await storageService.resetEventAgendaToDefault(eventId);
               onShowToast('Fresh Agenda Loaded', 'Seeded default upcoming agenda for Pre-Event, Day 1 & Day 2', 'success');
             }}
             className="px-3.5 py-2.5 rounded-2xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-all cursor-pointer shrink-0"
@@ -528,8 +546,8 @@ export const AgendaTab: React.FC<AgendaTabProps> = ({
           </div>
           <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
             <button
-              onClick={() => {
-                storageService.resetEventAgendaToDefault(eventId);
+              onClick={async () => {
+                await storageService.resetEventAgendaToDefault(eventId);
                 onShowToast('Fresh Agenda Loaded', 'Seeded default upcoming agenda for Pre-Event, Day 1 & Day 2', 'success');
               }}
               className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold border border-slate-200 dark:border-slate-700 inline-flex items-center gap-1.5 cursor-pointer"
