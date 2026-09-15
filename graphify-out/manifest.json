@@ -612,9 +612,9 @@
     "semantic_hash": "5ca37e78098d648b1adabb0e924b70e8"
   },
   "src/components/student/StudentDashboard.tsx": {
-    "mtime": 1789445801.4272113,
-    "seen": 1789445875.36052,
-    "ast_hash": "7d990400f81ea20399b32fcae2afed52",
+    "mtime": 1789446317.441669,
+    "seen": 1789446354.2229125,
+    "ast_hash": "672d8a2e3b8b060a6fa4cad33d6bce17",
     "semantic_hash": ""
   },
   "src/components/student/StudentJoinModal.tsx": {

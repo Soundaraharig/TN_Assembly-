@@ -40,7 +40,7 @@ import {
   ChevronUp
 } from 'lucide-react';
 
-type StudentDashboardTab = 'voting' | 'desk' | 'agenda';
+type StudentDashboardTab = 'desk' | 'voting' | 'agenda';
 
 interface StudentDashboardProps {
   student: Learner;
@@ -145,14 +145,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   // Derived live voting lists
   const liveElections = useMemo(() => syncedElections.filter(e => e.status === 'Live'), [syncedElections]);
   const activeFlashVotes = useMemo(() => syncedFlashVotes.filter(f => f.status === 'ACTIVE'), [syncedFlashVotes]);
-  const concludedElections = useMemo(() => syncedElections.filter(e => e.status === 'Closed' || (!!e.winner && e.status !== 'Live')), [syncedElections]);
 
   const hasLiveVoting = useMemo(() => {
     return liveElections.length > 0 || activeFlashVotes.length > 0;
   }, [liveElections, activeFlashVotes]);
 
-  // Client-side Tab State (Default to 'voting' if live voting is active, else 'desk')
-  const [activeTab, setActiveTab] = useState<StudentDashboardTab>(() => hasLiveVoting ? 'voting' : 'desk');
+  // Client-side Tab State (Always opens on 'desk' by default)
+  const [activeTab, setActiveTab] = useState<StudentDashboardTab>('desk');
 
   // Agenda tab sub-state
   const currentAgendaItem = useMemo(() => {
@@ -359,7 +358,22 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       <div className="sticky top-2 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md p-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl transition-all">
         <div className="grid grid-cols-3 gap-1 sm:gap-2">
           
-          {/* Tab 1: Live Ballots / Voting 🗳️ */}
+          {/* Tab 1: My Delegate Desk 📋 */}
+          <button
+            type="button"
+            id="tab-btn-desk"
+            onClick={() => setActiveTab('desk')}
+            className={`py-2.5 px-2 sm:px-4 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 transition-all cursor-pointer ${
+              activeTab === 'desk'
+                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/30'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60'
+            }`}
+          >
+            <UserCheck className="w-4 h-4 shrink-0" />
+            <span className="truncate">My Desk</span>
+          </button>
+
+          {/* Tab 2: Live Ballots / Voting 🗳️ */}
           <button
             type="button"
             id="tab-btn-voting"
@@ -377,21 +391,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 LIVE NOW
               </span>
             )}
-          </button>
-
-          {/* Tab 2: My Delegate Desk 📋 */}
-          <button
-            type="button"
-            id="tab-btn-desk"
-            onClick={() => setActiveTab('desk')}
-            className={`py-2.5 px-2 sm:px-4 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 transition-all cursor-pointer ${
-              activeTab === 'desk'
-                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/30'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60'
-            }`}
-          >
-            <UserCheck className="w-4 h-4 shrink-0" />
-            <span className="truncate">My Desk</span>
           </button>
 
           {/* Tab 3: Assembly Agenda 📅 */}
@@ -673,42 +672,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-semibold">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                 <span>Live Realtime Sync Active • No refresh needed</span>
-              </div>
-            </div>
-          )}
-
-          {/* 4. Concluded Elections Summary (Collapsible if present) */}
-          {concludedElections.length > 0 && (
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm space-y-3">
-              <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                  Concluded Assembly Ballots ({concludedElections.length})
-                </h4>
-              </div>
-              <div className="space-y-2">
-                {concludedElections.map(elec => {
-                  const winnerCand = elec.candidates?.find(c => c.id === elec.winner || c.learner_id === elec.winner);
-                  const winnerDisplay = winnerCand ? winnerCand.name : elec.winner;
-
-                  return (
-                    <div key={elec.id} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 text-xs">
-                      <div>
-                        <span className="font-bold text-slate-900 dark:text-white">{elec.title}</span>
-                        <p className="text-[11px] text-slate-500">{elec.position || 'Parliamentary Role'}</p>
-                      </div>
-                      {winnerDisplay ? (
-                        <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 font-bold border border-emerald-500/20 text-[11px] flex items-center gap-1 shrink-0">
-                          <Crown className="w-3 h-3 text-amber-500" /> Elected: {winnerDisplay}
-                        </span>
-                      ) : (
-                        <span className="px-2.5 py-1 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-medium text-[11px] shrink-0">
-                          Concluded
-                        </span>
-                      )}
-                    </div>
-                  );
-                })}
               </div>
             </div>
           )}
