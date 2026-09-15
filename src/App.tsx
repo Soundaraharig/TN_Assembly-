@@ -289,6 +289,15 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
     }
   }, [activeTabFromPath, props.activeNavTab]);
 
+  useEffect(() => {
+    if (activeEvent?.id && isSupabaseEnabled) {
+      const currentDelegates = storageService.getLearners(activeEvent.id);
+      if (currentDelegates.length === 0) {
+        storageService.hydrateFullEventData(activeEvent.id);
+      }
+    }
+  }, [activeEvent?.id]);
+
   // SAFE fallback: only use matchedEvent or currentEvent; NEVER blindly pick events[0]
   // to prevent cross-event contamination (e.g. showing JKKN ARTS data in JKKNCET view)
   const activeEvent = matchedEvent || props.currentEvent || props.events.find(e => e.id === preferredEventId);
@@ -1489,9 +1498,29 @@ export function App() {
   const handleEventChange = (ev: CollegeEvent) => {
     setCurrentEvent(ev);
     currentEventRef.current = ev;
-    if (isAuthenticated && (role === 'coordinator' || role === 'organiser' || role === 'super_admin')) {
-      storageService.fetchCoordinatorAdminData(ev.id).catch(err =>
-        console.warn('[App] Coordinator event change fetch warning:', err)
+    if (isSupabaseEnabled) {
+      storageService.hydrateFullEventData(ev.id).then(() => {
+        setLearners(storageService.getLearners(ev.id));
+        setParties(storageService.getParties(ev.id));
+        setCommittees(storageService.getCommittees(ev.id));
+        setAgenda(storageService.getAgenda(ev.id));
+        setJury(storageService.getJury(ev.id));
+        setVolunteers(storageService.getVolunteers(ev.id));
+        setNominations(storageService.getNominations(ev.id));
+        setOpenNominationPositions(storageService.getOpenNominationPositions(ev.id));
+        setElections(storageService.getElections(ev.id));
+        setFlashVotes(storageService.getFlashVotes(ev.id));
+        setChecklist(storageService.getChecklist(ev.id));
+        setQuestions(storageService.getQuestions(ev.id));
+        setProceedings(storageService.getProceedings(ev.id));
+        setScores(storageService.getScores(ev.id));
+        setChatMessages(storageService.getChatMessages(ev.id));
+        setFeedback(storageService.getFeedback(ev.id));
+        setTeam(storageService.getTeam(ev.id));
+        setEventDays(storageService.getEventDays(ev.id));
+        setDayAttendance(storageService.getDayAttendance(ev.id));
+      }).catch(err =>
+        console.warn('[App] hydrateFullEventData error in handleEventChange:', err)
       );
     }
     setLearners(storageService.getLearners(ev.id));

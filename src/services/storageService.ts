@@ -1486,12 +1486,10 @@ class StorageService {
     this.isSyncing = true;
 
     try {
-      let eventsQuery = sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS);
-      if (targetEventId) {
-        eventsQuery = eventsQuery.eq('id', targetEventId);
-      } else {
-        eventsQuery = eventsQuery.order('created_at', { ascending: false });
-      }
+      const eventsQuery = sb
+        .from('college_events')
+        .select('*')
+        .order('created_at', { ascending: false });
 
       let coordQuery = sb.from('coordinators').select(SUPABASE_COLUMNS.COORDINATORS);
 
@@ -2040,16 +2038,153 @@ class StorageService {
   }
 
   /**
+   * Complete event hydration on selection (Part 2):
+   * Fetches ALL child data matching this eventId from Supabase:
+   * - learners
+   * - session_agenda
+   * - committees
+   * - political_parties
+   * - volunteers
+   * - event_day_attendance
+   * - event_days
+   * - unpacks social_coverage for elections and flash votes
+   * Commits all records directly into reactive storage keys and calls this.notify()
+   */
+  public async hydrateFullEventData(eventId: string): Promise<boolean> {
+    const sb = supabase;
+    if (!sb || !eventId) return false;
+
+    // 1. Set activeEventId in memory and localStorage
+    try {
+      const saved = localStorage.getItem('tn_assembly_auth_session');
+      const sess = saved ? JSON.parse(saved) : {};
+      sess.currentEventId = eventId;
+      localStorage.setItem('tn_assembly_auth_session', JSON.stringify(sess));
+    } catch {}
+
+    const cacheKey = `hydrate_full_${eventId}`;
+    return this.dedupeInFlight(cacheKey, async () => {
+      try {
+        // Fetch event metadata to unpack social_coverage
+        const eventPromise = sb.from('college_events').select('*').eq('id', eventId).maybeSingle();
+
+        // Fetch all delegates/participants
+        const learnersPromise = sb.from('learners').select('*').eq('event_id', eventId);
+
+        // Fetch agenda schedule
+        const agendaPromise = sb.from('session_agenda').select('*').eq('event_id', eventId);
+
+        // Fetch committees & political parties
+        const commPromise = sb.from('committees').select('*').eq('event_id', eventId);
+        const partiesPromise = sb.from('political_parties').select('*').eq('event_id', eventId);
+
+        // Fetch volunteers and attendance
+        const volPromise = sb.from('volunteers').select('*').eq('event_id', eventId);
+        const attPromise = sb.from('event_day_attendance').select('*').eq('event_id', eventId);
+        const eventDaysPromise = sb.from('event_days').select('*').eq('event_id', eventId);
+
+        const [
+          { data: eventData, error: evErr },
+          { data: learnersData, error: learnersErr },
+          { data: agendaData, error: agendaErr },
+          { data: commData, error: commErr },
+          { data: partiesData, error: partiesErr },
+          { data: volData, error: volErr },
+          { data: attData, error: attErr },
+          { data: daysData, error: daysErr }
+        ] = await Promise.all([
+          eventPromise,
+          learnersPromise,
+          agendaPromise,
+          commPromise,
+          partiesPromise,
+          volPromise,
+          attPromise,
+          eventDaysPromise
+        ]);
+
+        if (evErr) console.warn('[StorageService] hydrateFullEventData eventErr:', evErr);
+        if (learnersErr) console.warn('[StorageService] hydrateFullEventData learnersErr:', learnersErr);
+        if (agendaErr) console.warn('[StorageService] hydrateFullEventData agendaErr:', agendaErr);
+
+        // 1. Commit and merge event metadata
+        if (eventData) {
+          const ev = eventData as unknown as CollegeEvent;
+          const curEvents = this.getEvents();
+          const otherEvents = curEvents.filter(e => e.id !== ev.id);
+          this.setItem(STORAGE_KEYS.EVENTS, [...otherEvents, ev]);
+          this.restoreJkkncetEvent();
+          this.unpackAndApplyEventState([ev], eventId);
+        }
+
+        // 2. Commit delegates/learners
+        if (learnersData && Array.isArray(learnersData)) {
+          const otherLearners = this.getLearners().filter(l => l.event_id && l.event_id !== eventId);
+          const mergedLearners = [...otherLearners, ...(learnersData as unknown as Learner[])];
+          this.setItem(STORAGE_KEYS.LEARNERS, sortLearnersStably(mergedLearners));
+        }
+
+        // 3. Commit agenda schedule
+        if (agendaData && Array.isArray(agendaData)) {
+          const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== eventId);
+          const sortedAgenda = (agendaData as unknown as AgendaItem[]).sort((a: any, b: any) => {
+            if (a.order_number !== undefined && b.order_number !== undefined) return a.order_number - b.order_number;
+            if (a.time && b.time) return String(a.time).localeCompare(String(b.time));
+            return 0;
+          });
+          this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...sortedAgenda]);
+        }
+
+        // 4. Commit committees & parties
+        if (commData && Array.isArray(commData)) {
+          const otherComm = this.getCommittees().filter(c => c.event_id && c.event_id !== eventId);
+          this.setItem(STORAGE_KEYS.COMMITTEES, [...otherComm, ...(commData as unknown as Committee[])]);
+        }
+        if (partiesData && Array.isArray(partiesData)) {
+          const otherParties = this.getParties().filter(p => p.event_id && p.event_id !== eventId);
+          this.setItem(STORAGE_KEYS.PARTIES, [...otherParties, ...(partiesData as unknown as Party[])]);
+        }
+
+        // 5. Commit volunteers, attendance, event days
+        if (volData && Array.isArray(volData)) {
+          const otherVol = this.getVolunteers().filter(v => v.event_id && v.event_id !== eventId);
+          this.setItem(STORAGE_KEYS.VOLUNTEERS, [...otherVol, ...(volData as unknown as Volunteer[])]);
+        }
+        if (attData && Array.isArray(attData)) {
+          const otherAtt = this.getDayAttendance().filter(a => a.event_id && a.event_id !== eventId);
+          this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...otherAtt, ...(attData as unknown as DayAttendanceRecord[])]);
+        }
+        if (daysData && Array.isArray(daysData)) {
+          const otherDays = this.getEventDays().filter(d => d.event_id && d.event_id !== eventId);
+          this.setItem(STORAGE_KEYS.EVENT_DAYS, [...otherDays, ...(daysData as unknown as EventDay[])]);
+        }
+
+        // Resync main days attendance
+        this.resyncMainDaysAttendance(eventId);
+
+        // Notify all subscribers (AdminDashboard, ParticipantsTab, AgendaTab, ElectionsTab, etc.)
+        this.notify();
+        if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+        return true;
+      } catch (err) {
+        console.error('[StorageService] hydrateFullEventData fatal error:', err);
+        return false;
+      }
+    });
+  }
+
+  /**
    * Fetch coordinator/admin tables with 5-minute memory caching.
    * Only called inside authenticated Coordinator/Admin routes.
    */
   public async fetchCoordinatorAdminData(eventId?: string, force = false): Promise<void> {
-    await this.syncFromSupabase(eventId, force);
+    if (eventId) {
+      await this.hydrateFullEventData(eventId);
+    } else {
+      await this.syncFromSupabase(eventId, force);
+    }
   }
 
-  /**
-   * Fetch single event metadata by ID and unpack its social_coverage (proceedings, flash votes, elections).
-   */
   /**
    * Fetch single event metadata by ID and unpack its social_coverage (proceedings, flash votes, elections).
    */
