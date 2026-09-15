@@ -424,7 +424,7 @@ BEGIN
     -- 2. Remove all coordinator accounts except the Super Admin
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'coordinators') THEN
         DELETE FROM public.coordinators
-        WHERE LOWER(email) NOT IN ('admin@jkkn.in', 'admin@tnassembly.gov.in');
+        WHERE LOWER(email) NOT IN ('admin@tnassembly.gov.in');
     END IF;
 
     -- 3. Delete all event records (Clean 0 Events slate)
@@ -471,7 +471,7 @@ BEGIN
     -- 2. Remove all coordinator accounts except the Super Admin
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'coordinators') THEN
         DELETE FROM public.coordinators
-        WHERE LOWER(email) NOT IN ('admin@jkkn.in', 'admin@tnassembly.gov.in');
+        WHERE LOWER(email) NOT IN ('admin@tnassembly.gov.in');
     END IF;
 
     -- 3. Keep exactly 1 primary event record and reset its counters to 0

@@ -270,12 +270,12 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
                 <form onSubmit={handleCredentialsSubmit} className="space-y-3">
                   <div>
                     <label className="block text-xs font-bold mb-1" style={{ color: 'var(--text-secondary)' }}>
-                      Email Address / Admin ID
+                      Email Address
                     </label>
                     <input
                       type="text"
                       required
-                      placeholder="user id"
+                      placeholder="User ID"
                       value={email}
                       onChange={e => { setEmail(e.target.value); setCoordError(''); }}
                       className="input-theme"

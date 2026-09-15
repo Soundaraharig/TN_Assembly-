@@ -1314,7 +1314,7 @@ export function App() {
           if (sess.activeNavTab) setActiveNavTab(sess.activeNavTab);
           setUserSession({
             role: 'super_admin',
-            email: sess.email || 'admin@jkkn.in',
+            email: sess.email || 'admin@tnassembly.gov.in',
             name: sess.name || 'Super Admin'
           });
           return;
@@ -2086,23 +2086,21 @@ export function App() {
 
             // 1. Check Super Admin
             if (
-              (emailLower === 'admin@jkkn.in' && passTrim === 'admin@jkkn') ||
-              (emailLower === 'admin@jkkn' && passTrim === 'admin@jkkn') ||
-              (emailLower === 'admin' && passTrim === 'admin@jkkn') ||
-              (emailLower === 'admin@tnassembly.gov.in' && passTrim === 'admin@jkkn')
+              (emailLower === 'admin@tnassembly.gov.in' && passTrim === 'admin123') ||
+              (emailLower.includes('admin') && passTrim === 'admin123')
             ) {
               const sess: UserSession = {
                 role: 'super_admin',
-                email: 'admin@jkkn.in',
+                email: emailInput,
                 name: 'Super Admin'
               };
               setUserSession(sess);
               setIsAuthenticated(true);
               setRole('super_admin');
               setActiveNavTab('overview');
-              saveSession({ role: 'super_admin', email: 'admin@jkkn.in', name: 'Super Admin', activeNavTab: 'overview' });
+              saveSession({ role: 'super_admin', email: emailInput, name: 'Super Admin', activeNavTab: 'overview' });
               setActiveNavTab('events_dashboard');
-              saveSession({ role: 'super_admin', email: 'admin@jkkn.in', name: 'Super Admin', activeNavTab: 'events_dashboard' });
+              saveSession({ role: 'super_admin', email: emailInput, name: 'Super Admin', activeNavTab: 'events_dashboard' });
               return sess;
             }
 
