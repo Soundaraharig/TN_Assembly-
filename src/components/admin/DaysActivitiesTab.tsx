@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import type { EventDay, Learner, DayAttendanceRecord, CollegeEvent, Party, Committee, DayAttendanceStatus, LoginRecord } from '../../types';
 import { getRecordSessionStatuses, formatMarkedBy } from '../../types';
 import { storageService } from '../../services/storageService';
+import { supabase } from '../../lib/supabase';
 import { EditDayActivitiesModal } from './EditDayActivitiesModal';
 import {
   Plus,
@@ -26,7 +27,10 @@ import {
   Laptop,
   Clock,
   ShieldCheck,
-  X
+  X,
+  ChevronLeft,
+  ChevronRight,
+  Loader2
 } from 'lucide-react';
 
 interface DaysActivitiesTabProps {
@@ -76,19 +80,176 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
   const [viewMode, setViewMode] = useState<'days' | 'attendance' | 'login_records'>('days');
   const [selectedDayId, setSelectedDayId] = useState<string>('');
 
-  // Login records & device audit state
-  const [loginRecords, setLoginRecords] = useState<LoginRecord[]>(() => storageService.getLoginRecords(event?.id));
+  // Login records & device audit state (limit 50 per page to maintain low egress)
+  const [loginRecords, setLoginRecords] = useState<LoginRecord[]>(() => storageService.getLoginRecords(event?.id).slice(0, 50));
+  const [loginPage, setLoginPage] = useState<number>(1);
+  const [loginTotalCount, setLoginTotalCount] = useState<number>(() => storageService.getLoginRecords(event?.id).length);
+  const [isLoadingLogins, setIsLoadingLogins] = useState<boolean>(false);
   const [loginRoleFilter, setLoginRoleFilter] = useState<'ALL' | 'student' | 'volunteer' | 'jury'>('ALL');
   const [loginDeviceFilter, setLoginDeviceFilter] = useState<'ALL' | 'Mobile' | 'Desktop'>('ALL');
   const [loginSearchQuery, setLoginSearchQuery] = useState('');
+  const LOGIN_PAGE_SIZE = 50;
 
-  // Auto-refresh login records every 4s
+  // Query persistent audit rows from Supabase (without tight setInterval loops)
   useEffect(() => {
-    setLoginRecords(storageService.getLoginRecords(event?.id));
-    const timer = setInterval(() => {
-      setLoginRecords(storageService.getLoginRecords(event?.id));
-    }, 4000);
-    return () => clearInterval(timer);
+    let isMounted = true;
+    const loadLoginRows = async () => {
+      setIsLoadingLogins(true);
+      try {
+        const res = await storageService.fetchLoginRecordsAsync(event?.id, loginPage, LOGIN_PAGE_SIZE);
+        if (isMounted) {
+          setLoginRecords(res.data);
+          setLoginTotalCount(res.total);
+        }
+      } catch (err) {
+        console.warn('[DaysActivitiesTab] Error fetching login records:', err);
+      } finally {
+        if (isMounted) setIsLoadingLogins(false);
+      }
+    };
+    loadLoginRows();
+
+    // Re-sync when storageService updates
+    const unsub = storageService.subscribe(() => {
+      if (isMounted && loginPage === 1) {
+        setLoginRecords(storageService.getLoginRecords(event?.id).slice(0, LOGIN_PAGE_SIZE));
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsub();
+    };
+  }, [event?.id, loginPage]);
+
+  // Postgres Realtime listener for incoming login_records
+  useEffect(() => {
+    if (!supabase || !event?.id) return;
+    const activeEventId = event.id;
+
+    const channel = supabase
+      .channel(`admin_login_records_stream_${activeEventId}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'login_records',
+        filter: `event_id=eq.${activeEventId}`
+      }, (payload: any) => {
+        if (payload?.new) {
+          const row = payload.new;
+          const dType = String(row.device_type || '').toLowerCase();
+          const normalizedDevice: 'mobile' | 'desktop' = (dType.includes('mobi') || dType.includes('tablet')) ? 'mobile' : 'desktop';
+          const ts = row.logged_in_at || row.login_at || row.created_at || new Date().toISOString();
+          const newEntry: LoginRecord = {
+            id: row.id,
+            event_id: row.event_id,
+            user_id: row.user_id || row.learner_id || row.volunteer_id || '',
+            learner_id: row.learner_id,
+            volunteer_id: row.volunteer_id,
+            user_name: row.user_name || 'User',
+            role: row.role,
+            access_code: row.access_code,
+            login_at: ts,
+            logged_in_at: ts,
+            device_type: normalizedDevice,
+            device_info: row.device_info || (normalizedDevice === 'mobile' ? 'Mobile Client' : 'Desktop Client'),
+            ip_address: row.ip_address,
+            details: row.details
+          };
+          setLoginRecords(prev => {
+            if (prev.some(r => r.id === newEntry.id)) return prev;
+            return [newEntry, ...prev].slice(0, LOGIN_PAGE_SIZE);
+          });
+          setLoginTotalCount(c => c + 1);
+        }
+      })
+      .subscribe();
+
+    return () => {
+      try {
+        if (supabase) {
+          supabase.removeChannel(channel);
+        }
+      } catch { }
+    };
+  }, [event?.id]);
+
+  // Synchronized attendance state (updated via props, storageService.subscribe, and Realtime sync)
+  const [syncedAttendance, setSyncedAttendance] = useState<DayAttendanceRecord[]>(() => dayAttendance);
+
+  useEffect(() => {
+    setSyncedAttendance(dayAttendance);
+  }, [dayAttendance]);
+
+  // Subscribe to storageService updates so any local or optimistic update reflects immediately
+  useEffect(() => {
+    const unsub = storageService.subscribe(() => {
+      if (event?.id) {
+        setSyncedAttendance(storageService.getDayAttendance(event.id));
+      }
+    });
+    return unsub;
+  }, [event?.id]);
+
+  // Supabase Postgres Realtime listener specifically for event_day_attendance
+  useEffect(() => {
+    if (!supabase || !event?.id) return;
+    const activeEventId = event.id;
+
+    // Activate Realtime listener in storageService
+    storageService.setupAttendanceRealtimeListener(activeEventId);
+
+    // Direct listener on admin_attendance_sync for instant UI counter updates without requiring a manual page refresh
+    const channel = supabase
+      .channel(`admin_attendance_sync_${activeEventId}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'event_day_attendance',
+        filter: `event_id=eq.${activeEventId}`
+      }, (payload: any) => {
+        if (payload?.new && payload.new.id) {
+          const rec = payload.new as DayAttendanceRecord;
+          setSyncedAttendance(prev => {
+            const filtered = prev.filter(
+              a => a.id !== rec.id && !(a.event_id === rec.event_id && a.day_id === rec.day_id && a.student_id === rec.student_id)
+            );
+            return [...filtered, rec];
+          });
+        }
+      })
+      .on('broadcast', { event: 'attendance_marked' }, (msg: any) => {
+        const p = msg?.payload;
+        if (p && (p.eventId === activeEventId || !p.eventId)) {
+          if (p.record) {
+            const rec = p.record as DayAttendanceRecord;
+            setSyncedAttendance(prev => {
+              const filtered = prev.filter(
+                a => a.id !== rec.id && !(a.event_id === rec.event_id && a.day_id === rec.day_id && a.student_id === rec.student_id)
+              );
+              return [...filtered, rec];
+            });
+          } else if (Array.isArray(p.records)) {
+            const recs = p.records as DayAttendanceRecord[];
+            const keys = new Set(recs.map(r => `${r.event_id}:::${r.day_id}:::${r.student_id}`));
+            setSyncedAttendance(prev => {
+              const filtered = prev.filter(a => !keys.has(`${a.event_id}:::${a.day_id}:::${a.student_id}`));
+              return [...filtered, ...recs];
+            });
+          } else {
+            setSyncedAttendance(storageService.getDayAttendance(activeEventId));
+          }
+        }
+      })
+      .subscribe();
+
+    return () => {
+      try {
+        if (supabase) {
+          supabase.removeChannel(channel);
+        }
+      } catch { }
+    };
   }, [event?.id]);
 
   // Modal State
@@ -126,7 +287,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
   const overallSummary = useMemo(() => {
     const totalStudents = learners.length;
     return sortedDays.map(day => {
-      const dayAtt = dayAttendance.filter(a => a.day_id === day.id);
+      const dayAtt = syncedAttendance.filter(a => a.day_id === day.id);
       const dayAttMap = new Map<string, DayAttendanceRecord>();
       dayAtt.forEach(a => dayAttMap.set(a.student_id, a));
 
@@ -164,7 +325,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
         bothPercentage
       };
     });
-  }, [sortedDays, dayAttendance, learners]);
+  }, [sortedDays, syncedAttendance, learners]);
 
   // Attendance for current viewed day (Forenoon, Afternoon, Overall)
   const currentDayStats = useMemo(() => {
@@ -182,7 +343,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
       };
     }
     const dayAttMap = new Map<string, DayAttendanceRecord>();
-    dayAttendance
+    syncedAttendance
       .filter(a => a.day_id === currentAttendanceDay.id)
       .forEach(a => dayAttMap.set(a.student_id, a));
 
@@ -217,13 +378,13 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
       bothPresentCount,
       absentCount
     };
-  }, [currentAttendanceDay, dayAttendance, learners]);
+  }, [currentAttendanceDay, syncedAttendance, learners]);
 
   // Filtered learners for attendance view
   const filteredLearners = useMemo(() => {
     if (!currentAttendanceDay) return [];
     const dayAttMap = new Map<string, DayAttendanceRecord>();
-    dayAttendance
+    syncedAttendance
       .filter(a => a.day_id === currentAttendanceDay.id)
       .forEach(a => dayAttMap.set(a.student_id, a));
 
@@ -257,7 +418,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
 
       return matchesSearch && matchesStatus;
     });
-  }, [learners, dayAttendance, currentAttendanceDay, searchQuery, statusFilter, parties]);
+  }, [learners, syncedAttendance, currentAttendanceDay, searchQuery, statusFilter, parties]);
 
   // Handlers
   const handleOpenAddDay = () => {
@@ -1531,12 +1692,12 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                 <div className="flex items-center gap-2 mt-1">
                   <span className="text-base font-black flex items-center gap-1" style={{ color: 'var(--text-primary)' }}>
                     <Smartphone className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                    {loginRecords.filter(r => r.device_type === 'Mobile').length}
+                    {loginRecords.filter(r => (r.device_type || '').toLowerCase() === 'mobile').length}
                   </span>
                   <span style={{ color: 'var(--text-muted)' }}>•</span>
                   <span className="text-base font-black flex items-center gap-1" style={{ color: 'var(--text-primary)' }}>
                     <Laptop className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-                    {loginRecords.filter(r => r.device_type !== 'Mobile').length}
+                    {loginRecords.filter(r => (r.device_type || '').toLowerCase() !== 'mobile').length}
                   </span>
                 </div>
                 <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Device distribution</span>
@@ -1626,7 +1787,11 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
             {(() => {
               const filtered = loginRecords.filter(r => {
                 if (loginRoleFilter !== 'ALL' && r.role !== loginRoleFilter) return false;
-                if (loginDeviceFilter !== 'ALL' && r.device_type !== loginDeviceFilter) return false;
+                if (loginDeviceFilter !== 'ALL') {
+                  const isMobile = (r.device_type || '').toLowerCase() === 'mobile';
+                  if (loginDeviceFilter === 'Mobile' && !isMobile) return false;
+                  if (loginDeviceFilter === 'Desktop' && isMobile) return false;
+                }
                 if (loginSearchQuery.trim()) {
                   const q = loginSearchQuery.trim().toLowerCase();
                   const mName = (r.user_name || '').toLowerCase().includes(q);
@@ -1658,7 +1823,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                     className="p-3.5 flex items-center justify-between text-xs font-semibold"
                     style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
                   >
-                    <span>Displaying {filtered.length} authentication entries</span>
+                    <span>Displaying {filtered.length} authentication entries (Page {loginPage})</span>
                     <span className="text-emerald-600 dark:text-emerald-400 text-[11px] flex items-center gap-1 font-mono">
                       <ShieldCheck className="w-3.5 h-3.5" /> Synchronized Audit Log
                     </span>
@@ -1714,7 +1879,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                           className="px-2.5 py-1 rounded-xl text-xs font-medium border flex items-center gap-1.5"
                           style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
                         >
-                          {entry.device_type === 'Mobile' ? (
+                          {(entry.device_type || '').toLowerCase() === 'mobile' ? (
                             <Smartphone className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                           ) : (
                             <Laptop className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
@@ -1728,7 +1893,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                         >
                           <Clock className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
                           <span>
-                            {new Date(entry.login_at).toLocaleString([], {
+                            {new Date(entry.logged_in_at || entry.login_at).toLocaleString([], {
                               month: 'short',
                               day: 'numeric',
                               hour: '2-digit',
@@ -1743,6 +1908,50 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                 </div>
               );
             })()}
+
+            {/* Pagination Controls */}
+            {loginTotalCount > LOGIN_PAGE_SIZE && (
+              <div
+                className="p-3.5 border-t flex flex-col sm:flex-row items-center justify-between gap-3 text-xs"
+                style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+              >
+                <div className="flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
+                  <span>
+                    Showing {Math.min((loginPage - 1) * LOGIN_PAGE_SIZE + 1, loginTotalCount)} -{' '}
+                    {Math.min(loginPage * LOGIN_PAGE_SIZE, loginTotalCount)} of {loginTotalCount} total logins
+                  </span>
+                  {isLoadingLogins && <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-500" />}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={loginPage <= 1 || isLoadingLogins}
+                    onClick={() => setLoginPage(p => Math.max(1, p - 1))}
+                    className="px-3 py-1.5 rounded-xl border flex items-center gap-1 font-bold text-xs disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all hover:bg-slate-500/10"
+                    style={{ borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                    <span>Previous</span>
+                  </button>
+
+                  <span className="px-3 py-1 rounded-lg border font-mono font-bold text-xs" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--amber)' }}>
+                    Page {loginPage} of {Math.max(1, Math.ceil(loginTotalCount / LOGIN_PAGE_SIZE))}
+                  </span>
+
+                  <button
+                    type="button"
+                    disabled={loginPage >= Math.ceil(loginTotalCount / LOGIN_PAGE_SIZE) || isLoadingLogins}
+                    onClick={() => setLoginPage(p => p + 1)}
+                    className="px-3 py-1.5 rounded-xl border flex items-center gap-1 font-bold text-xs disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all hover:bg-slate-500/10"
+                    style={{ borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                  >
+                    <span>Next</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

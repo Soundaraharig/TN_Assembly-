@@ -157,13 +157,13 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
     });
   };
 
-  // Real-time login records refresh
+  // Real-time login records refresh (event-driven via storageService.subscribe)
   useEffect(() => {
     setLoginRecords(storageService.getLoginRecords(eventId));
-    const timer = setInterval(() => {
+    const unsub = storageService.subscribe(() => {
       setLoginRecords(storageService.getLoginRecords(eventId));
-    }, 4000);
-    return () => clearInterval(timer);
+    });
+    return () => unsub();
   }, [eventId]);
 
   // Map student IDs and access codes to their most recent login record

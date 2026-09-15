@@ -317,6 +317,14 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
       } else {
         await storageService.setStudentDayAttendance(eventId, activeDay.id, studentId, status, volunteerName, 'volunteer', session);
       }
+      storageService.broadcastAttendanceMarked({
+        eventId: activeDay.event_id || eventId,
+        dayId: activeDay.id,
+        studentId,
+        session: session || 'BOTH',
+        status,
+        timestamp: new Date().toISOString()
+      }).catch(() => {});
       setAttendanceRefreshKey(k => k + 1);
       onShowToast?.(
         status === 'Present' ? `Marked ${sessionLabel} Present` : `Marked ${sessionLabel} Absent`,
@@ -352,6 +360,14 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
       } else {
         await storageService.batchSetDayAttendance(eventId, activeDay.id, studentIds, status, volunteerName, 'volunteer', session);
       }
+      storageService.broadcastAttendanceMarked({
+        eventId: activeDay.event_id || eventId,
+        dayId: activeDay.id,
+        studentIds,
+        session: session || 'BOTH',
+        status,
+        timestamp: new Date().toISOString()
+      }).catch(() => {});
       setAttendanceRefreshKey(k => k + 1);
       onShowToast?.(
         'Attendance Updated',

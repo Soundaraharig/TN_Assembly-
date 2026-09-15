@@ -552,11 +552,14 @@ export interface LoginRecord {
   id: string;
   event_id: string;
   user_id: string;
+  learner_id?: string;
+  volunteer_id?: string;
   user_name: string;
   role: 'student' | 'volunteer' | 'jury' | 'coordinator';
   access_code: string;
   login_at: string; // ISO string
-  device_type: 'Mobile' | 'Tablet' | 'Desktop' | 'Other';
+  logged_in_at?: string; // ISO string
+  device_type: 'mobile' | 'desktop' | 'Mobile' | 'Tablet' | 'Desktop' | 'Other' | string;
   device_info: string;
   ip_address?: string;
   details?: string;

@@ -139,16 +139,10 @@ export const SUPABASE_COLUMNS = {
 
 type Listener = () => void;
 
-function detectDeviceType(): 'Mobile' | 'Tablet' | 'Desktop' | 'Other' {
-  if (typeof window === 'undefined' || !navigator) return 'Other';
+function detectDeviceType(): 'mobile' | 'desktop' {
+  if (typeof window === 'undefined' || !navigator) return 'desktop';
   const ua = (navigator.userAgent || '').toLowerCase();
-  if (/(ipad|tablet|(android(?!.*mobile))|(windows(?!.*phone)(.*touch))|kindle|playbook|silk)/.test(ua)) {
-    return 'Tablet';
-  }
-  if (/(mobi|ipod|phone|android|blackberry|opera mini|fennec|minimo|symbian)/.test(ua)) {
-    return 'Mobile';
-  }
-  return 'Desktop';
+  return /(mobi|android|touch|mini|phone|ipod|ipad|tablet)/i.test(ua) ? 'mobile' : 'desktop';
 }
 
 function getDeviceInfo(): string {
@@ -412,6 +406,7 @@ class StorageService {
   private inFlightPromises = new Map<string, Promise<{ success: boolean; error: any; data?: any }>>();
   private failedWriteSignatures = new Map<string, number>();
   private fixedLearnerIdsSynced = new Set<string>();
+  private attendanceRealtimeChannel: any = null;
 
   // ── SWR Cache & Schema Versioning ───────────────────────────────────────
   public wasCacheMigrated: boolean = false;
@@ -2509,6 +2504,117 @@ class StorageService {
     }
   }
 
+  public setupAttendanceRealtimeListener(activeEventId: string) {
+    if (!supabase || !activeEventId) return;
+
+    if (this.attendanceRealtimeChannel) {
+      try {
+        supabase.removeChannel(this.attendanceRealtimeChannel);
+      } catch { }
+      this.attendanceRealtimeChannel = null;
+    }
+
+    try {
+      this.attendanceRealtimeChannel = supabase
+        .channel('admin_attendance_sync')
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'event_day_attendance',
+          filter: `event_id=eq.${activeEventId}`
+        }, (payload: any) => {
+          this.invalidateCache('attendance');
+          this.invalidateCache('portal_');
+          this.invalidateCache('sync_');
+          if (payload?.new && payload.new.id) {
+            const rec = payload.new as DayAttendanceRecord;
+            const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+            // Optimistically merge payload.new into the local attendance cache/state
+            const next = curAtt.filter(
+              a => a.id !== rec.id && !(a.event_id === rec.event_id && a.day_id === rec.day_id && a.student_id === rec.student_id)
+            );
+            next.push(rec);
+            this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, next);
+
+            // Sync with learner check-in status if mapped to main day 1 or 2
+            const days = this.getEventDays(activeEventId);
+            const curDay = days.find(d => d.id === rec.day_id);
+            if (curDay && (curDay.main_day === 1 || curDay.main_day === 2)) {
+              const isDay1 = curDay.main_day === 1;
+              const isPres = rec.status === 'Present';
+              const curLearners = this.getLearners(activeEventId);
+              const updatedL = curLearners.map(l => {
+                if (l.id === rec.student_id) {
+                  return {
+                    ...l,
+                    day1_checked_in: isDay1 ? isPres : l.day1_checked_in,
+                    day2_checked_in: !isDay1 ? isPres : l.day2_checked_in
+                  };
+                }
+                return l;
+              });
+              this.setItem(STORAGE_KEYS.LEARNERS, updatedL);
+            }
+
+            // Trigger storageService.notify() so the Admin UI updates immediately
+            this.notify();
+            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+          }
+        })
+        .on('broadcast', { event: 'attendance_marked' }, (msg: any) => {
+          const p = msg?.payload;
+          if (p && (p.eventId === activeEventId || !p.eventId)) {
+            if (p.record) {
+              const rec = p.record as DayAttendanceRecord;
+              const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+              const next = curAtt.filter(
+                a => a.id !== rec.id && !(a.event_id === rec.event_id && a.day_id === rec.day_id && a.student_id === rec.student_id)
+              );
+              next.push(rec);
+              this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, next);
+            } else if (Array.isArray(p.records)) {
+              const recs = p.records as DayAttendanceRecord[];
+              const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+              const keys = new Set(recs.map(r => `${r.event_id}:::${r.day_id}:::${r.student_id}`));
+              const next = curAtt.filter(a => !keys.has(`${a.event_id}:::${a.day_id}:::${a.student_id}`));
+              next.push(...recs);
+              this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, next);
+            }
+            this.notify();
+            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+          }
+        })
+        .subscribe();
+    } catch (err) {
+      console.warn('[StorageService] setupAttendanceRealtimeListener error:', err);
+    }
+  }
+
+  public async broadcastAttendanceMarked(payload: {
+    eventId: string;
+    dayId: string;
+    studentId?: string;
+    studentIds?: string[];
+    session?: 'FN' | 'AN' | 'BOTH';
+    status: DayAttendanceStatus;
+    record?: DayAttendanceRecord;
+    records?: DayAttendanceRecord[];
+    timestamp?: string;
+  }): Promise<void> {
+    if (!supabase) return;
+    try {
+      const channel = supabase.channel('admin_attendance_sync');
+      await channel.send({
+        type: 'broadcast',
+        event: 'attendance_marked',
+        payload
+      });
+    } catch (e) {
+      console.warn('[StorageService] broadcastAttendanceMarked failed on admin_attendance_sync:', e);
+    }
+    this.broadcast('attendance_marked', payload).catch(() => {});
+  }
+
   public async syncEventStateToSupabase(eventId: string) {
     if (!supabase || !eventId) return;
     try {
@@ -3336,17 +3442,28 @@ class StorageService {
     user_name: string;
     role: 'student' | 'volunteer' | 'jury' | 'coordinator';
     access_code: string;
-    device_type?: 'Mobile' | 'Tablet' | 'Desktop' | 'Other';
+    device_type?: 'mobile' | 'desktop' | 'Mobile' | 'Tablet' | 'Desktop' | 'Other' | string;
     device_info?: string;
     ip_address?: string;
     details?: string;
   }): LoginRecord {
+    const timestamp = new Date().toISOString();
+    const detectedDevice = detectDeviceType();
+    const rawDevice = record.device_type || detectedDevice;
+    const normalizedDevice: 'mobile' | 'desktop' =
+      String(rawDevice).toLowerCase().includes('mobi') || String(rawDevice).toLowerCase().includes('tablet')
+        ? 'mobile'
+        : 'desktop';
+
     const records = this.getItem<LoginRecord[]>(STORAGE_KEYS.LOGIN_RECORDS, []);
     const entry: LoginRecord = {
       id: genUuid(),
-      login_at: new Date().toISOString(),
-      device_type: record.device_type || detectDeviceType(),
+      login_at: timestamp,
+      logged_in_at: timestamp,
+      device_type: normalizedDevice,
       device_info: record.device_info || getDeviceInfo(),
+      learner_id: record.role === 'student' ? record.user_id : undefined,
+      volunteer_id: record.role === 'volunteer' ? record.user_id : undefined,
       ...record
     };
 
@@ -3354,29 +3471,54 @@ class StorageService {
     // Keep reasonable history of last 1000 logins
     if (records.length > 1000) records.pop();
     this.setItem(STORAGE_KEYS.LOGIN_RECORDS, records);
+    this.notify();
 
-    // Sync to Supabase if configured (graceful error handling)
+    // Sync to Supabase persistent table if configured (graceful error handling)
     if (supabase && isSupabaseEnabled) {
+      const payload: Record<string, any> = {
+        event_id: entry.event_id,
+        user_id: entry.user_id,
+        access_code: entry.access_code,
+        role: entry.role,
+        device_type: normalizedDevice,
+        logged_in_at: timestamp,
+        login_at: timestamp,
+        user_name: entry.user_name || 'User',
+        device_info: entry.device_info || getDeviceInfo(),
+        details: entry.details || null
+      };
+      if (entry.role === 'student') {
+        payload.learner_id = entry.user_id;
+      } else if (entry.role === 'volunteer') {
+        payload.volunteer_id = entry.user_id;
+      }
+
       Promise.resolve(
         supabase
           .from('login_records')
-          .insert({
-            id: entry.id,
-            event_id: entry.event_id,
-            user_id: entry.user_id,
-            user_name: entry.user_name,
-            role: entry.role,
-            access_code: entry.access_code,
-            login_at: entry.login_at,
-            device_type: entry.device_type,
-            device_info: entry.device_info,
-            ip_address: entry.ip_address || null,
-            details: entry.details || null
-          })
+          .insert(payload)
       )
-        .then((res: any) => {
+        .then(async (res: any) => {
           if (res?.error) {
-            console.warn('[StorageService] Supabase login_records sync error (may need migration):', res.error.message);
+            console.warn('[StorageService] Supabase login_records sync retry due to:', res.error.message);
+            // Fallback for earlier table versions that may lack learner_id or logged_in_at
+            const fallbackPayload: Record<string, any> = {
+              event_id: entry.event_id,
+              user_id: entry.user_id,
+              user_name: entry.user_name || 'User',
+              role: entry.role,
+              access_code: entry.access_code,
+              device_type: normalizedDevice,
+              device_info: entry.device_info || getDeviceInfo(),
+              login_at: timestamp,
+              details: entry.details || null
+            };
+            if (supabase) {
+              const retryRes = await supabase.from('login_records').insert(fallbackPayload);
+              if (retryRes?.error) {
+                console.warn('[StorageService] Supabase login_records fallback error:', retryRes.error.message);
+              }
+            }
           }
         })
         .catch((err: any) => {
@@ -3384,8 +3526,77 @@ class StorageService {
         });
     }
 
-    console.log(`🔑 [Login Recorded] ${entry.role.toUpperCase()} ${entry.user_name} (${entry.access_code}) from ${entry.device_info} at ${entry.login_at}`);
+    console.log(`🔑 [Login Recorded] ${entry.role.toUpperCase()} ${entry.user_name} (${entry.access_code}) from ${entry.device_type} at ${entry.login_at}`);
     return entry;
+  }
+
+  public async fetchLoginRecordsAsync(eventId?: string, page: number = 1, pageSize: number = 50): Promise<{ data: LoginRecord[]; total: number }> {
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    if (!supabase || !isSupabaseEnabled) {
+      const local = this.getLoginRecords(eventId);
+      return {
+        data: local.slice(from, from + pageSize),
+        total: local.length
+      };
+    }
+
+    try {
+      let query = supabase
+        .from('login_records')
+        .select('*', { count: 'exact' });
+
+      if (eventId) {
+        query = query.eq('event_id', eventId);
+      }
+
+      const { data, count, error } = await query
+        .order('created_at', { ascending: false })
+        .range(from, to);
+
+      if (error) {
+        console.warn('[StorageService] fetchLoginRecordsAsync query error:', error.message);
+        const local = this.getLoginRecords(eventId);
+        return { data: local.slice(from, from + pageSize), total: local.length };
+      }
+
+      const mapped: LoginRecord[] = (data || []).map((row: any) => {
+        const dType = String(row.device_type || '').toLowerCase();
+        const normalizedDevice: 'mobile' | 'desktop' = (dType.includes('mobi') || dType.includes('tablet')) ? 'mobile' : 'desktop';
+        const ts = row.logged_in_at || row.login_at || row.created_at || new Date().toISOString();
+        return {
+          id: row.id,
+          event_id: row.event_id,
+          user_id: row.user_id || row.learner_id || row.volunteer_id || '',
+          learner_id: row.learner_id,
+          volunteer_id: row.volunteer_id,
+          user_name: row.user_name || 'User',
+          role: row.role,
+          access_code: row.access_code,
+          login_at: ts,
+          logged_in_at: ts,
+          device_type: normalizedDevice,
+          device_info: row.device_info || (normalizedDevice === 'mobile' ? 'Mobile Client' : 'Desktop Client'),
+          ip_address: row.ip_address,
+          details: row.details
+        };
+      });
+
+      // Update local storage with page 1 results to cache for instant load
+      if (page === 1 && mapped.length > 0) {
+        const local = this.getLoginRecords(eventId);
+        const mappedIds = new Set(mapped.map(m => m.id));
+        const merged = [...mapped, ...local.filter(l => !mappedIds.has(l.id))].slice(0, 500);
+        this.setItem(STORAGE_KEYS.LOGIN_RECORDS, merged);
+      }
+
+      return { data: mapped, total: count ?? mapped.length };
+    } catch (ex) {
+      console.warn('[StorageService] fetchLoginRecordsAsync error:', ex);
+      const local = this.getLoginRecords(eventId);
+      return { data: local.slice(from, from + pageSize), total: local.length };
+    }
   }
 
   public getLoginRecords(eventId?: string): LoginRecord[] {
@@ -4620,6 +4831,16 @@ class StorageService {
     }
 
     this.persistEventDaysToSocialCoverage(eventId);
+    this.notify();
+    this.broadcastAttendanceMarked({
+      eventId,
+      dayId,
+      studentId,
+      session,
+      status,
+      record,
+      timestamp
+    }).catch(() => {});
     return record;
   }
 
@@ -4782,6 +5003,16 @@ class StorageService {
     }
 
     this.persistEventDaysToSocialCoverage(eventId);
+    this.notify();
+    this.broadcastAttendanceMarked({
+      eventId,
+      dayId,
+      studentIds,
+      session,
+      status,
+      records: Array.from(existingMap.values()).filter(r => studentIds.includes(r.student_id)),
+      timestamp
+    }).catch(() => {});
   }
 
   public getEventAttendanceSummary(eventId: string): {
