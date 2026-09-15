@@ -275,7 +275,7 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
                     <input
                       type="text"
                       required
-                      placeholder="admin@jkkn.in"
+                      placeholder="user id"
                       value={email}
                       onChange={e => { setEmail(e.target.value); setCoordError(''); }}
                       className="input-theme"
