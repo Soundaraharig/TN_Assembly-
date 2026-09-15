@@ -42,11 +42,14 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
   const [editingEvent, setEditingEvent] = useState<CollegeEvent | null>(null);
   const [deletingEventId, setDeletingEventId] = useState<string | null>(null);
 
+  const hasFetchedRef = React.useRef(false);
+
   React.useEffect(() => {
-    if (events.length === 0) {
-      storageService.resolveAndHydrateActiveEvent();
+    if (!hasFetchedRef.current) {
+      hasFetchedRef.current = true;
+      storageService.fetchAllEvents();
     }
-  }, [events.length]);
+  }, []);
 
   const isSuperAdmin = role === 'super_admin' || role === 'organiser' || !role ||
     (userEmail && (
@@ -68,7 +71,7 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
         // 3. Known authoritative mapping for Soundarahari to JKKNCET TN ASSEMBLY 2026
         if (normEmail === 'soundaraharigece2025@jkkn.ac.in' && (e.id === '200fdd74-4d21-44d5-9f63-9a07bf267824' || e.college_name?.toLowerCase().includes('jkkncet') || e.slug?.includes('jkkncet'))) return true;
         // 4. All active college rounds
-        if (e.is_active || e.status === 'Active' || e.status === 'College Round' || e.event_stage === 'College Round') return true;
+        if ((e as any).is_active || (e.status as string) === 'Active' || (e.status as string) === 'College Round' || e.event_stage === 'College Round') return true;
         return false;
       });
 

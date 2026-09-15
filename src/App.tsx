@@ -289,18 +289,19 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
     }
   }, [activeTabFromPath, props.activeNavTab]);
 
+  // SAFE fallback: only use matchedEvent or currentEvent; NEVER blindly pick events[0]
+  // to prevent cross-event contamination (e.g. showing JKKN ARTS data in JKKNCET view)
+  const activeEvent = matchedEvent || props.currentEvent || props.events.find(e => e.id === preferredEventId);
+  const hydratedEventsRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     if (activeEvent?.id && isSupabaseEnabled) {
-      const currentDelegates = storageService.getLearners(activeEvent.id);
-      if (currentDelegates.length === 0) {
+      if (!hydratedEventsRef.current.has(activeEvent.id) && !storageService.isEventHydrated(activeEvent.id)) {
+        hydratedEventsRef.current.add(activeEvent.id);
         storageService.hydrateFullEventData(activeEvent.id);
       }
     }
   }, [activeEvent?.id]);
-
-  // SAFE fallback: only use matchedEvent or currentEvent; NEVER blindly pick events[0]
-  // to prevent cross-event contamination (e.g. showing JKKN ARTS data in JKKNCET view)
-  const activeEvent = matchedEvent || props.currentEvent || props.events.find(e => e.id === preferredEventId);
 
   // Strictly event-scoped records computed synchronously so child views and tabs NEVER cross-bleed data across events
   const currentLearners = useMemo(() => {
@@ -1060,10 +1061,6 @@ export function App() {
       saveSession({ currentEventId: activeEv.id });
 
       const eventLearners = storageService.getLearners(activeEv.id);
-      // Auto-recover event hydration if learners are empty for active event
-      if (isSupabaseEnabled && eventLearners.length === 0) {
-        storageService.syncFromSupabase(activeEv.id, true).catch(() => {});
-      }
       setLearners(eventLearners);
       setParties(storageService.getParties(activeEv.id));
       setCommittees(storageService.getCommittees(activeEv.id));
@@ -1121,19 +1118,22 @@ export function App() {
     }
   };
 
+  const hasMountedEventsRef = useRef(false);
+
   useEffect(() => {
     loadState();
     const unsubscribe = storageService.subscribe(() => {
       loadState();
     });
 
-    // Unconditional initial sync: fetch events and hydrate active event on mount
-    // regardless of auth state, so the events list and delegate context are populated
-    if (isSupabaseEnabled) {
-      storageService.resolveAndHydrateActiveEvent().then(() => {
+    // Unconditional initial sync: fetch events list ONLY on mount
+    // Child tables are strictly NOT fetched on the Event Hub or initial load
+    if (isSupabaseEnabled && !hasMountedEventsRef.current) {
+      hasMountedEventsRef.current = true;
+      storageService.fetchAllEvents().then(() => {
         loadState();
       }).catch(err => {
-        console.warn('[App] Initial Supabase sync warning:', err);
+        console.warn('[App] Initial Supabase events sync warning:', err);
       });
     }
 
@@ -1377,6 +1377,11 @@ export function App() {
   // Role-Based Conditional Fetching: Trigger targeted data fetches only after authenticated session verification
   useEffect(() => {
     if (!isAuthenticated) return;
+
+    // Do NOT hydrate child tables when sitting on the All Assembly Events hub (/events)
+    const isEventsHub = typeof window !== 'undefined' && 
+      (window.location.pathname === '/events' || window.location.pathname === '/events/');
+    if (isEventsHub) return;
 
     const eventId = currentEvent?.id || currentEventRef.current?.id;
     if (!eventId) return;
@@ -2147,9 +2152,9 @@ export function App() {
               saveSession({ role: 'super_admin', email: emailInput, name: 'Super Admin', activeNavTab: 'events_dashboard' });
               // Force sync events from Supabase immediately after super admin login
               if (isSupabaseEnabled) {
-                storageService.syncFromSupabase(undefined, true).then(() => {
+                storageService.fetchAllEvents(true).then(() => {
                   loadState();
-                }).catch(err => console.warn('[App] Super admin sync warning:', err));
+                }).catch(err => console.warn('[App] Super admin events sync warning:', err));
               }
               return sess;
             }

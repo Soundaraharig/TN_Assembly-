@@ -442,6 +442,12 @@ class StorageService {
   private failedWriteSignatures = new Map<string, number>();
   private fixedLearnerIdsSynced = new Set<string>();
   private attendanceRealtimeChannel: any = null;
+  private hydratedEventIds = new Set<string>();
+  private eventsFetched = false;
+
+  public isEventHydrated(eventId: string): boolean {
+    return this.hydratedEventIds.has(eventId);
+  }
 
   // ── SWR Cache & Schema Versioning ───────────────────────────────────────
   public wasCacheMigrated: boolean = false;
@@ -539,6 +545,8 @@ class StorageService {
 
   public invalidateCache(prefix?: string): void {
     if (!prefix) {
+      this.hydratedEventIds.clear();
+      this.eventsFetched = false;
       this.memoryCache.clear();
       try {
         if (typeof window !== 'undefined' && window.localStorage) {
@@ -554,6 +562,10 @@ class StorageService {
       } catch { }
       return;
     }
+    if (prefix === 'events') {
+      this.eventsFetched = false;
+    }
+    this.hydratedEventIds.delete(prefix);
     for (const k of Array.from(this.memoryCache.keys())) {
       if (k.startsWith(prefix) || k.startsWith(`tn_cache_${prefix}`)) {
         this.memoryCache.delete(k);
@@ -640,7 +652,7 @@ class StorageService {
         // Force a clean initial fetch from Supabase if connected
         if (isSupabaseEnabled && supabase) {
           setTimeout(() => {
-            this.syncFromSupabase(undefined, true).catch(err =>
+            this.fetchAllEvents(true).catch(err =>
               console.warn('[StorageService] Initial post-migration fetch warning:', err)
             );
           }, 0);
@@ -660,7 +672,7 @@ class StorageService {
       // Always trigger an initial background fetch so events are populated from Supabase
       // even on first visit with empty localStorage (INITIAL_EVENTS is [])
       setTimeout(() => {
-        this.syncFromSupabase(undefined, false).catch(err =>
+        this.fetchAllEvents(false).catch(err =>
           console.warn('[StorageService] Initial background sync warning:', err)
         );
       }, 0);
@@ -2038,6 +2050,43 @@ class StorageService {
   }
 
   /**
+   * Fetches ONLY college_events without loading any child tables.
+   * Safe to call on /events (Event Hub) and initial application load.
+   */
+  public async fetchAllEvents(force = false): Promise<CollegeEvent[]> {
+    const sb = supabase;
+    if (!sb) return this.getEvents();
+
+    if (!force && this.eventsFetched && this.getEvents().length > 0) {
+      return this.getEvents();
+    }
+
+    const cacheKey = 'fetch_all_events';
+    return this.dedupeInFlight(cacheKey, async () => {
+      try {
+        const { data, error } = await sb
+          .from('college_events')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (!error && data && Array.isArray(data)) {
+          const evs = data as unknown as CollegeEvent[];
+          this.setItem(STORAGE_KEYS.EVENTS, evs);
+          this.restoreJkkncetEvent();
+          this.eventsFetched = true;
+          this.notify();
+          return evs;
+        } else if (error) {
+          console.warn('[StorageService] fetchAllEvents query error:', error);
+        }
+      } catch (err) {
+        console.warn('[StorageService] fetchAllEvents fatal error:', err);
+      }
+      return this.getEvents();
+    });
+  }
+
+  /**
    * Complete event hydration on selection (Part 2):
    * Fetches ALL child data matching this eventId from Supabase:
    * - learners
@@ -2050,9 +2099,13 @@ class StorageService {
    * - unpacks social_coverage for elections and flash votes
    * Commits all records directly into reactive storage keys and calls this.notify()
    */
-  public async hydrateFullEventData(eventId: string): Promise<boolean> {
+  public async hydrateFullEventData(eventId: string, force = false): Promise<boolean> {
     const sb = supabase;
     if (!sb || !eventId) return false;
+
+    if (!force && this.hydratedEventIds.has(eventId)) {
+      return true;
+    }
 
     // 1. Set activeEventId in memory and localStorage
     try {
@@ -2064,6 +2117,9 @@ class StorageService {
 
     const cacheKey = `hydrate_full_${eventId}`;
     return this.dedupeInFlight(cacheKey, async () => {
+      if (!force && this.hydratedEventIds.has(eventId)) {
+        return true;
+      }
       try {
         // Fetch event metadata to unpack social_coverage
         const eventPromise = sb.from('college_events').select('*').eq('id', eventId).maybeSingle();
@@ -2087,11 +2143,11 @@ class StorageService {
           { data: eventData, error: evErr },
           { data: learnersData, error: learnersErr },
           { data: agendaData, error: agendaErr },
-          { data: commData, error: commErr },
-          { data: partiesData, error: partiesErr },
-          { data: volData, error: volErr },
-          { data: attData, error: attErr },
-          { data: daysData, error: daysErr }
+          { data: commData },
+          { data: partiesData },
+          { data: volData },
+          { data: attData },
+          { data: daysData }
         ] = await Promise.all([
           eventPromise,
           learnersPromise,
@@ -2151,7 +2207,7 @@ class StorageService {
           this.setItem(STORAGE_KEYS.VOLUNTEERS, [...otherVol, ...(volData as unknown as Volunteer[])]);
         }
         if (attData && Array.isArray(attData)) {
-          const otherAtt = this.getDayAttendance().filter(a => a.event_id && a.event_id !== eventId);
+          const otherAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []).filter(a => a.event_id && a.event_id !== eventId);
           this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...otherAtt, ...(attData as unknown as DayAttendanceRecord[])]);
         }
         if (daysData && Array.isArray(daysData)) {
@@ -2161,6 +2217,9 @@ class StorageService {
 
         // Resync main days attendance
         this.resyncMainDaysAttendance(eventId);
+
+        // Record hydration completion
+        this.hydratedEventIds.add(eventId);
 
         // Notify all subscribers (AdminDashboard, ParticipantsTab, AgendaTab, ElectionsTab, etc.)
         this.notify();
@@ -2179,9 +2238,9 @@ class StorageService {
    */
   public async fetchCoordinatorAdminData(eventId?: string, force = false): Promise<void> {
     if (eventId) {
-      await this.hydrateFullEventData(eventId);
+      await this.hydrateFullEventData(eventId, force);
     } else {
-      await this.syncFromSupabase(eventId, force);
+      await this.fetchAllEvents(force);
     }
   }
 
@@ -8425,29 +8484,21 @@ class StorageService {
   public async resolveAndHydrateActiveEvent(preferredEventId?: string): Promise<string | undefined> {
     let targetId = preferredEventId || this.getActiveEventId();
     if (!targetId || this.getEvents().length === 0) {
-      if (supabase) {
+      await this.fetchAllEvents(true);
+      const events = this.getEvents();
+      if (events.length > 0) {
+        const active = events.find((e: any) => e.is_active) || events[0];
+        targetId = active.id;
         try {
-          const { data: events, error } = await supabase.from('college_events').select('*').order('created_at', { ascending: false });
-          if (!error && events && events.length > 0) {
-            const active = events.find((e: any) => e.is_active) || events[0];
-            targetId = active.id;
-            this.setItem(STORAGE_KEYS.EVENTS, events as unknown as CollegeEvent[]);
-            try {
-              const saved = localStorage.getItem('tn_assembly_auth_session');
-              const sess = saved ? JSON.parse(saved) : {};
-              sess.currentEventId = targetId;
-              localStorage.setItem('tn_assembly_auth_session', JSON.stringify(sess));
-            } catch {}
-          }
-        } catch (e) {
-          console.warn('[StorageService] Failed to auto-recover events from Supabase:', e);
-        }
+          const saved = localStorage.getItem('tn_assembly_auth_session');
+          const sess = saved ? JSON.parse(saved) : {};
+          sess.currentEventId = targetId;
+          localStorage.setItem('tn_assembly_auth_session', JSON.stringify(sess));
+        } catch {}
       }
     }
     if (targetId) {
-      await this.syncFromSupabase(targetId, true);
-    } else if (supabase) {
-      await this.syncFromSupabase(undefined, true);
+      await this.hydrateFullEventData(targetId);
     }
     return targetId;
   }
