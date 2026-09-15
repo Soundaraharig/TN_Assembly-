@@ -300,7 +300,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
   const handleConfirmSingleDelete = (e: React.FormEvent) => {
     e.preventDefault();
     const pass = coordAuthPass.trim();
-    if (pass === 'coord123' || pass === 'admin123' || pass.length >= 6) {
+    if (pass === 'coord123' || pass === 'admin123' || pass === 'admin@jkkn' || pass.length >= 6) {
       if (deletingLearnerId) {
         onDeleteLearner(deletingLearnerId);
         setSelectedLearnerIds(prev => {
@@ -322,8 +322,8 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
   const handleConfirmMassDelete = (e: React.FormEvent) => {
     e.preventDefault();
     const pass = massDeletePass.trim();
-    if (pass !== 'coord123' && pass !== 'admin123' && pass !== 'DELETE' && pass.length < 6) {
-      setMassDeleteError('Unauthorized: Enter valid Coordinator Password (coord123 / admin123) or type DELETE to confirm.');
+    if (pass !== 'coord123' && pass !== 'admin123' && pass !== 'admin@jkkn' && pass !== 'DELETE' && pass.length < 6) {
+      setMassDeleteError('Unauthorized: Enter valid Coordinator Password (coord123 / admin@jkkn) or type DELETE to confirm.');
       return;
     }
 
@@ -1746,7 +1746,7 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
                 <input
                   type="text"
                   required
-                  placeholder="Enter coord123, admin123 or DELETE"
+                  placeholder="Enter coord123, admin@jkkn or DELETE"
                   value={massDeletePass}
                   onChange={(e) => setMassDeletePass(e.target.value)}
                   className="w-full p-2.5 rounded-xl border text-xs focus:outline-none"

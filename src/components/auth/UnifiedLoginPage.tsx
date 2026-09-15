@@ -18,14 +18,14 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
   theme,
   onToggleTheme
 }) => {
-  const [email, setEmail]       = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [coordError, setCoordError] = useState('');
 
   const [accessCode, setAccessCode] = useState('');
-  const [codeError, setCodeError]   = useState('');
+  const [codeError, setCodeError] = useState('');
   const [isOrganizerLoading, setIsOrganizerLoading] = useState(false);
-  const [isCodeLoading, setIsCodeLoading]           = useState(false);
+  const [isCodeLoading, setIsCodeLoading] = useState(false);
 
   // Security Lockout / Rate Limiting (5 attempts -> 3 min lockout)
   const LOCKOUT_KEY = 'tn_assembly_join_lockout';
@@ -60,14 +60,14 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
         try {
           sessionStorage.removeItem(LOCKOUT_KEY);
           sessionStorage.removeItem(FAILED_COUNT_KEY);
-        } catch {}
+        } catch { }
       }
     };
     updateCountdown();
     const interval = setInterval(updateCountdown, 1000);
     return () => clearInterval(interval);
   }, [lockoutUntil]);
-  
+
   const isJoinUrl = () => {
     if (typeof window === 'undefined') return false;
     const path = window.location.pathname.toLowerCase();
@@ -142,7 +142,7 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
       setFailedAttempts(nextFailed);
       try {
         sessionStorage.setItem(FAILED_COUNT_KEY, String(nextFailed));
-      } catch {}
+      } catch { }
 
       if (nextFailed >= 5) {
         const lockDuration = 180000; // 3 minutes lockout
@@ -151,7 +151,7 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
         setLockoutRemaining(180);
         try {
           sessionStorage.setItem(LOCKOUT_KEY, String(lockExpiry));
-        } catch {}
+        } catch { }
         setCodeError('Security Lockout: 5 failed attempts reached. Access code verification suspended for 3 minutes.');
         return;
       }
@@ -162,7 +162,7 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
       try {
         sessionStorage.removeItem(FAILED_COUNT_KEY);
         sessionStorage.removeItem(LOCKOUT_KEY);
-      } catch {}
+      } catch { }
       setCodeError('');
       const name = (res as any).full_name || (res as any).name || 'User';
       const roleStr = (res as any).role === 'volunteer' ? 'Volunteer' : (res as any).role === 'jury' ? 'Jury' : 'Delegate';
@@ -270,12 +270,12 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
                 <form onSubmit={handleCredentialsSubmit} className="space-y-3">
                   <div>
                     <label className="block text-xs font-bold mb-1" style={{ color: 'var(--text-secondary)' }}>
-                      Email Address
+                      Email Address / Admin ID
                     </label>
                     <input
                       type="text"
                       required
-                      placeholder="admin@tnassembly.in"
+                      placeholder="admin@jkkn.in"
                       value={email}
                       onChange={e => { setEmail(e.target.value); setCoordError(''); }}
                       className="input-theme"
