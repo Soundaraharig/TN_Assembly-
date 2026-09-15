@@ -336,9 +336,9 @@
     "semantic_hash": "5b4bc0f8532cd2bd90daced81d45749a"
   },
   "src/App.tsx": {
-    "mtime": 1789392686.9472408,
-    "seen": 1789392720.6067183,
-    "ast_hash": "16c43d2e6bc0199962c6b1479470a82c",
+    "mtime": 1789466190.6405866,
+    "seen": 1789466644.068261,
+    "ast_hash": "0851f2b7952b50bddde11741bab7459f",
     "semantic_hash": ""
   },
   "src/components/admin/CreateEventModal.tsx": {
@@ -396,9 +396,9 @@
     "semantic_hash": "1be1e4def2adcb6f1bf996286e6c386e"
   },
   "src/components/auth/UnifiedLoginPage.tsx": {
-    "mtime": 1789290382.667797,
-    "seen": 1789290726.8243482,
-    "ast_hash": "5ba9e983b5ad8f7e3a1af224eab681f2",
+    "mtime": 1789466533.9010966,
+    "seen": 1789466644.0691245,
+    "ast_hash": "fede75dcd7d5cada437407d2cc39f862",
     "semantic_hash": ""
   },
   "src/components/common/Header.tsx": {
@@ -522,9 +522,9 @@
     "semantic_hash": "a866683017f14bd81bc76c2fd58997d5"
   },
   "src/components/coordinator/ElectionsTab.tsx": {
-    "mtime": 1789444934.8121276,
-    "seen": 1789445875.359027,
-    "ast_hash": "92409d8cf7b7a8c948c2df13608d4693",
+    "mtime": 1789448440.2046263,
+    "seen": 1789448494.404331,
+    "ast_hash": "bc6b197aaea4c1f81c4a2fad37e1cbcd",
     "semantic_hash": ""
   },
   "src/components/coordinator/FeedbackTab.tsx": {
@@ -552,9 +552,9 @@
     "semantic_hash": "9cdf384843f6c6f4f2f06c1988fb03f1"
   },
   "src/components/coordinator/ParticipantsTab.tsx": {
-    "mtime": 1789392624.779098,
-    "seen": 1789392720.6104872,
-    "ast_hash": "19b8a42d5e2b9527bf6a26905d5981b2",
+    "mtime": 1789466355.6448078,
+    "seen": 1789466644.0714865,
+    "ast_hash": "cddbea69c4b317aa796e9815d7c001e2",
     "semantic_hash": ""
   },
   "src/components/coordinator/PartiesTab.tsx": {
@@ -612,9 +612,9 @@
     "semantic_hash": "5ca37e78098d648b1adabb0e924b70e8"
   },
   "src/components/student/StudentDashboard.tsx": {
-    "mtime": 1789446317.441669,
-    "seen": 1789446354.2229125,
-    "ast_hash": "672d8a2e3b8b060a6fa4cad33d6bce17",
+    "mtime": 1789448470.2000823,
+    "seen": 1789448494.4055488,
+    "ast_hash": "cc7c586989e080222c7f98b906ba65b6",
     "semantic_hash": ""
   },
   "src/components/student/StudentJoinModal.tsx": {
@@ -666,15 +666,15 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1789445569.4938302,
-    "seen": 1789445875.3613188,
-    "ast_hash": "a901a587c38036ce950250ca2c3f207a",
+    "mtime": 1789448178.6561048,
+    "seen": 1789448494.406387,
+    "ast_hash": "0deca1e4f253c7392f7cb7daddebb9b9",
     "semantic_hash": ""
   },
   "src/types/index.ts": {
-    "mtime": 1789444593.3176153,
-    "seen": 1789445875.3613203,
-    "ast_hash": "2dc45658c4c35664e05e00912c59ca13",
+    "mtime": 1789448121.0680072,
+    "seen": 1789448494.4063885,
+    "ast_hash": "699024478dd5071ebd1afc234c72ee46",
     "semantic_hash": ""
   },
   "src/utils/accessCodeGenerator.ts": {

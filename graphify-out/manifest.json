@@ -336,9 +336,9 @@
     "semantic_hash": "5b4bc0f8532cd2bd90daced81d45749a"
   },
   "src/App.tsx": {
-    "mtime": 1789466190.6405866,
-    "seen": 1789466644.068261,
-    "ast_hash": "0851f2b7952b50bddde11741bab7459f",
+    "mtime": 1789481525.1998,
+    "seen": 1789482763.4985201,
+    "ast_hash": "0d96b462d8c2c6b760e86585071d2409",
     "semantic_hash": ""
   },
   "src/components/admin/CreateEventModal.tsx": {
@@ -378,10 +378,10 @@
     "semantic_hash": "c84522ad7df524c96f13462b962f2d36"
   },
   "src/components/admin/MyEventsDashboard.tsx": {
-    "mtime": 1789103742.651043,
-    "seen": 1789196099.9922328,
-    "ast_hash": "04523aa247e2e05a49261ea1c4566c3c",
-    "semantic_hash": "04523aa247e2e05a49261ea1c4566c3c"
+    "mtime": 1789481373.5295084,
+    "seen": 1789482763.5009155,
+    "ast_hash": "ce5062fef2c90986dae3da6e1d1d6c69",
+    "semantic_hash": ""
   },
   "src/components/admin/SuperAdminDashboard.tsx": {
     "mtime": 1788930505.7364166,
@@ -396,9 +396,9 @@
     "semantic_hash": "1be1e4def2adcb6f1bf996286e6c386e"
   },
   "src/components/auth/UnifiedLoginPage.tsx": {
-    "mtime": 1789466533.9010966,
-    "seen": 1789466644.0691245,
-    "ast_hash": "fede75dcd7d5cada437407d2cc39f862",
+    "mtime": 1789469143.4623892,
+    "seen": 1789482763.5017009,
+    "ast_hash": "abea9005d47e9364f353fe100b2b110e",
     "semantic_hash": ""
   },
   "src/components/common/Header.tsx": {
@@ -522,9 +522,9 @@
     "semantic_hash": "a866683017f14bd81bc76c2fd58997d5"
   },
   "src/components/coordinator/ElectionsTab.tsx": {
-    "mtime": 1789448440.2046263,
-    "seen": 1789448494.404331,
-    "ast_hash": "bc6b197aaea4c1f81c4a2fad37e1cbcd",
+    "mtime": 1789482645.1982732,
+    "seen": 1789482763.508887,
+    "ast_hash": "6e7ff932587ef1a3624436929da7a642",
     "semantic_hash": ""
   },
   "src/components/coordinator/FeedbackTab.tsx": {
@@ -552,9 +552,9 @@
     "semantic_hash": "9cdf384843f6c6f4f2f06c1988fb03f1"
   },
   "src/components/coordinator/ParticipantsTab.tsx": {
-    "mtime": 1789466355.6448078,
-    "seen": 1789466644.0714865,
-    "ast_hash": "cddbea69c4b317aa796e9815d7c001e2",
+    "mtime": 1789469143.4623892,
+    "seen": 1789482763.5101418,
+    "ast_hash": "19b8a42d5e2b9527bf6a26905d5981b2",
     "semantic_hash": ""
   },
   "src/components/coordinator/PartiesTab.tsx": {
@@ -666,15 +666,15 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1789448178.6561048,
-    "seen": 1789448494.406387,
-    "ast_hash": "0deca1e4f253c7392f7cb7daddebb9b9",
+    "mtime": 1789481330.3286123,
+    "seen": 1789482763.5169704,
+    "ast_hash": "3d9fa91ecb1a9570eec53399dd38a623",
     "semantic_hash": ""
   },
   "src/types/index.ts": {
-    "mtime": 1789448121.0680072,
-    "seen": 1789448494.4063885,
-    "ast_hash": "699024478dd5071ebd1afc234c72ee46",
+    "mtime": 1789476057.0257037,
+    "seen": 1789482763.5169747,
+    "ast_hash": "b552a4429266703f06dd3d13fc076135",
     "semantic_hash": ""
   },
   "src/utils/accessCodeGenerator.ts": {

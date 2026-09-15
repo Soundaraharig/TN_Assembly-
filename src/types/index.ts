@@ -242,11 +242,28 @@ export interface Election {
   votes_by_delegate?: Record<string, string>;
   party_id?: string;
   eligibility?: ElectionEligibility;
+  is_archived?: boolean;
+  archived_at?: string;
   completed_at?: string;
   reset_at?: string;
   updated_at?: string;
   created_at: string;
   createdAt?: string;
+}
+
+export interface ElectionBackupSnapshot {
+  id: string;
+  event_id: string;
+  election_id: string;
+  election_title: string;
+  snapshot_reason: string;
+  created_at: string;
+  election?: Election;
+  total_votes?: number;
+  winner?: string;
+  elections_state?: Election[];
+  flash_votes_state?: LiveFlashVote[];
+  voter_logs?: any[];
 }
 
 export type AssemblyElection = Election;

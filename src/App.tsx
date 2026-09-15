@@ -1051,6 +1051,10 @@ export function App() {
       saveSession({ currentEventId: activeEv.id });
 
       const eventLearners = storageService.getLearners(activeEv.id);
+      // Auto-recover event hydration if learners are empty for active event
+      if (isSupabaseEnabled && eventLearners.length === 0) {
+        storageService.syncFromSupabase(activeEv.id, true).catch(() => {});
+      }
       setLearners(eventLearners);
       setParties(storageService.getParties(activeEv.id));
       setCommittees(storageService.getCommittees(activeEv.id));
@@ -1114,10 +1118,10 @@ export function App() {
       loadState();
     });
 
-    // Unconditional initial sync: fetch events from Supabase on mount
-    // regardless of auth state, so the events list is populated before login
+    // Unconditional initial sync: fetch events and hydrate active event on mount
+    // regardless of auth state, so the events list and delegate context are populated
     if (isSupabaseEnabled) {
-      storageService.syncFromSupabase(undefined, true).then(() => {
+      storageService.resolveAndHydrateActiveEvent().then(() => {
         loadState();
       }).catch(err => {
         console.warn('[App] Initial Supabase sync warning:', err);

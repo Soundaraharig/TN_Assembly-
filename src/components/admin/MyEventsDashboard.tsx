@@ -42,6 +42,12 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
   const [editingEvent, setEditingEvent] = useState<CollegeEvent | null>(null);
   const [deletingEventId, setDeletingEventId] = useState<string | null>(null);
 
+  React.useEffect(() => {
+    if (events.length === 0) {
+      storageService.resolveAndHydrateActiveEvent();
+    }
+  }, [events.length]);
+
   const isSuperAdmin = role === 'super_admin';
 
   // Filter events for non-superadmin coordinators if userEmail is set

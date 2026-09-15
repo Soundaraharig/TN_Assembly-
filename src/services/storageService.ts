@@ -16,6 +16,7 @@ import type {
   NominationHistoryEntry,
   Election,
   ElectionCandidate,
+  ElectionBackupSnapshot,
   LiveFlashVote,
   BillProceeding,
   ScoreRecord,
@@ -121,20 +122,21 @@ const STORAGE_KEYS = {
   DAY_ATTENDANCE: 'tn_assembly_day_attendance_v1',
   VOTE_AUDIT_LOG: 'tn_assembly_vote_audit_log_v1',
   LOCK_UPDATED_AT: 'tn_assembly_lock_updated_at_v1',
-  LOGIN_RECORDS: 'tn_assembly_login_records_v1'
+  LOGIN_RECORDS: 'tn_assembly_login_records_v1',
+  ELECTIONS_BACKUP_SNAPSHOTS: 'tn_assembly_elections_backup_snapshots_v1'
 };
 
 export const SUPABASE_COLUMNS = {
-  COLLEGE_EVENTS: 'id, college_name, slug, chapter, level, location, dates, event_stage, status, participant_count, assigned_coordinator_email, assigned_coordinator_name, elections_count, is_locked, social_coverage, treasury_whatsapp_link, opposition_whatsapp_link, chief_guests, created_at, updated_at',
-  COORDINATORS: 'id, event_id, name, email, password_hash, raw_temp_password, created_at, updated_at',
-  LEARNERS: 'id, event_id, access_code, full_name, email, phone, department, academic_year, constituency_number, constituency_name, party_id, party_name, party_group_link, bench, role, committee_id, committee_name, committee_group_link, school_name, day1_checked_in, day2_checked_in, district, created_at, updated_at',
-  POLITICAL_PARTIES: 'id, event_id, name, bench, color, leader, manifesto, whatsapp_group_link, created_at',
-  COMMITTEES: 'id, event_id, name, topic, chairperson, max_capacity, created_at',
-  SESSION_AGENDA: 'id, event_id, day, time, title, description, speaker_role, is_current, created_at',
-  JURY_MEMBERS: 'id, event_id, name, access_code, designation, assigned_bench, email, phone, status, created_at',
-  VOLUNTEERS: 'id, event_id, name, access_code, station, shift, phone, email, is_yuva, has_arrived, role, created_at',
-  EVENT_DAYS: 'id, event_id, day_number, name, date, status, activities, is_archived, order_index, created_at, updated_at',
-  EVENT_DAY_ATTENDANCE: 'id, event_id, day_id, event_day_id, student_id, participant_id, status, marked_by, marked_by_role, marked_at, created_at, updated_at'
+  COLLEGE_EVENTS: '*',
+  COORDINATORS: '*',
+  LEARNERS: '*',
+  POLITICAL_PARTIES: '*',
+  COMMITTEES: '*',
+  SESSION_AGENDA: '*',
+  JURY_MEMBERS: '*',
+  VOLUNTEERS: '*',
+  EVENT_DAYS: '*',
+  EVENT_DAY_ATTENDANCE: '*'
 } as const;
 
 type Listener = () => void;
@@ -3427,10 +3429,8 @@ class StorageService {
             this.setItem(STORAGE_KEYS.VOLUNTEERS, [...vols, matchedVol as unknown as Volunteer]);
           }
           await this.fetchEventMetadata(matchedVol.event_id);
-          // Ensure the event and its associated data are fully loaded
-          if (!this.getEvents().some(e => e.id === matchedVol.event_id)) {
-            await this.syncFromSupabase(matchedVol.event_id, true);
-          }
+          // Always trigger full hydration for the active event's delegates, attendance, and agenda
+          await this.syncFromSupabase(matchedVol.event_id, true);
           return this.authenticateAccessCode(accessCode, targetEventId);
         }
       }
@@ -3453,30 +3453,29 @@ class StorageService {
             this.setItem(STORAGE_KEYS.JURY, [...juries, matchedJury as unknown as JuryMember]);
           }
           await this.fetchEventMetadata(matchedJury.event_id);
-          // Ensure the event and its associated data are fully loaded
-          if (!this.getEvents().some(e => e.id === matchedJury.event_id)) {
-            await this.syncFromSupabase(matchedJury.event_id, true);
-          }
+          // Always trigger full hydration for the active event's delegates, attendance, and agenda
+          await this.syncFromSupabase(matchedJury.event_id, true);
           return this.authenticateAccessCode(accessCode, targetEventId);
         }
       }
 
-      // 4. Check Student / Delegate with strict .limit(1)
-      let learnerQuery = supabase.from('learners').select(SUPABASE_COLUMNS.LEARNERS).limit(1);
+      // 4. Check Student / Delegate
+      let learnerQuery = supabase.from('learners').select(SUPABASE_COLUMNS.LEARNERS).limit(5);
       if (targetEventId) learnerQuery = learnerQuery.eq('event_id', targetEventId);
-      const { data: lRows } = await learnerQuery.ilike('access_code', clean);
+      const { data: lRows } = await learnerQuery.or(`access_code.ilike.${clean},access_code.ilike.${normClean},access_code.ilike.%${clean}%`);
 
       if (lRows && lRows.length > 0) {
-        const matchedLearner = lRows[0] as unknown as Learner;
+        const matchedLearner = lRows.find((l: any) => {
+          const lCode = (l.access_code || '').toUpperCase().replace(/-/g, '');
+          return lCode === normClean || (l.access_code || '').toUpperCase() === clean;
+        }) || lRows[0] as unknown as Learner;
         const learners = this.getLearners();
         if (!learners.some(l => l.id === matchedLearner.id)) {
           this.setItem(STORAGE_KEYS.LEARNERS, [...learners, matchedLearner]);
         }
         await this.fetchEventMetadata(matchedLearner.event_id);
-        // Ensure the event and its associated data are fully loaded
-        if (!this.getEvents().some(e => e.id === matchedLearner.event_id)) {
-          await this.syncFromSupabase(matchedLearner.event_id, true);
-        }
+        // Always trigger full hydration for the active event's delegates, attendance, and agenda
+        await this.syncFromSupabase(matchedLearner.event_id, true);
         return this.authenticateAccessCode(accessCode, targetEventId);
       }
     } catch (authErr) {
@@ -6574,7 +6573,7 @@ class StorageService {
     );
 
     if (role === 'student') {
-      return nonDeputyList.map(e => ({
+      return nonDeputyList.filter(e => !e.is_archived && e.status !== 'archived').map(e => ({
         ...e,
         total_votes: undefined as any,
         voted_delegate_ids: studentId && e.voted_delegate_ids?.includes(studentId) ? [studentId] : [],
@@ -6584,7 +6583,14 @@ class StorageService {
         }))
       }));
     }
-    return nonDeputyList;
+    return nonDeputyList.filter(e => !e.is_archived && e.status !== 'archived');
+  }
+
+  public getArchivedElections(eventId?: string): Election[] {
+    const all = this.getElectionAll();
+    const targetId = eventId || this.getActiveEventId();
+    const list = targetId ? all.filter(e => e.event_id === targetId) : all;
+    return list.filter(e => e.is_archived || e.status === 'archived');
   }
 
   public addElection(elec: Partial<Election>): Election {
@@ -6815,6 +6821,13 @@ class StorageService {
     }
 
     if (targetEventId) {
+      this.saveElectionSnapshot(targetEventId, {
+        election_id: electionId,
+        election_title: all.find(e => e.id === electionId)?.title || 'Election Ballot',
+        snapshot_reason: 'Election closed and winner declared',
+        election: all.find(e => e.id === electionId),
+        winner: winnerCandidate?.name || all.find(e => e.id === electionId)?.winner
+      });
       this.broadcast('election_update', { eventId: targetEventId, elections: this.getElections(targetEventId) });
       this.syncEventStateToSupabase(targetEventId);
     }
@@ -6886,6 +6899,15 @@ class StorageService {
     }
 
     if (targetEventId) {
+      if (status === 'Closed') {
+        this.saveElectionSnapshot(targetEventId, {
+          election_id: electionId,
+          election_title: all.find(e => e.id === electionId)?.title || 'Election Ballot',
+          snapshot_reason: 'Status set to Closed / Concluded',
+          election: all.find(e => e.id === electionId),
+          winner: winnerCandidate?.name || all.find(e => e.id === electionId)?.winner
+        });
+      }
       this.broadcast('election_update', { eventId: targetEventId, elections: this.getElections(targetEventId) });
       this.syncEventStateToSupabase(targetEventId);
     }
@@ -7055,11 +7077,156 @@ class StorageService {
     this.notify();
   }
 
-  public deleteElection(electionId: string) {
-    const target = this.getElectionAll().find(e => e.id === electionId);
-    const all = this.getElectionAll().filter(e => e.id !== electionId);
+  public archiveElection(electionId: string) {
+    let targetEventId = '';
+    const all = this.getElectionAll().map(e => {
+      if (e.id === electionId) {
+        targetEventId = e.event_id;
+        return {
+          ...e,
+          status: 'archived',
+          is_archived: true,
+          archived_at: new Date().toISOString()
+        };
+      }
+      return e;
+    });
     this.setItem(STORAGE_KEYS.ELECTIONS, all);
-    if (target?.event_id) this.syncEventStateToSupabase(target.event_id);
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+    if (targetEventId) {
+      this.broadcast('election_update', { eventId: targetEventId, elections: this.getElections(targetEventId) });
+      this.syncEventStateToSupabase(targetEventId);
+    }
+  }
+
+  public deleteElection(electionId: string) {
+    // Soft-delete: NEVER permanently remove or execute destructive SQL delete
+    this.archiveElection(electionId);
+  }
+
+  public restoreElection(electionId: string) {
+    let targetEventId = '';
+    const all = this.getElectionAll().map(e => {
+      if (e.id === electionId) {
+        targetEventId = e.event_id;
+        const copy = { ...e };
+        delete copy.is_archived;
+        delete copy.archived_at;
+        if (copy.status === 'archived') {
+          copy.status = (copy.candidates && copy.candidates.some(c => (c.votes || 0) > 0)) ? 'Closed' : 'Upcoming';
+        }
+        return copy;
+      }
+      return e;
+    });
+    this.setItem(STORAGE_KEYS.ELECTIONS, all);
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+    if (targetEventId) {
+      this.broadcast('election_update', { eventId: targetEventId, elections: this.getElections(targetEventId) });
+      this.syncEventStateToSupabase(targetEventId);
+    }
+  }
+
+  public getElectionSnapshots(eventId?: string): ElectionBackupSnapshot[] {
+    const all = this.getItem<ElectionBackupSnapshot[]>(STORAGE_KEYS.ELECTIONS_BACKUP_SNAPSHOTS, []);
+    return eventId ? all.filter(s => s.event_id === eventId) : all;
+  }
+
+  public saveElectionSnapshot(eventId: string, snapshotData: Partial<ElectionBackupSnapshot>): ElectionBackupSnapshot {
+    const all = this.getItem<ElectionBackupSnapshot[]>(STORAGE_KEYS.ELECTIONS_BACKUP_SNAPSHOTS, []);
+    const electionsState = this.getElectionAll().filter(e => e.event_id === eventId);
+    const flashVotesState = this.getFlashVotes(eventId);
+    const entry: ElectionBackupSnapshot = {
+      id: `snap_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      event_id: eventId,
+      election_id: snapshotData.election_id || '',
+      election_title: snapshotData.election_title || 'Election Ballot',
+      snapshot_reason: snapshotData.snapshot_reason || 'Manual snapshot',
+      created_at: new Date().toISOString(),
+      election: snapshotData.election,
+      total_votes: snapshotData.election?.total_votes,
+      winner: snapshotData.winner || snapshotData.election?.winner,
+      elections_state: electionsState,
+      flash_votes_state: flashVotesState,
+      ...snapshotData
+    };
+    all.unshift(entry);
+    this.setItem(STORAGE_KEYS.ELECTIONS_BACKUP_SNAPSHOTS, all.slice(0, 50));
+    return entry;
+  }
+
+  public exportElectionData(eventId: string) {
+    const event = this.getEvents().find(e => e.id === eventId);
+    const eventCode = event?.slug || event?.college_name?.toLowerCase().replace(/[^a-z0-9]/g, '_') || eventId;
+    const nowIso = new Date().toISOString();
+    const safeTimestamp = nowIso.replace(/:/g, '-');
+
+    const allElections = this.getElectionAll().filter(e => e.event_id === eventId);
+    const flashVotes = this.getFlashVotes(eventId);
+    const nominations = this.getNominations(eventId);
+    const snapshots = this.getElectionSnapshots(eventId);
+    const auditLogs = this.getAuditLogs(eventId).filter(l => (l as any).poll_id || (l as any).action?.includes('VOTE'));
+
+    // 1. JSON Export
+    const backupJson = {
+      app: 'TN Assembly Simulation Portal',
+      event_id: eventId,
+      event_metadata: event || null,
+      exported_at: nowIso,
+      elections_count: allElections.length,
+      flash_votes_count: flashVotes.length,
+      elections: allElections,
+      flash_votes: flashVotes,
+      nominations,
+      snapshots,
+      audit_logs: auditLogs
+    };
+
+    if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+      const jsonBlob = new Blob([JSON.stringify(backupJson, null, 2)], { type: 'application/json' });
+      const jsonUrl = URL.createObjectURL(jsonBlob);
+      const jsonLink = document.createElement('a');
+      jsonLink.href = jsonUrl;
+      jsonLink.download = `assembly_elections_backup_${eventCode}_${safeTimestamp}.json`;
+      document.body.appendChild(jsonLink);
+      jsonLink.click();
+      document.body.removeChild(jsonLink);
+      URL.revokeObjectURL(jsonUrl);
+
+      // 2. CSV Summary Export
+      const csvRows: string[] = [
+        'Election ID,Title,Scope,Candidate Name,Votes Tallied,Status,Winner'
+      ];
+
+      allElections.forEach(elec => {
+        const candidates = elec.candidates && elec.candidates.length > 0 ? elec.candidates : [];
+        if (candidates.length === 0) {
+          csvRows.push(
+            `"${elec.id}","${(elec.title || '').replace(/"/g, '""')}","${(elec.type || elec.position || '').replace(/"/g, '""')}","N/A",0,"${elec.status || ''}","${(elec.winner || '').replace(/"/g, '""')}"`
+          );
+        } else {
+          candidates.forEach(cand => {
+            csvRows.push(
+              `"${elec.id}","${(elec.title || '').replace(/"/g, '""')}","${(elec.type || elec.position || '').replace(/"/g, '""')}","${(cand.name || '').replace(/"/g, '""')}",${cand.votes || 0},"${elec.status || ''}","${(elec.winner || '').replace(/"/g, '""')}"`
+            );
+          });
+        }
+      });
+
+      const csvBlob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+      const csvUrl = URL.createObjectURL(csvBlob);
+      const csvLink = document.createElement('a');
+      csvLink.href = csvUrl;
+      csvLink.download = `assembly_elections_summary_${eventCode}_${safeTimestamp}.csv`;
+      document.body.appendChild(csvLink);
+      csvLink.click();
+      document.body.removeChild(csvLink);
+      URL.revokeObjectURL(csvUrl);
+    }
+
+    return { jsonCount: allElections.length, flashVotesCount: flashVotes.length };
   }
 
   // ── LIVE FLASH VOTES (Instant Yes/No Division Polls) ──────────────────────
@@ -8099,7 +8266,7 @@ class StorageService {
   }
 
   // Helper to get active event ID if not explicitly passed
-  private getActiveEventId(eventId?: string): string | undefined {
+  public getActiveEventId(eventId?: string): string | undefined {
     if (eventId) return eventId;
     try {
       const saved = localStorage.getItem('tn_assembly_auth_session');
@@ -8109,7 +8276,45 @@ class StorageService {
       }
     } catch { }
     const evs = this.getEvents();
-    return evs.length > 0 ? evs[0].id : undefined;
+    const active = evs.find(e => (e as any).is_active) || evs[0];
+    return active?.id;
+  }
+
+  /**
+   * Auto-recovery of active event context:
+   * If activeEventId is missing or null in localStorage/memory, immediately fetch all events from college_events:
+   * supabase.from('college_events').select('*')
+   * Automatically select the active event (events.find(e => e.is_active) || events[0]) and store its ID.
+   * Trigger the hydration sequence for that event's delegates, attendance, and agenda immediately.
+   */
+  public async resolveAndHydrateActiveEvent(preferredEventId?: string): Promise<string | undefined> {
+    let targetId = preferredEventId || this.getActiveEventId();
+    if (!targetId || this.getEvents().length === 0) {
+      if (supabase) {
+        try {
+          const { data: events, error } = await supabase.from('college_events').select('*').order('created_at', { ascending: false });
+          if (!error && events && events.length > 0) {
+            const active = events.find((e: any) => e.is_active) || events[0];
+            targetId = active.id;
+            this.setItem(STORAGE_KEYS.EVENTS, events as unknown as CollegeEvent[]);
+            try {
+              const saved = localStorage.getItem('tn_assembly_auth_session');
+              const sess = saved ? JSON.parse(saved) : {};
+              sess.currentEventId = targetId;
+              localStorage.setItem('tn_assembly_auth_session', JSON.stringify(sess));
+            } catch {}
+          }
+        } catch (e) {
+          console.warn('[StorageService] Failed to auto-recover events from Supabase:', e);
+        }
+      }
+    }
+    if (targetId) {
+      await this.syncFromSupabase(targetId, true);
+    } else if (supabase) {
+      await this.syncFromSupabase(undefined, true);
+    }
+    return targetId;
   }
 
   // ── Security Locks (Allocation Lock, Registrations Frozen, Scores Locked) ──

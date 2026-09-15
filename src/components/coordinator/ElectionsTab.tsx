@@ -30,7 +30,10 @@ import {
   KeyRound,
   UserCheck,
   UserX,
-  CheckCircle2
+  CheckCircle2,
+  Download,
+  Archive,
+  ShieldAlert
 } from 'lucide-react';
 import { getProjectorSettings, saveProjectorSettings } from './ProjectorTab';
 import { storageService, getResolvedPartyName, deduplicateElectionList } from '../../services/storageService';
@@ -112,8 +115,56 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   onDeleteFlashVote,
   onShowToast
 }) => {
-  const [activeTabSection, setActiveTabSection] = useState<'ELECTIONS' | 'FLASH_VOTES' | 'HISTORY'>('ELECTIONS');
+  const [activeTabSection, setActiveTabSection] = useState<'ELECTIONS' | 'FLASH_VOTES' | 'HISTORY' | 'TRASH'>('ELECTIONS');
   const [selectedHistoryElection, setSelectedHistoryElection] = useState<Election | null>(null);
+  const [archivedElections, setArchivedElections] = useState<Election[]>(() => {
+    return storageService.getArchivedElections(eventId);
+  });
+  const [deletingElection, setDeletingElection] = useState<Election | null>(null);
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
+
+  useEffect(() => {
+    setArchivedElections(storageService.getArchivedElections(eventId));
+    const unsub = storageService.subscribe(() => {
+      setArchivedElections(storageService.getArchivedElections(eventId));
+    });
+    return () => unsub();
+  }, [eventId]);
+
+  const handleDeleteClick = (elec: Election) => {
+    const totalVotes = elec.total_votes || (elec.candidates || []).reduce((sum, c) => sum + (c.votes || 0), 0);
+    if (totalVotes > 0) {
+      setDeletingElection(elec);
+      setDeleteConfirmInput('');
+    } else {
+      if (window.confirm(`Archive "${elec.title}" to trash? You can restore it anytime from the Trash view.`)) {
+        storageService.archiveElection(elec.id);
+        if (onDeleteElection) onDeleteElection(elec.id);
+        setArchivedElections(storageService.getArchivedElections(eventId));
+        onShowToast('Ballot Archived', `Archived "${elec.title}" to trash.`, 'info');
+      }
+    }
+  };
+
+  const handleConfirmGuardDelete = () => {
+    if (!deletingElection) return;
+    if (deleteConfirmInput.trim() !== 'DELETE') {
+      onShowToast('Confirmation Mismatch', 'Please type DELETE exactly to confirm archiving this ballot.', 'error');
+      return;
+    }
+    storageService.archiveElection(deletingElection.id);
+    if (onDeleteElection) onDeleteElection(deletingElection.id);
+    setArchivedElections(storageService.getArchivedElections(eventId));
+    onShowToast('Ballot Archived', `Archived "${deletingElection.title}" to trash.`, 'info');
+    setDeletingElection(null);
+    setDeleteConfirmInput('');
+  };
+
+  const handleRestoreElection = (elecId: string, title: string) => {
+    storageService.restoreElection(elecId);
+    setArchivedElections(storageService.getArchivedElections(eventId));
+    onShowToast('Ballot Restored', `Restored "${title}" to active ballots.`, 'success');
+  };
   
   const [expandedElectionIds, setExpandedElectionIds] = useState<Set<string>>(new Set());
   const [activeNominateElectionId, setActiveNominateElectionId] = useState<string | null>(null);
@@ -984,16 +1035,11 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                   </>
                 )}
 
-                {onDeleteElection && !CONSTITUTIONAL_POSTS.some(p => p.position === elec.position || p.type === elec.type) && (
+                {!CONSTITUTIONAL_POSTS.some(p => p.position === elec.position || p.type === elec.type) && (
                   <button
-                    onClick={() => {
-                      if (window.confirm(`Are you sure you want to delete the "${elec.title}" ballot?`)) {
-                        onDeleteElection(elec.id);
-                        onShowToast('Ballot Deleted', `Deleted "${elec.title}" successfully.`, 'info');
-                      }
-                    }}
+                    onClick={() => handleDeleteClick(elec)}
                     className="px-2.5 py-1 rounded-lg text-xs font-semibold text-rose-400 hover:text-rose-300 border border-rose-500/30 hover:border-rose-500/50 bg-rose-500/10 flex items-center gap-1 cursor-pointer transition-all"
-                    title="Delete Election Ballot"
+                    title="Archive Election Ballot to Trash"
                   >
                     <Trash2 className="w-3.5 h-3.5" /> Delete
                   </button>
@@ -1797,6 +1843,27 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
+            onClick={() => {
+              try {
+                const res = storageService.exportElectionData(eventId);
+                onShowToast(
+                  'Election Backup Generated',
+                  `Downloaded offline JSON archive and CSV summary (${res.jsonCount} elections, ${res.flashVotesCount} flash votes).`,
+                  'success'
+                );
+              } catch (err: any) {
+                onShowToast('Export Error', err?.message || 'Failed to export backup', 'error');
+              }
+            }}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-md flex items-center gap-1.5 transition-all cursor-pointer hover:scale-[1.02] active:scale-95 shrink-0"
+            title="Download complete offline backup (JSON + CSV) of all election ballots, candidate tallies, and voter logs"
+          >
+            <Download className="w-4 h-4" />
+            <span>📥 Export & Backup Election Data</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setIsQuickLaunchModalOpen(true)}
             className="px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md flex items-center gap-1.5 transition-all cursor-pointer hover:scale-[1.02] active:scale-95 shrink-0"
           >
@@ -1837,6 +1904,17 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
             >
               <History className="w-3.5 h-3.5" />
               Election Results & History ({closedElections.length})
+            </button>
+            <button
+              onClick={() => setActiveTabSection('TRASH')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                activeTabSection === 'TRASH'
+                  ? 'bg-rose-600 text-white shadow-sm font-bold'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Archived / Trash ({archivedElections.length})
             </button>
           </div>
         </div>
@@ -2100,6 +2178,96 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                         className="px-3 py-1.5 rounded-lg text-xs font-bold text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 flex items-center gap-1.5 cursor-pointer transition-all shrink-0"
                       >
                         <BarChart3 className="w-3.5 h-3.5" /> View Results
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TRASH / ARCHIVED ELECTIONS VIEW */}
+      {activeTabSection === 'TRASH' && (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3" style={{ borderColor: 'var(--border-soft)' }}>
+            <div>
+              <h3 className="text-lg font-bold text-rose-500 flex items-center gap-2">
+                <Trash2 className="w-5 h-5" />
+                Archived Ballots & Trash Bin
+              </h3>
+              <p className="text-xs text-slate-400">
+                Soft-deleted election ballots are safely archived here with all vote logs intact. You can restore any ballot to active voting at any time.
+              </p>
+            </div>
+            <span className="text-xs font-mono text-rose-300 bg-rose-950/60 px-3 py-1 rounded-full border border-rose-800/60 shrink-0">
+              {archivedElections.length} Archived {archivedElections.length === 1 ? 'Ballot' : 'Ballots'}
+            </span>
+          </div>
+
+          {archivedElections.length === 0 ? (
+            <div className="p-12 text-center rounded-2xl border border-dashed space-y-2" style={{ borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}>
+              <Archive className="w-8 h-8 text-slate-500 mx-auto" />
+              <p className="text-sm font-semibold text-slate-300">Trash is Empty</p>
+              <p className="text-xs text-slate-400 max-w-md mx-auto">
+                No ballots have been archived. When you delete a ballot, it is soft-deleted to this trash bin and can be restored whenever needed.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {archivedElections.map((elec) => {
+                const totalVotes = elec.total_votes || (elec.candidates || []).reduce((s, c) => s + (c.votes || 0), 0);
+                const archivedTime = elec.archived_at ? new Date(elec.archived_at).toLocaleString() : 'Archived';
+
+                return (
+                  <div
+                    key={elec.id}
+                    className="p-5 rounded-2xl border space-y-4 shadow-xs border-rose-500/20 bg-rose-500/5 transition-all flex flex-col justify-between"
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <span className="text-[10px] uppercase font-bold text-rose-400 tracking-wider block">
+                            Archived • {elec.position || 'Ballot'}
+                          </span>
+                          <h4 className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>
+                            {elec.title}
+                          </h4>
+                          <span className="text-[11px] text-slate-400">
+                            Archived on: {archivedTime}
+                          </span>
+                        </div>
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 shrink-0">
+                          In Trash
+                        </span>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 space-y-2 text-xs">
+                        <div className="flex items-center justify-between text-slate-300">
+                          <span>Recorded Votes:</span>
+                          <span className="font-mono font-bold text-amber-400">{totalVotes}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-slate-300">
+                          <span>Nominees:</span>
+                          <span className="font-mono font-bold text-white">{elec.candidates?.length || 0} candidates</span>
+                        </div>
+                        {elec.winner && (
+                          <div className="flex items-center justify-between text-slate-300">
+                            <span>Declared Winner:</span>
+                            <span className="font-bold text-emerald-400">{elec.winner}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2 pt-2 border-t" style={{ borderColor: 'var(--border-soft)' }}>
+                      <button
+                        onClick={() => handleRestoreElection(elec.id, elec.title)}
+                        className="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-md flex items-center gap-1.5 cursor-pointer transition-all hover:scale-[1.02] active:scale-95"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>Restore to Active</span>
                       </button>
                     </div>
                   </div>
@@ -2929,6 +3097,74 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                   <span>Launch Live Now</span>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ACCIDENTAL DELETION GUARD MODAL */}
+      {deletingElection && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div
+            className="w-full max-w-md rounded-2xl border shadow-2xl overflow-hidden animate-scaleIn border-rose-500/40 bg-slate-900 text-white p-6 space-y-5"
+          >
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
+                <ShieldAlert className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-white">
+                  Accidental Deletion Guard
+                </h3>
+                <p className="text-xs text-rose-300/90 font-medium">
+                  This ballot has recorded votes ({deletingElection.total_votes || (deletingElection.candidates || []).reduce((s, c) => s + (c.votes || 0), 0)} votes cast).
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-rose-950/40 border border-rose-800/50 text-xs text-slate-300 space-y-2">
+              <p>
+                To safeguard election integrity and prevent accidental data loss, ballots with active votes cannot be instantly removed.
+              </p>
+              <p className="text-amber-300 font-medium">
+                Confirming will safely soft-delete this ballot to the <strong>Archived / Trash</strong> bin (where you can restore it anytime).
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-slate-300 block">
+                Type <span className="font-mono font-bold text-rose-400">DELETE</span> below to confirm:
+              </label>
+              <input
+                type="text"
+                value={deleteConfirmInput}
+                onChange={(e) => setDeleteConfirmInput(e.target.value)}
+                placeholder="Type DELETE to confirm"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white font-mono text-sm placeholder-slate-500 focus:outline-hidden focus:border-rose-500 transition-colors"
+                autoFocus
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeletingElection(null);
+                  setDeleteConfirmInput('');
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleteConfirmInput.trim() !== 'DELETE'}
+                onClick={handleConfirmGuardDelete}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white shadow-md disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Confirm Archive to Trash</span>
+              </button>
             </div>
           </div>
         </div>
