@@ -444,6 +444,7 @@ class StorageService {
   private attendanceRealtimeChannel: any = null;
   private hydratedEventIds = new Set<string>();
   private eventsFetched = false;
+  private isLoginRecordsConfigured: boolean = false;
 
   public isEventHydrated(eventId: string): boolean {
     return this.hydratedEventIds.has(eventId);
@@ -528,7 +529,7 @@ class StorageService {
   // In-flight read promises map to coalesce concurrent duplicate fetches into a single promise
   private inFlightReadPromises = new Map<string, Promise<any>>();
 
-  public dedupeInFlight<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  public dedupeInFlight<T>(key: string, fn: () => PromiseLike<T> | Promise<T>): Promise<T> {
     if (this.inFlightReadPromises.has(key)) {
       return this.inFlightReadPromises.get(key) as Promise<T>;
     }
@@ -541,6 +542,10 @@ class StorageService {
     })();
     this.inFlightReadPromises.set(key, promise);
     return promise;
+  }
+
+  public dedupedFetch<T>(key: string, fn: () => PromiseLike<T> | Promise<T>): Promise<T> {
+    return this.dedupeInFlight(key, fn);
   }
 
   public invalidateCache(prefix?: string): void {
@@ -2507,16 +2512,18 @@ class StorageService {
     const sb = supabase;
     if (!sb || !eventId) return;
     try {
-      // STRICTLY SCOPED: Jury portal fetches ONLY event (with social_coverage for scores), learners, and agenda.
-      // NEVER queries: volunteers, event_day_attendance, event_days, jury_members, political_parties, or elections.
+      // STRICTLY SCOPED: Jury portal fetches ONLY event (with social_coverage for scores) and learners.
+      // NEVER queries: volunteers, coordinators, event_day_attendance, event_days, jury_members, political_parties, elections, or session_agenda on initial load.
       const [
         { data: evData },
-        { data: agendaData },
         { data: learnersData }
       ] = await Promise.all([
-        sb.from('college_events').select('id, college_name, event_stage, status, chapter, social_coverage').eq('id', eventId).limit(1),
-        sb.from('session_agenda').select(SUPABASE_COLUMNS.SESSION_AGENDA).eq('event_id', eventId).order('time', { ascending: true }),
-        sb.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('event_id', eventId)
+        this.dedupeInFlight<{ data: any }>(`query_event_${eventId}`, async () =>
+          await sb.from('college_events').select('id, college_name, event_stage, status, chapter, social_coverage').eq('id', eventId).limit(1)
+        ),
+        this.dedupeInFlight<{ data: any }>(`query_learners_${eventId}`, async () =>
+          await sb.from('learners').select('id, event_id, full_name, roll_no:constituency_number, department, year:academic_year, academic_year, party:party_name, party_name, constituency_name, bench').eq('event_id', eventId)
+        )
       ]);
 
       if (evData && evData.length > 0) {
@@ -2543,11 +2550,6 @@ class StorageService {
         } catch (scoreErr) {
           console.warn('[StorageService] Jury score extraction from social_coverage warning:', scoreErr);
         }
-      }
-
-      if (agendaData) {
-        const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== eventId);
-        this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...(agendaData as unknown as AgendaItem[])]);
       }
 
       if (learnersData) {
@@ -2597,17 +2599,25 @@ class StorageService {
     if (!sb || !eventId) return;
     try {
       // STRICTLY SCOPED: Volunteer portal fetches ONLY event, learners, event_days, and attendance.
-      // NEVER queries: jury_members, session_agenda, political_parties, committees, volunteers, or election configs.
+      // NEVER queries: jury_members, coordinators, session_agenda, political_parties, committees, volunteers, or election configs.
       const [
         { data: evData },
         { data: daysData },
         { data: learnersData },
         { data: attData }
       ] = await Promise.all([
-        sb.from('college_events').select('id, college_name, event_stage, status, chapter, social_coverage').eq('id', eventId).limit(1),
-        sb.from('event_days').select(SUPABASE_COLUMNS.EVENT_DAYS).eq('event_id', eventId).order('day_number', { ascending: true }),
-        sb.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('event_id', eventId),
-        sb.from('event_day_attendance').select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE).eq('event_id', eventId)
+        this.dedupeInFlight<{ data: any }>(`query_event_${eventId}`, async () =>
+          await sb.from('college_events').select('id, college_name, event_stage, status, chapter, social_coverage').eq('id', eventId).limit(1)
+        ),
+        this.dedupeInFlight<{ data: any }>(`query_event_days_${eventId}`, async () =>
+          await sb.from('event_days').select(SUPABASE_COLUMNS.EVENT_DAYS).eq('event_id', eventId).order('day_number', { ascending: true })
+        ),
+        this.dedupeInFlight<{ data: any }>(`query_learners_${eventId}`, async () =>
+          await sb.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('event_id', eventId)
+        ),
+        this.dedupeInFlight<{ data: any }>(`query_attendance_${eventId}`, async () =>
+          await sb.from('event_day_attendance').select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE).eq('event_id', eventId)
+        )
       ]);
 
       if (evData && evData.length > 0) {
@@ -3953,8 +3963,7 @@ class StorageService {
           if (!vols.some(v => v.id === matchedVol.id)) {
             this.setItem(STORAGE_KEYS.VOLUNTEERS, [...vols, matchedVol as unknown as Volunteer]);
           }
-          await this.fetchEventMetadata(matchedVol.event_id).catch(() => {});
-          this.syncFromSupabase(matchedVol.event_id, true).catch(() => {});
+          this.fetchVolunteerPortalData(matchedVol.event_id, matchedVol.id, true).catch(() => {});
 
           this.logAudit({
             event_id: matchedVol.event_id,
@@ -4003,8 +4012,7 @@ class StorageService {
           if (!juries.some(j => j.id === matchedJury.id)) {
             this.setItem(STORAGE_KEYS.JURY, [...juries, matchedJury as unknown as JuryMember]);
           }
-          await this.fetchEventMetadata(matchedJury.event_id).catch(() => {});
-          this.syncFromSupabase(matchedJury.event_id, true).catch(() => {});
+          this.fetchJuryPortalData(matchedJury.event_id, matchedJury.id, true).catch(() => {});
 
           this.logAudit({
             event_id: matchedJury.event_id,
@@ -4081,8 +4089,8 @@ class StorageService {
     this.setItem(STORAGE_KEYS.LOGIN_RECORDS, records);
     this.notify();
 
-    // Sync to Supabase persistent table if configured (graceful error handling)
-    if (supabase && isSupabaseEnabled) {
+    // Sync to Supabase persistent table ONLY if explicitly configured (prevents 404 Not Found errors)
+    if (this.isLoginRecordsConfigured && supabase && isSupabaseEnabled) {
       const payload: Record<string, any> = {
         event_id: entry.event_id,
         user_id: entry.user_id,
@@ -4108,29 +4116,12 @@ class StorageService {
       )
         .then(async (res: any) => {
           if (res?.error) {
-            console.warn('[StorageService] Supabase login_records sync retry due to:', res.error.message);
-            // Fallback for earlier table versions that may lack learner_id or logged_in_at
-            const fallbackPayload: Record<string, any> = {
-              event_id: entry.event_id,
-              user_id: entry.user_id,
-              user_name: entry.user_name || 'User',
-              role: entry.role,
-              access_code: entry.access_code,
-              device_type: normalizedDevice,
-              device_info: entry.device_info || getDeviceInfo(),
-              login_at: timestamp,
-              details: entry.details || null
-            };
-            if (supabase) {
-              const retryRes = await supabase.from('login_records').insert(fallbackPayload);
-              if (retryRes?.error) {
-                console.warn('[StorageService] Supabase login_records fallback error:', retryRes.error.message);
-              }
-            }
+            // Table unconfigured, disable further remote attempts silently
+            this.isLoginRecordsConfigured = false;
           }
         })
-        .catch((err: any) => {
-          console.warn('[StorageService] Error syncing login record to Supabase:', err);
+        .catch(() => {
+          this.isLoginRecordsConfigured = false;
         });
     }
 
@@ -4142,7 +4133,7 @@ class StorageService {
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
 
-    if (!supabase || !isSupabaseEnabled) {
+    if (!this.isLoginRecordsConfigured || !supabase || !isSupabaseEnabled) {
       const local = this.getLoginRecords(eventId);
       return {
         data: local.slice(from, from + pageSize),

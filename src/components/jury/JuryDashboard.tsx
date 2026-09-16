@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import type { JuryMember, Learner, ScoreRecord, CollegeEvent, AgendaItem } from '../../types';
 import { useTheme } from '../../lib/theme';
+import { storageService } from '../../services/storageService';
 
 interface JuryDashboardProps {
   jury?: JuryMember | null;
@@ -77,6 +78,21 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
   // Mobile Quick Search State
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState<boolean>(false);
   const [isMobileKeypadOpen, setIsMobileKeypadOpen] = useState<boolean>(false);
+
+  const [liveAgenda, setLiveAgenda] = useState<AgendaItem[]>(agenda);
+
+  useEffect(() => {
+    setLiveAgenda(agenda);
+  }, [agenda]);
+
+  // Lazy load agenda on demand only when Jury member opens the Agenda tab
+  useEffect(() => {
+    if (activeTab === 'agenda' && event?.id) {
+      storageService.fetchAgendaOnDemand(event.id).then(items => {
+        if (items && items.length > 0) setLiveAgenda(items);
+      }).catch(err => console.warn('[JuryDashboard] Lazy agenda fetch error:', err));
+    }
+  }, [activeTab, event?.id]);
 
   // Set default selected learner
   useEffect(() => {
@@ -1266,12 +1282,12 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
               <Calendar className="w-4 h-4" style={{ color: 'var(--accent)' }} /> Assembly Floor Agenda
             </h2>
             <div className="space-y-3">
-              {agenda.length === 0 ? (
+              {liveAgenda.length === 0 ? (
                 <div className="text-center py-12 text-xs" style={{ color: 'var(--text-muted)' }}>
                   No agenda items scheduled yet.
                 </div>
               ) : (
-                agenda.map(item => (
+                liveAgenda.map(item => (
                   <div
                     key={item.id}
                     className="p-4 rounded-xl border flex items-start justify-between gap-4"

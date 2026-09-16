@@ -336,9 +336,9 @@
     "semantic_hash": "5b4bc0f8532cd2bd90daced81d45749a"
   },
   "src/App.tsx": {
-    "mtime": 1789573791.93819,
-    "seen": 1789575016.3580868,
-    "ast_hash": "28e8f3bef599bebb3a53f1dcc7c10ce3",
+    "mtime": 1789578089.0333984,
+    "seen": 1789578296.3984938,
+    "ast_hash": "952b9fbb9f11cd5535c00cc525a8826d",
     "semantic_hash": ""
   },
   "src/components/admin/CreateEventModal.tsx": {
@@ -606,10 +606,10 @@
     "semantic_hash": ""
   },
   "src/components/jury/JuryDashboard.tsx": {
-    "mtime": 1788941657.5135376,
-    "seen": 1789196099.99226,
-    "ast_hash": "5ca37e78098d648b1adabb0e924b70e8",
-    "semantic_hash": "5ca37e78098d648b1adabb0e924b70e8"
+    "mtime": 1789576803.5948155,
+    "seen": 1789578296.4383233,
+    "ast_hash": "b9fe0ad3e67c55cf644f01f2092c8b4f",
+    "semantic_hash": ""
   },
   "src/components/student/StudentDashboard.tsx": {
     "mtime": 1789571307.2614014,
@@ -666,9 +666,9 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1789574549.2813213,
-    "seen": 1789575016.3811224,
-    "ast_hash": "aa737f41c154b39f6a90ee0b92ec4040",
+    "mtime": 1789578167.7145536,
+    "seen": 1789578296.4720905,
+    "ast_hash": "e2fb19f3203ae5c3c04445d21c0c9321",
     "semantic_hash": ""
   },
   "src/types/index.ts": {

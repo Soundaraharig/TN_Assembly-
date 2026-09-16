@@ -2344,9 +2344,13 @@ export function App() {
             // Search across ALL events in Supabase
             const authRes = await storageService.authenticateAccessCodeAsync(cleanCode);
             if (!authRes) return null;
-            // Non-student roles sync from Supabase, while students are strictly isolated
-            if (authRes.eventId && isSupabaseEnabled && authRes.role !== 'student') {
-              await storageService.syncFromSupabase(authRes.eventId, true);
+            // Scoped data sync strictly by authenticated role
+            if (authRes.eventId && isSupabaseEnabled) {
+              if (authRes.role === 'volunteer') {
+                await storageService.fetchVolunteerPortalData(authRes.eventId, authRes.user?.id || '', true);
+              } else if (authRes.role === 'jury') {
+                await storageService.fetchJuryPortalData(authRes.eventId, authRes.user?.id || '', true);
+              }
               loadState(authRes.eventId);
             }
             return handleAccessCodeLogin(authRes);
