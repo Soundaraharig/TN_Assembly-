@@ -332,25 +332,16 @@ export function processRows(rows: any[], eventId: string, existingCodes: Set<str
 
     if (parsedConstNo !== undefined && rawConstName) {
       const matchByNo = TN_CONSTITUENCIES.find(c => c.number === parsedConstNo);
-      if (matchByNo) {
-        const normDbName = matchByNo.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-        const normRowName = rawConstName.toLowerCase().replace(/[^a-z0-9]/g, '');
-        const namesMatch =
-          normDbName === normRowName ||
-          normDbName.includes(normRowName) ||
-          normRowName.includes(normDbName);
+      const normRowName = rawConstName.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const matchByName = TN_CONSTITUENCIES.find(c => {
+        const normDb = c.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        return normDb === normRowName || normDb.includes(normRowName) || normRowName.includes(normDb);
+      });
 
-        if (!namesMatch) {
-          errors.push(
-            `Row ${index + 1}: Constituency conflict — No. ${parsedConstNo} is "${matchByNo.name}" (${matchByNo.district}), but file specified "${rawConstName}".`
-          );
-          finalConstNo = undefined;
-          finalConstName = undefined;
-        } else {
-          finalConstName = matchByNo.name;
-          finalDistrict = finalDistrict || matchByNo.district;
-        }
-      }
+      // Respect the user's specified constituency number and name from the file
+      finalConstNo = parsedConstNo;
+      finalConstName = rawConstName;
+      finalDistrict = district || matchByName?.district || matchByNo?.district;
     } else if (parsedConstNo !== undefined && !rawConstName) {
       const matchByNo = TN_CONSTITUENCIES.find(c => c.number === parsedConstNo);
       if (matchByNo) {
@@ -367,6 +358,8 @@ export function processRows(rows: any[], eventId: string, existingCodes: Set<str
         finalConstNo = matchByName.number;
         finalConstName = matchByName.name;
         finalDistrict = finalDistrict || matchByName.district;
+      } else {
+        finalConstName = rawConstName;
       }
     }
 
