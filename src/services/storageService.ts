@@ -978,10 +978,6 @@ class StorageService {
         if (!evId && defaultEventId) {
           evId = defaultEventId;
         }
-        if (!evId || (!validEventIds.has(evId) && validEventIds.size > 0)) {
-          orphanedLearnersCleaned++;
-          return;
-        }
         seenLearnerIds.add(l.id);
 
         let finalPartyId = l.party_id;
@@ -1043,24 +1039,17 @@ class StorageService {
   }
 
   private getDeletedIds(): Set<string> {
-    const arr = this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []);
-    return new Set(arr);
+    // Return empty set to prevent ghost suppression of valid delegates in remote Supabase
+    return new Set<string>();
   }
 
-  private addDeletedIds(ids: string[]) {
-    if (!ids || ids.length === 0) return;
-    const current = this.getDeletedIds();
-    ids.forEach(id => { if (id) current.add(id); });
-    this.setItem(STORAGE_KEYS.DELETED_IDS, Array.from(current));
+  private addDeletedIds(_ids: string[]) {
+    // Disabled: Do not maintain persistent deleted ID tombstone cache,
+    // as it causes re-imported delegates to silently vanish from UI.
   }
 
-  private removeDeletedId(id: string) {
-    if (!id) return;
-    const current = this.getDeletedIds();
-    if (current.has(id)) {
-      current.delete(id);
-      this.setItem(STORAGE_KEYS.DELETED_IDS, Array.from(current));
-    }
+  private removeDeletedId(_id: string) {
+    // No-op
   }
 
   /**
@@ -1860,48 +1849,65 @@ class StorageService {
         console.error("Supabase Error [learners]:", learnersErr);
         hasQueryError = true;
       } else if (learners !== null) {
-        if (learners.length === 0) {
-          this.setItem(STORAGE_KEYS.LEARNERS, []);
-        } else {
-          const localLearners = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, []);
-          const localLearnerMap = new Map<string, Learner>();
-          localLearners.forEach(l => localLearnerMap.set(l.id, l));
+        const localLearners = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, []);
+        const localLearnerMap = new Map<string, Learner>();
+        localLearners.forEach(l => { if (l && l.id) localLearnerMap.set(l.id, l); });
 
-          const learnerMap = new Map<string, Learner>();
-          learners.forEach(r => {
-            if (deletedIds.has(r.id)) return;
-            const local = localLearnerMap.get(r.id);
-            const ext = extendedLearnerMap.get(r.id);
-            const merged = local ? { ...local, ...(r as Learner) } : { ...(r as Learner) };
-            if (ext) {
-              if (ext.school_name && !merged.school_name) merged.school_name = ext.school_name;
-              if (ext.party_group_link && !merged.party_group_link) merged.party_group_link = ext.party_group_link;
-              if (ext.committee_group_link && !merged.committee_group_link) merged.committee_group_link = ext.committee_group_link;
-            }
-            learnerMap.set(r.id, merged);
-          });
-          this.setItem(STORAGE_KEYS.LEARNERS, sortLearnersStably(Array.from(learnerMap.values())));
-
-          // Synchronize participant_count for each event based on real learner count
-          const countsByEvent = new Map<string, number>();
-          learnerMap.forEach(l => {
-            if (l.event_id) {
-              countsByEvent.set(l.event_id, (countsByEvent.get(l.event_id) || 0) + 1);
-            }
-          });
-          const curEvents = this.getItem<CollegeEvent[]>(STORAGE_KEYS.EVENTS, []);
-          let eventsModified = false;
-          const updatedCurEvents = curEvents.map(ev => {
-            const realCount = countsByEvent.get(ev.id);
-            if (realCount !== undefined && ev.participant_count !== realCount) {
-              eventsModified = true;
-              return { ...ev, participant_count: realCount };
-            }
-            return ev;
-          });
-          if (eventsModified) {
-            this.setItem(STORAGE_KEYS.EVENTS, updatedCurEvents);
+        const incomingLearnerMap = new Map<string, Learner>();
+        learners.forEach(r => {
+          if (!r || !r.id) return;
+          const local = localLearnerMap.get(r.id);
+          const ext = extendedLearnerMap.get(r.id);
+          const merged = local ? { ...local, ...(r as Learner) } : { ...(r as Learner) };
+          if (ext) {
+            if (ext.school_name && !merged.school_name) merged.school_name = ext.school_name;
+            if (ext.party_group_link && !merged.party_group_link) merged.party_group_link = ext.party_group_link;
+            if (ext.committee_group_link && !merged.committee_group_link) merged.committee_group_link = ext.committee_group_link;
           }
+          incomingLearnerMap.set(r.id, merged);
+        });
+
+        let finalLearners: Learner[];
+        if (targetEventId) {
+          // Scope is a single event:
+          // CRITICAL: Retain all learners belonging to other events
+          const otherEventsLearners = localLearners.filter(l => l.event_id && l.event_id !== targetEventId);
+          const thisEventLearners = Array.from(incomingLearnerMap.values());
+          finalLearners = [...otherEventsLearners, ...thisEventLearners];
+        } else {
+          // Full sync across all events:
+          if (learners.length === 0 && localLearners.length > 0) {
+            console.warn('[StorageService] Full sync returned 0 remote learners while local has participants. Preserving local data.');
+            finalLearners = localLearners;
+          } else {
+            const mergedMap = new Map<string, Learner>(localLearnerMap);
+            incomingLearnerMap.forEach((v, k) => mergedMap.set(k, v));
+            finalLearners = Array.from(mergedMap.values());
+          }
+        }
+
+        this.setItem(STORAGE_KEYS.LEARNERS, sortLearnersStably(finalLearners));
+
+        // Synchronize participant_count for each event based on real learner count
+        const countsByEvent = new Map<string, number>();
+        finalLearners.forEach(l => {
+          if (l.event_id) {
+            countsByEvent.set(l.event_id, (countsByEvent.get(l.event_id) || 0) + 1);
+          }
+        });
+        const curEvents = this.getItem<CollegeEvent[]>(STORAGE_KEYS.EVENTS, []);
+        let eventsModified = false;
+        const updatedCurEvents = curEvents.map(ev => {
+          if (targetEventId && ev.id !== targetEventId) return ev;
+          const realCount = countsByEvent.get(ev.id) || 0;
+          if (ev.participant_count !== realCount) {
+            eventsModified = true;
+            return { ...ev, participant_count: realCount };
+          }
+          return ev;
+        });
+        if (eventsModified) {
+          this.setItem(STORAGE_KEYS.EVENTS, updatedCurEvents);
         }
       }
 
@@ -1909,42 +1915,62 @@ class StorageService {
         console.error("Supabase Error [political_parties]:", partiesErr);
         hasQueryError = true;
       } else if (parties !== null) {
-        if (parties.length === 0) {
-          this.setItem(STORAGE_KEYS.PARTIES, []);
-        } else {
-          const localParties = this.getItem<Party[]>(STORAGE_KEYS.PARTIES, []);
-          const localPartyMap = new Map<string, Party>();
-          localParties.forEach(p => localPartyMap.set(p.id, p));
+        const localParties = this.getItem<Party[]>(STORAGE_KEYS.PARTIES, []);
+        const localPartyMap = new Map<string, Party>();
+        localParties.forEach(p => { if (p && p.id) localPartyMap.set(p.id, p); });
 
-          const partyMap = new Map<string, Party>();
-          parties.forEach(remote => {
-            if (deletedIds.has(remote.id)) return;
-            const local = localPartyMap.get(remote.id);
-            partyMap.set(remote.id, local ? { ...local, ...remote } : (remote as unknown as Party));
-          });
-          this.setItem(STORAGE_KEYS.PARTIES, Array.from(partyMap.values()));
+        const incomingPartyMap = new Map<string, Party>();
+        parties.forEach(remote => {
+          if (!remote || !remote.id) return;
+          const local = localPartyMap.get(remote.id);
+          incomingPartyMap.set(remote.id, local ? { ...local, ...remote } : (remote as unknown as Party));
+        });
+
+        let finalParties: Party[];
+        if (targetEventId) {
+          const otherEventsParties = localParties.filter(p => p.event_id && p.event_id !== targetEventId);
+          finalParties = [...otherEventsParties, ...Array.from(incomingPartyMap.values())];
+        } else {
+          if (parties.length === 0 && localParties.length > 0) {
+            finalParties = localParties;
+          } else {
+            const mergedMap = new Map<string, Party>(localPartyMap);
+            incomingPartyMap.forEach((v, k) => mergedMap.set(k, v));
+            finalParties = Array.from(mergedMap.values());
+          }
         }
+        this.setItem(STORAGE_KEYS.PARTIES, finalParties);
       }
 
       if (commErr) {
         console.error("Supabase Error [committees]:", commErr);
         hasQueryError = true;
       } else if (committees !== null) {
-        if (committees.length === 0) {
-          this.setItem(STORAGE_KEYS.COMMITTEES, []);
-        } else {
-          const localComms = this.getItem<Committee[]>(STORAGE_KEYS.COMMITTEES, []);
-          const localCommMap = new Map<string, Committee>();
-          localComms.forEach(c => localCommMap.set(c.id, c));
+        const localComms = this.getItem<Committee[]>(STORAGE_KEYS.COMMITTEES, []);
+        const localCommMap = new Map<string, Committee>();
+        localComms.forEach(c => { if (c && c.id) localCommMap.set(c.id, c); });
 
-          const commMap = new Map<string, Committee>();
-          committees.forEach(remote => {
-            if (deletedIds.has(remote.id)) return;
-            const local = localCommMap.get(remote.id);
-            commMap.set(remote.id, local ? { ...local, ...remote } : (remote as unknown as Committee));
-          });
-          this.setItem(STORAGE_KEYS.COMMITTEES, Array.from(commMap.values()));
+        const incomingCommMap = new Map<string, Committee>();
+        committees.forEach(remote => {
+          if (!remote || !remote.id) return;
+          const local = localCommMap.get(remote.id);
+          incomingCommMap.set(remote.id, local ? { ...local, ...remote } : (remote as unknown as Committee));
+        });
+
+        let finalComms: Committee[];
+        if (targetEventId) {
+          const otherEventsComms = localComms.filter(c => c.event_id && c.event_id !== targetEventId);
+          finalComms = [...otherEventsComms, ...Array.from(incomingCommMap.values())];
+        } else {
+          if (committees.length === 0 && localComms.length > 0) {
+            finalComms = localComms;
+          } else {
+            const mergedMap = new Map<string, Committee>(localCommMap);
+            incomingCommMap.forEach((v, k) => mergedMap.set(k, v));
+            finalComms = Array.from(mergedMap.values());
+          }
         }
+        this.setItem(STORAGE_KEYS.COMMITTEES, finalComms);
       }
 
       if (agendaErr) {
@@ -4257,21 +4283,14 @@ class StorageService {
   public getLearners(eventId?: string): Learner[] {
     const all = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, INITIAL_LEARNERS);
     const seenIds = new Set<string>();
-    const seenCodes = new Set<string>();
     const unique: Learner[] = [];
     const allParties = this.getItem<Party[]>(STORAGE_KEYS.PARTIES, []);
     let benchFixedCount = 0;
     const learnersToSync: Array<{ id: string; bench: BenchType }> = [];
 
     for (const l of all) {
-      if (!l.id || seenIds.has(l.id)) continue;
-      const codeKey = l.access_code && l.access_code.trim()
-        ? `${l.event_id || ''}:::${l.access_code.trim().toUpperCase()}`
-        : null;
-      if (codeKey && seenCodes.has(codeKey)) continue;
-
+      if (!l || !l.id || seenIds.has(l.id)) continue;
       seenIds.add(l.id);
-      if (codeKey) seenCodes.add(codeKey);
 
       // Dynamically align bench with political party bench
       const party = allParties.find(p =>
@@ -4620,10 +4639,13 @@ class StorageService {
   }
 
   public async deleteLearner(learnerId: string): Promise<void> {
-    const target = this.getLearners().find(l => l.id === learnerId);
-    const all = this.getLearners().filter(l => l.id !== learnerId);
+    if (!learnerId || typeof learnerId !== 'string' || !learnerId.trim()) return;
+    const allCurrent = this.getLearners();
+    const target = allCurrent.find(l => l.id === learnerId);
+    if (!target) return;
+    const all = allCurrent.filter(l => l.id !== learnerId);
     this.setItem(STORAGE_KEYS.LEARNERS, all);
-    if (target?.event_id) {
+    if (target.event_id) {
       const remainingCount = all.filter(l => l.event_id === target.event_id).length;
       const events = this.getEvents().map(e =>
         e.id === target.event_id ? { ...e, participant_count: remainingCount } : e
@@ -4633,15 +4655,22 @@ class StorageService {
         supabase.from('college_events').update({ participant_count: remainingCount }).eq('id', target.event_id).then();
       }
     }
-    this.addDeletedIds([learnerId]);
     await this.sbDelete('learners', learnerId);
   }
 
   public async deleteLearners(learnerIds: string[], eventId?: string): Promise<void> {
-    if (!learnerIds || learnerIds.length === 0) return;
-    this.addDeletedIds(learnerIds);
-    const idSet = new Set(learnerIds);
-    const all = this.getLearners().filter(l => !idSet.has(l.id));
+    if (!learnerIds || !Array.isArray(learnerIds) || learnerIds.length === 0) return;
+    const validIds = Array.from(new Set(learnerIds.filter(id => typeof id === 'string' && id.trim().length > 0)));
+    if (validIds.length === 0) return;
+
+    const allCurrent = this.getLearners();
+    const idSet = new Set(validIds);
+    // Strict event isolation: only delete learners belonging to this eventId (if eventId is provided)
+    const targetsToDelete = allCurrent.filter(l => idSet.has(l.id) && (!eventId || l.event_id === eventId));
+    if (targetsToDelete.length === 0) return;
+
+    const idsActuallyDeleted = new Set(targetsToDelete.map(l => l.id));
+    const all = allCurrent.filter(l => !idsActuallyDeleted.has(l.id));
     this.setItem(STORAGE_KEYS.LEARNERS, all);
 
     if (eventId) {
@@ -4656,13 +4685,18 @@ class StorageService {
     }
 
     if (supabase) {
-      const { error } = await supabase.from('learners').delete().in('id', learnerIds);
+      const { error } = await supabase.from('learners').delete().in('id', Array.from(idsActuallyDeleted));
       if (error) console.warn('[Supabase] bulk delete error:', error.message);
     }
   }
 
-  public async clearAllLearners(eventId: string): Promise<void> {
-    if (!eventId) return;
+  public async clearAllLearners(eventId: string, confirmationToken?: string): Promise<{ success: boolean; error?: string }> {
+    if (!eventId) return { success: false, error: 'Event ID required' };
+    if (confirmationToken !== 'EXPLICIT_CONFIRM_DELETE_ROSTER') {
+      console.warn('[StorageService] clearAllLearners blocked: Missing required explicit confirmation token.');
+      return { success: false, error: 'Confirmation token required to wipe delegate roster.' };
+    }
+
     const all = this.getLearners().filter(l => l.event_id !== eventId);
     this.setItem(STORAGE_KEYS.LEARNERS, all);
 
@@ -4676,6 +4710,7 @@ class StorageService {
       if (error) console.warn('[Supabase] clear all learners error:', error.message);
       await supabase.from('college_events').update({ participant_count: 0 }).eq('id', eventId);
     }
+    return { success: true };
   }
 
   /**

@@ -56,7 +56,7 @@ interface ParticipantsTabProps {
   onUpdateLearner: (learner: Learner) => void;
   onDeleteLearner: (learnerId: string) => void;
   onDeleteMultipleLearners?: (learnerIds: string[]) => void;
-  onClearAllLearners?: () => void;
+  onClearAllLearners?: (token?: string) => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -328,40 +328,14 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
   const handleConfirmMassDelete = (e: React.FormEvent) => {
     e.preventDefault();
     const pass = massDeletePass.trim();
-    if (pass !== 'coord123' && pass !== 'admin123' && pass !== 'DELETE' && pass.length < 6) {
-      setMassDeleteError('Unauthorized: Enter valid Coordinator Password (coord123 / admin123) or type DELETE to confirm.');
-      return;
-    }
 
-    if (massDeleteScope === 'SELECTED') {
-      const idsToDelete = Array.from(selectedLearnerIds);
-      if (idsToDelete.length === 0) {
-        setMassDeleteError('No delegates selected to delete.');
+    if (massDeleteScope === 'ALL') {
+      if (pass !== 'DELETE') {
+        setMassDeleteError('Safety Lock: Type "DELETE" in capital letters to confirm clearing all delegates.');
         return;
       }
-      if (onDeleteMultipleLearners) {
-        onDeleteMultipleLearners(idsToDelete);
-      } else {
-        idsToDelete.forEach(id => onDeleteLearner(id));
-      }
-      onShowToast('Mass Delete Complete', `Successfully removed ${idsToDelete.length} selected delegates`, 'success');
-      setSelectedLearnerIds(new Set());
-    } else if (massDeleteScope === 'FILTERED') {
-      const idsToDelete = filteredLearners.map(l => l.id);
-      if (idsToDelete.length === 0) {
-        setMassDeleteError('No matching filtered delegates to delete.');
-        return;
-      }
-      if (onDeleteMultipleLearners) {
-        onDeleteMultipleLearners(idsToDelete);
-      } else {
-        idsToDelete.forEach(id => onDeleteLearner(id));
-      }
-      onShowToast('Filtered Delegates Deleted', `Removed ${idsToDelete.length} filtered delegates`, 'success');
-      setSelectedLearnerIds(new Set());
-    } else if (massDeleteScope === 'ALL') {
       if (onClearAllLearners) {
-        onClearAllLearners();
+        onClearAllLearners('EXPLICIT_CONFIRM_DELETE_ROSTER');
       } else if (onDeleteMultipleLearners) {
         onDeleteMultipleLearners(learners.map(l => l.id));
       } else {
@@ -369,6 +343,39 @@ export const ParticipantsTab: React.FC<ParticipantsTabProps> = ({
       }
       onShowToast('Roster Cleared', `Successfully wiped all ${learners.length} delegate records`, 'info');
       setSelectedLearnerIds(new Set());
+    } else {
+      if (pass !== 'coord123' && pass !== 'admin123' && pass !== 'DELETE' && pass.length < 6) {
+        setMassDeleteError('Unauthorized: Enter valid Coordinator Password (coord123 / admin123) or type DELETE to confirm.');
+        return;
+      }
+
+      if (massDeleteScope === 'SELECTED') {
+        const idsToDelete = Array.from(selectedLearnerIds);
+        if (idsToDelete.length === 0) {
+          setMassDeleteError('No delegates selected to delete.');
+          return;
+        }
+        if (onDeleteMultipleLearners) {
+          onDeleteMultipleLearners(idsToDelete);
+        } else {
+          idsToDelete.forEach(id => onDeleteLearner(id));
+        }
+        onShowToast('Mass Delete Complete', `Successfully removed ${idsToDelete.length} selected delegates`, 'success');
+        setSelectedLearnerIds(new Set());
+      } else if (massDeleteScope === 'FILTERED') {
+        const idsToDelete = filteredLearners.map(l => l.id);
+        if (idsToDelete.length === 0) {
+          setMassDeleteError('No matching filtered delegates to delete.');
+          return;
+        }
+        if (onDeleteMultipleLearners) {
+          onDeleteMultipleLearners(idsToDelete);
+        } else {
+          idsToDelete.forEach(id => onDeleteLearner(id));
+        }
+        onShowToast('Filtered Delegates Deleted', `Removed ${idsToDelete.length} filtered delegates`, 'success');
+        setSelectedLearnerIds(new Set());
+      }
     }
 
     setIsMassDeleteModalOpen(false);

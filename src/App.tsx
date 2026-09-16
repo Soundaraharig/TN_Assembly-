@@ -207,7 +207,7 @@ interface EventTabRouteHandlerProps {
   handleUpdateLearner: (l: Learner) => void;
   handleDeleteLearner: (id: string) => void;
   handleDeleteMultipleLearners: (ids: string[]) => void;
-  handleClearAllLearners: () => void;
+  handleClearAllLearners: (token?: string) => void;
   handleToggleOpenNominationPosition: (pos: string) => void;
   handleSetAllOpenNominationPositions: (open: boolean, pos: string[]) => void;
   handleAddCommittee: (comm: Partial<Committee>) => void;
@@ -1676,13 +1676,21 @@ export function App() {
     }
   };
 
-  const handleClearAllLearners = async () => {
+  const handleClearAllLearners = async (confirmationToken?: string) => {
     if (currentEvent) {
-      await storageService.clearAllLearners(currentEvent.id);
-      setLearners([]);
-      setCurrentEvent(prev => prev ? { ...prev, participant_count: 0 } : prev);
-      setEvents(storageService.getEvents());
-      addToast('Roster Cleared', 'All delegate participants have been removed', 'info');
+      if (confirmationToken !== 'EXPLICIT_CONFIRM_DELETE_ROSTER') {
+        addToast('Action Blocked', 'Automatic or unconfirmed deletion of participants is disabled.', 'error');
+        return;
+      }
+      const res = await storageService.clearAllLearners(currentEvent.id, 'EXPLICIT_CONFIRM_DELETE_ROSTER');
+      if (res && res.success) {
+        setLearners(storageService.getLearners(currentEvent.id));
+        setCurrentEvent(prev => prev ? { ...prev, participant_count: 0 } : prev);
+        setEvents(storageService.getEvents());
+        addToast('Roster Cleared', 'All delegate participants have been removed', 'info');
+      } else {
+        addToast('Clear Roster Blocked', res?.error || 'Failed to clear roster', 'error');
+      }
     }
   };
 

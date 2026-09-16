@@ -1,4 +1,4 @@
-import Papa from 'papaparse';
+ximport Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import type { Learner, AcademicYear, BenchType, Party, Committee } from '../types';
 import { generateAccessCode } from './accessCodeGenerator';
@@ -25,7 +25,7 @@ export interface CSVImportResult {
 export function parseAcademicYear(val: any): AcademicYear {
   if (!val) return '1st Year';
   const str = String(val).trim().toLowerCase();
-  
+
   if (
     str.includes('4th') ||
     str.includes('fourth') ||
@@ -115,112 +115,112 @@ export function processRows(rows: any[], eventId: string, existingCodes: Set<str
     aliases: string[];
     isIdentifier?: boolean;
   }[] = [
-    {
-      key: 'name',
-      label: 'Student Name',
-      aliases: [
-        'studentname', 'name', 'delegatename', 'participantname', 'fullname', 'learnername',
-        'candidatename', 'firstname', 'nameofstudent', 'studentsname', 'nameofthestudent',
-        'student', 'participant', 'delegate', 'candidate', 'fullnameofstudent', 'nameofparticipant', 'nameofdelegate'
-      ],
-      isIdentifier: true
-    },
-    {
-      key: 'constituency_number',
-      label: 'Constituency Number',
-      aliases: [
-        'constituencynumber', 'constituencyno', 'constno', 'constnum', 'seatnumber', 'seatno',
-        'acno', 'acnumber', 'constituencyn', 'constituencyid'
-      ]
-    },
-    {
-      key: 'constituency_name',
-      label: 'Constituency Name',
-      aliases: [
-        'constituencyname', 'constituency', 'tnconstituencyname', 'constname',
-        'seatname', 'constituencyseat', 'constituencyseatname'
-      ]
-    },
-    {
-      key: 'party',
-      label: 'Allocated Party',
-      aliases: [
-        'allocatedparty', 'party', 'partyname', 'assignedparty', 'partyassignment',
-        'politicalparty', 'partyassigned', 'partyallocated'
-      ]
-    },
-    {
-      key: 'committee',
-      label: 'Allocated Committee',
-      aliases: [
-        'allocatedcommittee', 'committee', 'committeename', 'assignedcommittee',
-        'committeegroup', 'committeeassignment'
-      ]
-    },
-    {
-      key: 'access_code',
-      label: 'Access Code',
-      aliases: [
-        'accesscode', 'code', 'delegatecode', 'studentcode', 'passcode'
-      ]
-    },
-    {
-      key: 'bench',
-      label: 'Bench',
-      aliases: [
-        'bench', 'benchassignment', 'side', 'rulingopposition', 'benchtype'
-      ]
-    },
-    {
-      key: 'role',
-      label: 'Legislative Role',
-      aliases: [
-        'role', 'legislativerole', 'cabinetrole', 'designation', 'position', 'parliamentaryrole', 'cabinet'
-      ]
-    },
-    {
-      key: 'department',
-      label: 'Department',
-      aliases: [
-        'department', 'dept', 'branch', 'course', 'major', 'program', 'programme',
-        'specialization', 'stream', 'degree', 'branchdept', 'coursename'
-      ]
-    },
-    {
-      key: 'academic_year',
-      label: 'Academic Year',
-      aliases: [
-        'academicyear', 'year', 'yearofstudy', 'studyingyear', 'currentyear', 'class',
-        'batch', 'yr', 'std', 'semester', 'sem', 'classyear', 'yearsem'
-      ]
-    },
-    {
-      key: 'email',
-      label: 'Email ID',
-      aliases: [
-        'email', 'emailid', 'emailaddress', 'contactemail', 'mail', 'studentemail',
-        'studentsemail', 'mailid', 'useremail'
-      ]
-    },
-    {
-      key: 'phone',
-      label: 'Phone Number',
-      aliases: [
-        'phone', 'phonenumber', 'mobile', 'mobilenumber', 'contact', 'contactnumber',
-        'phoneno', 'mobileno', 'whatsapp', 'cell', 'whatsappnumber', 'whatsappno', 'cellnumber', 'contactno'
-      ]
-    },
-    {
-      key: 'district',
-      label: 'District',
-      aliases: ['district', 'tndistrict', 'districtname']
-    },
-    {
-      key: 'sno',
-      label: 'S.No',
-      aliases: ['sno', 'slno', 'serialno', 'serialnumber', 'no']
-    }
-  ];
+      {
+        key: 'name',
+        label: 'Student Name',
+        aliases: [
+          'studentname', 'name', 'delegatename', 'participantname', 'fullname', 'learnername',
+          'candidatename', 'firstname', 'nameofstudent', 'studentsname', 'nameofthestudent',
+          'student', 'participant', 'delegate', 'candidate', 'fullnameofstudent', 'nameofparticipant', 'nameofdelegate'
+        ],
+        isIdentifier: true
+      },
+      {
+        key: 'constituency_number',
+        label: 'Constituency Number',
+        aliases: [
+          'constituencynumber', 'constituencyno', 'constno', 'constnum', 'seatnumber', 'seatno',
+          'acno', 'acnumber', 'constituencyn', 'constituencyid'
+        ]
+      },
+      {
+        key: 'constituency_name',
+        label: 'Constituency Name',
+        aliases: [
+          'constituencyname', 'constituency', 'tnconstituencyname', 'constname',
+          'seatname', 'constituencyseat', 'constituencyseatname'
+        ]
+      },
+      {
+        key: 'party',
+        label: 'Allocated Party',
+        aliases: [
+          'allocatedparty', 'party', 'partyname', 'assignedparty', 'partyassignment',
+          'politicalparty', 'partyassigned', 'partyallocated'
+        ]
+      },
+      {
+        key: 'committee',
+        label: 'Allocated Committee',
+        aliases: [
+          'allocatedcommittee', 'committee', 'committeename', 'assignedcommittee',
+          'committeegroup', 'committeeassignment'
+        ]
+      },
+      {
+        key: 'access_code',
+        label: 'Access Code',
+        aliases: [
+          'accesscode', 'code', 'delegatecode', 'studentcode', 'passcode'
+        ]
+      },
+      {
+        key: 'bench',
+        label: 'Bench',
+        aliases: [
+          'bench', 'benchassignment', 'side', 'rulingopposition', 'benchtype'
+        ]
+      },
+      {
+        key: 'role',
+        label: 'Legislative Role',
+        aliases: [
+          'role', 'legislativerole', 'cabinetrole', 'designation', 'position', 'parliamentaryrole', 'cabinet'
+        ]
+      },
+      {
+        key: 'department',
+        label: 'Department',
+        aliases: [
+          'department', 'dept', 'branch', 'course', 'major', 'program', 'programme',
+          'specialization', 'stream', 'degree', 'branchdept', 'coursename'
+        ]
+      },
+      {
+        key: 'academic_year',
+        label: 'Academic Year',
+        aliases: [
+          'academicyear', 'year', 'yearofstudy', 'studyingyear', 'currentyear', 'class',
+          'batch', 'yr', 'std', 'semester', 'sem', 'classyear', 'yearsem'
+        ]
+      },
+      {
+        key: 'email',
+        label: 'Email ID',
+        aliases: [
+          'email', 'emailid', 'emailaddress', 'contactemail', 'mail', 'studentemail',
+          'studentsemail', 'mailid', 'useremail'
+        ]
+      },
+      {
+        key: 'phone',
+        label: 'Phone Number',
+        aliases: [
+          'phone', 'phonenumber', 'mobile', 'mobilenumber', 'contact', 'contactnumber',
+          'phoneno', 'mobileno', 'whatsapp', 'cell', 'whatsappnumber', 'whatsappno', 'cellnumber', 'contactno'
+        ]
+      },
+      {
+        key: 'district',
+        label: 'District',
+        aliases: ['district', 'tndistrict', 'districtname']
+      },
+      {
+        key: 'sno',
+        label: 'S.No',
+        aliases: ['sno', 'slno', 'serialno', 'serialnumber', 'no']
+      }
+    ];
 
   // Determine mapped fields and unmapped headers across all detected headers
   const mappedFieldsSet = new Set<string>();
