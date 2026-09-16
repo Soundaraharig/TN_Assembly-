@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import type { CollegeEvent, AgendaItem, Election, LiveFlashVote, Learner } from '../../types';
 import { Radio, Volume2, VolumeX, Maximize2, Minimize2, Clock, Sparkles, Trophy, Crown, Shield } from 'lucide-react';
 import type { ProjectorStudioSettings } from '../../types';
 import { storageService } from '../../services/storageService';
-import { extractEventFromUrl } from '../../utils/slug';
+import { extractEventFromUrl, extractEventSlugCandidateFromUrl } from '../../utils/slug';
 
 interface StandaloneProjectorDisplayProps {
   currentEvent?: CollegeEvent | null;
@@ -51,6 +51,21 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
       osc.stop(ctx.currentTime + 0.6);
     } catch {}
   };
+
+  // Strictly scoped on-demand Display portal fetch (runs at most once on mount)
+  const hasMountedDisplayFetchRef = useRef(false);
+  useEffect(() => {
+    if (hasMountedDisplayFetchRef.current) return;
+    hasMountedDisplayFetchRef.current = true;
+    const evs = storageService.getEvents();
+    const activeEv = extractEventFromUrl(evs) || initialEvent || (currentEvent?.id ? evs.find(e => e.id === currentEvent.id) : null) || evs[0];
+    const target = activeEv?.id || extractEventSlugCandidateFromUrl();
+    if (target) {
+      storageService.fetchDisplayPortalData(target).catch(err =>
+        console.warn('[StandaloneProjectorDisplay] display data fetch warning:', err)
+      );
+    }
+  }, [initialEvent?.id, currentEvent?.id]);
 
   // Sync state from storage & events
   useEffect(() => {

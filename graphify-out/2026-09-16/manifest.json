@@ -336,9 +336,9 @@
     "semantic_hash": "5b4bc0f8532cd2bd90daced81d45749a"
   },
   "src/App.tsx": {
-    "mtime": 1789569179.4237509,
-    "seen": 1789569814.0631158,
-    "ast_hash": "91f3b7e3d243e291a45ecf78c76855eb",
+    "mtime": 1789570796.445238,
+    "seen": 1789570944.616388,
+    "ast_hash": "3c6c09f41b4826f7f55c64e8d03bde5a",
     "semantic_hash": ""
   },
   "src/components/admin/CreateEventModal.tsx": {
@@ -630,9 +630,9 @@
     "semantic_hash": ""
   },
   "src/components/volunteer/VolunteerDashboard.tsx": {
-    "mtime": 1789444780.877553,
-    "seen": 1789445875.360702,
-    "ast_hash": "8f5f4a7a73ed874f45e6d807f4485d86",
+    "mtime": 1789570823.2435384,
+    "seen": 1789570944.6209147,
+    "ast_hash": "bb1e3be6a6f31187838aede5ee1db65b",
     "semantic_hash": ""
   },
   "src/data/initialMockData.ts": {
@@ -666,9 +666,9 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1789568714.2903008,
-    "seen": 1789569814.0673928,
-    "ast_hash": "182556a173b7a699d62c945833d24132",
+    "mtime": 1789570896.711519,
+    "seen": 1789570944.621454,
+    "ast_hash": "ad0f4c2067a0bd20f2334b2ee814ebad",
     "semantic_hash": ""
   },
   "src/types/index.ts": {

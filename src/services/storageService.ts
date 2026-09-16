@@ -73,7 +73,7 @@ import type {
   ConstituencyAllocationOptions
 } from '../utils/allocationEngine';
 import { supabase, isSupabaseEnabled } from '../lib/supabase';
-import { getEventSlug } from '../utils/slug';
+import { getEventSlug, findEventBySlug } from '../utils/slug';
 
 // ---------------------------------------------------------------------------
 // Cache versioning & Stale-While-Revalidate metadata
@@ -2642,6 +2642,133 @@ class StorageService {
       if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
     } catch (e) {
       console.warn('[StorageService] fetchVolunteerPortalData error:', e);
+    }
+  }
+
+  /**
+   * Dedicated fetch for Standalone Projector / Display View.
+   * STRICTLY SCOPED as per agent egress & privacy rules:
+   * Only queries:
+   *   1. The active event metadata & social_coverage (for stage header and live elections / flash votes)
+   *   2. session_agenda for schedule display
+   *   3. total delegate count via head: true (transfers 0 rows of learner data)
+   * NEVER queries: volunteers, event_day_attendance, event_days, committees, political_parties, or full learners table.
+   * Utilizes Stale-While-Revalidate with 5-minute TTL and realtime broadcast sync.
+   */
+  public async fetchDisplayPortalData(slugOrId: string, force = false): Promise<void> {
+    const sb = supabase;
+    if (!sb || !slugOrId) return;
+
+    let resolvedEventId = slugOrId;
+    const existingEvs = this.getEvents();
+    const matched = findEventBySlug(existingEvs, slugOrId);
+    if (matched) {
+      resolvedEventId = matched.id;
+    }
+
+    const cacheKey = `portal_display_${resolvedEventId}`;
+
+    if (!force) {
+      const cacheStatus = this.getCacheStatus(cacheKey);
+      if (cacheStatus.status === 'fresh') return;
+      if (cacheStatus.status === 'stale') {
+        this.dedupeInFlight(cacheKey, () => this.executeDisplayPortalFetch(resolvedEventId, slugOrId, cacheKey))
+          .catch(err => console.warn('[StorageService] SWR background display fetch error:', err));
+        return;
+      }
+    }
+
+    return this.dedupeInFlight(cacheKey, () => this.executeDisplayPortalFetch(resolvedEventId, slugOrId, cacheKey));
+  }
+
+  private async executeDisplayPortalFetch(resolvedEventId: string, slugOrId: string, cacheKey: string): Promise<void> {
+    const sb = supabase;
+    if (!sb) return;
+
+    try {
+      // 1. Setup realtime broadcast sync (projector_update, speaker_bell, election_update, flash_vote_update)
+      this.setupRealtimeSync();
+
+      const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+
+      // 2. Fetch single event metadata
+      let targetEv: CollegeEvent | null = null;
+      const cached = this.getEvents().find(e => e.id === resolvedEventId);
+      if (cached && cached.social_coverage) {
+        targetEv = cached;
+      } else {
+        let evQuery = sb.from('college_events').select('id, college_name, event_stage, status, chapter, level, social_coverage, slug');
+        if (isUuid(resolvedEventId)) {
+          evQuery = evQuery.eq('id', resolvedEventId);
+        } else if (isUuid(slugOrId)) {
+          evQuery = evQuery.eq('id', slugOrId);
+        } else {
+          const clean = slugOrId.trim();
+          evQuery = evQuery.or(`slug.eq.${clean},college_name.ilike.%${clean.split('-')[0]}%`);
+        }
+        const { data: evData, error: evErr } = await evQuery.limit(1);
+        if (!evErr && evData && evData.length > 0) {
+          targetEv = evData[0] as unknown as CollegeEvent;
+          resolvedEventId = targetEv.id;
+          const curEvs = this.getEvents();
+          this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== targetEv!.id), targetEv]);
+          this.restoreJkkncetEvent();
+          this.unpackAndApplyEventState([targetEv], targetEv.id);
+        }
+      }
+
+      const activeEventId = targetEv?.id || resolvedEventId;
+      if (!activeEventId) return;
+
+      // 3. Fetch agenda schedule and delegate count in parallel (STRICTLY SCOPED)
+      const [
+        { data: agendaData, error: agendaErr },
+        { count: delegateCount }
+      ] = await Promise.all([
+        sb.from('session_agenda').select(SUPABASE_COLUMNS.SESSION_AGENDA).eq('event_id', activeEventId).order('time', { ascending: true }),
+        sb.from('learners').select('id', { count: 'exact', head: true }).eq('event_id', activeEventId)
+      ]);
+
+      if (!agendaErr && agendaData) {
+        const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== activeEventId);
+        const sortedAgenda = (agendaData as unknown as AgendaItem[]).sort((a: any, b: any) => {
+          if (a.order_number !== undefined && b.order_number !== undefined) return a.order_number - b.order_number;
+          if (a.time && b.time) return String(a.time).localeCompare(String(b.time));
+          return 0;
+        });
+        this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...sortedAgenda]);
+      }
+
+      if (typeof delegateCount === 'number' && delegateCount > 0) {
+        const localLearners = this.getLearners(activeEventId);
+        if (localLearners.length === 0) {
+          const placeholders: Learner[] = Array.from({ length: delegateCount }, (_, idx) => ({
+            id: `delegate_counter_${idx}`,
+            event_id: activeEventId,
+            full_name: 'Delegate',
+            access_code: '',
+            email: '',
+            phone: '',
+            bench: 'Ruling',
+            department: '',
+            academic_year: '1st Year',
+            day1_checked_in: false,
+            day2_checked_in: false,
+            created_at: new Date().toISOString()
+          }));
+          const otherL = this.getLearners().filter(l => l.event_id && l.event_id !== activeEventId);
+          this.setItem(STORAGE_KEYS.LEARNERS, [...otherL, ...placeholders]);
+        }
+      }
+
+      this.setCacheEntry(cacheKey, {
+        resolvedEventId: activeEventId,
+        hasEvent: !!targetEv
+      });
+      this.notify();
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+    } catch (e) {
+      console.warn('[StorageService] executeDisplayPortalFetch error:', e);
     }
   }
 

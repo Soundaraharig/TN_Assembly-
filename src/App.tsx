@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Routes, Route, Navigate, useParams, useNavigate, useLocation, Link } from 'react-router-dom';
-import { getEventSlug, findEventBySlug, extractEventFromUrl, pathToTab, tabToPath } from './utils/slug';
+import { getEventSlug, findEventBySlug, extractEventFromUrl, pathToTab, tabToPath, isStandaloneDisplayPath, extractEventSlugCandidateFromUrl } from './utils/slug';
 import type {
   UserRole,
   CollegeEvent,
@@ -109,15 +109,8 @@ function getInitialRouteInfo(initialSession: SavedAuthSession | null) {
   const pathname = window.location.pathname.toLowerCase();
   const search = window.location.search.toLowerCase();
 
-  // Standalone Projector View (/display, ?projector=true, /live-projector) - strictly excluding /events/
-  const isStandalone = (
-    pathname.includes('/display') ||
-    pathname.includes('/live-projector') ||
-    search.includes('projector=true') ||
-    search.includes('display=true')
-  ) && !pathname.includes('/events/');
-
-  if (isStandalone) {
+  // Standalone Projector / Display View (/display, ?projector=true, /live-projector, /events/:slug/display)
+  if (isStandaloneDisplayPath(pathname, search)) {
     return { role: 'coordinator' as UserRole, isAuthenticated: true, activeNavTab: 'projector' as ActiveNavTab };
   }
 
@@ -1159,9 +1152,14 @@ export function App() {
       loadState();
     });
 
+    const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
+    const search = typeof window !== 'undefined' ? window.location.search : '';
+    const isDisplay = isStandaloneDisplayPath(pathname, search);
+
     // Unconditional initial sync: fetch events list ONLY on mount
     // Child tables are strictly NOT fetched on the Event Hub or initial load
-    if (isSupabaseEnabled && !hasMountedEventsRef.current) {
+    // Display screens only fetch their active event via fetchDisplayPortalData
+    if (!isDisplay && isSupabaseEnabled && !hasMountedEventsRef.current) {
       hasMountedEventsRef.current = true;
       storageService.fetchAllEvents().then(() => {
         loadState();
@@ -1186,15 +1184,8 @@ export function App() {
         const pathname = (typeof window !== 'undefined' ? window.location.pathname : '').toLowerCase();
         const search = (typeof window !== 'undefined' ? window.location.search : '').toLowerCase();
 
-        // 1. Standalone Projector View requested (/display, ?projector=true, /live-projector) - strictly excluding /events/
-        const isStandalone = (
-          pathname.includes('/display') ||
-          pathname.includes('/live-projector') ||
-          search.includes('projector=true') ||
-          search.includes('display=true')
-        ) && !pathname.includes('/events/');
-
-        if (isStandalone) {
+        // 1. Standalone Projector View requested (/display, ?projector=true, /live-projector, /events/:slug/display)
+        if (isStandaloneDisplayPath(pathname, search)) {
           setRole('coordinator');
           setActiveNavTab('projector');
           setIsAuthenticated(true);
@@ -1412,9 +1403,22 @@ export function App() {
     if (!isAuthenticated) return;
 
     // Do NOT hydrate child tables when sitting on the All Assembly Events hub (/events)
-    const isEventsHub = typeof window !== 'undefined' && 
-      (window.location.pathname === '/events' || window.location.pathname === '/events/');
+    const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
+    const search = typeof window !== 'undefined' ? window.location.search : '';
+    const isEventsHub = pathname === '/events' || pathname === '/events/';
     if (isEventsHub) return;
+
+    // CRITICAL: Standalone Projector / Display view must NEVER trigger coordinator admin queries!
+    if (isStandaloneDisplayPath(pathname, search)) {
+      const activeEv = extractEventFromUrl(events) || currentEvent || currentEventRef.current || events[0];
+      const evIdOrSlug = activeEv?.id || extractEventSlugCandidateFromUrl();
+      if (evIdOrSlug) {
+        storageService.fetchDisplayPortalData(evIdOrSlug).catch(err =>
+          console.warn('[App] Display portal fetch warning:', err)
+        );
+      }
+      return;
+    }
 
     const eventId = currentEvent?.id || currentEventRef.current?.id;
     if (!eventId) return;
@@ -2166,13 +2170,7 @@ export function App() {
   };
 
   // Standalone Projector Screen render check (strictly for standalone display paths like /display or /events/*/display, NOT /events/*/projector)
-  const isStandaloneProjectorView = (typeof window !== 'undefined') && (
-    window.location.pathname.toLowerCase().endsWith('/display') ||
-    (window.location.pathname.toLowerCase().includes('/display') && !window.location.pathname.toLowerCase().includes('/projector')) ||
-    window.location.pathname.toLowerCase().includes('/live-projector') ||
-    window.location.search.toLowerCase().includes('display=true') ||
-    (window.location.search.toLowerCase().includes('projector=true') && !window.location.pathname.toLowerCase().includes('/events/'))
-  );
+  const isStandaloneProjectorView = (typeof window !== 'undefined') && isStandaloneDisplayPath(window.location.pathname, window.location.search);
 
   if (isStandaloneProjectorView) {
     const activeEv = extractEventFromUrl(events) || currentEvent || events[0];

@@ -87,6 +87,35 @@ export function extractEventFromUrl(events: CollegeEvent[], preferredEventId?: s
   return undefined;
 }
 
+export function extractEventSlugCandidateFromUrl(): string | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const searchParams = new URLSearchParams(window.location.search);
+  const eventParam = searchParams.get('event') || searchParams.get('eventId') || searchParams.get('event_id');
+  if (eventParam) return eventParam.trim();
+
+  const pathname = window.location.pathname;
+  if (pathname.toLowerCase().includes('/events/')) {
+    const parts = pathname.split('/').filter(Boolean);
+    const eventsIdx = parts.findIndex(p => p.toLowerCase() === 'events');
+    if (eventsIdx !== -1 && parts.length > eventsIdx + 1) {
+      return decodeURIComponent(parts[eventsIdx + 1]).trim();
+    }
+  }
+  return undefined;
+}
+
+export function isStandaloneDisplayPath(pathname: string = '', search: string = ''): boolean {
+  const p = (pathname || '').toLowerCase();
+  const s = (search || '').toLowerCase();
+  return (
+    p.endsWith('/display') ||
+    (p.includes('/display') && !p.includes('/projector')) ||
+    p.includes('/live-projector') ||
+    s.includes('display=true') ||
+    (s.includes('projector=true') && !p.includes('/events/'))
+  );
+}
+
 // Map between route path parameter (:tab) and internal ActiveNavTab
 const TAB_PATH_MAP: Record<string, ActiveNavTab> = {
   'overview': 'overview',

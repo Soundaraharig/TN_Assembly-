@@ -336,9 +336,9 @@
     "semantic_hash": "5b4bc0f8532cd2bd90daced81d45749a"
   },
   "src/App.tsx": {
-    "mtime": 1789570796.445238,
-    "seen": 1789570944.616388,
-    "ast_hash": "3c6c09f41b4826f7f55c64e8d03bde5a",
+    "mtime": 1789573791.93819,
+    "seen": 1789575016.3580868,
+    "ast_hash": "28e8f3bef599bebb3a53f1dcc7c10ce3",
     "semantic_hash": ""
   },
   "src/components/admin/CreateEventModal.tsx": {
@@ -414,10 +414,10 @@
     "semantic_hash": ""
   },
   "src/components/common/StandaloneProjectorDisplay.tsx": {
-    "mtime": 1788930505.7387245,
-    "seen": 1789196099.9922364,
-    "ast_hash": "2764c98eb7a399ed77ec1a9e3572f07d",
-    "semantic_hash": "2764c98eb7a399ed77ec1a9e3572f07d"
+    "mtime": 1789574066.41854,
+    "seen": 1789575016.3631773,
+    "ast_hash": "3ebf4b1555cb49086a258ff9ea20269c",
+    "semantic_hash": ""
   },
   "src/components/common/Toast.tsx": {
     "mtime": 1788930505.7387245,
@@ -612,9 +612,9 @@
     "semantic_hash": "5ca37e78098d648b1adabb0e924b70e8"
   },
   "src/components/student/StudentDashboard.tsx": {
-    "mtime": 1789569307.0749898,
-    "seen": 1789569814.0666957,
-    "ast_hash": "ac76b33a7a23561133fdf4a4a1200ae8",
+    "mtime": 1789571307.2614014,
+    "seen": 1789575016.3770313,
+    "ast_hash": "5391075d92722696d2faf11676398b78",
     "semantic_hash": ""
   },
   "src/components/student/StudentJoinModal.tsx": {
@@ -666,9 +666,9 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1789570896.711519,
-    "seen": 1789570944.621454,
-    "ast_hash": "ad0f4c2067a0bd20f2334b2ee814ebad",
+    "mtime": 1789574549.2813213,
+    "seen": 1789575016.3811224,
+    "ast_hash": "aa737f41c154b39f6a90ee0b92ec4040",
     "semantic_hash": ""
   },
   "src/types/index.ts": {
@@ -708,10 +708,10 @@
     "semantic_hash": "fe5fdfef277dde26d5af43091dddf811"
   },
   "src/utils/slug.ts": {
-    "mtime": 1789099765.194568,
-    "seen": 1789196099.9922717,
-    "ast_hash": "1bfb69652175f80a7e9c79147d7b9922",
-    "semantic_hash": "1bfb69652175f80a7e9c79147d7b9922"
+    "mtime": 1789573177.489822,
+    "seen": 1789575016.3836977,
+    "ast_hash": "4226af25ff899e868c491647a7e54a74",
+    "semantic_hash": ""
   },
   "start_vite.ps1": {
     "mtime": 1788930505.7610824,
