@@ -1055,34 +1055,64 @@ export function App() {
     } catch {}
 
     const urlEvent = extractEventFromUrl(evs);
-    const activeId = targetEventId || urlEvent?.id || currentEventRef.current?.id || savedEventId;
-    let activeEv = evs.find(e => e.id === activeId) || urlEvent || evs.find(e => (e as any).is_active) || evs[0];
+    const studentEventId = (role === 'student' && currentStudent?.event_id) ? currentStudent.event_id : undefined;
+    const activeId = targetEventId || studentEventId || urlEvent?.id || currentEventRef.current?.id || savedEventId;
+    let activeEv = evs.find(e => e.id === activeId) || urlEvent || (role === 'student' ? null : (evs.find(e => (e as any).is_active) || evs[0]));
 
     if (activeEv) {
       setCurrentEvent(activeEv);
       currentEventRef.current = activeEv;
       saveSession({ currentEventId: activeEv.id });
 
-      const eventLearners = storageService.getLearners(activeEv.id);
-      setLearners(eventLearners);
-      setParties(storageService.getParties(activeEv.id));
-      setCommittees(storageService.getCommittees(activeEv.id));
-      setAgenda(storageService.getAgenda(activeEv.id));
-      setJury(storageService.getJury(activeEv.id));
-      setVolunteers(storageService.getVolunteers(activeEv.id));
-      setNominations(storageService.getNominations(activeEv.id));
-      setOpenNominationPositions(storageService.getOpenNominationPositions(activeEv.id));
-      setElections(storageService.getElections(activeEv.id));
-      setFlashVotes(storageService.getFlashVotes(activeEv.id));
-      setChecklist(storageService.getChecklist(activeEv.id));
-      setQuestions(storageService.getQuestions(activeEv.id));
-      setProceedings(storageService.getProceedings(activeEv.id));
-      setScores(storageService.getScores(activeEv.id));
-      setChatMessages(storageService.getChatMessages(activeEv.id));
-      setFeedback(storageService.getFeedback(activeEv.id));
-      setTeam(storageService.getTeam(activeEv.id));
-      setEventDays(storageService.getEventDays(activeEv.id));
-      setDayAttendance(storageService.getDayAttendance(activeEv.id));
+      if (role === 'student') {
+        // Strictly isolated: student state only contains single student and active elections/nominations
+        if (currentStudent) {
+          setLearners([currentStudent]);
+        }
+        setNominations(storageService.getNominations(activeEv.id, 'student', currentStudent?.id));
+        setOpenNominationPositions(storageService.getOpenNominationPositions(activeEv.id));
+        setElections(storageService.getElections(activeEv.id, 'student', currentStudent?.id));
+        setFlashVotes(storageService.getFlashVotes(activeEv.id, 'student', currentStudent?.id));
+      } else if (role === 'volunteer') {
+        // STRICTLY SCOPED: Volunteer portal only gets learners, parties, committees, eventDays, dayAttendance, elections, flashVotes
+        // NEVER fetches: jury, agenda, scores, nominations, questions, proceedings, chat, feedback, team
+        const eventLearners = storageService.getLearners(activeEv.id);
+        setLearners(eventLearners);
+        setParties(storageService.getParties(activeEv.id));
+        setCommittees(storageService.getCommittees(activeEv.id));
+        setElections(storageService.getElections(activeEv.id));
+        setFlashVotes(storageService.getFlashVotes(activeEv.id));
+        setEventDays(storageService.getEventDays(activeEv.id));
+        setDayAttendance(storageService.getDayAttendance(activeEv.id));
+      } else if (role === 'jury') {
+        // STRICTLY SCOPED: Jury portal only gets learners, agenda, and scores
+        // NEVER fetches: volunteers, dayAttendance, eventDays, elections, flashVotes, nominations
+        const eventLearners = storageService.getLearners(activeEv.id);
+        setLearners(eventLearners);
+        setAgenda(storageService.getAgenda(activeEv.id));
+        setScores(storageService.getScores(activeEv.id));
+      } else {
+        const eventLearners = storageService.getLearners(activeEv.id);
+        setLearners(eventLearners);
+        setParties(storageService.getParties(activeEv.id));
+        setCommittees(storageService.getCommittees(activeEv.id));
+        setAgenda(storageService.getAgenda(activeEv.id));
+        setJury(storageService.getJury(activeEv.id));
+        setVolunteers(storageService.getVolunteers(activeEv.id));
+        setNominations(storageService.getNominations(activeEv.id));
+        setOpenNominationPositions(storageService.getOpenNominationPositions(activeEv.id));
+        setElections(storageService.getElections(activeEv.id));
+        setFlashVotes(storageService.getFlashVotes(activeEv.id));
+        setChecklist(storageService.getChecklist(activeEv.id));
+        setQuestions(storageService.getQuestions(activeEv.id));
+        setProceedings(storageService.getProceedings(activeEv.id));
+        setScores(storageService.getScores(activeEv.id));
+        setChatMessages(storageService.getChatMessages(activeEv.id));
+        setFeedback(storageService.getFeedback(activeEv.id));
+        setTeam(storageService.getTeam(activeEv.id));
+        setEventDays(storageService.getEventDays(activeEv.id));
+        setDayAttendance(storageService.getDayAttendance(activeEv.id));
+      }
 
       const coord = coords.find(c => c.event_id === activeEv!.id) || coords[0] || null;
       setCurrentCoordinator(coord);
@@ -1405,10 +1435,7 @@ export function App() {
           console.warn('[App] Jury portal fetch warning:', err)
         );
       } else if (role === 'student') {
-        const studentId = currentStudent?.id || '';
-        storageService.fetchStudentPortalData(eventId, studentId, force).catch(err =>
-          console.warn('[App] Student portal fetch warning:', err)
-        );
+        // Students are strictly isolated: active ballots and updates arrive purely via Supabase Realtime channel
       }
     };
 
@@ -2045,9 +2072,45 @@ export function App() {
     role: 'volunteer' | 'jury' | 'student';
     user: Learner | Volunteer | JuryMember;
     eventId: string;
+    event?: CollegeEvent;
   }) => {
+    // Strictly isolate student / delegate login:
+    // No calls to volunteers, event_day_attendance, committees, session_agenda, or full learners
+    if (authResult.role === 'student') {
+      const student = authResult.user as Learner;
+      const studentEventId = student.event_id || authResult.eventId;
+      const allEvs = storageService.getEvents();
+      const studentEv = authResult.event || allEvs.find(e => e.id === studentEventId);
+
+      if (studentEv) {
+        setCurrentEvent(studentEv);
+        currentEventRef.current = studentEv;
+        setEvents(prev => prev.some(e => e.id === studentEv.id) ? prev : [...prev, studentEv]);
+      }
+
+      setLearners([student]);
+      setNominations(storageService.getNominations(studentEventId, 'student', student.id));
+      setOpenNominationPositions(storageService.getOpenNominationPositions(studentEventId));
+      setElections(storageService.getElections(studentEventId, 'student', student.id));
+      setFlashVotes(storageService.getFlashVotes(studentEventId, 'student', student.id));
+      setRole('student');
+      setCurrentStudent(student);
+      setUserSession({ role: 'student', name: student.full_name });
+      saveSession({
+        role: 'student',
+        studentCode: student.access_code,
+        student,
+        currentEventId: studentEventId
+      });
+      setIsAuthenticated(true);
+      const slug = studentEv ? getEventSlug(studentEv) : (studentEventId || 'jkkncet-tn-assembly-2026');
+      if (typeof window !== 'undefined') navigate(`/events/${slug}/dashboard`);
+      addToast('Delegate Access Verified', `Welcome, ${student.full_name}`, 'success');
+      return { ...student, role: 'student' };
+    }
+
     const allEvs = storageService.getEvents();
-    const targetEv = allEvs.find(e => e.id === authResult.eventId) || events.find(e => e.id === authResult.eventId) || currentEvent || allEvs[0];
+    const targetEv = authResult.event || allEvs.find(e => e.id === authResult.eventId) || events.find(e => e.id === authResult.eventId) || currentEvent || allEvs[0];
     if (allEvs.length > 0) {
       setEvents(allEvs);
     }
@@ -2099,21 +2162,7 @@ export function App() {
       return { id: jury.id, name: jury.name, full_name: jury.name, role: 'jury', access_code: jury.access_code };
     }
 
-    // Role is student / delegate
-    const student = authResult.user as Learner;
-    setRole('student');
-    setCurrentStudent(student);
-    setUserSession({ role: 'student', name: student.full_name });
-    saveSession({
-      role: 'student',
-      studentCode: student.access_code,
-      student,
-      currentEventId: targetEv?.id || student.event_id
-    });
-    const slug = targetEv ? getEventSlug(targetEv) : 'jkkncet-tn-assembly-2026';
-    if (typeof window !== 'undefined') navigate(`/events/${slug}/dashboard`);
-    addToast('Delegate Access Verified', `Welcome, ${student.full_name}`, 'success');
-    return { ...student, role: 'student' };
+    return null;
   };
 
   // Standalone Projector Screen render check (strictly for standalone display paths like /display or /events/*/display, NOT /events/*/projector)
@@ -2297,8 +2346,8 @@ export function App() {
             // Search across ALL events in Supabase
             const authRes = await storageService.authenticateAccessCodeAsync(cleanCode);
             if (!authRes) return null;
-            // Ensure the matched event is fully loaded into state
-            if (authRes.eventId && isSupabaseEnabled) {
+            // Non-student roles sync from Supabase, while students are strictly isolated
+            if (authRes.eventId && isSupabaseEnabled && authRes.role !== 'student') {
               await storageService.syncFromSupabase(authRes.eventId, true);
               loadState(authRes.eventId);
             }

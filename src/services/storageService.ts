@@ -2377,11 +2377,47 @@ class StorageService {
     });
   }
 
+  private sessionAgendaCache: Map<string, AgendaItem[]> = new Map();
+
+  /**
+   * On-Demand agenda loader for Student Portal.
+   * Fetches session_agenda ONLY when student navigates to Agenda tab,
+   * cached in-memory so it fetches at most once per session.
+   */
+  public async fetchAgendaOnDemand(eventId: string): Promise<AgendaItem[]> {
+    if (!eventId) return [];
+    if (this.sessionAgendaCache.has(eventId)) {
+      return this.sessionAgendaCache.get(eventId)!;
+    }
+    const localAgenda = this.getAgenda(eventId);
+    if (localAgenda.length > 0) {
+      this.sessionAgendaCache.set(eventId, localAgenda);
+    }
+    if (!supabase) return localAgenda;
+    try {
+      const { data, error } = await supabase
+        .from('session_agenda')
+        .select('*')
+        .eq('event_id', eventId)
+        .order('time', { ascending: true });
+      if (!error && data) {
+        const items = data as unknown as AgendaItem[];
+        this.sessionAgendaCache.set(eventId, items);
+        const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...items]);
+        this.notify();
+        return items;
+      }
+    } catch (err) {
+      console.warn('[StorageService] fetchAgendaOnDemand error:', err);
+    }
+    return this.getAgenda(eventId);
+  }
+
   /**
    * Dedicated fetch for Student/Delegate portal.
-   * Only fetches the student's own event, session agenda, event days, parties,
-   * committees, their own learner record, and their own attendance record.
-   * NEVER fetches coordinators, volunteers, jury members, or other learners.
+   * Scoped strictly: NEVER queries volunteers, event_day_attendance, committees,
+   * session_agenda, or full learners tables.
    * Utilizes Stale-While-Revalidate with 5-minute TTL.
    */
   public async fetchStudentPortalData(eventId: string, studentId: string, force = false): Promise<void> {
@@ -2393,7 +2429,6 @@ class StorageService {
       const cacheStatus = this.getCacheStatus(cacheKey);
       if (cacheStatus.status === 'fresh') return;
       if (cacheStatus.status === 'stale') {
-        // Stale-While-Revalidate: Trigger background fetch to update stale data automatically
         this.dedupeInFlight(cacheKey, () => this.executeStudentPortalFetch(eventId, studentId, cacheKey))
           .catch(err => console.warn('[StorageService] SWR background student fetch error:', err));
         return;
@@ -2407,22 +2442,14 @@ class StorageService {
     const sb = supabase;
     if (!sb || !eventId) return;
     try {
+      // Strictly scoped: only fetch the single event metadata and single student row
+      // NEVER query volunteers, event_day_attendance, committees, session_agenda, or full learners
       const [
         { data: evData },
-        { data: agendaData },
-        { data: daysData },
-        { data: partyData },
-        { data: commData },
-        { data: studentData },
-        { data: attData }
+        { data: studentData }
       ] = await Promise.all([
-        sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS).eq('id', eventId).limit(1),
-        sb.from('session_agenda').select(SUPABASE_COLUMNS.SESSION_AGENDA).eq('event_id', eventId).order('time', { ascending: true }),
-        sb.from('event_days').select(SUPABASE_COLUMNS.EVENT_DAYS).eq('event_id', eventId).order('day_number', { ascending: true }),
-        sb.from('political_parties').select(SUPABASE_COLUMNS.POLITICAL_PARTIES).eq('event_id', eventId),
-        sb.from('committees').select(SUPABASE_COLUMNS.COMMITTEES).eq('event_id', eventId),
-        studentId ? sb.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('id', studentId).limit(1) : Promise.resolve({ data: null }),
-        studentId ? sb.from('event_day_attendance').select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE).eq('event_id', eventId).eq('student_id', studentId) : Promise.resolve({ data: null })
+        sb.from('college_events').select('id, college_name, event_stage, status, chapter, social_coverage').eq('id', eventId).limit(1),
+        studentId ? sb.from('learners').select('id, event_id, full_name, roll_no:constituency_number, department, year:academic_year, academic_year, party:party_name, party_name, party_id, access_code, bench, role, constituency_number, constituency_name, committee_name, committee_id').eq('id', studentId).limit(1) : Promise.resolve({ data: null })
       ]);
 
       if (evData && evData.length > 0) {
@@ -2433,36 +2460,10 @@ class StorageService {
         this.unpackAndApplyEventState([ev], eventId);
       }
 
-      if (agendaData) {
-        const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== eventId);
-        this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...(agendaData as unknown as AgendaItem[])]);
-      }
-
-      if (daysData) {
-        const otherDays = this.getEventDays().filter(d => d.event_id && d.event_id !== eventId);
-        this.setItem(STORAGE_KEYS.EVENT_DAYS, [...otherDays, ...(daysData as unknown as EventDay[])]);
-      }
-
-      if (partyData) {
-        const otherParties = this.getParties().filter(p => p.event_id && p.event_id !== eventId);
-        this.setItem(STORAGE_KEYS.PARTIES, [...otherParties, ...(partyData as unknown as Party[])]);
-      }
-
-      if (commData) {
-        const otherComms = this.getCommittees().filter(c => c.event_id && c.event_id !== eventId);
-        this.setItem(STORAGE_KEYS.COMMITTEES, [...otherComms, ...(commData as unknown as Committee[])]);
-      }
-
       if (studentData && studentData.length > 0) {
         const st = studentData[0] as unknown as Learner;
         const curLearners = this.getLearners();
         this.setItem(STORAGE_KEYS.LEARNERS, [...curLearners.filter(l => l.id !== st.id), st]);
-      }
-
-      if (attData) {
-        const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
-        const otherAtt = curAtt.filter(a => !(a.event_id === eventId && a.student_id === studentId));
-        this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...otherAtt, ...(attData as unknown as DayAttendanceRecord[])]);
       }
 
       this.setCacheEntry(cacheKey, {
@@ -2506,20 +2507,16 @@ class StorageService {
     const sb = supabase;
     if (!sb || !eventId) return;
     try {
+      // STRICTLY SCOPED: Jury portal fetches ONLY event (with social_coverage for scores), learners, and agenda.
+      // NEVER queries: volunteers, event_day_attendance, event_days, jury_members, political_parties, or elections.
       const [
         { data: evData },
         { data: agendaData },
-        { data: daysData },
-        { data: juryData },
-        { data: learnersData },
-        { data: partyData }
+        { data: learnersData }
       ] = await Promise.all([
-        sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS).eq('id', eventId).limit(1),
+        sb.from('college_events').select('id, college_name, event_stage, status, chapter, social_coverage').eq('id', eventId).limit(1),
         sb.from('session_agenda').select(SUPABASE_COLUMNS.SESSION_AGENDA).eq('event_id', eventId).order('time', { ascending: true }),
-        sb.from('event_days').select(SUPABASE_COLUMNS.EVENT_DAYS).eq('event_id', eventId).order('day_number', { ascending: true }),
-        juryId ? sb.from('jury_members').select(SUPABASE_COLUMNS.JURY_MEMBERS).eq('id', juryId).limit(1) : Promise.resolve({ data: null }),
-        sb.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('event_id', eventId),
-        sb.from('political_parties').select(SUPABASE_COLUMNS.POLITICAL_PARTIES).eq('event_id', eventId)
+        sb.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('event_id', eventId)
       ]);
 
       if (evData && evData.length > 0) {
@@ -2528,6 +2525,24 @@ class StorageService {
         this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), ev]);
         this.restoreJkkncetEvent();
         this.unpackAndApplyEventState([ev], eventId);
+
+        // Extract jury-scoped scores from social_coverage.scores (no standalone scores table exists)
+        try {
+          const socialCoverage = (ev as any).social_coverage;
+          if (socialCoverage && typeof socialCoverage === 'object' && Array.isArray(socialCoverage.scores)) {
+            const allScores: ScoreRecord[] = socialCoverage.scores;
+            const juryScores = juryId ? allScores.filter((s: ScoreRecord) => s.jury_id === juryId) : allScores;
+            if (juryScores.length > 0) {
+              const existingScores = this.getScores(eventId);
+              const mergedMap = new Map<string, ScoreRecord>();
+              existingScores.forEach(s => mergedMap.set(s.id, s));
+              juryScores.forEach(s => mergedMap.set(s.id, s));
+              this.setItem(STORAGE_KEYS.SCORES, Array.from(mergedMap.values()));
+            }
+          }
+        } catch (scoreErr) {
+          console.warn('[StorageService] Jury score extraction from social_coverage warning:', scoreErr);
+        }
       }
 
       if (agendaData) {
@@ -2535,25 +2550,9 @@ class StorageService {
         this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...(agendaData as unknown as AgendaItem[])]);
       }
 
-      if (daysData) {
-        const otherDays = this.getEventDays().filter(d => d.event_id && d.event_id !== eventId);
-        this.setItem(STORAGE_KEYS.EVENT_DAYS, [...otherDays, ...(daysData as unknown as EventDay[])]);
-      }
-
-      if (juryData && juryData.length > 0) {
-        const curJury = this.getJury();
-        const jm = juryData[0] as unknown as JuryMember;
-        this.setItem(STORAGE_KEYS.JURY, [...curJury.filter(j => j.id !== jm.id), jm]);
-      }
-
       if (learnersData) {
         const otherLearners = this.getLearners().filter(l => l.event_id && l.event_id !== eventId);
         this.setItem(STORAGE_KEYS.LEARNERS, [...otherLearners, ...(learnersData as unknown as Learner[])]);
-      }
-
-      if (partyData) {
-        const otherParties = this.getParties().filter(p => p.event_id && p.event_id !== eventId);
-        this.setItem(STORAGE_KEYS.PARTIES, [...otherParties, ...(partyData as unknown as Party[])]);
       }
 
       this.setCacheEntry(cacheKey, {
@@ -2570,8 +2569,8 @@ class StorageService {
 
   /**
    * Dedicated fetch for Volunteer Operations Desk.
-   * Fetches event, event days, learners, attendance, parties, committees, and volunteers for that event.
-   * NEVER fetches coordinators, session agenda, or jury members.
+   * STRICTLY SCOPED: Fetches ONLY event, event days, learners, and day attendance for the active event.
+   * NEVER fetches: coordinators, session_agenda, jury_members, political_parties, committees, or volunteers tables.
    * Utilizes Stale-While-Revalidate with 5-minute TTL.
    */
   public async fetchVolunteerPortalData(eventId: string, volunteerId: string, force = false): Promise<void> {
@@ -2597,22 +2596,18 @@ class StorageService {
     const sb = supabase;
     if (!sb || !eventId) return;
     try {
+      // STRICTLY SCOPED: Volunteer portal fetches ONLY event, learners, event_days, and attendance.
+      // NEVER queries: jury_members, session_agenda, political_parties, committees, volunteers, or election configs.
       const [
         { data: evData },
         { data: daysData },
         { data: learnersData },
-        { data: attData },
-        { data: partyData },
-        { data: commData },
-        { data: volData }
+        { data: attData }
       ] = await Promise.all([
-        sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS).eq('id', eventId).limit(1),
+        sb.from('college_events').select('id, college_name, event_stage, status, chapter, social_coverage').eq('id', eventId).limit(1),
         sb.from('event_days').select(SUPABASE_COLUMNS.EVENT_DAYS).eq('event_id', eventId).order('day_number', { ascending: true }),
         sb.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('event_id', eventId),
-        sb.from('event_day_attendance').select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE).eq('event_id', eventId),
-        sb.from('political_parties').select(SUPABASE_COLUMNS.POLITICAL_PARTIES).eq('event_id', eventId),
-        sb.from('committees').select(SUPABASE_COLUMNS.COMMITTEES).eq('event_id', eventId),
-        sb.from('volunteers').select(SUPABASE_COLUMNS.VOLUNTEERS).eq('event_id', eventId)
+        sb.from('event_day_attendance').select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE).eq('event_id', eventId)
       ]);
 
       if (evData && evData.length > 0) {
@@ -2636,21 +2631,6 @@ class StorageService {
       if (attData) {
         const otherAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []).filter(a => a.event_id && a.event_id !== eventId);
         this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...otherAtt, ...(attData as unknown as DayAttendanceRecord[])]);
-      }
-
-      if (partyData) {
-        const otherParties = this.getParties().filter(p => p.event_id && p.event_id !== eventId);
-        this.setItem(STORAGE_KEYS.PARTIES, [...otherParties, ...(partyData as unknown as Party[])]);
-      }
-
-      if (commData) {
-        const otherComms = this.getCommittees().filter(c => c.event_id && c.event_id !== eventId);
-        this.setItem(STORAGE_KEYS.COMMITTEES, [...otherComms, ...(commData as unknown as Committee[])]);
-      }
-
-      if (volData) {
-        const otherVols = this.getVolunteers().filter(v => v.event_id && v.event_id !== eventId);
-        this.setItem(STORAGE_KEYS.VOLUNTEERS, [...otherVols, ...(volData as unknown as Volunteer[])]);
       }
 
       this.setCacheEntry(cacheKey, {
@@ -3699,15 +3679,118 @@ class StorageService {
     return null;
   }
 
+  /**
+   * Strictly isolated Student Portal authentication:
+   * Step 1: Fetch ONLY single learner row: id, event_id, full_name, roll_no, department, year, party, access_code
+   * Step 2: Extract student.event_id and fetch ONLY that event's metadata: id, college_name, event_stage, status, chapter
+   * COMPLETELY REMOVES calls to volunteers, event_day_attendance, committees, session_agenda, and full learners.
+   */
+  public async authenticateStudentAccessCode(
+    accessCode: string
+  ): Promise<{ role: 'student'; user: Learner; eventId: string; event: CollegeEvent } | null> {
+    const clean = accessCode.trim().replace(/\s+/g, '').toUpperCase();
+    if (!clean) return null;
+    const normClean = clean.replace(/-/g, '');
+    if (!supabase) return null;
+
+    try {
+      // Step 1: Fetch ONLY single learner row
+      let studentRow: any = null;
+      const { data: exactMatch } = await supabase
+        .from('learners')
+        .select('id, event_id, full_name, roll_no:constituency_number, department, year:academic_year, academic_year, party:party_name, party_name, party_id, access_code, bench, role, constituency_number, constituency_name, committee_name, committee_id')
+        .eq('access_code', clean)
+        .limit(1)
+        .maybeSingle();
+
+      if (exactMatch) {
+        studentRow = exactMatch;
+      } else if (normClean !== clean) {
+        const { data: normMatch } = await supabase
+          .from('learners')
+          .select('id, event_id, full_name, roll_no:constituency_number, department, year:academic_year, academic_year, party:party_name, party_name, party_id, access_code, bench, role, constituency_number, constituency_name, committee_name, committee_id')
+          .eq('access_code', normClean)
+          .limit(1)
+          .maybeSingle();
+        studentRow = normMatch;
+      }
+
+      if (!studentRow) return null;
+
+      const student = studentRow as unknown as Learner;
+      if (!student.event_id) return null;
+
+      // Step 2: Extract student.event_id and fetch ONLY that event's metadata
+      const { data: eventRow, error: evErr } = await supabase
+        .from('college_events')
+        .select('id, college_name, event_stage, status, chapter, social_coverage')
+        .eq('id', student.event_id)
+        .single();
+
+      if (evErr || !eventRow) {
+        console.warn('[StorageService] Student event metadata fetch error:', evErr);
+        return null;
+      }
+
+      const event = eventRow as unknown as CollegeEvent;
+
+      // Cache learner and event in memory/local storage for instant UI hydration
+      const curLearners = this.getLearners();
+      this.setItem(STORAGE_KEYS.LEARNERS, [...curLearners.filter(l => l.id !== student.id), student]);
+
+      const curEvents = this.getEvents();
+      this.setItem(STORAGE_KEYS.EVENTS, [...curEvents.filter(e => e.id !== event.id), event]);
+      this.restoreJkkncetEvent();
+      this.unpackAndApplyEventState([event], event.id);
+
+      // Audit and login logs (zero full-table egress)
+      this.logAudit({
+        event_id: student.event_id,
+        action: 'ACCESS_CODE_LOGIN_SUCCESS',
+        actor_role: 'student',
+        actor_name: student.full_name,
+        details: `Delegate login: ${student.full_name} (${student.access_code})`
+      });
+      this.recordLogin({
+        event_id: student.event_id,
+        user_id: student.id,
+        user_name: student.full_name,
+        role: 'student',
+        access_code: student.access_code,
+        details: `Delegate App Login (${student.bench || 'Delegate'} Bench • ${student.party_name || 'Independent'})`
+      });
+      console.log(`[Auth Trace] Code: "${accessCode}" -> Matched Learner ID: "${student.id}" -> Event ID: "${student.event_id}" -> Role: "student" (Name: ${student.full_name})`);
+
+      return {
+        role: 'student',
+        user: student,
+        eventId: student.event_id,
+        event
+      };
+    } catch (err) {
+      console.warn('[StorageService] authenticateStudentAccessCode exception:', err);
+      return null;
+    }
+  }
+
   public async authenticateAccessCodeAsync(
     accessCode: string,
     targetEventId?: string
-  ): Promise<{ role: 'volunteer' | 'jury' | 'student'; user: Volunteer | JuryMember | Learner; eventId: string } | null> {
+  ): Promise<{ role: 'volunteer' | 'jury' | 'student'; user: Volunteer | JuryMember | Learner; eventId: string; event?: CollegeEvent } | null> {
     const clean = accessCode.trim().replace(/\s+/g, '').toUpperCase();
     if (!clean) return null;
     const normClean = clean.replace(/-/g, '');
 
-    // 1. Try local cache first
+    const isVolunteerCode = clean.startsWith('VOL') || normClean.startsWith('VOL');
+    const isJuryCode = clean.startsWith('JURY') || normClean.startsWith('JURY');
+
+    // If code is not explicitly volunteer or jury, authenticate student directly (isolating Step 1 & Step 2)
+    if (!isVolunteerCode && !isJuryCode) {
+      const studentRes = await this.authenticateStudentAccessCode(clean);
+      if (studentRes) return studentRes;
+    }
+
+    // 1. Try local cache
     const localRes = this.authenticateAccessCode(clean, targetEventId);
     if (localRes) return localRes;
 
@@ -3816,53 +3899,9 @@ class StorageService {
         }
       }
 
-      // 4. Check Student / Delegate (check target event first if provided, then fallback to global)
-      let lRows: any[] | null = null;
-      if (targetEventId) {
-        const q = await supabase.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('event_id', targetEventId)
-          .or(`access_code.ilike.${clean},access_code.ilike.${normClean}`).limit(5);
-        lRows = q.data;
-      }
-      if (!lRows || lRows.length === 0) {
-        const q = await supabase.from('learners').select(SUPABASE_COLUMNS.LEARNERS)
-          .or(`access_code.ilike.${clean},access_code.ilike.${normClean}`).limit(5);
-        lRows = q.data;
-      }
-
-      if (lRows && lRows.length > 0) {
-        const matchedLearner = lRows.find((l: any) => {
-          const lCode = (l.access_code || '').toUpperCase().replace(/[\s-]/g, '');
-          return lCode === normClean || lCode === clean;
-        }) || (lRows[0] as unknown as Learner);
-
-        if (matchedLearner) {
-          const learners = this.getLearners();
-          if (!learners.some(l => l.id === matchedLearner.id)) {
-            this.setItem(STORAGE_KEYS.LEARNERS, [...learners, matchedLearner as unknown as Learner]);
-          }
-          await this.fetchEventMetadata(matchedLearner.event_id).catch(() => {});
-          this.syncFromSupabase(matchedLearner.event_id, true).catch(() => {});
-
-          this.logAudit({
-            event_id: matchedLearner.event_id,
-            action: 'ACCESS_CODE_LOGIN_SUCCESS',
-            actor_role: 'student',
-            actor_name: matchedLearner.full_name,
-            details: `Delegate login: ${matchedLearner.full_name} (${matchedLearner.access_code})`
-          });
-          this.recordLogin({
-            event_id: matchedLearner.event_id,
-            user_id: matchedLearner.id,
-            user_name: matchedLearner.full_name,
-            role: 'student',
-            access_code: matchedLearner.access_code,
-            details: `Delegate App Login (${matchedLearner.bench || 'Delegate'} Bench • ${matchedLearner.party_name || 'Independent'})`
-          });
-          console.log(`[Auth Trace] Code: "${accessCode}" -> Matched Record ID: "${matchedLearner.id}" -> Event ID: "${matchedLearner.event_id}" -> Role: "student" (Name: ${matchedLearner.full_name})`);
-
-          return { role: 'student', user: matchedLearner as unknown as Learner, eventId: matchedLearner.event_id };
-        }
-      }
+      // 4. Fallback student check (if volunteer/jury didn't match)
+      const studentRes = await this.authenticateStudentAccessCode(clean);
+      if (studentRes) return studentRes;
     } catch (authErr) {
       console.warn('[StorageService] Remote access code auth error:', authErr);
     }

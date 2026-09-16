@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import type {
   Learner,
   CollegeEvent,
@@ -153,10 +153,29 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   // Client-side Tab State (Always opens on 'desk' by default)
   const [activeTab, setActiveTab] = useState<StudentDashboardTab>('desk');
 
+  // On-demand agenda loading: do NOT fetch on login. Fetch ONLY when clicking Agenda tab, cached in memory.
+  const [studentAgenda, setStudentAgenda] = useState<AgendaItem[]>(agenda);
+  const [isAgendaLoading, setIsAgendaLoading] = useState(false);
+  const agendaFetchedRef = useRef(false);
+
+  useEffect(() => {
+    if (activeTab === 'agenda' && !agendaFetchedRef.current) {
+      agendaFetchedRef.current = true;
+      setIsAgendaLoading(true);
+      storageService.fetchAgendaOnDemand(targetEventId).then(items => {
+        setStudentAgenda(items);
+        setIsAgendaLoading(false);
+      }).catch(err => {
+        console.warn('[StudentDashboard] Failed to fetch on-demand agenda:', err);
+        setIsAgendaLoading(false);
+      });
+    }
+  }, [activeTab, targetEventId]);
+
   // Agenda tab sub-state
   const currentAgendaItem = useMemo(() => {
-    return agenda.find(a => a.is_current || a.status === 'In Progress') || agenda[0];
-  }, [agenda]);
+    return studentAgenda.find(a => a.is_current || a.status === 'In Progress') || studentAgenda[0];
+  }, [studentAgenda]);
 
   const [agendaDayFilter, setAgendaDayFilter] = useState<AgendaDay | 'All'>('Day 1');
   const [showCompletedSessions, setShowCompletedSessions] = useState(false);
@@ -383,10 +402,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   // Agenda tab day filtering & splitting
   const filteredAgendaItems = useMemo(() => {
-    return agenda
+    return studentAgenda
       .filter(item => agendaDayFilter === 'All' || item.day === agendaDayFilter)
       .sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
-  }, [agenda, agendaDayFilter]);
+  }, [studentAgenda, agendaDayFilter]);
 
   const activeOrUpcomingAgendaItems = useMemo(() => {
     return filteredAgendaItems.filter(item => item.status !== 'Completed');
@@ -1370,7 +1389,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             {/* Segmented Filter: [Pre-Event] [Day 1] [Day 2] [All] */}
             <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 overflow-x-auto">
               {(['Pre-Event', 'Day 1', 'Day 2', 'All'] as const).map(day => {
-                const count = day === 'All' ? agenda.length : agenda.filter(a => a.day === day).length;
+                const count = day === 'All' ? studentAgenda.length : studentAgenda.filter(a => a.day === day).length;
                 const isSelected = agendaDayFilter === day;
                 return (
                   <button
@@ -1397,7 +1416,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
           {/* Agenda Session List (Virtualized/Paginated-style smooth scrollable container) */}
           <div className="space-y-3">
-            {filteredAgendaItems.length === 0 ? (
+            {isAgendaLoading && studentAgenda.length === 0 ? (
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center text-xs text-slate-500 flex items-center justify-center gap-2">
+                <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                <span>Loading assembly agenda on demand...</span>
+              </div>
+            ) : filteredAgendaItems.length === 0 ? (
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center text-xs text-slate-500">
                 No agenda sessions scheduled for {agendaDayFilter}.
               </div>

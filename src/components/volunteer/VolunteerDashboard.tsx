@@ -393,6 +393,8 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     storageService.getYuvaAssignments(eventId)
   );
 
+  const hasMountedInitialFetchRef = useRef(false);
+
   useEffect(() => {
     let isMounted = true;
     const currentVersion = ++fetchVersionRef.current;
@@ -422,8 +424,11 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
       }
     };
 
-    // Perform initial background sync to fetch latest from DB
-    performSync();
+    // MOUNT GUARD: Perform initial background sync ONLY ONCE to prevent duplicate REST queries
+    if (!hasMountedInitialFetchRef.current) {
+      hasMountedInitialFetchRef.current = true;
+      performSync();
+    }
 
     // Subscribe to local storage service pub/sub updates
     const unsubscribe = storageService.subscribe(() => {
