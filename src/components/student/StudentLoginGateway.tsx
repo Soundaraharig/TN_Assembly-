@@ -12,8 +12,9 @@ export const StudentLoginGateway: React.FC<StudentLoginGatewayProps> = ({ onLogi
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!accessCode.trim()) return;
-    const success = onLoginWithCode(accessCode.trim());
+    const clean = accessCode.trim().replace(/\s+/g, '').toUpperCase();
+    if (!clean) return;
+    const success = onLoginWithCode(clean);
     if (!success) {
       setError('Invalid Access Code. Please verify your 6-character code.');
     } else {

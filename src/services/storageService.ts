@@ -3515,34 +3515,40 @@ class StorageService {
   }
 
   public authenticateStudent(accessCode: string): Learner | null {
-    const clean = accessCode.trim().toUpperCase();
+    const clean = accessCode.trim().replace(/\s+/g, '').toUpperCase();
     if (!clean) return null;
+    const normClean = clean.replace(/-/g, '');
     const learners = this.getLearners();
-    return learners.find(l => (l.access_code || '').toUpperCase() === clean) || null;
+    return learners.find(l => {
+      const lCode = (l.access_code || '').toUpperCase().replace(/[\s-]/g, '');
+      return lCode === normClean || lCode === clean;
+    }) || null;
   }
 
   public authenticateJury(accessCode: string): JuryMember | null {
-    const clean = accessCode.trim().toUpperCase();
+    const clean = accessCode.trim().replace(/\s+/g, '').toUpperCase();
     if (!clean) return null;
     const normClean = clean.replace(/-/g, '');
     const jury = this.getJury();
     return jury.find(j => {
-      const jCode = (j.access_code || '').toUpperCase().replace(/-/g, '');
+      const jCode = (j.access_code || '').toUpperCase().replace(/[\s-]/g, '');
       return jCode === normClean ||
+        jCode === clean ||
         (!normClean.startsWith('JURY') && jCode === `JURY${normClean}`) ||
         (normClean.startsWith('JURY') && jCode === normClean);
     }) || null;
   }
 
   public authenticateVolunteer(accessCode: string): Volunteer | null {
-    const clean = accessCode.trim().toUpperCase();
+    const clean = accessCode.trim().replace(/\s+/g, '').toUpperCase();
     if (!clean) return null;
     const volunteers = this.getVolunteers();
     const normClean = clean.replace(/-/g, '');
     return volunteers.find(v => {
-      const vCode = (v.access_code || '').toUpperCase().replace(/-/g, '');
+      const vCode = (v.access_code || '').toUpperCase().replace(/[\s-]/g, '');
       const phoneSuffix = v.phone ? v.phone.replace(/\D/g, '').slice(-4) : '';
       return vCode === normClean ||
+        vCode === clean ||
         (normClean.startsWith('VOL') && vCode === normClean) ||
         (!normClean.startsWith('VOL') && vCode === `VOL${normClean}`) ||
         (phoneSuffix && (phoneSuffix === normClean || `VOL${phoneSuffix}` === normClean));
@@ -3553,7 +3559,7 @@ class StorageService {
     accessCode: string,
     targetEventId?: string
   ): { role: 'volunteer' | 'jury' | 'student'; user: Volunteer | JuryMember | Learner; eventId: string } | null {
-    const clean = accessCode.trim().toUpperCase();
+    const clean = accessCode.trim().replace(/\s+/g, '').toUpperCase();
     if (!clean) return null;
     const normClean = clean.replace(/-/g, '');
 
@@ -3564,9 +3570,10 @@ class StorageService {
       : allVolunteers;
 
     const matchedVol = candidateVolunteers.find(v => {
-      const vCode = (v.access_code || '').toUpperCase().replace(/-/g, '');
+      const vCode = (v.access_code || '').toUpperCase().replace(/[\s-]/g, '');
       const phoneSuffix = v.phone ? v.phone.replace(/\D/g, '').slice(-4) : '';
       return vCode === normClean ||
+        vCode === clean ||
         (normClean.startsWith('VOL') && vCode === normClean) ||
         (!normClean.startsWith('VOL') && vCode === `VOL${normClean}`) ||
         (phoneSuffix && (phoneSuffix === normClean || `VOL${phoneSuffix}` === normClean));
@@ -3599,8 +3606,9 @@ class StorageService {
       : allJury;
 
     const matchedJury = candidateJury.find(j => {
-      const jCode = (j.access_code || '').toUpperCase().replace(/-/g, '');
+      const jCode = (j.access_code || '').toUpperCase().replace(/[\s-]/g, '');
       return jCode === normClean ||
+        jCode === clean ||
         (!normClean.startsWith('JURY') && jCode === `JURY${normClean}`) ||
         (normClean.startsWith('JURY') && jCode === normClean);
     });
@@ -3631,7 +3639,11 @@ class StorageService {
       ? allLearners.filter(l => l.event_id === targetEventId).concat(allLearners.filter(l => l.event_id !== targetEventId))
       : allLearners;
 
-    const matchedStudent = candidateLearners.find(l => (l.access_code || '').toUpperCase() === clean);
+    const matchedStudent = candidateLearners.find(l => {
+      const lCode = (l.access_code || '').toUpperCase().replace(/[\s-]/g, '');
+      return lCode === normClean || lCode === clean;
+    });
+
     if (matchedStudent) {
       this.logAudit({
         event_id: matchedStudent.event_id,
@@ -3691,26 +3703,36 @@ class StorageService {
     accessCode: string,
     targetEventId?: string
   ): Promise<{ role: 'volunteer' | 'jury' | 'student'; user: Volunteer | JuryMember | Learner; eventId: string } | null> {
+    const clean = accessCode.trim().replace(/\s+/g, '').toUpperCase();
+    if (!clean) return null;
+    const normClean = clean.replace(/-/g, '');
+
     // 1. Try local cache first
-    const localRes = this.authenticateAccessCode(accessCode, targetEventId);
+    const localRes = this.authenticateAccessCode(clean, targetEventId);
     if (localRes) return localRes;
 
     if (!supabase) return null;
 
-    const clean = accessCode.trim().toUpperCase();
-    if (!clean) return null;
-    const normClean = clean.replace(/-/g, '');
-
     try {
-      // 2. Check Volunteers (small limit)
-      let volQuery = supabase.from('volunteers').select(SUPABASE_COLUMNS.VOLUNTEERS).limit(5);
-      if (targetEventId) volQuery = volQuery.eq('event_id', targetEventId);
-      const { data: vRows } = await volQuery.or(`access_code.ilike.%${normClean}%,access_code.ilike.%${clean}%`);
+      // 2. Check Volunteers (check target event first if provided, then fallback to global)
+      let vRows: any[] | null = null;
+      if (targetEventId) {
+        const q = await supabase.from('volunteers').select(SUPABASE_COLUMNS.VOLUNTEERS).eq('event_id', targetEventId)
+          .or(`access_code.ilike.${normClean},access_code.ilike.${clean},access_code.ilike.%${normClean}%,access_code.ilike.%${clean}%`).limit(5);
+        vRows = q.data;
+      }
+      if (!vRows || vRows.length === 0) {
+        const q = await supabase.from('volunteers').select(SUPABASE_COLUMNS.VOLUNTEERS)
+          .or(`access_code.ilike.${normClean},access_code.ilike.${clean},access_code.ilike.%${normClean}%,access_code.ilike.%${clean}%`).limit(5);
+        vRows = q.data;
+      }
+
       if (vRows && vRows.length > 0) {
         const matchedVol = vRows.find((v: any) => {
-          const vCode = (v.access_code || '').toUpperCase().replace(/-/g, '');
+          const vCode = (v.access_code || '').toUpperCase().replace(/[\s-]/g, '');
           const phoneSuffix = v.phone ? v.phone.replace(/\D/g, '').slice(-4) : '';
           return vCode === normClean ||
+            vCode === clean ||
             (normClean.startsWith('VOL') && vCode === normClean) ||
             (!normClean.startsWith('VOL') && vCode === `VOL${normClean}`) ||
             (phoneSuffix && (phoneSuffix === normClean || `VOL${phoneSuffix}` === normClean));
@@ -3721,21 +3743,47 @@ class StorageService {
           if (!vols.some(v => v.id === matchedVol.id)) {
             this.setItem(STORAGE_KEYS.VOLUNTEERS, [...vols, matchedVol as unknown as Volunteer]);
           }
-          await this.fetchEventMetadata(matchedVol.event_id);
-          // Always trigger full hydration for the active event's delegates, attendance, and agenda
-          await this.syncFromSupabase(matchedVol.event_id, true);
-          return this.authenticateAccessCode(accessCode, targetEventId);
+          await this.fetchEventMetadata(matchedVol.event_id).catch(() => {});
+          this.syncFromSupabase(matchedVol.event_id, true).catch(() => {});
+
+          this.logAudit({
+            event_id: matchedVol.event_id,
+            action: 'ACCESS_CODE_LOGIN_SUCCESS',
+            actor_role: 'volunteer',
+            actor_name: matchedVol.name,
+            details: `Volunteer login: ${matchedVol.name} (${matchedVol.access_code})`
+          });
+          this.recordLogin({
+            event_id: matchedVol.event_id,
+            user_id: matchedVol.id,
+            user_name: matchedVol.name,
+            role: 'volunteer',
+            access_code: matchedVol.access_code,
+            details: `Volunteer Desk Access (${matchedVol.station || 'Operations'})`
+          });
+          console.log(`[Auth Trace] Code: "${accessCode}" -> Matched Record ID: "${matchedVol.id}" -> Event ID: "${matchedVol.event_id}" -> Role: "volunteer" (Name: ${matchedVol.name})`);
+          return { role: 'volunteer', user: matchedVol as unknown as Volunteer, eventId: matchedVol.event_id };
         }
       }
 
-      // 3. Check Jury Members (small limit)
-      let juryQuery = supabase.from('jury_members').select(SUPABASE_COLUMNS.JURY_MEMBERS).limit(5);
-      if (targetEventId) juryQuery = juryQuery.eq('event_id', targetEventId);
-      const { data: jRows } = await juryQuery.or(`access_code.ilike.%${normClean}%,access_code.ilike.%${clean}%`);
+      // 3. Check Jury Members (check target event first if provided, then fallback to global)
+      let jRows: any[] | null = null;
+      if (targetEventId) {
+        const q = await supabase.from('jury_members').select(SUPABASE_COLUMNS.JURY_MEMBERS).eq('event_id', targetEventId)
+          .or(`access_code.ilike.${normClean},access_code.ilike.${clean},access_code.ilike.%${normClean}%,access_code.ilike.%${clean}%`).limit(5);
+        jRows = q.data;
+      }
+      if (!jRows || jRows.length === 0) {
+        const q = await supabase.from('jury_members').select(SUPABASE_COLUMNS.JURY_MEMBERS)
+          .or(`access_code.ilike.${normClean},access_code.ilike.${clean},access_code.ilike.%${normClean}%,access_code.ilike.%${clean}%`).limit(5);
+        jRows = q.data;
+      }
+
       if (jRows && jRows.length > 0) {
         const matchedJury = jRows.find((j: any) => {
-          const jCode = (j.access_code || '').toUpperCase().replace(/-/g, '');
+          const jCode = (j.access_code || '').toUpperCase().replace(/[\s-]/g, '');
           return jCode === normClean ||
+            jCode === clean ||
             (!normClean.startsWith('JURY') && jCode === `JURY${normClean}`) ||
             (normClean.startsWith('JURY') && jCode === normClean);
         }) || jRows[0];
@@ -3745,36 +3793,86 @@ class StorageService {
           if (!juries.some(j => j.id === matchedJury.id)) {
             this.setItem(STORAGE_KEYS.JURY, [...juries, matchedJury as unknown as JuryMember]);
           }
-          await this.fetchEventMetadata(matchedJury.event_id);
-          // Always trigger full hydration for the active event's delegates, attendance, and agenda
-          await this.syncFromSupabase(matchedJury.event_id, true);
-          return this.authenticateAccessCode(accessCode, targetEventId);
+          await this.fetchEventMetadata(matchedJury.event_id).catch(() => {});
+          this.syncFromSupabase(matchedJury.event_id, true).catch(() => {});
+
+          this.logAudit({
+            event_id: matchedJury.event_id,
+            action: 'ACCESS_CODE_LOGIN_SUCCESS',
+            actor_role: 'jury',
+            actor_name: matchedJury.name,
+            details: `Jury login: ${matchedJury.name} (${matchedJury.access_code})`
+          });
+          this.recordLogin({
+            event_id: matchedJury.event_id,
+            user_id: matchedJury.id,
+            user_name: matchedJury.name,
+            role: 'jury',
+            access_code: matchedJury.access_code,
+            details: `Jury Pass Access (${matchedJury.designation || 'Jury Member'})`
+          });
+          console.log(`[Auth Trace] Code: "${accessCode}" -> Matched Record ID: "${matchedJury.id}" -> Event ID: "${matchedJury.event_id}" -> Role: "jury" (Name: ${matchedJury.name})`);
+          return { role: 'jury', user: matchedJury as unknown as JuryMember, eventId: matchedJury.event_id };
         }
       }
 
-      // 4. Check Student / Delegate
-      let learnerQuery = supabase.from('learners').select(SUPABASE_COLUMNS.LEARNERS).limit(5);
-      if (targetEventId) learnerQuery = learnerQuery.eq('event_id', targetEventId);
-      const { data: lRows } = await learnerQuery.or(`access_code.ilike.${clean},access_code.ilike.${normClean},access_code.ilike.%${clean}%`);
+      // 4. Check Student / Delegate (check target event first if provided, then fallback to global)
+      let lRows: any[] | null = null;
+      if (targetEventId) {
+        const q = await supabase.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('event_id', targetEventId)
+          .or(`access_code.ilike.${clean},access_code.ilike.${normClean}`).limit(5);
+        lRows = q.data;
+      }
+      if (!lRows || lRows.length === 0) {
+        const q = await supabase.from('learners').select(SUPABASE_COLUMNS.LEARNERS)
+          .or(`access_code.ilike.${clean},access_code.ilike.${normClean}`).limit(5);
+        lRows = q.data;
+      }
 
       if (lRows && lRows.length > 0) {
         const matchedLearner = lRows.find((l: any) => {
-          const lCode = (l.access_code || '').toUpperCase().replace(/-/g, '');
-          return lCode === normClean || (l.access_code || '').toUpperCase() === clean;
-        }) || lRows[0] as unknown as Learner;
-        const learners = this.getLearners();
-        if (!learners.some(l => l.id === matchedLearner.id)) {
-          this.setItem(STORAGE_KEYS.LEARNERS, [...learners, matchedLearner]);
+          const lCode = (l.access_code || '').toUpperCase().replace(/[\s-]/g, '');
+          return lCode === normClean || lCode === clean;
+        }) || (lRows[0] as unknown as Learner);
+
+        if (matchedLearner) {
+          const learners = this.getLearners();
+          if (!learners.some(l => l.id === matchedLearner.id)) {
+            this.setItem(STORAGE_KEYS.LEARNERS, [...learners, matchedLearner as unknown as Learner]);
+          }
+          await this.fetchEventMetadata(matchedLearner.event_id).catch(() => {});
+          this.syncFromSupabase(matchedLearner.event_id, true).catch(() => {});
+
+          this.logAudit({
+            event_id: matchedLearner.event_id,
+            action: 'ACCESS_CODE_LOGIN_SUCCESS',
+            actor_role: 'student',
+            actor_name: matchedLearner.full_name,
+            details: `Delegate login: ${matchedLearner.full_name} (${matchedLearner.access_code})`
+          });
+          this.recordLogin({
+            event_id: matchedLearner.event_id,
+            user_id: matchedLearner.id,
+            user_name: matchedLearner.full_name,
+            role: 'student',
+            access_code: matchedLearner.access_code,
+            details: `Delegate App Login (${matchedLearner.bench || 'Delegate'} Bench • ${matchedLearner.party_name || 'Independent'})`
+          });
+          console.log(`[Auth Trace] Code: "${accessCode}" -> Matched Record ID: "${matchedLearner.id}" -> Event ID: "${matchedLearner.event_id}" -> Role: "student" (Name: ${matchedLearner.full_name})`);
+
+          return { role: 'student', user: matchedLearner as unknown as Learner, eventId: matchedLearner.event_id };
         }
-        await this.fetchEventMetadata(matchedLearner.event_id);
-        // Always trigger full hydration for the active event's delegates, attendance, and agenda
-        await this.syncFromSupabase(matchedLearner.event_id, true);
-        return this.authenticateAccessCode(accessCode, targetEventId);
       }
     } catch (authErr) {
       console.warn('[StorageService] Remote access code auth error:', authErr);
     }
 
+    this.logAudit({
+      event_id: targetEventId,
+      action: 'ACCESS_CODE_LOGIN_FAILED',
+      details: `Failed access code attempt: ${accessCode}`
+    });
+    console.warn(`[Auth Trace] Code: "${accessCode}" -> No matching record found in volunteers, jury, or learners.`);
     return null;
   }
 

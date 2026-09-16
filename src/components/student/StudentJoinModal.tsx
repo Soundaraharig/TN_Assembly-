@@ -22,7 +22,7 @@ export const StudentJoinView: React.FC<StudentJoinViewProps> = ({ onLoginSuccess
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanCode = accessCode.trim().toUpperCase();
+    const cleanCode = accessCode.trim().replace(/\s+/g, '').toUpperCase();
     if (!cleanCode) {
       setError('Please enter your access code.');
       return;

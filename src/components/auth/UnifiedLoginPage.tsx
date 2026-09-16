@@ -132,10 +132,11 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
       setCodeError(`Too many failed attempts. Code verification temporarily locked. Try again in ${lockoutRemaining}s.`);
       return;
     }
-    if (!accessCode.trim()) return;
+    const clean = accessCode.trim().replace(/\s+/g, '').toUpperCase();
+    if (!clean) return;
     setIsCodeLoading(true);
     await new Promise(r => setTimeout(r, 400));
-    const res = await onLoginAccessCode(accessCode);
+    const res = await onLoginAccessCode(clean);
     setIsCodeLoading(false);
     if (!res) {
       const nextFailed = failedAttempts + 1;
@@ -391,7 +392,7 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
                     maxLength={10}
                     disabled={Boolean(lockoutUntil && Date.now() < lockoutUntil)}
                     value={accessCode}
-                    onChange={e => { setAccessCode(e.target.value.toUpperCase()); setCodeError(''); }}
+                    onChange={e => { setAccessCode(e.target.value.toUpperCase().replace(/\s+/g, '')); setCodeError(''); }}
                     className="input-theme text-center font-mono font-black text-lg tracking-widest uppercase disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{ letterSpacing: '0.25em' }}
                   />

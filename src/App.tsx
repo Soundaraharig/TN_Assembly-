@@ -2046,7 +2046,11 @@ export function App() {
     user: Learner | Volunteer | JuryMember;
     eventId: string;
   }) => {
-    const targetEv = events.find(e => e.id === authResult.eventId) || currentEvent || events[0];
+    const allEvs = storageService.getEvents();
+    const targetEv = allEvs.find(e => e.id === authResult.eventId) || events.find(e => e.id === authResult.eventId) || currentEvent || allEvs[0];
+    if (allEvs.length > 0) {
+      setEvents(allEvs);
+    }
     if (targetEv) {
       setCurrentEvent(targetEv);
       currentEventRef.current = targetEv;
@@ -2289,10 +2293,9 @@ export function App() {
             return null;
           }}
           onLoginAccessCode={async (code: string): Promise<any> => {
-            const cleanCode = code.trim().toUpperCase();
-            // Don't filter by undefined eventId — let the access code
-            // query search across ALL events in Supabase
-            const authRes = await storageService.authenticateAccessCodeAsync(cleanCode, currentEvent?.id);
+            const cleanCode = code.trim().replace(/\s+/g, '').toUpperCase();
+            // Search across ALL events in Supabase
+            const authRes = await storageService.authenticateAccessCodeAsync(cleanCode);
             if (!authRes) return null;
             // Ensure the matched event is fully loaded into state
             if (authRes.eventId && isSupabaseEnabled) {
@@ -2547,7 +2550,7 @@ export function App() {
                     handleAccessCodeLogin(authResult);
                   }}
                   onShowToast={addToast}
-                  targetEventId={currentEvent?.id}
+                  targetEventId={undefined}
                 />
               }
             />
