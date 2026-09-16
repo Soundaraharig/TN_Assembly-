@@ -275,6 +275,9 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
                     <Users className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--text-muted)' }} />
                     <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>
                       {(() => {
+                        if (storageService.isEventHydrated(event.id)) {
+                          return storageService.getLearners(event.id).length;
+                        }
                         const byStorage = storageService.getLearners(event.id);
                         if (byStorage.length > 0) return byStorage.length;
                         const byProps = learners.filter(l => l.event_id === event.id);

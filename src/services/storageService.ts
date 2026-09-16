@@ -3151,6 +3151,9 @@ class StorageService {
         role: raw.role || 'Member of Legislative Assembly (MLA)',
         committee_id: raw.committee_id && isValidUuid(raw.committee_id as string) ? raw.committee_id : null,
         committee_name: raw.committee_name || null,
+        school_name: raw.school_name || null,
+        party_group_link: raw.party_group_link || null,
+        committee_group_link: raw.committee_group_link || null,
         day1_checked_in: !!raw.day1_checked_in,
         day2_checked_in: !!raw.day2_checked_in,
         created_at: raw.created_at || new Date().toISOString(),
@@ -4541,17 +4544,20 @@ class StorageService {
           full_name: l.full_name || 'Delegate',
           email: l.email || '',
           phone: l.phone || '',
-          department: l.department || '',
-          academic_year: l.academic_year || ('' as AcademicYear),
+          department: l.department || 'General',
+          academic_year: (l.academic_year as AcademicYear) || '1st Year',
           constituency_number: l.constituency_number,
           constituency_name: l.constituency_name,
           district: l.district,
           party_name: resolvedPartyName,
           party_id: resolvedPartyId,
-          bench: resolvedBench,
-          role: l.role,
+          bench: resolvedBench || 'Independent',
+          role: l.role || 'Member of Legislative Assembly (MLA)',
           committee_name: resolvedCommName,
           committee_id: resolvedCommId,
+          school_name: l.school_name || undefined,
+          party_group_link: l.party_group_link || undefined,
+          committee_group_link: l.committee_group_link || undefined,
           day1_checked_in: false,
           day2_checked_in: false,
           created_at: new Date().toISOString()
@@ -4579,11 +4585,14 @@ class StorageService {
 
     this.setItem(STORAGE_KEYS.LEARNERS, finalAllLearners);
 
-    // Update participant count on event
+    // Update participant count on event (both in local storage and Supabase)
     const events = this.getEvents().map(e =>
       e.id === eventId ? { ...e, participant_count: finalEventLearners.length } : e
     );
     this.setItem(STORAGE_KEYS.EVENTS, events);
+    if (supabase) {
+      supabase.from('college_events').update({ participant_count: finalEventLearners.length }).eq('id', eventId).then();
+    }
 
     this.notify();
     return {
@@ -4615,10 +4624,14 @@ class StorageService {
     const all = this.getLearners().filter(l => l.id !== learnerId);
     this.setItem(STORAGE_KEYS.LEARNERS, all);
     if (target?.event_id) {
+      const remainingCount = all.filter(l => l.event_id === target.event_id).length;
       const events = this.getEvents().map(e =>
-        e.id === target.event_id ? { ...e, participant_count: Math.max(0, e.participant_count - 1) } : e
+        e.id === target.event_id ? { ...e, participant_count: remainingCount } : e
       );
       this.setItem(STORAGE_KEYS.EVENTS, events);
+      if (supabase) {
+        supabase.from('college_events').update({ participant_count: remainingCount }).eq('id', target.event_id).then();
+      }
     }
     this.addDeletedIds([learnerId]);
     await this.sbDelete('learners', learnerId);
@@ -4637,6 +4650,9 @@ class StorageService {
         e.id === eventId ? { ...e, participant_count: remainingCount } : e
       );
       this.setItem(STORAGE_KEYS.EVENTS, events);
+      if (supabase) {
+        supabase.from('college_events').update({ participant_count: remainingCount }).eq('id', eventId).then();
+      }
     }
 
     if (supabase) {
@@ -4658,6 +4674,7 @@ class StorageService {
     if (supabase) {
       const { error } = await supabase.from('learners').delete().eq('event_id', eventId);
       if (error) console.warn('[Supabase] clear all learners error:', error.message);
+      await supabase.from('college_events').update({ participant_count: 0 }).eq('id', eventId);
     }
   }
 
