@@ -7750,17 +7750,13 @@ class StorageService {
     if (target.target_audience === 'RULING' && learner.bench !== 'Ruling') return false;
     if (target.target_audience === 'OPPOSITION' && learner.bench !== 'Opposition') return false;
 
-    // Check if already voted
+    // FAIR VOTING: Once voted, the vote is FINAL and cannot be changed
     const existingIndex = target.votes.findIndex(v => v.learner_id === learner.id);
     if (existingIndex >= 0) {
-      const prev = target.votes[existingIndex].vote;
-      if (prev === 'AYE') target.ayes_count = Math.max(0, target.ayes_count - 1);
-      if (prev === 'NO') target.noes_count = Math.max(0, target.noes_count - 1);
-      if (prev === 'ABSTAIN') target.abstain_count = Math.max(0, target.abstain_count - 1);
-      target.votes.splice(existingIndex, 1);
-    } else {
-      target.voter_ids.push(learner.id);
+      // Student has already cast their vote — reject re-voting
+      return false;
     }
+    target.voter_ids.push(learner.id);
 
     if (decision === 'AYE') target.ayes_count += 1;
     if (decision === 'NO') target.noes_count += 1;

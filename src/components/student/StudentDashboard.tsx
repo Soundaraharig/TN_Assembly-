@@ -553,47 +553,61 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       <div className="grid grid-cols-3 gap-2 pt-2">
                         <button
                           type="button"
+                          disabled={!!myVote}
                           onClick={() => {
                             onCastFlashVote(fv.id, student, 'AYE');
-                            onShowToast('Division Vote Cast', 'Recorded vote: AYE', 'success');
+                            onShowToast('Division Vote Cast', 'Recorded vote: AYE — Your vote is final.', 'success');
                           }}
-                          className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                          className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
                             myVote === 'AYE'
                               ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg'
-                              : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                              : myVote
+                                ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-50'
+                                : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20 cursor-pointer'
                           }`}
                         >
                           AYE {myVote === 'AYE' && '✓'}
                         </button>
                         <button
                           type="button"
+                          disabled={!!myVote}
                           onClick={() => {
                             onCastFlashVote(fv.id, student, 'NO');
-                            onShowToast('Division Vote Cast', 'Recorded vote: NO', 'info');
+                            onShowToast('Division Vote Cast', 'Recorded vote: NO — Your vote is final.', 'info');
                           }}
-                          className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                          className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
                             myVote === 'NO'
                               ? 'bg-rose-500 text-white border-rose-400 shadow-lg'
-                              : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30 hover:bg-rose-500/20'
+                              : myVote
+                                ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-50'
+                                : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30 hover:bg-rose-500/20 cursor-pointer'
                           }`}
                         >
                           NO {myVote === 'NO' && '✓'}
                         </button>
                         <button
                           type="button"
+                          disabled={!!myVote}
                           onClick={() => {
                             onCastFlashVote(fv.id, student, 'ABSTAIN');
-                            onShowToast('Division Vote Cast', 'Recorded vote: ABSTAIN', 'info');
+                            onShowToast('Division Vote Cast', 'Recorded vote: ABSTAIN — Your vote is final.', 'info');
                           }}
-                          className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                          className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
                             myVote === 'ABSTAIN'
                               ? 'bg-slate-600 text-white border-slate-500 shadow-lg'
-                              : 'bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/30 hover:bg-slate-500/20'
+                              : myVote
+                                ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-50'
+                                : 'bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/30 hover:bg-slate-500/20 cursor-pointer'
                           }`}
                         >
                           ABSTAIN {myVote === 'ABSTAIN' && '✓'}
                         </button>
                       </div>
+                      {myVote && (
+                        <p className="text-[10px] text-center text-slate-500 dark:text-slate-400 font-semibold pt-1">
+                          🔒 Your vote is final and cannot be changed
+                        </p>
+                      )}
                     </div>
                   );
                 })}
