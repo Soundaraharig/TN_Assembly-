@@ -1661,7 +1661,9 @@ class StorageService {
           events.forEach(remoteEv => {
             if (deletedIds.has(remoteEv.id)) return;
             const local = localEventMap.get(remoteEv.id);
-            eventMap.set(remoteEv.id, local ? { ...local, ...remoteEv } : (remoteEv as unknown as CollegeEvent));
+            const normalizedRemote = this.normalizeEvent(remoteEv as unknown as CollegeEvent);
+            const merged = local ? { ...local, ...normalizedRemote } : normalizedRemote;
+            eventMap.set(remoteEv.id, this.normalizeEvent(merged));
           });
 
           this.setItem(STORAGE_KEYS.EVENTS, Array.from(eventMap.values()));
@@ -2126,6 +2128,67 @@ class StorageService {
   }
 
   /**
+   * Normalizes a CollegeEvent by ensuring cabinet_ministries is populated
+   * from either top-level, social_coverage, or the dedicated local backup.
+   */
+  public normalizeEvent(ev: CollegeEvent): CollegeEvent {
+    if (!ev) return ev;
+    const sc = (ev.social_coverage as Record<string, any>) || {};
+    let ministries: string[] | undefined = undefined;
+    if (Array.isArray(ev.cabinet_ministries) && ev.cabinet_ministries.length > 0) {
+      ministries = ev.cabinet_ministries;
+    } else if (Array.isArray(sc.cabinet_ministries) && sc.cabinet_ministries.length > 0) {
+      ministries = sc.cabinet_ministries;
+    } else if (typeof localStorage !== 'undefined' && ev.id) {
+      try {
+        const stored = localStorage.getItem(`tn_assembly_cabinet_${ev.id}`);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            ministries = parsed;
+          }
+        }
+      } catch {}
+    }
+
+    if (ministries) {
+      return {
+        ...ev,
+        cabinet_ministries: ministries,
+        social_coverage: {
+          ...sc,
+          cabinet_ministries: ministries
+        }
+      };
+    }
+    return ev;
+  }
+
+  public getCabinetMinistries(eventId: string): string[] {
+    if (!eventId) return [];
+    const ev = this.getEvents().find(e => e.id === eventId);
+    if (ev && Array.isArray(ev.cabinet_ministries) && ev.cabinet_ministries.length > 0) {
+      return ev.cabinet_ministries;
+    }
+    const sc = ev?.social_coverage as Record<string, any> | undefined;
+    if (sc && Array.isArray(sc.cabinet_ministries) && sc.cabinet_ministries.length > 0) {
+      return sc.cabinet_ministries;
+    }
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const stored = localStorage.getItem(`tn_assembly_cabinet_${eventId}`);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed;
+          }
+        }
+      } catch {}
+    }
+    return [];
+  }
+
+  /**
    * Fetches ONLY college_events without loading any child tables.
    * Safe to call on /events (Event Hub) and initial application load.
    */
@@ -2146,7 +2209,7 @@ class StorageService {
           .order('created_at', { ascending: false });
 
         if (!error && data && Array.isArray(data)) {
-          const evs = data as unknown as CollegeEvent[];
+          const evs = (data as unknown as CollegeEvent[]).map(e => this.normalizeEvent(e));
           this.setItem(STORAGE_KEYS.EVENTS, evs);
           this.restoreJkkncetEvent();
           this.eventsFetched = true;
@@ -2307,7 +2370,7 @@ class StorageService {
 
         // 1. Commit and merge event metadata
         if (eventData) {
-          const ev = eventData as unknown as CollegeEvent;
+          const ev = this.normalizeEvent(eventData as unknown as CollegeEvent);
           const curEvents = this.getEvents();
           const otherEvents = curEvents.filter(e => e.id !== ev.id);
           this.setItem(STORAGE_KEYS.EVENTS, [...otherEvents, ev]);
@@ -2410,7 +2473,7 @@ class StorageService {
           .limit(1);
 
         if (evData && evData.length > 0) {
-          const ev = evData[0] as unknown as CollegeEvent;
+          const ev = this.normalizeEvent(evData[0] as unknown as CollegeEvent);
           const allEvs = this.getEvents();
           this.setItem(STORAGE_KEYS.EVENTS, [...allEvs.filter(e => e.id !== ev.id), ev]);
           this.restoreJkkncetEvent();
@@ -2493,7 +2556,7 @@ class StorageService {
       ]);
 
       if (evData && evData.length > 0) {
-        const ev = evData[0] as unknown as CollegeEvent;
+        const ev = this.normalizeEvent(evData[0] as unknown as CollegeEvent);
         const curEvs = this.getEvents();
         this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), ev]);
         this.restoreJkkncetEvent();
@@ -2551,7 +2614,7 @@ class StorageService {
       ]);
 
       if (evData && evData.length > 0) {
-        const ev = evData[0] as unknown as CollegeEvent;
+        const ev = this.normalizeEvent(evData[0] as unknown as CollegeEvent);
         const curEvs = this.getEvents();
         this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), ev]);
         this.restoreJkkncetEvent();
@@ -2634,7 +2697,7 @@ class StorageService {
       ]);
 
       if (evData && evData.length > 0) {
-        const ev = evData[0] as unknown as CollegeEvent;
+        const ev = this.normalizeEvent(evData[0] as unknown as CollegeEvent);
         const curEvs = this.getEvents();
         this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), ev]);
         this.restoreJkkncetEvent();
@@ -2721,7 +2784,7 @@ class StorageService {
         }
         const { data: evData, error: evErr } = await evQuery.limit(1);
         if (!evErr && evData && evData.length > 0) {
-          targetEv = evData[0] as unknown as CollegeEvent;
+          targetEv = this.normalizeEvent(evData[0] as unknown as CollegeEvent);
           resolvedEventId = targetEv.id;
           const curEvs = this.getEvents();
           this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== targetEv!.id), targetEv]);
@@ -3177,7 +3240,9 @@ class StorageService {
         scores: scs,
         vote_audit_log: voteAudit,
         yuva_assignments: yuvaAssignments,
-        cabinet_ministries: currentEv?.cabinet_ministries || [],
+        cabinet_ministries: (Array.isArray(currentEv?.cabinet_ministries) && currentEv!.cabinet_ministries.length > 0)
+          ? currentEv!.cabinet_ministries
+          : (Array.isArray(existingSC.cabinet_ministries) ? existingSC.cabinet_ministries : this.getCabinetMinistries(eventId)),
         checklist: this.getChecklist(eventId),
         team: this.getTeam(eventId),
         extended_learners: this.getLearners(eventId).map(l => ({
@@ -4247,7 +4312,8 @@ class StorageService {
   // ── EVENTS ────────────────────────────────────────────────────────────────
 
   public getEvents(): CollegeEvent[] {
-    return this.getItem<CollegeEvent[]>(STORAGE_KEYS.EVENTS, INITIAL_EVENTS);
+    const raw = this.getItem<CollegeEvent[]>(STORAGE_KEYS.EVENTS, INITIAL_EVENTS);
+    return raw.map(e => this.normalizeEvent(e));
   }
 
   public addEvent(event: Partial<CollegeEvent>): CollegeEvent {
@@ -6693,6 +6759,14 @@ class StorageService {
   }
 
   public async saveCabinetMinistries(eventId: string, ministries: string[]): Promise<{ success: boolean; error?: any }> {
+    if (typeof localStorage !== 'undefined' && eventId) {
+      try {
+        localStorage.setItem(`tn_assembly_cabinet_${eventId}`, JSON.stringify(ministries));
+      } catch (err) {
+        console.warn('Failed to cache cabinet ministries to localStorage:', err);
+      }
+    }
+
     // Update both cabinet_ministries AND social_coverage.cabinet_ministries so both persist to Supabase
     const events = this.getEvents().map(e => {
       if (e.id === eventId) {

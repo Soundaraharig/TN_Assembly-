@@ -241,7 +241,21 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
   onShowToast
 }) => {
   // Ministries come ONLY from Supabase via savedMinistries prop — NO defaults
-  const [ministries, setMinistries] = useState<string[]>([]);
+  const [ministries, setMinistries] = useState<string[]>(() => {
+    if (Array.isArray(savedMinistries) && savedMinistries.length > 0) {
+      return savedMinistries;
+    }
+    if (eventId && typeof localStorage !== 'undefined') {
+      try {
+        const stored = localStorage.getItem(`tn_assembly_cabinet_${eventId}`);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch {}
+    }
+    return Array.isArray(savedMinistries) ? savedMinistries : [];
+  });
   const [newMinistryInput, setNewMinistryInput] = useState('');
   const [viewMode, setViewMode] = useState<'roster' | 'config'>('roster');
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -251,12 +265,24 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
 
   // Sync ministries from savedMinistries prop (Supabase source of truth)
   useEffect(() => {
-    if (Array.isArray(savedMinistries)) {
+    if (Array.isArray(savedMinistries) && savedMinistries.length > 0) {
       setMinistries(savedMinistries);
-    } else {
-      setMinistries([]);
+    } else if (eventId && typeof localStorage !== 'undefined') {
+      try {
+        const stored = localStorage.getItem(`tn_assembly_cabinet_${eventId}`);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setMinistries(parsed);
+            return;
+          }
+        }
+      } catch {}
+      if (Array.isArray(savedMinistries)) {
+        setMinistries(savedMinistries);
+      }
     }
-  }, [savedMinistries]);
+  }, [savedMinistries, eventId]);
 
   // Reset editing state when event changes
   useEffect(() => {
@@ -301,6 +327,11 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
 
   // Persist ministries to Supabase via the existing onSaveCabinet callback
   const persistMinistries = useCallback(async (updated: string[]) => {
+    if (eventId && typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem(`tn_assembly_cabinet_${eventId}`, JSON.stringify(updated));
+      } catch {}
+    }
     if (!onSaveCabinet) return;
     setIsSaving(true);
     try {
@@ -313,7 +344,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
     } finally {
       setIsSaving(false);
     }
-  }, [onSaveCabinet, onShowToast]);
+  }, [eventId, onSaveCabinet, onShowToast]);
 
   const handleAddMinistry = async (e: React.FormEvent) => {
     e.preventDefault();

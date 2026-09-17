@@ -640,7 +640,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           learners={currentLearners}
           parties={currentParties}
           eventId={activeEvent.id}
-          savedMinistries={activeEvent.cabinet_ministries}
+          savedMinistries={activeEvent.cabinet_ministries || (activeEvent.social_coverage as any)?.cabinet_ministries || storageService.getCabinetMinistries(activeEvent.id)}
           isLocked={activeEvent.is_locked}
           onSaveCabinet={async (ministries) => {
             const result = await storageService.saveCabinetMinistries(activeEvent.id, ministries);
