@@ -664,11 +664,13 @@ class StorageService {
         console.log(`[StorageService] Cache version mismatch (current: "${storedVersion}", target: "${CACHE_VERSION}"). Automatically purging stale cache...`);
         this.wasCacheMigrated = true;
 
-        // Keys that must be preserved: session / auth tokens / theme
+        // Keys that must be preserved: session / auth tokens / theme / deletion tombstones
         const preserveKeys = new Set<string>([
           'tn_assembly_auth_session',
           'user_session',
-          'tn_theme'
+          'tn_theme',
+          STORAGE_KEYS.DELETED_IDS,         // Deletion tombstone — must NEVER be wiped
+          'tn_assembly_deleted_question_ids' // Legacy tombstone key (backward compat)
         ]);
 
         const allStorageKeys = new Set(Object.values(STORAGE_KEYS));
@@ -1481,10 +1483,12 @@ class StorageService {
       this.setItem(STORAGE_KEYS.QUESTIONS, Array.from(qMap.values()));
     }
     if (allProceedingsQs && allProceedingsQs.length > 0) {
-      const localPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+      // Always exclude tombstoned (admin-deleted) questions — they must NEVER be restored from Supabase
+      const deletedQIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
+      const localPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []).filter(q => !deletedQIds.has(q.id));
       const pqMap = new Map<string, ProceedingsQuestion>();
       localPQs.forEach(q => pqMap.set(q.id, q));
-      allProceedingsQs.forEach(remoteQ => {
+      allProceedingsQs.filter(remoteQ => !deletedQIds.has(remoteQ.id)).forEach(remoteQ => {
         const local = pqMap.get(remoteQ.id);
         if (!local) {
           pqMap.set(remoteQ.id, remoteQ);
@@ -3428,7 +3432,7 @@ class StorageService {
       const finalMergedScores = Array.from(scoreMap.values());
 
       // Safe non-destructive merge of proceedings questions by unique ID, respecting deletions
-      const deletedQIds = new Set(this.getItem<string[]>('tn_assembly_deleted_question_ids', []));
+      const deletedQIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
       const localPQs = this.getProceedingsQuestions(eventId).filter(q => !deletedQIds.has(q.id));
       const rawRemotePQs = Array.isArray(existingSC.proceedings_questions)
         ? (existingSC.proceedings_questions as ProceedingsQuestion[])
@@ -9981,7 +9985,11 @@ class StorageService {
 
   // ── PROCEEDINGS QUESTIONS ───────────────────────────────────────────
   public getProceedingsQuestions(eventKey?: string): ProceedingsQuestion[] {
-    const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+    // Always filter out tombstoned (deleted) questions first
+    const deletedQIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
+    const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []).filter(
+      q => !deletedQIds.has(q.id)
+    );
     if (!eventKey) return list;
     const cleanKey = (eventKey || '').toLowerCase().trim();
     const allEvs = this.getEvents();
@@ -10060,8 +10068,8 @@ class StorageService {
               ? sc.questions
               : []);
 
-        const deletedQIds = new Set(this.getItem<string[]>('tn_assembly_deleted_question_ids', []));
-        const localPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []).filter(q => !deletedQIds.has(q.id));
+        const deletedQIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
+        const localPQs = this.getProceedingsQuestions(eventKey);
         const pqMap = new Map<string, ProceedingsQuestion>();
         localPQs.forEach(q => pqMap.set(q.id, q));
 
@@ -10209,19 +10217,24 @@ class StorageService {
   }
 
   public deleteProceedingsQuestion(questionId: string, fallbackEventId?: string): void {
-    // Record persistent deletion tombstone
-    const deletedQIds = this.getItem<string[]>('tn_assembly_deleted_question_ids', []);
+    // Record persistent deletion tombstone — stored in STORAGE_KEYS.DELETED_IDS so it
+    // survives cache version migrations and is filtered everywhere via getProceedingsQuestions().
+    const deletedQIds = this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []);
     if (!deletedQIds.includes(questionId)) {
       deletedQIds.push(questionId);
-      this.setItem('tn_assembly_deleted_question_ids', deletedQIds);
+      this.setItem(STORAGE_KEYS.DELETED_IDS, deletedQIds);
     }
 
+    // Remove from local PROCEEDINGS_QUESTIONS list immediately
     const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
     const target = list.find(q => q.id === questionId);
     const targetEventId = target?.event_id || fallbackEventId;
     const filtered = list.filter(q => q.id !== questionId);
     this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, filtered);
     this.notify();
+
+    // Push deletion to Supabase — syncEventStateToSupabase reads DELETED_IDS and strips
+    // the deleted question from the social_coverage.proceedings_questions blob before saving.
     if (targetEventId) {
       const allEvs = this.getEvents();
       const matched = findEventBySlug(allEvs, targetEventId) || allEvs.find(e => e.id === targetEventId);
