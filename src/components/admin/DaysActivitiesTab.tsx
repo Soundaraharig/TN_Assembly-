@@ -209,7 +209,14 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
         filter: `event_id=eq.${activeEventId}`
       }, (payload: any) => {
         if (payload?.new && payload.new.id) {
-          const rec = payload.new as DayAttendanceRecord;
+          const rawRec = payload.new as DayAttendanceRecord;
+          const { fn, an, overall } = getRecordSessionStatuses(rawRec);
+          const rec: DayAttendanceRecord = {
+            ...rawRec,
+            fn_status: rawRec.fn_status || fn,
+            an_status: rawRec.an_status || an,
+            status: overall
+          };
           setSyncedAttendance(prev => {
             const filtered = prev.filter(
               a => a.id !== rec.id && !(a.event_id === rec.event_id && a.day_id === rec.day_id && a.student_id === rec.student_id)
@@ -222,7 +229,14 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
         const p = msg?.payload;
         if (p && (p.eventId === activeEventId || !p.eventId)) {
           if (p.record) {
-            const rec = p.record as DayAttendanceRecord;
+            const rawRec = p.record as DayAttendanceRecord;
+            const { fn, an, overall } = getRecordSessionStatuses(rawRec);
+            const rec: DayAttendanceRecord = {
+              ...rawRec,
+              fn_status: rawRec.fn_status || fn,
+              an_status: rawRec.an_status || an,
+              status: overall
+            };
             setSyncedAttendance(prev => {
               const filtered = prev.filter(
                 a => a.id !== rec.id && !(a.event_id === rec.event_id && a.day_id === rec.day_id && a.student_id === rec.student_id)
@@ -230,7 +244,11 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
               return [...filtered, rec];
             });
           } else if (Array.isArray(p.records)) {
-            const recs = p.records as DayAttendanceRecord[];
+            const rawRecs = p.records as DayAttendanceRecord[];
+            const recs = rawRecs.map(r => {
+              const { fn, an, overall } = getRecordSessionStatuses(r);
+              return { ...r, fn_status: r.fn_status || fn, an_status: r.an_status || an, status: overall };
+            });
             const keys = new Set(recs.map(r => `${r.event_id}:::${r.day_id}:::${r.student_id}`));
             setSyncedAttendance(prev => {
               const filtered = prev.filter(a => !keys.has(`${a.event_id}:::${a.day_id}:::${a.student_id}`));
@@ -437,7 +455,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
   };
 
   const handlePromptDeleteDay = (day: EventDay) => {
-    const attCount = dayAttendance.filter(a => a.day_id === day.id).length;
+    const attCount = syncedAttendance.filter(a => a.day_id === day.id).length;
     setDeletingDay(day);
     setDeleteConfirmCount(attCount);
   };
@@ -463,7 +481,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
   const handleExportAttendanceCsv = () => {
     if (!currentAttendanceDay) return;
     const dayAttMap = new Map<string, DayAttendanceRecord>();
-    dayAttendance
+    syncedAttendance
       .filter(a => a.day_id === currentAttendanceDay.id)
       .forEach(a => dayAttMap.set(a.student_id, a));
 
@@ -534,11 +552,83 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
     if (!currentAttendanceDay) return;
     const studentIds = learners.map(l => l.id);
     const sessionLabel = session === 'FN' ? 'Forenoon (FN)' : session === 'AN' ? 'Afternoon (AN)' : 'Full Day';
+    const dayId = currentAttendanceDay.id;
+
+    // Instant optimistic update for 0ms visual feedback
+    setSyncedAttendance(prev => {
+      const prevMap = new Map(prev.filter(a => a.day_id === dayId).map(a => [a.student_id, a]));
+      const otherRecords = prev.filter(a => a.day_id !== dayId);
+      const updatedDayRecords = studentIds.map(stId => {
+        const prior = prevMap.get(stId);
+        const { fn: priorFn, an: priorAn } = getRecordSessionStatuses(prior);
+        const nextFn = session === 'FN' ? status : (session === 'AN' ? priorFn : status);
+        const nextAn = session === 'AN' ? status : (session === 'FN' ? priorAn : status);
+        const effective: DayAttendanceStatus = (nextFn === 'Present' || nextAn === 'Present') ? 'Present' : 'Absent';
+        return {
+          id: prior?.id || `opt-${stId}`,
+          event_id: event.id,
+          day_id: dayId,
+          student_id: stId,
+          status: effective,
+          fn_status: nextFn,
+          an_status: nextAn,
+          marked_by: `Admin Batch Action [FN:${nextFn}|AN:${nextAn}]`,
+          marked_by_role: 'admin',
+          marked_at: new Date().toISOString()
+        } as DayAttendanceRecord;
+      });
+      return [...otherRecords, ...updatedDayRecords];
+    });
+
     try {
-      await onBatchSetDayAttendance(currentAttendanceDay.id, studentIds, status, 'Admin Batch Action', session);
+      await onBatchSetDayAttendance(dayId, studentIds, status, 'Admin Batch Action', session);
+      if (event?.id) {
+        setSyncedAttendance(storageService.getDayAttendance(event.id));
+      }
       onShowToast('Batch Updated', `Marked all ${learners.length} students as ${status} for ${currentAttendanceDay.name} (${sessionLabel})`, 'success');
     } catch (err: any) {
       onShowToast('Batch Save Failed', err?.message || 'Could not save batch attendance in database', 'error');
+    }
+  };
+
+  const handleToggleStudentSession = async (studentId: string, session: 'FN' | 'AN', status: DayAttendanceStatus) => {
+    if (!currentAttendanceDay) return;
+    const dayId = currentAttendanceDay.id;
+
+    // Instant optimistic update
+    setSyncedAttendance(prev => {
+      const existing = prev.find(a => a.day_id === dayId && a.student_id === studentId);
+      const { fn: priorFn, an: priorAn } = getRecordSessionStatuses(existing);
+      const nextFn = session === 'FN' ? status : priorFn;
+      const nextAn = session === 'AN' ? status : priorAn;
+      const effective: DayAttendanceStatus = (nextFn === 'Present' || nextAn === 'Present') ? 'Present' : 'Absent';
+      const updated: DayAttendanceRecord = {
+        ...(existing || {}),
+        id: existing?.id || `opt-${studentId}`,
+        event_id: event.id,
+        day_id: dayId,
+        student_id: studentId,
+        status: effective,
+        fn_status: nextFn,
+        an_status: nextAn,
+        marked_by: `Admin [FN:${nextFn}|AN:${nextAn}]`,
+        marked_by_role: 'admin',
+        marked_at: new Date().toISOString()
+      } as DayAttendanceRecord;
+      return [...prev.filter(a => !(a.day_id === dayId && a.student_id === studentId)), updated];
+    });
+
+    try {
+      const rec = await onSetStudentDayAttendance(dayId, studentId, status, 'Admin', session);
+      if (rec) {
+        setSyncedAttendance(prev => {
+          const { fn, an, overall } = getRecordSessionStatuses(rec);
+          const formatted: DayAttendanceRecord = { ...rec, fn_status: fn, an_status: an, status: overall };
+          return [...prev.filter(a => a.id !== rec.id && !(a.day_id === rec.day_id && a.student_id === rec.student_id)), formatted];
+        });
+      }
+    } catch (err: any) {
+      onShowToast('Save Failed', err?.message || 'Could not record attendance in database', 'error');
     }
   };
 
@@ -783,7 +873,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
               ) : (
                 sortedDays.map((day) => {
                 const isActive = day.status === 'Active';
-                const dayAtt = dayAttendance.filter(a => a.day_id === day.id);
+                const dayAtt = syncedAttendance.filter(a => a.day_id === day.id);
                 const dayAttMap = new Map<string, DayAttendanceRecord>();
                 dayAtt.forEach(a => dayAttMap.set(a.student_id, a));
 
@@ -1141,7 +1231,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
               </span>
               {sortedDays.map((d) => {
                 const isCurrent = d.id === currentAttendanceDay.id;
-                const dAtt = dayAttendance.filter(a => a.day_id === d.id);
+                const dAtt = syncedAttendance.filter(a => a.day_id === d.id);
                 const dAttMap = new Map<string, DayAttendanceRecord>();
                 dAtt.forEach(a => dAttMap.set(a.student_id, a));
                 let pres = 0;
@@ -1368,7 +1458,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                   </thead>
                   <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
                     {filteredLearners.map((learner) => {
-                      const att = dayAttendance.find(a => a.day_id === currentAttendanceDay.id && a.student_id === learner.id);
+                      const att = syncedAttendance.find(a => a.day_id === currentAttendanceDay.id && a.student_id === learner.id);
                       const { fn, an } = getRecordSessionStatuses(att);
                       const isFnPresent = fn === 'Present';
                       const isAnPresent = an === 'Present';
@@ -1418,13 +1508,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
 
                               <div className="inline-flex items-center gap-1">
                                 <button
-                                  onClick={async () => {
-                                    try {
-                                      await onSetStudentDayAttendance(currentAttendanceDay.id, learner.id, 'Present', 'Admin', 'FN');
-                                    } catch (err: any) {
-                                      onShowToast('Save Failed', err?.message || 'Could not record attendance in database', 'error');
-                                    }
-                                  }}
+                                  onClick={() => handleToggleStudentSession(learner.id, 'FN', 'Present')}
                                   className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
                                     isFnPresent
                                       ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
@@ -1435,13 +1519,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                                   P
                                 </button>
                                 <button
-                                  onClick={async () => {
-                                    try {
-                                      await onSetStudentDayAttendance(currentAttendanceDay.id, learner.id, 'Absent', 'Admin', 'FN');
-                                    } catch (err: any) {
-                                      onShowToast('Save Failed', err?.message || 'Could not record attendance in database', 'error');
-                                    }
-                                  }}
+                                  onClick={() => handleToggleStudentSession(learner.id, 'FN', 'Absent')}
                                   className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
                                     !isFnPresent
                                       ? 'bg-rose-600 text-white font-black shadow-xs'
@@ -1469,13 +1547,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
 
                               <div className="inline-flex items-center gap-1">
                                 <button
-                                  onClick={async () => {
-                                    try {
-                                      await onSetStudentDayAttendance(currentAttendanceDay.id, learner.id, 'Present', 'Admin', 'AN');
-                                    } catch (err: any) {
-                                      onShowToast('Save Failed', err?.message || 'Could not record attendance in database', 'error');
-                                    }
-                                  }}
+                                  onClick={() => handleToggleStudentSession(learner.id, 'AN', 'Present')}
                                   className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
                                     isAnPresent
                                       ? 'bg-sky-500 text-white font-black shadow-xs'
@@ -1486,13 +1558,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                                   P
                                 </button>
                                 <button
-                                  onClick={async () => {
-                                    try {
-                                      await onSetStudentDayAttendance(currentAttendanceDay.id, learner.id, 'Absent', 'Admin', 'AN');
-                                    } catch (err: any) {
-                                      onShowToast('Save Failed', err?.message || 'Could not record attendance in database', 'error');
-                                    }
-                                  }}
+                                  onClick={() => handleToggleStudentSession(learner.id, 'AN', 'Absent')}
                                   className={`px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
                                     !isAnPresent
                                       ? 'bg-rose-600 text-white font-black shadow-xs'

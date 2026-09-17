@@ -265,22 +265,20 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
 
   // Sync ministries from savedMinistries prop (Supabase source of truth)
   useEffect(() => {
-    if (Array.isArray(savedMinistries) && savedMinistries.length > 0) {
+    console.log("Question Hour event ID:", eventId);
+    if (Array.isArray(savedMinistries)) {
       setMinistries(savedMinistries);
     } else if (eventId && typeof localStorage !== 'undefined') {
       try {
         const stored = localStorage.getItem(`tn_assembly_cabinet_${eventId}`);
         if (stored) {
           const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) {
+          if (Array.isArray(parsed)) {
             setMinistries(parsed);
             return;
           }
         }
       } catch {}
-      if (Array.isArray(savedMinistries)) {
-        setMinistries(savedMinistries);
-      }
     }
   }, [savedMinistries, eventId]);
 

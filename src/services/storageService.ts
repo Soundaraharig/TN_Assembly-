@@ -1269,7 +1269,10 @@ class StorageService {
         allDays = [...allDays, ...sc.event_days];
       }
       if (Array.isArray(sc.day_attendance)) {
-        allDayAtt = [...allDayAtt, ...sc.day_attendance];
+        allDayAtt = [...allDayAtt, ...(sc.day_attendance as DayAttendanceRecord[]).map(r => {
+          const { fn, an, overall } = getRecordSessionStatuses(r);
+          return { ...r, fn_status: r.fn_status || fn, an_status: r.an_status || an, status: overall };
+        })];
       }
       if (Array.isArray(sc.checklist)) {
         allChecklist = [...allChecklist, ...sc.checklist];
@@ -1285,6 +1288,13 @@ class StorageService {
 
       if (Array.isArray(sc.cabinet_ministries)) {
         ev.cabinet_ministries = sc.cabinet_ministries;
+        if (typeof localStorage !== 'undefined' && ev.id) {
+          try {
+            localStorage.setItem(`tn_assembly_cabinet_${ev.id}`, JSON.stringify(sc.cabinet_ministries));
+            const evSlug = getEventSlug(ev);
+            if (evSlug) localStorage.setItem(`tn_assembly_cabinet_${evSlug}`, JSON.stringify(sc.cabinet_ministries));
+          } catch {}
+        }
       }
       if (Array.isArray(sc.yuva_assignments)) {
         const key = `${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${ev.id}`;
@@ -1727,8 +1737,8 @@ class StorageService {
         }
         if (!attendanceErr && Array.isArray(rawAttendance)) {
           allDayAtt = [...allDayAtt, ...(rawAttendance as unknown as DayAttendanceRecord[]).map(r => {
-            const { fn, an } = getRecordSessionStatuses(r);
-            return { ...r, fn_status: r.fn_status || fn, an_status: r.an_status || an };
+            const { fn, an, overall } = getRecordSessionStatuses(r);
+            return { ...r, fn_status: r.fn_status || fn, an_status: r.an_status || an, status: overall };
           })];
         }
 
@@ -1944,9 +1954,10 @@ class StorageService {
           const retainedLocalAtt = localAtt.filter(a => !remoteEventIds.has(a.event_id));
           const attMap = new Map<string, DayAttendanceRecord>();
           allDayAtt.forEach(a => {
-            const { fn, an } = getRecordSessionStatuses(a);
+            const { fn, an, overall } = getRecordSessionStatuses(a);
             attMap.set(`${a.event_id}:::${a.day_id}:::${a.student_id}`, {
               ...a,
+              status: overall,
               fn_status: a.fn_status || fn,
               an_status: a.an_status || an
             });
@@ -2292,13 +2303,16 @@ class StorageService {
       getEventSlug(e).toLowerCase() === cleanKey || 
       (e.slug && e.slug.toLowerCase() === cleanKey)
     );
-    if (ev && Array.isArray(ev.cabinet_ministries) && ev.cabinet_ministries.length > 0) {
+
+    // Prefer explicit event-level cabinet_ministries if defined
+    if (ev && Array.isArray(ev.cabinet_ministries)) {
       return ev.cabinet_ministries;
     }
     const sc = ev?.social_coverage as Record<string, any> | undefined;
-    if (sc && Array.isArray(sc.cabinet_ministries) && sc.cabinet_ministries.length > 0) {
+    if (sc && Array.isArray(sc.cabinet_ministries)) {
       return sc.cabinet_ministries;
     }
+
     if (typeof localStorage !== 'undefined') {
       try {
         const stored = localStorage.getItem(`tn_assembly_cabinet_${eventId}`);
@@ -2331,13 +2345,80 @@ class StorageService {
         }
       } catch {}
     }
-    if (ev && Array.isArray(ev.cabinet_ministries)) {
-      return ev.cabinet_ministries;
-    }
-    if (sc && Array.isArray(sc.cabinet_ministries)) {
-      return sc.cabinet_ministries;
-    }
     return [];
+  }
+
+  private lastMinistryReqTimes: Record<string, number> = {};
+
+  /**
+   * Directly fetches the latest target ministries for the specified event from Supabase college_events.
+   * Scoped strictly to the given event ID or slug with race-condition timestamp protection.
+   */
+  public async fetchEventMinistries(eventIdOrSlug: string): Promise<string[]> {
+    if (!eventIdOrSlug) return [];
+    const cleanKey = eventIdOrSlug.trim();
+    const reqTime = Date.now();
+    this.lastMinistryReqTimes[cleanKey.toLowerCase()] = reqTime;
+
+    const currentCached = this.getCabinetMinistries(cleanKey);
+    const sb = supabase;
+    if (!sb || !isSupabaseEnabled) {
+      return currentCached;
+    }
+
+    try {
+      const allEvs = this.getEvents();
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanKey);
+      const matched = findEventBySlug(allEvs, cleanKey) || allEvs.find(e => e.id === cleanKey);
+      const targetEventId = matched?.id || (isUuid ? cleanKey : undefined);
+
+      let query = sb.from('college_events').select('id, slug, college_name, social_coverage');
+      if (targetEventId) {
+        query = query.eq('id', targetEventId);
+      } else {
+        query = query.or(`slug.eq.${cleanKey},college_name.ilike.%${cleanKey.split('-')[0]}%`);
+      }
+
+      const { data, error } = await query.limit(1);
+      if (error) {
+        console.warn('[StorageService] fetchEventMinistries error:', error.message);
+        return currentCached;
+      }
+
+      // Race condition check: drop stale server response if a newer request was made
+      if (this.lastMinistryReqTimes[cleanKey.toLowerCase()] && this.lastMinistryReqTimes[cleanKey.toLowerCase()] > reqTime) {
+        return this.getCabinetMinistries(cleanKey);
+      }
+
+      if (data && data.length > 0) {
+        const ev = data[0];
+        const sc = (ev.social_coverage || {}) as Record<string, any>;
+        const ministries: string[] = Array.isArray(sc.cabinet_ministries) ? sc.cabinet_ministries : [];
+
+        if (typeof localStorage !== 'undefined') {
+          try {
+            localStorage.setItem(`tn_assembly_cabinet_${ev.id}`, JSON.stringify(ministries));
+            if (ev.slug) {
+              localStorage.setItem(`tn_assembly_cabinet_${ev.slug}`, JSON.stringify(ministries));
+            }
+          } catch {}
+        }
+
+        const targetEv = allEvs.find(e => e.id === ev.id);
+        if (targetEv) {
+          targetEv.cabinet_ministries = ministries;
+          const scEv = (targetEv.social_coverage || {}) as Record<string, any>;
+          targetEv.social_coverage = { ...scEv, cabinet_ministries: ministries };
+          this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === targetEv.id ? targetEv : e));
+        }
+
+        this.notify();
+        return ministries;
+      }
+    } catch (err) {
+      console.warn('[StorageService] fetchEventMinistries exception:', err);
+    }
+    return currentCached;
   }
 
   /**
@@ -2568,8 +2649,12 @@ class StorageService {
           this.setItem(STORAGE_KEYS.VOLUNTEERS, [...otherVol, ...(volData as unknown as Volunteer[])]);
         }
         if (attData && Array.isArray(attData)) {
+          const mappedAtt = (attData as unknown as DayAttendanceRecord[]).map(r => {
+            const { fn, an, overall } = getRecordSessionStatuses(r);
+            return { ...r, fn_status: r.fn_status || fn, an_status: r.an_status || an, status: overall };
+          });
           const otherAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []).filter(a => a.event_id && a.event_id !== eventId);
-          this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...otherAtt, ...(attData as unknown as DayAttendanceRecord[])]);
+          this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...otherAtt, ...mappedAtt]);
         }
         if (daysData && Array.isArray(daysData)) {
           const otherDays = this.getEventDays().filter(d => d.event_id && d.event_id !== eventId);
@@ -2876,9 +2961,13 @@ class StorageService {
         this.setItem(STORAGE_KEYS.LEARNERS, [...otherLearners, ...(learnersData as unknown as Learner[])]);
       }
 
-      if (attData) {
+      if (attData && Array.isArray(attData)) {
+        const mappedAtt = (attData as unknown as DayAttendanceRecord[]).map(r => {
+          const { fn, an, overall } = getRecordSessionStatuses(r);
+          return { ...r, fn_status: r.fn_status || fn, an_status: r.an_status || an, status: overall };
+        });
         const otherAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []).filter(a => a.event_id && a.event_id !== eventId);
-        this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...otherAtt, ...(attData as unknown as DayAttendanceRecord[])]);
+        this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...otherAtt, ...mappedAtt]);
       }
 
       this.setCacheEntry(cacheKey, {
@@ -3343,7 +3432,14 @@ class StorageService {
           this.invalidateCache('portal_');
           this.invalidateCache('sync_');
           if (payload?.new && payload.new.id) {
-            const rec = payload.new as DayAttendanceRecord;
+            const rawRec = payload.new as DayAttendanceRecord;
+            const { fn, an, overall } = getRecordSessionStatuses(rawRec);
+            const rec: DayAttendanceRecord = {
+              ...rawRec,
+              fn_status: rawRec.fn_status || fn,
+              an_status: rawRec.an_status || an,
+              status: overall
+            };
             const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
             // Optimistically merge payload.new into the local attendance cache/state
             const next = curAtt.filter(
@@ -3381,7 +3477,14 @@ class StorageService {
           const p = msg?.payload;
           if (p && (p.eventId === activeEventId || !p.eventId)) {
             if (p.record) {
-              const rec = p.record as DayAttendanceRecord;
+              const rawRec = p.record as DayAttendanceRecord;
+              const { fn, an, overall } = getRecordSessionStatuses(rawRec);
+              const rec: DayAttendanceRecord = {
+                ...rawRec,
+                fn_status: rawRec.fn_status || fn,
+                an_status: rawRec.an_status || an,
+                status: overall
+              };
               const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
               const next = curAtt.filter(
                 a => a.id !== rec.id && !(a.event_id === rec.event_id && a.day_id === rec.day_id && a.student_id === rec.student_id)
@@ -3389,8 +3492,12 @@ class StorageService {
               next.push(rec);
               this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, next);
             } else if (Array.isArray(p.records)) {
-              const recs = p.records as DayAttendanceRecord[];
+              const rawRecs = p.records as DayAttendanceRecord[];
               const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+              const recs = rawRecs.map(r => {
+                const { fn, an, overall } = getRecordSessionStatuses(r);
+                return { ...r, fn_status: r.fn_status || fn, an_status: r.an_status || an, status: overall };
+              });
               const keys = new Set(recs.map(r => `${r.event_id}:::${r.day_id}:::${r.student_id}`));
               const next = curAtt.filter(a => !keys.has(`${a.event_id}:::${a.day_id}:::${a.student_id}`));
               next.push(...recs);
@@ -5798,16 +5905,17 @@ class StorageService {
     const all = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
     const existingIndex = all.findIndex(a => a.event_id === eventId && a.day_id === dayId && a.student_id === studentId);
     const prior = existingIndex >= 0 ? all[existingIndex] : null;
+    const { fn: priorFn, an: priorAn } = getRecordSessionStatuses(prior || undefined);
 
     let nextFnStatus: DayAttendanceStatus;
     let nextAnStatus: DayAttendanceStatus;
 
     if (session === 'FN') {
       nextFnStatus = status;
-      nextAnStatus = prior?.an_status ?? (prior?.status === 'Present' ? 'Present' : 'Absent');
+      nextAnStatus = priorAn;
     } else if (session === 'AN') {
       nextAnStatus = status;
-      nextFnStatus = prior?.fn_status ?? (prior?.status === 'Present' ? 'Present' : 'Absent');
+      nextFnStatus = priorFn;
     } else {
       nextFnStatus = status;
       nextAnStatus = status;
@@ -5966,15 +6074,16 @@ class StorageService {
       const localExisting = existingMap.get(key);
       const remoteExisting = remoteExistingMap.get(stId);
       const prior = localExisting || remoteExisting;
+      const { fn: priorFn, an: priorAn } = getRecordSessionStatuses(prior);
 
       let nextFn: DayAttendanceStatus;
       let nextAn: DayAttendanceStatus;
       if (session === 'FN') {
         nextFn = status;
-        nextAn = prior?.an_status ?? (prior?.status === 'Present' ? 'Present' : 'Absent');
+        nextAn = priorAn;
       } else if (session === 'AN') {
         nextAn = status;
-        nextFn = prior?.fn_status ?? (prior?.status === 'Present' ? 'Present' : 'Absent');
+        nextFn = priorFn;
       } else {
         nextFn = status;
         nextAn = status;
@@ -7133,6 +7242,7 @@ class StorageService {
     const allEvs = this.getEvents();
     const target = allEvs.find(e => e.id === eventId || getEventSlug(e) === eventId);
     const resolvedSlug = target ? getEventSlug(target) : eventId;
+    const resolvedEventId = target?.id || (eventId.length === 36 ? eventId : undefined);
 
     if (typeof localStorage !== 'undefined' && eventId) {
       try {
@@ -7140,12 +7250,15 @@ class StorageService {
         if (resolvedSlug) {
           localStorage.setItem(`tn_assembly_cabinet_${resolvedSlug}`, JSON.stringify(ministries));
         }
+        if (resolvedEventId && resolvedEventId !== eventId) {
+          localStorage.setItem(`tn_assembly_cabinet_${resolvedEventId}`, JSON.stringify(ministries));
+        }
       } catch (err) {
         console.warn('Failed to cache cabinet ministries to localStorage:', err);
       }
     }
 
-    // Update both cabinet_ministries AND social_coverage.cabinet_ministries so both persist to Supabase
+    // Update in-memory events state with both top-level and social_coverage cabinet_ministries
     const events = allEvs.map(e => {
       if (e.id === eventId || e.id === target?.id) {
         const sc = { ...((e.social_coverage as Record<string, unknown>) || {}) };
@@ -7156,11 +7269,55 @@ class StorageService {
     });
     this.setItem(STORAGE_KEYS.EVENTS, events);
 
+    const syncTarget = events.find(e => e.id === eventId || e.id === target?.id);
+    const dbTargetId = syncTarget?.id || resolvedEventId || eventId;
+
+    if (supabase) {
+      try {
+        // Fetch current remote social_coverage to merge cleanly
+        const { data: currentRemote } = await supabase
+          .from('college_events')
+          .select('id, social_coverage')
+          .eq('id', dbTargetId)
+          .maybeSingle();
+
+        const baseSc = (currentRemote?.social_coverage || syncTarget?.social_coverage || {}) as Record<string, any>;
+        const updatedSc = { ...baseSc, cabinet_ministries: ministries };
+
+        const { error } = await supabase.from('college_events').update({
+          social_coverage: updatedSc
+        }).eq('id', dbTargetId);
+
+        if (error) {
+          console.error('[Supabase] saveCabinetMinistries error:', error.message);
+          return { success: false, error };
+        }
+
+        // Immediately re-fetch and verify from DB (Requirement 3)
+        const { data: verified, error: verifyErr } = await supabase
+          .from('college_events')
+          .select('id, social_coverage')
+          .eq('id', dbTargetId)
+          .maybeSingle();
+
+        if (verifyErr || !verified) {
+          console.error('[Supabase] saveCabinetMinistries verification failed:', verifyErr);
+          return { success: false, error: verifyErr || new Error('Database verification failed') };
+        }
+
+        console.log('[StorageService] Successfully verified saved ministries in DB for event:', dbTargetId, verified.social_coverage?.cabinet_ministries);
+      } catch (err) {
+        console.error('[Supabase] saveCabinetMinistries exception:', err);
+        return { success: false, error: err };
+      }
+    }
+
     // ZERO-LATENCY REALTIME BROADCAST to all connected students and coordinators
     this.broadcast('ministries_update', {
-      eventId,
+      eventId: dbTargetId,
       eventSlug: resolvedSlug,
-      ministries
+      ministries,
+      timestamp: Date.now()
     }).catch(err => {
       console.warn('[Supabase] broadcast ministries_update error:', err);
     });
@@ -7168,22 +7325,6 @@ class StorageService {
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
 
-    const syncTarget = events.find(e => e.id === eventId || e.id === target?.id);
-    if (syncTarget && supabase) {
-      try {
-        const { error } = await supabase.from('college_events').update({
-          social_coverage: syncTarget.social_coverage,
-          cabinet_ministries: ministries
-        }).eq('id', syncTarget.id || eventId);
-        if (error) {
-          console.error('[Supabase] saveCabinetMinistries error:', error.message);
-          return { success: false, error };
-        }
-      } catch (err) {
-        console.error('[Supabase] saveCabinetMinistries exception:', err);
-        return { success: false, error: err };
-      }
-    }
     return { success: true };
   }
 
@@ -10202,7 +10343,7 @@ class StorageService {
       const matched = cleanKey ? (findEventBySlug(allEvs, cleanKey) || allEvs.find(e => e.id === cleanKey)) : undefined;
       const targetEventId = matched?.id || (isUuid ? cleanKey : undefined);
 
-      let query = sb.from('college_events').select('id, college_name, slug, social_coverage, cabinet_ministries');
+      let query = sb.from('college_events').select('id, college_name, slug, social_coverage');
       if (targetEventId) {
         query = query.eq('id', targetEventId);
       } else if (cleanKey) {
@@ -10217,25 +10358,23 @@ class StorageService {
         const sc = (ev.social_coverage || {}) as Record<string, any>;
 
         // Synchronize remote cabinet_ministries immediately so target ministry is available on initial load
-        const remoteMinistries: string[] = (Array.isArray(sc.cabinet_ministries) && sc.cabinet_ministries.length > 0)
+        const remoteMinistries: string[] = Array.isArray(sc.cabinet_ministries)
           ? sc.cabinet_ministries
-          : (Array.isArray((ev as any).cabinet_ministries) && (ev as any).cabinet_ministries.length > 0 ? (ev as any).cabinet_ministries : []);
-        if (remoteMinistries.length > 0) {
-          if (typeof localStorage !== 'undefined') {
-            try {
-              localStorage.setItem(`tn_assembly_cabinet_${ev.id}`, JSON.stringify(remoteMinistries));
-              if (ev.slug) {
-                localStorage.setItem(`tn_assembly_cabinet_${ev.slug}`, JSON.stringify(remoteMinistries));
-              }
-            } catch {}
-          }
-          const targetEv = allEvs.find(e => e.id === ev.id);
-          if (targetEv) {
-            targetEv.cabinet_ministries = remoteMinistries;
-            const scEv = (targetEv.social_coverage || {}) as Record<string, any>;
-            targetEv.social_coverage = { ...scEv, cabinet_ministries: remoteMinistries };
-            this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === targetEv.id ? targetEv : e));
-          }
+          : (Array.isArray((ev as any).cabinet_ministries) ? (ev as any).cabinet_ministries : []);
+        if (typeof localStorage !== 'undefined') {
+          try {
+            localStorage.setItem(`tn_assembly_cabinet_${ev.id}`, JSON.stringify(remoteMinistries));
+            if (ev.slug) {
+              localStorage.setItem(`tn_assembly_cabinet_${ev.slug}`, JSON.stringify(remoteMinistries));
+            }
+          } catch {}
+        }
+        const targetEv = allEvs.find(e => e.id === ev.id);
+        if (targetEv) {
+          targetEv.cabinet_ministries = remoteMinistries;
+          const scEv = (targetEv.social_coverage || {}) as Record<string, any>;
+          targetEv.social_coverage = { ...scEv, cabinet_ministries: remoteMinistries };
+          this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === targetEv.id ? targetEv : e));
         }
 
         // Synchronize remote deleted_question_ids tombstones

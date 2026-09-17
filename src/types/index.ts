@@ -560,7 +560,7 @@ export function getRecordSessionStatuses(record?: DayAttendanceRecord): {
   if (record.fn_status && record.an_status) {
     const fn = record.fn_status;
     const an = record.an_status;
-    const overall: DayAttendanceStatus = (fn === 'Present' || an === 'Present' || record.status === 'Present') ? 'Present' : 'Absent';
+    const overall: DayAttendanceStatus = (fn === 'Present' || an === 'Present') ? 'Present' : 'Absent';
     return { fn, an, overall };
   }
 
@@ -570,7 +570,7 @@ export function getRecordSessionStatuses(record?: DayAttendanceRecord): {
     if (fnMatch) {
       const fn = fnMatch[1] as DayAttendanceStatus;
       const an = fnMatch[2] as DayAttendanceStatus;
-      const overall: DayAttendanceStatus = (fn === 'Present' || an === 'Present' || record.status === 'Present') ? 'Present' : 'Absent';
+      const overall: DayAttendanceStatus = (fn === 'Present' || an === 'Present') ? 'Present' : 'Absent';
       return { fn, an, overall };
     }
   }
@@ -579,7 +579,7 @@ export function getRecordSessionStatuses(record?: DayAttendanceRecord): {
   const isOverallPresent = record.status === 'Present';
   const fn: DayAttendanceStatus = record.fn_status || (isOverallPresent ? 'Present' : 'Absent');
   const an: DayAttendanceStatus = record.an_status || (isOverallPresent ? 'Present' : 'Absent');
-  const overall: DayAttendanceStatus = (fn === 'Present' || an === 'Present' || isOverallPresent) ? 'Present' : 'Absent';
+  const overall: DayAttendanceStatus = isOverallPresent ? 'Present' : 'Absent';
   return { fn, an, overall };
 }
 

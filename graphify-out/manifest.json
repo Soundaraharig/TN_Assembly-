@@ -336,9 +336,9 @@
     "semantic_hash": "5b4bc0f8532cd2bd90daced81d45749a"
   },
   "src/App.tsx": {
-    "mtime": 1789621818.4846344,
-    "seen": 1789621880.603805,
-    "ast_hash": "4382e7ea11d2c37a004a432f9f71b358",
+    "mtime": 1789642451.627823,
+    "seen": 1789642678.3189545,
+    "ast_hash": "c28281b2ffd8b487539970864e0bdc49",
     "semantic_hash": ""
   },
   "src/components/admin/CreateEventModal.tsx": {
@@ -348,9 +348,9 @@
     "semantic_hash": "a3f9bdf2bec8f9201297c4082dc98e27"
   },
   "src/components/admin/DaysActivitiesTab.tsx": {
-    "mtime": 1789445012.1502874,
-    "seen": 1789445875.356425,
-    "ast_hash": "fca8a3e40e6f835eddf64a6b7e054322",
+    "mtime": 1789642592.2373056,
+    "seen": 1789642678.3190448,
+    "ast_hash": "fb09610a568852bbde7320bec42a5bc7",
     "semantic_hash": ""
   },
   "src/components/admin/EditCoordinatorModal.tsx": {
@@ -462,9 +462,9 @@
     "semantic_hash": "ba398393f6b1c486a30ea92c7e26138f"
   },
   "src/components/coordinator/CabinetTab.tsx": {
-    "mtime": 1789621809.1170857,
-    "seen": 1789621880.6071093,
-    "ast_hash": "ef7235420e43d258a1efb1bc42c9c46d",
+    "mtime": 1789641425.4667287,
+    "seen": 1789641499.1706371,
+    "ast_hash": "eee475c5cba0ebce082c86462377cd15",
     "semantic_hash": ""
   },
   "src/components/coordinator/ChapterAwardsTab.tsx": {
@@ -612,9 +612,9 @@
     "semantic_hash": ""
   },
   "src/components/student/StudentDashboard.tsx": {
-    "mtime": 1789637456.7308638,
-    "seen": 1789637492.8583052,
-    "ast_hash": "df29f3e3bf06882e95a3694060fa1318",
+    "mtime": 1789641409.508309,
+    "seen": 1789641499.17652,
+    "ast_hash": "b7400e360e5c6459cd5b3068f79acff6",
     "semantic_hash": ""
   },
   "src/components/student/StudentJoinModal.tsx": {
@@ -666,15 +666,15 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1789637432.773489,
-    "seen": 1789637492.859117,
-    "ast_hash": "79bcb1f83956af8e5de41ead76bd9543",
+    "mtime": 1789642629.1790504,
+    "seen": 1789642678.32354,
+    "ast_hash": "c86ff824514da1a0c1264806d94d0395",
     "semantic_hash": ""
   },
   "src/types/index.ts": {
-    "mtime": 1789625800.226861,
-    "seen": 1789636734.028748,
-    "ast_hash": "f466d754884e867dd395f45faf4e38b6",
+    "mtime": 1789642327.676219,
+    "seen": 1789642678.3235412,
+    "ast_hash": "5440f49ef612873a98e670dbf8f81df2",
     "semantic_hash": ""
   },
   "src/utils/accessCodeGenerator.ts": {

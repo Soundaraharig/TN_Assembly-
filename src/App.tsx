@@ -336,7 +336,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
   }, [activeEvent?.id, props.eventDays]);
 
   const currentDayAttendance = useMemo(() => {
-    return activeEvent?.id ? props.dayAttendance.filter(a => a.event_id === activeEvent.id) : props.dayAttendance;
+    return activeEvent?.id ? storageService.getDayAttendance(activeEvent.id) : props.dayAttendance;
   }, [activeEvent?.id, props.dayAttendance]);
 
   const currentProceedings = useMemo(() => {

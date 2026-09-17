@@ -96,6 +96,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     if (fromId.length > 0) return fromId;
     return storageService.getCabinetMinistries(eventSlug);
   });
+  const [isMinistriesLoading, setIsMinistriesLoading] = useState<boolean>(() => {
+    const fromId = storageService.getCabinetMinistries(resolvedEventId);
+    const fromSlug = storageService.getCabinetMinistries(eventSlug);
+    return fromId.length === 0 && fromSlug.length === 0;
+  });
   const [questionMinistry, setQuestionMinistry] = useState<string>(() => {
     const mins = storageService.getCabinetMinistries(resolvedEventId);
     const resolved = mins.length > 0 ? mins : storageService.getCabinetMinistries(eventSlug);
@@ -127,36 +132,54 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     // Ensure realtime broadcast channel is active on student client
     storageService.setupRealtimeSync();
 
+    const currentResolvedId = event?.id || storageService.getEvents().find(e => getEventSlug(e) === eventSlug)?.id || targetEventId;
+    console.log("Question Hour event ID:", currentResolvedId);
+
     const refreshLiveState = () => {
-      const currentResolvedId = event?.id || storageService.getEvents().find(e => getEventSlug(e) === eventSlug)?.id || targetEventId;
-      if (eventSlug || currentResolvedId) {
-        const freshDeadline = storageService.getEventDeadline(eventSlug) || storageService.getEventDeadline(currentResolvedId);
+      const activeId = event?.id || storageService.getEvents().find(e => getEventSlug(e) === eventSlug)?.id || targetEventId;
+      if (eventSlug || activeId) {
+        const freshDeadline = storageService.getEventDeadline(eventSlug) || storageService.getEventDeadline(activeId);
         setDeadline(freshDeadline);
-        const allQ = [...storageService.getProceedingsQuestions(eventSlug), ...storageService.getProceedingsQuestions(currentResolvedId)];
+        const allQ = [...storageService.getProceedingsQuestions(eventSlug), ...storageService.getProceedingsQuestions(activeId)];
         const uniqueQ = Array.from(new Map(allQ.map(q => [q.id, q])).values());
         setStudentQuestions(uniqueQ.filter(q => q.student_id === student.id || q.student_name === student.full_name));
         setApprovedHouseQuestions(uniqueQ.filter(q => q.status === 'Approved' || q.status === 'Starred'));
 
         // Refresh configured ministries from Cabinet & Shadow Ministry system
-        const fromId = storageService.getCabinetMinistries(currentResolvedId);
+        const fromId = storageService.getCabinetMinistries(activeId);
         const activeMins = fromId.length > 0 ? fromId : storageService.getCabinetMinistries(eventSlug);
         setEventMinistries(activeMins);
+        setIsMinistriesLoading(false);
         setQuestionMinistry(prev => {
           if (activeMins.includes(prev)) return prev;
           return activeMins.length > 0 ? activeMins[0] : '';
         });
 
-        const updatedElecs = storageService.getElections(currentResolvedId, 'student', student.id);
+        const updatedElecs = storageService.getElections(activeId, 'student', student.id);
         setSyncedElections(updatedElecs);
-        const updatedFV = storageService.getFlashVotes(currentResolvedId, 'student', student.id);
+        const updatedFV = storageService.getFlashVotes(activeId, 'student', student.id);
         setSyncedFlashVotes(updatedFV);
-        const updatedNoms = storageService.getNominations(currentResolvedId, 'student', student.id);
+        const updatedNoms = storageService.getNominations(activeId, 'student', student.id);
         setSyncedNominations(updatedNoms);
       }
     };
     refreshLiveState();
 
-    const currentResolvedId = event?.id || storageService.getEvents().find(e => getEventSlug(e) === eventSlug)?.id || targetEventId;
+    // Query the database directly for ministries configured for THIS specific event
+    if (currentResolvedId) {
+      storageService.fetchEventMinistries(currentResolvedId).then(mins => {
+        setEventMinistries(mins);
+        setIsMinistriesLoading(false);
+        setQuestionMinistry(prev => {
+          if (mins.includes(prev)) return prev;
+          return mins.length > 0 ? mins[0] : '';
+        });
+      }).catch(err => {
+        console.warn('[StudentDashboard] fetchEventMinistries error:', err);
+        setIsMinistriesLoading(false);
+      });
+    }
+
     if (currentResolvedId || eventSlug) {
       storageService.fetchProceedingsQuestionsOnDemand(currentResolvedId || eventSlug).then(() => {
         refreshLiveState();
@@ -229,6 +252,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     if (isSubmittingQuestion) return;
     if (!isQuestionWindowOpen) {
       onShowToast('Submission Closed', 'Question submission deadline has passed.', 'error');
+      return;
+    }
+    if (isMinistriesLoading) {
+      onShowToast('Please Wait', 'Ministries are still loading for this event.', 'info');
       return;
     }
     if (!questionMinistry || eventMinistries.length === 0) {
@@ -1264,12 +1291,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <div>
                   <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Target Ministry</label>
                   <select
-                    disabled={!isQuestionWindowOpen || eventMinistries.length === 0 || isSubmittingQuestion}
+                    disabled={!isQuestionWindowOpen || isMinistriesLoading || eventMinistries.length === 0 || isSubmittingQuestion}
                     value={questionMinistry}
                     onChange={(e) => setQuestionMinistry(e.target.value)}
                     className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white font-semibold focus:outline-none focus:border-amber-500 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {eventMinistries.length === 0 ? (
+                    {isMinistriesLoading ? (
+                      <option value="" disabled>Loading ministries...</option>
+                    ) : eventMinistries.length === 0 ? (
                       <option value="" disabled>No ministries configured for this event.</option>
                     ) : (
                       eventMinistries.map(m => (
