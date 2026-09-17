@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import type { Learner, Party } from '../../types';
 import {
   getResolvedPartyName,
@@ -12,18 +12,17 @@ import {
 } from '../../services/storageService';
 import {
   Landmark,
-  Save,
-  RotateCcw,
   Plus,
   Trash2,
-  CheckSquare,
-  Square,
   Sparkles,
   Users,
   Search,
   ChevronDown,
   UserCheck,
-  Lock
+  Lock,
+  Pencil,
+  Check,
+  X
 } from 'lucide-react';
 
 interface CabinetTabProps {
@@ -42,83 +41,6 @@ export interface MinistryItem {
   name: string;
   isCustom?: boolean;
 }
-
-export const DEFAULT_MINISTRY_ITEMS: MinistryItem[] = [
-  { id: 'min_edu', name: 'Ministry of Education' },
-  { id: 'min_finance', name: 'Ministry of Finance' },
-  { id: 'min_health', name: 'Ministry of Health & Family Welfare' },
-  { id: 'min_it_ai', name: 'Ministry of IT & AI' },
-  { id: 'min_pwi', name: 'Ministry of Public Works & Infrastructure' },
-  { id: 'min_sports', name: 'Ministry of Youth Affairs & Sports' },
-  { id: 'min_youth_sports', name: 'Ministry of Youth & Sports' },
-  { id: 'min_wcd', name: 'Ministry of Women & Child Development' },
-  { id: 'min_social', name: 'Ministry of Social Justice & Empowerment' },
-  { id: 'min_transport', name: 'Ministry of Road Transport & Highways' },
-  { id: 'min_rural', name: 'Ministry of Rural Development' },
-  { id: 'min_science', name: 'Ministry of Science & Technology' },
-  { id: 'min_msme', name: 'Ministry of MSME' },
-  { id: 'min_env', name: 'Ministry of Environment, Forest, & Climate Change' },
-  { id: 'min_environment', name: 'Ministry of Environment' },
-  { id: 'min_skill', name: 'Ministry of Skill Development & Entrepreneurship' },
-  { id: 'min_it', name: 'Ministry of Electronics & IT' },
-  { id: 'min_jal', name: 'Ministry of Jal Shakti' },
-  { id: 'min_urban', name: 'Ministry of Housing & Urban Affairs' },
-  { id: 'min_home', name: 'Ministry of Home Affairs' },
-  { id: 'min_defence', name: 'Ministry of Defence' },
-  { id: 'min_agri', name: 'Ministry of Agriculture' },
-  { id: 'min_law', name: 'Ministry of Law & Justice' },
-  { id: 'min_commerce', name: 'Ministry of Commerce & Industry' },
-  { id: 'min_power', name: 'Ministry of Power' },
-  { id: 'min_railways', name: 'Ministry of Railways' },
-  { id: 'min_parliament', name: 'Ministry of Parliamentary Affairs' },
-  { id: 'min_tourism', name: 'Ministry of Tourism & Culture' }
-];
-
-export const DEFAULT_MINISTRIES = DEFAULT_MINISTRY_ITEMS.map((m: MinistryItem) => m.name);
-
-export const DEFAULT_CUSTOM_ITEMS: MinistryItem[] = [
-  { id: 'custom_environment', name: 'Ministry of Environment', isCustom: true }
-];
-
-export const DEFAULT_SELECTED_IDS: string[] = [
-  'min_edu',
-  'min_finance',
-  'min_health',
-  'min_it_ai',
-  'min_pwi',
-  'min_sports',
-  'min_wcd',
-  'min_skill',
-  'min_home',
-  'min_defence',
-  'min_agri',
-  'min_it',
-  'min_tourism',
-  'min_environment'
-];
-
-const getStoredCustomMinistries = (eId?: string): MinistryItem[] => {
-  if (!eId || typeof window === 'undefined') return DEFAULT_CUSTOM_ITEMS;
-  try {
-    const raw = localStorage.getItem(`tn_assembly_custom_ministries_${eId}`);
-    if (raw !== null) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
-    }
-  } catch {
-    // fallback
-  }
-  return DEFAULT_CUSTOM_ITEMS;
-};
-
-const saveStoredCustomMinistries = (eId: string | undefined, customs: MinistryItem[]) => {
-  if (!eId || typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(`tn_assembly_custom_ministries_${eId}`, JSON.stringify(customs));
-  } catch {
-    // ignore
-  }
-};
 
 // Helper Searchable Dropdown for assigning delegates to portfolio roles
 interface SearchableDelegateSelectProps {
@@ -318,10 +240,33 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
   onAssignCabinetRole,
   onShowToast
 }) => {
-  const [selectedMinistryIds, setSelectedMinistryIds] = useState<string[]>(DEFAULT_SELECTED_IDS);
-  const [customMinistries, setCustomMinistries] = useState<MinistryItem[]>(() => getStoredCustomMinistries(eventId));
+  // Ministries come ONLY from Supabase via savedMinistries prop — NO defaults
+  const [ministries, setMinistries] = useState<string[]>([]);
   const [newMinistryInput, setNewMinistryInput] = useState('');
   const [viewMode, setViewMode] = useState<'roster' | 'config'>('roster');
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingName, setEditingName] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const prevEventIdRef = useRef<string | undefined>(eventId);
+
+  // Sync ministries from savedMinistries prop (Supabase source of truth)
+  useEffect(() => {
+    if (Array.isArray(savedMinistries)) {
+      setMinistries(savedMinistries);
+    } else {
+      setMinistries([]);
+    }
+  }, [savedMinistries]);
+
+  // Reset editing state when event changes
+  useEffect(() => {
+    if (eventId !== prevEventIdRef.current) {
+      prevEventIdRef.current = eventId;
+      setEditingIndex(null);
+      setEditingName('');
+      setNewMinistryInput('');
+    }
+  }, [eventId]);
 
   const eventLearners = useMemo(() => {
     return eventId ? (learners || []).filter(l => l.event_id === eventId) : (learners || []);
@@ -352,134 +297,25 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
     return map;
   }, [eventLearners]);
 
-  const isInitializedRef = useRef(false);
-  const isDirtyRef = useRef(false);
-  const prevSavedMinistriesRef = useRef<string[] | undefined>(savedMinistries);
-  const prevEventIdRef = useRef<string | undefined>(eventId);
+  const activeCount = ministries.length;
 
-  const allMinistries: MinistryItem[] = [...DEFAULT_MINISTRY_ITEMS, ...customMinistries];
-  const activeCount = selectedMinistryIds.length;
-
-  useEffect(() => {
-    // If event changed, reset initialization and dirty flags and reload event-specific custom ministries
-    if (eventId !== prevEventIdRef.current) {
-      prevEventIdRef.current = eventId;
-      isInitializedRef.current = false;
-      isDirtyRef.current = false;
-      setCustomMinistries(getStoredCustomMinistries(eventId));
-    }
-
-    const savedChanged = JSON.stringify(prevSavedMinistriesRef.current) !== JSON.stringify(savedMinistries);
-
-    // Only sync from props if component is uninitialized, OR if user hasn't made unsaved edits and savedMinistries content actually changed
-    if (!isInitializedRef.current || (!isDirtyRef.current && savedChanged)) {
-      prevSavedMinistriesRef.current = savedMinistries;
-      if (Array.isArray(savedMinistries) && savedMinistries.length > 0) {
-        const newSelectedIds: string[] = [];
-        const currentCustoms = getStoredCustomMinistries(eventId);
-        const newCustoms: MinistryItem[] = [...currentCustoms];
-        const normalizeMinName = (s: string) =>
-          s.toLowerCase()
-            .replace(/^ministry\s+(of|for)\s+/i, '')
-            .replace(/\band\b/g, '&')
-            .replace(/infrastracture/g, 'infrastructure')
-            .replace(/ai\s*&\s*it/g, 'it&ai')
-            .replace(/[^a-z0-9&]/g, '');
-
-        savedMinistries.forEach((savedItemStr) => {
-          const normSaved = normalizeMinName(savedItemStr);
-
-          // Find matching standard item by ID, Name, or normalized name
-          const standardMatch = DEFAULT_MINISTRY_ITEMS.find(m =>
-            m.id === savedItemStr ||
-            m.name.toLowerCase() === savedItemStr.toLowerCase() ||
-            normalizeMinName(m.name) === normSaved
-          );
-          if (standardMatch) {
-            if (!newSelectedIds.includes(standardMatch.id)) {
-              newSelectedIds.push(standardMatch.id);
-            }
-            return;
-          }
-
-          // Find matching custom item by ID or Name
-          const customMatch = newCustoms.find(m =>
-            m.id === savedItemStr ||
-            m.name.toLowerCase() === savedItemStr.toLowerCase() ||
-            normalizeMinName(m.name) === normSaved
-          );
-          if (customMatch) {
-            if (!newSelectedIds.includes(customMatch.id)) {
-              newSelectedIds.push(customMatch.id);
-            }
-            return;
-          }
-
-          // If not found in standard or custom, create a new custom item
-          const newItem: MinistryItem = {
-            id: `custom_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-            name: savedItemStr,
-            isCustom: true
-          };
-          newCustoms.push(newItem);
-          newSelectedIds.push(newItem.id);
-        });
-
-        setCustomMinistries(newCustoms);
-        saveStoredCustomMinistries(eventId, newCustoms);
-        setSelectedMinistryIds(newSelectedIds);
-        isInitializedRef.current = true;
-      } else if (!isInitializedRef.current) {
-        setSelectedMinistryIds(DEFAULT_SELECTED_IDS);
-        if (Array.isArray(savedMinistries)) {
-          isInitializedRef.current = true;
-        }
+  // Persist ministries to Supabase via the existing onSaveCabinet callback
+  const persistMinistries = useCallback(async (updated: string[]) => {
+    if (!onSaveCabinet) return;
+    setIsSaving(true);
+    try {
+      const result = await onSaveCabinet(updated);
+      if (result && result.success === false) {
+        onShowToast('Save Failed', 'Failed to persist ministries to database. Please retry.', 'error');
       }
+    } catch {
+      onShowToast('Save Failed', 'An error occurred while saving. Please retry.', 'error');
+    } finally {
+      setIsSaving(false);
     }
-  }, [savedMinistries, eventId]);
+  }, [onSaveCabinet, onShowToast]);
 
-  const toggleSelection = (id: string) => {
-    if (isLocked) {
-      onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
-      return;
-    }
-    isDirtyRef.current = true;
-    setSelectedMinistryIds(prev =>
-      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
-    );
-  };
-
-  const handleSelectAll = () => {
-    if (isLocked) {
-      onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
-      return;
-    }
-    isDirtyRef.current = true;
-    setSelectedMinistryIds(allMinistries.map(m => m.id));
-  };
-
-  const handleClearAll = () => {
-    if (isLocked) {
-      onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
-      return;
-    }
-    isDirtyRef.current = true;
-    setSelectedMinistryIds([]);
-  };
-
-  const handleResetToDefault = () => {
-    if (isLocked) {
-      onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
-      return;
-    }
-    isDirtyRef.current = true;
-    setCustomMinistries(DEFAULT_CUSTOM_ITEMS);
-    saveStoredCustomMinistries(eventId, DEFAULT_CUSTOM_ITEMS);
-    setSelectedMinistryIds(DEFAULT_SELECTED_IDS);
-    onShowToast('Reset Complete', 'Restored default cabinet ministries', 'info');
-  };
-
-  const handleAddCustom = (e: React.FormEvent) => {
+  const handleAddMinistry = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isLocked) {
       onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
@@ -488,60 +324,113 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
     const trimmed = newMinistryInput.trim();
     if (!trimmed) return;
 
-    const exists = allMinistries.some(m => m.name.toLowerCase() === trimmed.toLowerCase());
-    if (!exists) {
-      isDirtyRef.current = true;
-      const newItem: MinistryItem = {
-        id: `custom_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        name: trimmed,
-        isCustom: true
-      };
-      const updatedCustoms = [...customMinistries, newItem];
-      setCustomMinistries(updatedCustoms);
-      setSelectedMinistryIds(prev => [...prev, newItem.id]);
-      saveStoredCustomMinistries(eventId, updatedCustoms);
-      setNewMinistryInput('');
-      onShowToast('Ministry Added', `Added ${trimmed} to custom list`, 'success');
-    } else {
-      onShowToast('Already Exists', 'This ministry is already in the list', 'info');
+    // Check for duplicate (case-insensitive) within this event
+    const exists = ministries.some(m => m.toLowerCase() === trimmed.toLowerCase());
+    if (exists) {
+      onShowToast('Already Exists', 'This ministry is already configured for this event', 'info');
+      return;
     }
+
+    const updated = [...ministries, trimmed];
+    setMinistries(updated);
+    setNewMinistryInput('');
+    await persistMinistries(updated);
+    onShowToast('Ministry Added', `Added "${trimmed}" to this event`, 'success');
   };
 
-  const handleRemoveCustom = (id: string) => {
+  const handleDeleteMinistry = async (index: number) => {
     if (isLocked) {
       onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
       return;
     }
-    isDirtyRef.current = true;
-    const itemToRemove = customMinistries.find(item => item.id === id);
-    const updatedCustoms = customMinistries.filter(item => item.id !== id);
-    setCustomMinistries(updatedCustoms);
-    setSelectedMinistryIds(prev => prev.filter(item => item !== id));
-    saveStoredCustomMinistries(eventId, updatedCustoms);
-    onShowToast('Ministry Deleted', `Removed ${itemToRemove?.name || 'custom ministry'} from list`, 'info');
-  };
+    const name = ministries[index];
+    const shortName = name.replace(/^Ministry\s+(of|for)\s+/i, '').trim();
+    const rulingRole = `Minister for ${shortName}`;
+    const shadowRole = `Shadow Minister for ${shortName}`;
 
-  const handleSave = async () => {
-    if (isLocked) {
-      onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
-      return;
-    }
-    const selectedMinistryNames = selectedMinistryIds
-      .map(id => allMinistries.find(m => m.id === id)?.name)
-      .filter((name): name is string => Boolean(name));
-
-    saveStoredCustomMinistries(eventId, customMinistries);
-    prevSavedMinistriesRef.current = selectedMinistryNames;
-    isInitializedRef.current = true;
-    isDirtyRef.current = false;
-    if (onSaveCabinet) {
-      const result = await onSaveCabinet(selectedMinistryNames);
-      if (result && result.success === false) {
-        onShowToast('Save Failed', 'Failed to persist cabinet to database. Please retry.', 'error');
-        return;
+    // Clear any learner assignments for this ministry
+    if (onAssignCabinetRole) {
+      const rulingHolder = eventLearners.find(l => isAssemblyRoleMatching(l.role, rulingRole));
+      const shadowHolder = eventLearners.find(l => isAssemblyRoleMatching(l.role, shadowRole));
+      if (rulingHolder) {
+        await onAssignCabinetRole('', rulingRole);
+      }
+      if (shadowHolder) {
+        await onAssignCabinetRole('', shadowRole);
       }
     }
-    onShowToast('Cabinet Saved', `Saved ${selectedMinistryNames.length} active ministries for this event`, 'success');
+
+    const updated = ministries.filter((_, i) => i !== index);
+    setMinistries(updated);
+    setEditingIndex(null);
+    await persistMinistries(updated);
+    onShowToast('Ministry Removed', `Removed "${name}" from this event`, 'info');
+  };
+
+  const handleStartRename = (index: number) => {
+    if (isLocked) {
+      onShowToast('Roster Locked', 'Unlock event in Overview tab to edit cabinet ministries', 'info');
+      return;
+    }
+    setEditingIndex(index);
+    setEditingName(ministries[index]);
+  };
+
+  const handleCancelRename = () => {
+    setEditingIndex(null);
+    setEditingName('');
+  };
+
+  const handleConfirmRename = async () => {
+    if (editingIndex === null) return;
+    const trimmed = editingName.trim();
+    if (!trimmed) {
+      onShowToast('Invalid Name', 'Ministry name cannot be empty', 'error');
+      return;
+    }
+
+    const oldName = ministries[editingIndex];
+    if (trimmed === oldName) {
+      handleCancelRename();
+      return;
+    }
+
+    // Check for duplicate
+    const exists = ministries.some((m, i) => i !== editingIndex && m.toLowerCase() === trimmed.toLowerCase());
+    if (exists) {
+      onShowToast('Already Exists', 'Another ministry with this name already exists for this event', 'info');
+      return;
+    }
+
+    // Update ministry name in the list
+    const updated = ministries.map((m, i) => i === editingIndex ? trimmed : m);
+    setMinistries(updated);
+    setEditingIndex(null);
+    setEditingName('');
+
+    // Update learner role names if assigned
+    const oldShort = oldName.replace(/^Ministry\s+(of|for)\s+/i, '').trim();
+    const newShort = trimmed.replace(/^Ministry\s+(of|for)\s+/i, '').trim();
+    const oldRuling = `Minister for ${oldShort}`;
+    const oldShadow = `Shadow Minister for ${oldShort}`;
+    const newRuling = `Minister for ${newShort}`;
+    const newShadow = `Shadow Minister for ${newShort}`;
+
+    if (onAssignCabinetRole) {
+      const rulingHolder = eventLearners.find(l => isAssemblyRoleMatching(l.role, oldRuling));
+      const shadowHolder = eventLearners.find(l => isAssemblyRoleMatching(l.role, oldShadow));
+
+      // Reassign with new role names to keep them connected
+      if (rulingHolder) {
+        await onAssignCabinetRole(rulingHolder.id, newRuling);
+      }
+      if (shadowHolder) {
+        await onAssignCabinetRole(shadowHolder.id, newShadow);
+      }
+    }
+
+    await persistMinistries(updated);
+    onShowToast('Ministry Renamed', `Renamed "${oldName}" → "${trimmed}"`, 'success');
   };
 
   const handleAssignRole = async (learnerId: string, portfolioRole: string) => {
@@ -580,19 +469,16 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
     }
   };
 
-  // Build active ministry portfolios based on selected Ministry IDs
-  const cabinetPortfolios = selectedMinistryIds
-    .map(id => allMinistries.find(m => m.id === id))
-    .filter((m): m is MinistryItem => Boolean(m))
-    .map(m => {
-      const shortName = m.name.replace(/^Ministry\s+(of|for)\s+/i, '').trim();
-      return {
-        id: m.id,
-        ministry: m.name,
-        rulingRole: `Minister for ${shortName}`,
-        shadowRole: `Shadow Minister for ${shortName}`
-      };
-    });
+  // Build active ministry portfolios from the event-specific ministry list
+  const cabinetPortfolios = ministries.map((name, index) => {
+    const shortName = name.replace(/^Ministry\s+(of|for)\s+/i, '').trim();
+    return {
+      id: `ministry_${index}`,
+      ministry: name,
+      rulingRole: `Minister for ${shortName}`,
+      shadowRole: `Shadow Minister for ${shortName}`
+    };
+  });
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -637,7 +523,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
           >
             {viewMode === 'roster' ? (
               <>
-                <CheckSquare className="w-3.5 h-3.5" />
+                <Users className="w-3.5 h-3.5" />
                 <span>Configure Active Ministries ({activeCount})</span>
               </>
             ) : (
@@ -735,246 +621,209 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {cabinetPortfolios.map(port => {
-                const rulingHolder = (eventLearners || []).find(l => isAssemblyRoleMatching(l.role, port.rulingRole));
-                const shadowHolder = (eventLearners || []).find(l => isAssemblyRoleMatching(l.role, port.shadowRole));
+            {cabinetPortfolios.length === 0 ? (
+              <div className="rounded-2xl p-8 border border-dashed text-center space-y-3" style={{ borderColor: 'var(--border-soft)' }}>
+                <Landmark className="w-10 h-10 text-slate-300 dark:text-slate-600 mx-auto" />
+                <p className="text-sm font-bold text-slate-500 dark:text-slate-400">No ministries configured for this event.</p>
+                <p className="text-xs text-slate-400">
+                  Switch to <strong>Configure Active Ministries</strong> to add your custom ministries.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {cabinetPortfolios.map(port => {
+                  const rulingHolder = (eventLearners || []).find(l => isAssemblyRoleMatching(l.role, port.rulingRole));
+                  const shadowHolder = (eventLearners || []).find(l => isAssemblyRoleMatching(l.role, port.shadowRole));
 
-                return (
-                  <div
-                    key={port.id}
-                    className="rounded-2xl p-5 border space-y-4 shadow-sm transition-all"
-                    style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}
-                  >
-                    <div className="border-b pb-2" style={{ borderColor: 'var(--border-soft)' }}>
-                      <h4 className="text-base font-extrabold" style={{ color: 'var(--text-primary)' }}>{port.ministry}</h4>
-                      <p className="text-[11px] text-slate-400">Assign Cabinet Minister & Opposition Counterpart</p>
-                    </div>
-
-                    <div className="space-y-3">
-                      {/* Ruling Cabinet Minister */}
-                      <div className="space-y-1.5">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="font-bold text-emerald-500 flex items-center gap-1">
-                            ● {port.rulingRole}
-                          </span>
-                          {rulingHolder && (
-                            <span className="text-[10px] text-slate-400">
-                              {getResolvedPartyName(rulingHolder, eventParties) || 'Ruling'}
-                            </span>
-                          )}
-                        </div>
-                        <SearchableDelegateSelect
-                          learners={eventLearners}
-                          parties={eventParties}
-                          currentLearnerId={rulingHolder?.id}
-                          disabled={isLocked}
-                          onSelect={(learnerId) => handleAssignRole(learnerId, port.rulingRole)}
-                          onShowToast={onShowToast}
-                          placeholder="Search minister name or const no..."
-                          assignedMinisterMap={assignedMinisterMap}
-                          portfolioRole={port.rulingRole}
-                        />
+                  return (
+                    <div
+                      key={port.id}
+                      className="rounded-2xl p-5 border space-y-4 shadow-sm transition-all"
+                      style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}
+                    >
+                      <div className="border-b pb-2" style={{ borderColor: 'var(--border-soft)' }}>
+                        <h4 className="text-base font-extrabold" style={{ color: 'var(--text-primary)' }}>{port.ministry}</h4>
+                        <p className="text-[11px] text-slate-400">Assign Cabinet Minister & Opposition Counterpart</p>
                       </div>
 
-                      {/* Shadow Cabinet Minister */}
-                      <div className="space-y-1.5 pt-1 border-t" style={{ borderColor: 'var(--border-soft)' }}>
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="font-bold text-rose-500 flex items-center gap-1">
-                            ● {port.shadowRole}
-                          </span>
-                          {shadowHolder && (
-                            <span className="text-[10px] text-slate-400">
-                              {getResolvedPartyName(shadowHolder, eventParties) || 'Opposition'}
+                      <div className="space-y-3">
+                        {/* Ruling Cabinet Minister */}
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-bold text-emerald-500 flex items-center gap-1">
+                              ● {port.rulingRole}
                             </span>
-                          )}
+                            {rulingHolder && (
+                              <span className="text-[10px] text-slate-400">
+                                {getResolvedPartyName(rulingHolder, eventParties) || 'Ruling'}
+                              </span>
+                            )}
+                          </div>
+                          <SearchableDelegateSelect
+                            learners={eventLearners}
+                            parties={eventParties}
+                            currentLearnerId={rulingHolder?.id}
+                            disabled={isLocked}
+                            onSelect={(learnerId) => handleAssignRole(learnerId, port.rulingRole)}
+                            onShowToast={onShowToast}
+                            placeholder="Search minister name or const no..."
+                            assignedMinisterMap={assignedMinisterMap}
+                            portfolioRole={port.rulingRole}
+                          />
                         </div>
-                        <SearchableDelegateSelect
-                          learners={eventLearners}
-                          parties={eventParties}
-                          currentLearnerId={shadowHolder?.id}
-                          disabled={isLocked}
-                          onSelect={(learnerId) => handleAssignRole(learnerId, port.shadowRole)}
-                          onShowToast={onShowToast}
-                          placeholder="Search shadow minister name or const no..."
-                          assignedMinisterMap={assignedMinisterMap}
-                          portfolioRole={port.shadowRole}
-                        />
+
+                        {/* Shadow Cabinet Minister */}
+                        <div className="space-y-1.5 pt-1 border-t" style={{ borderColor: 'var(--border-soft)' }}>
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-bold text-rose-500 flex items-center gap-1">
+                              ● {port.shadowRole}
+                            </span>
+                            {shadowHolder && (
+                              <span className="text-[10px] text-slate-400">
+                                {getResolvedPartyName(shadowHolder, eventParties) || 'Opposition'}
+                              </span>
+                            )}
+                          </div>
+                          <SearchableDelegateSelect
+                            learners={eventLearners}
+                            parties={eventParties}
+                            currentLearnerId={shadowHolder?.id}
+                            disabled={isLocked}
+                            onSelect={(learnerId) => handleAssignRole(learnerId, port.shadowRole)}
+                            onShowToast={onShowToast}
+                            placeholder="Search shadow minister name or const no..."
+                            assignedMinisterMap={assignedMinisterMap}
+                            portfolioRole={port.shadowRole}
+                          />
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
         </div>
       ) : (
-        /* Configuration Checklist View */
+        /* Configuration View — Add/Rename/Delete Ministries */
         <div className="space-y-4">
           
-          {/* Select all / Clear links */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3 text-xs font-semibold text-slate-500">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleSelectAll();
-                }}
-                className="text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
-              >
-                Select all {allMinistries.length}
-              </button>
-              <span>·</span>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleClearAll();
-                }}
-                className="text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
-              >
-                Clear
-              </button>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleSave();
-                }}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-sm flex items-center gap-1.5 cursor-pointer"
-              >
-                <Save className="w-3.5 h-3.5" />
-                <span>Save cabinet</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleResetToDefault();
-                }}
-                className="px-3.5 py-2 rounded-xl text-xs font-bold border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 flex items-center gap-1.5 cursor-pointer"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Reset to default</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Standard Catalogue List */}
-          <div className="space-y-2.5">
-            {DEFAULT_MINISTRY_ITEMS.map((item) => {
-              const isSelected = selectedMinistryIds.includes(item.id);
-              return (
-                <div
-                  key={item.id}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleSelection(item.id);
-                  }}
-                  className={`w-full p-3 rounded-2xl border transition-all cursor-pointer flex items-center gap-3 ${
-                    isSelected
-                      ? 'bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-400/80 dark:border-emerald-700/80 shadow-xs'
-                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300'
-                  }`}
-                >
-                  <div className={`p-0.5 rounded transition-colors ${isSelected ? 'text-emerald-600' : 'text-slate-400'}`}>
-                    {isSelected ? (
-                      <CheckSquare className="w-4 h-4 fill-emerald-100 text-emerald-600" />
-                    ) : (
-                      <Square className="w-4 h-4" />
-                    )}
-                  </div>
-                  <span className={`text-xs font-bold ${isSelected ? 'text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-400'}`}>
-                    {item.name}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Custom (this event) Section */}
-          <div className="pt-4 space-y-2.5">
-            <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
-              Custom (this event)
-            </label>
-
-            <div className="space-y-2.5">
-              {customMinistries.map((item) => {
-                const isSelected = selectedMinistryIds.includes(item.id);
-                return (
-                  <div
-                    key={item.id}
-                    className={`w-full p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 ${
-                      isSelected
-                        ? 'bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-400/80 dark:border-emerald-700/80'
-                        : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800'
-                    }`}
-                  >
-                    <div
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleSelection(item.id);
-                      }}
-                      className="flex items-center gap-3 cursor-pointer flex-1"
-                    >
-                      <div className={`p-0.5 rounded ${isSelected ? 'text-emerald-600' : 'text-slate-400'}`}>
-                        {isSelected ? (
-                          <CheckSquare className="w-4 h-4 fill-emerald-100 text-emerald-600" />
-                        ) : (
-                          <Square className="w-4 h-4" />
-                        )}
-                      </div>
-                      <span className="text-xs font-bold text-slate-900 dark:text-white">
-                        {item.name}
-                      </span>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleRemoveCustom(item.id);
-                      }}
-                      className="text-slate-400 hover:text-rose-600 p-1 transition-colors cursor-pointer"
-                      title="Delete custom ministry"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Add custom ministry bottom input */}
-          <form onSubmit={handleAddCustom} className="pt-2 space-y-2">
+          {/* Add ministry input at top */}
+          <form onSubmit={handleAddMinistry} className="space-y-2">
             <div className="flex items-center gap-2 max-w-xl">
               <input
                 type="text"
-                placeholder="Add your own ministry (e.g. Ministry of Space)"
+                placeholder="Add your own ministry (e.g. Ministry of Environment)"
                 value={newMinistryInput}
                 onChange={(e) => setNewMinistryInput(e.target.value)}
-                className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-amber-500"
+                disabled={isLocked || isSaving}
+                className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-amber-500 disabled:opacity-50"
               />
               <button
                 type="submit"
-                disabled={!newMinistryInput.trim()}
-                className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-amber-500 hover:text-white disabled:opacity-50 text-slate-700 dark:text-slate-200 font-bold text-xs border border-slate-200 dark:border-slate-700 transition-colors flex items-center gap-1.5 shrink-0"
+                disabled={!newMinistryInput.trim() || isLocked || isSaving}
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:hover:bg-amber-500 text-white font-bold text-xs border border-amber-600 transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>Add</span>
               </button>
             </div>
             <p className="text-[11px] text-slate-400">
-              Not in the official catalogue? Add a ministry just for this round — it works in voting, Questions Hour and the projection like any other. Remember to Save cabinet after adding.
+              Add ministries for this event. Each ministry you add is saved to the database immediately and persists across browser refreshes and sessions.
             </p>
           </form>
+
+          {/* Ministry list */}
+          {ministries.length === 0 ? (
+            <div className="rounded-2xl p-8 border border-dashed text-center space-y-3" style={{ borderColor: 'var(--border-soft)' }}>
+              <Landmark className="w-10 h-10 text-slate-300 dark:text-slate-600 mx-auto" />
+              <p className="text-sm font-bold text-slate-500 dark:text-slate-400">No ministries configured for this event.</p>
+              <p className="text-xs text-slate-400">
+                Use the input above to add your custom ministries. They will be saved to the database permanently.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
+                Event Ministries ({ministries.length})
+              </label>
+
+              {ministries.map((name, index) => (
+                <div
+                  key={`ministry_${index}_${name}`}
+                  className="w-full p-3 rounded-2xl border transition-all bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-400/80 dark:border-emerald-700/80 shadow-xs flex items-center justify-between gap-3"
+                >
+                  {editingIndex === index ? (
+                    /* Inline rename mode */
+                    <div className="flex items-center gap-2 flex-1">
+                      <input
+                        type="text"
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleConfirmRename();
+                          if (e.key === 'Escape') handleCancelRename();
+                        }}
+                        className="flex-1 bg-white dark:bg-slate-900 border border-amber-400 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-amber-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleConfirmRename}
+                        disabled={isSaving}
+                        className="text-emerald-500 hover:text-emerald-600 p-1 transition-colors cursor-pointer"
+                        title="Confirm rename"
+                      >
+                        <Check className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCancelRename}
+                        className="text-slate-400 hover:text-slate-600 p-1 transition-colors cursor-pointer"
+                        title="Cancel rename"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    /* Normal display mode */
+                    <>
+                      <div className="flex items-center gap-3 flex-1">
+                        <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 shrink-0 w-6 text-center">
+                          {index + 1}
+                        </span>
+                        <span className="text-xs font-bold text-slate-900 dark:text-white">
+                          {name}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleStartRename(index)}
+                          disabled={isLocked || isSaving}
+                          className="text-slate-400 hover:text-amber-600 p-1 transition-colors cursor-pointer disabled:opacity-40"
+                          title="Rename ministry"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteMinistry(index)}
+                          disabled={isLocked || isSaving}
+                          className="text-slate-400 hover:text-rose-600 p-1 transition-colors cursor-pointer disabled:opacity-40"
+                          title="Delete ministry"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
 
         </div>
       )}
@@ -982,4 +831,3 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
     </div>
   );
 };
-
