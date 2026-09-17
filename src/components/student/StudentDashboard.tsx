@@ -150,11 +150,21 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       }
     };
     refreshLiveState();
+
+    const currentResolvedId = event?.id || storageService.getEvents().find(e => getEventSlug(e) === eventSlug)?.id || targetEventId;
+    if (currentResolvedId || eventSlug) {
+      storageService.fetchProceedingsQuestionsOnDemand(currentResolvedId || eventSlug).then(() => {
+        refreshLiveState();
+      }).catch(err => {
+        console.warn('[StudentDashboard] on-demand fetch error:', err);
+      });
+    }
+
     const unsub = storageService.subscribe(() => {
       refreshLiveState();
     });
     return () => unsub();
-  }, [eventSlug, targetEventId, student.id, student.full_name, event?.id]);
+  }, [eventSlug, targetEventId, event?.id, student.id, student.full_name]);
 
   // Derived live voting lists
   const liveElections = useMemo(() => syncedElections.filter(e => e.status === 'Live' || e.status === 'live'), [syncedElections]);

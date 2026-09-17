@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { BillProceeding, Learner, EventDeadline, ProceedingsQuestion, ProceedingsMotion } from '../../types';
 import { storageService } from '../../services/storageService';
@@ -54,6 +54,14 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   // Filters
   const [statusFilter, setStatusFilter] = useState<'All' | 'Submitted' | 'Approved' | 'Starred' | 'Rejected'>('All');
   const [benchFilter, setBenchFilter] = useState<'All' | 'Ruling' | 'Opposition'>('All');
+  const [ministryFilter, setMinistryFilter] = useState<string>('All');
+
+  // Dynamic ministries from Cabinet configuration and submitted questions
+  const availableMinistries = useMemo(() => {
+    const fromConfig = storageService.getCabinetMinistries(eventId || targetSlug);
+    const fromQuestions = questions.map(q => q.ministry).filter(Boolean);
+    return Array.from(new Set([...fromConfig, ...fromQuestions]));
+  }, [eventId, targetSlug, questions]);
 
   // Modals & Inputs
   const [isAddBillOpen, setIsAddBillOpen] = useState(false);
@@ -85,11 +93,23 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
 
   useEffect(() => {
     refreshData();
+
+    // On-demand authoritative fetch from Supabase
+    const fetchTarget = eventId || targetSlug;
+    if (fetchTarget) {
+      storageService.fetchProceedingsQuestionsOnDemand(fetchTarget).then(fetchedQs => {
+        console.log('[Proceedings] eventId =', eventId, 'targetSlug =', targetSlug, 'returned questions =', fetchedQs.length);
+        refreshData();
+      }).catch(err => {
+        console.warn('[Proceedings] fetch error:', err);
+      });
+    }
+
     const unsub = storageService.subscribe(() => {
       refreshData();
     });
     return () => unsub();
-  }, [targetSlug]);
+  }, [targetSlug, eventId]);
 
   const setTab = (tab: 'questions' | 'motions' | 'bills') => {
     setSearchParams({ tab });
@@ -171,19 +191,33 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
     window.print();
   };
 
+  // Canonical status normalizer
+  const normalizeStatus = (status?: string): 'Submitted' | 'Approved' | 'Starred' | 'Rejected' => {
+    if (!status) return 'Submitted';
+    const s = status.toLowerCase().trim();
+    if (s === 'approved') return 'Approved';
+    if (s === 'starred') return 'Starred';
+    if (s === 'rejected') return 'Rejected';
+    return 'Submitted';
+  };
+
   // Calculations for Questions Sub-Tab
   const uniqueSubmittersCount = new Set(questions.map(q => q.student_name)).size;
   const totalMembersCount = learners.length || 196;
   const progressPct = Math.min(100, Math.round((uniqueSubmittersCount / totalMembersCount) * 100));
 
   const totalSubmitted = questions.length;
-  const approvedCount = questions.filter(q => q.status === 'Approved').length;
-  const starredCount = questions.filter(q => q.status === 'Starred').length;
+  const pendingCount = questions.filter(q => normalizeStatus(q.status) === 'Submitted').length;
+  const approvedCount = questions.filter(q => normalizeStatus(q.status) === 'Approved').length;
+  const starredCount = questions.filter(q => normalizeStatus(q.status) === 'Starred').length;
+  const rejectedCount = questions.filter(q => normalizeStatus(q.status) === 'Rejected').length;
   const readyToPutCount = approvedCount + starredCount;
 
   const filteredQuestions = questions.filter(q => {
-    if (statusFilter !== 'All' && q.status !== statusFilter) return false;
-    if (benchFilter !== 'All' && q.bench !== benchFilter) return false;
+    const canonicalStatus = normalizeStatus(q.status);
+    if (statusFilter !== 'All' && canonicalStatus !== statusFilter) return false;
+    if (benchFilter !== 'All' && (q.bench || '').toLowerCase() !== benchFilter.toLowerCase()) return false;
+    if (ministryFilter !== 'All' && q.ministry !== ministryFilter) return false;
     return true;
   });
 
@@ -367,10 +401,15 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
           </div>
 
           {/* Metric Badges Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             <div className="p-4 rounded-2xl border shadow-sm" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
               <span className="text-[10px] uppercase font-bold text-slate-400 block">Total Submitted</span>
               <strong className="text-2xl font-black text-slate-900 dark:text-white">{totalSubmitted}</strong>
+            </div>
+
+            <div className="p-4 rounded-2xl border shadow-sm bg-amber-500/5 border-amber-500/30">
+              <span className="text-[10px] uppercase font-bold text-amber-600 dark:text-amber-400 block">Pending</span>
+              <strong className="text-2xl font-black text-amber-500">{pendingCount}</strong>
             </div>
 
             <div className="p-4 rounded-2xl border shadow-sm bg-emerald-500/5 border-emerald-500/30">
@@ -396,20 +435,31 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
             <div className="flex items-center gap-3 flex-wrap">
               {/* Status Filter */}
               <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
-                {(['All', 'Submitted', 'Approved', 'Starred', 'Rejected'] as const).map(st => (
-                  <button
-                    key={st}
-                    type="button"
-                    onClick={() => setStatusFilter(st)}
-                    className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
-                      statusFilter === st
-                        ? 'bg-amber-500 text-white shadow-xs'
-                        : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
-                    }`}
-                  >
-                    {st === 'Submitted' ? 'Pending' : st}
-                  </button>
-                ))}
+                {(['All', 'Submitted', 'Approved', 'Starred', 'Rejected'] as const).map(st => {
+                  const countLabel = st === 'Submitted'
+                    ? `Pending (${pendingCount})`
+                    : st === 'Approved'
+                    ? `Approved (${approvedCount})`
+                    : st === 'Starred'
+                    ? `Starred (${starredCount})`
+                    : st === 'Rejected'
+                    ? `Rejected (${rejectedCount})`
+                    : `All (${totalSubmitted})`;
+                  return (
+                    <button
+                      key={st}
+                      type="button"
+                      onClick={() => setStatusFilter(st)}
+                      className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                        statusFilter === st
+                          ? 'bg-amber-500 text-white shadow-xs'
+                          : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                      }`}
+                    >
+                      {countLabel}
+                    </button>
+                  );
+                })}
               </div>
 
               {/* Bench Filter */}
@@ -429,6 +479,30 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                   </button>
                 ))}
               </div>
+
+              {/* Ministry Filter */}
+              {availableMinistries.length > 0 && (
+                <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-950 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
+                  <span className="text-[11px] font-bold text-slate-500">Ministry:</span>
+                  <select
+                    id="proceedings-ministry-filter"
+                    value={ministryFilter}
+                    onChange={(e) => setMinistryFilter(e.target.value)}
+                    aria-label="Filter questions by ministry"
+                    className="bg-transparent font-bold text-slate-800 dark:text-slate-200 cursor-pointer focus:outline-none pr-1"
+                  >
+                    <option value="All" className="dark:bg-slate-900">All Ministries ({questions.length})</option>
+                    {availableMinistries.map((min: string) => {
+                      const count = questions.filter(q => q.ministry === min).length;
+                      return (
+                        <option key={min} value={min} className="dark:bg-slate-900">
+                          {min} {count > 0 ? `(${count})` : ''}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              )}
             </div>
 
             {/* Action Bar Buttons */}
