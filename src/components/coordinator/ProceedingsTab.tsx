@@ -50,6 +50,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   const [deadline, setDeadline] = useState<EventDeadline>(() => storageService.getEventDeadline(eventId || targetSlug));
   const [questions, setQuestions] = useState<ProceedingsQuestion[]>(() => storageService.getProceedingsQuestions(targetSlug));
   const [motions, setMotions] = useState<ProceedingsMotion[]>(() => storageService.getProceedingsMotions(targetSlug));
+  const [isTogglingDeadline, setIsTogglingDeadline] = useState(false);
 
   // Filters
   const [statusFilter, setStatusFilter] = useState<'All' | 'Submitted' | 'Approved' | 'Starred' | 'Rejected'>('All');
@@ -116,14 +117,23 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   };
 
   // Deadline Handlers
-  const handleToggleQuestionStatus = (isOpen: boolean) => {
-    const updated = storageService.updateEventDeadlineStatus(targetSlug, isOpen, eventId);
-    setDeadline(updated);
-    onShowToast(
-      isOpen ? 'Question Submissions Opened' : 'Question Submissions Closed',
-      isOpen ? 'Student delegates can now submit questions for Question Hour.' : 'Question submission window is now locked for students.',
-      isOpen ? 'success' : 'info'
-    );
+  const handleToggleQuestionStatus = async (isOpen: boolean) => {
+    if (isTogglingDeadline) return;
+    setIsTogglingDeadline(true);
+    try {
+      const updated = storageService.updateEventDeadlineStatus(targetSlug, isOpen, eventId);
+      setDeadline(updated);
+      onShowToast(
+        isOpen ? 'Question Submissions Opened' : 'Question Submissions Closed',
+        isOpen ? 'Student delegates can now submit questions for Question Hour.' : 'Question submission window is now locked for students.',
+        isOpen ? 'success' : 'info'
+      );
+    } catch (err) {
+      console.error('Failed to toggle submission window:', err);
+      onShowToast('Sync Error', 'Failed to update submission window status. Please try again.', 'error');
+    } finally {
+      setIsTogglingDeadline(false);
+    }
   };
 
   // Question Actions with toggle support
@@ -369,15 +379,23 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                 return (
                   <button
                     type="button"
+                    disabled={isTogglingDeadline}
                     onClick={() => handleToggleQuestionStatus(!isCurrentlyOpen)}
-                    className={`relative group overflow-hidden px-6 py-3 rounded-2xl font-black text-xs transition-all duration-300 flex items-center justify-center gap-2.5 cursor-pointer shadow-xl border active:scale-95 hover:scale-102 ${
-                      isCurrentlyOpen
-                        ? 'bg-gradient-to-r from-rose-600 via-red-600 to-rose-700 text-white border-rose-500/30 shadow-rose-950/50 hover:shadow-rose-600/40 ring-1 ring-rose-500/20'
-                        : 'bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 text-white border-emerald-400/30 shadow-emerald-950/50 hover:shadow-emerald-500/40 ring-1 ring-emerald-400/20'
+                    className={`relative group overflow-hidden px-6 py-3 rounded-2xl font-black text-xs transition-all duration-300 flex items-center justify-center gap-2.5 shadow-xl border active:scale-95 hover:scale-102 ${
+                      isTogglingDeadline
+                        ? 'opacity-60 cursor-not-allowed bg-slate-700 text-slate-300 border-slate-600'
+                        : isCurrentlyOpen
+                        ? 'cursor-pointer bg-gradient-to-r from-rose-600 via-red-600 to-rose-700 text-white border-rose-500/30 shadow-rose-950/50 hover:shadow-rose-600/40 ring-1 ring-rose-500/20'
+                        : 'cursor-pointer bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 text-white border-emerald-400/30 shadow-emerald-950/50 hover:shadow-emerald-500/40 ring-1 ring-emerald-400/20'
                     }`}
                   >
                     <span className="relative z-10 flex items-center gap-2">
-                      {isCurrentlyOpen ? (
+                      {isTogglingDeadline ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <span>Updating Window...</span>
+                        </>
+                      ) : isCurrentlyOpen ? (
                         <>
                           <Lock className="w-4 h-4 transition-transform duration-300 group-hover:rotate-12" />
                           <span>Close Question Submissions</span>
@@ -391,7 +409,9 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                     </span>
                     
                     {/* Shiny overlay animation on hover */}
-                    <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300" />
+                    {!isTogglingDeadline && (
+                      <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300" />
+                    )}
                   </button>
                 );
               })()}

@@ -3102,10 +3102,16 @@ class StorageService {
         })
         .on('broadcast', { event: 'question_update' }, (msg: any) => {
           if (msg?.payload?.eventId && Array.isArray(msg?.payload?.questions)) {
+            const deletedQIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
             const localPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
             const pqMap = new Map<string, ProceedingsQuestion>();
-            localPQs.forEach(q => pqMap.set(q.id, q));
+            localPQs.forEach(q => {
+              if (!deletedQIds.has(q.id)) {
+                pqMap.set(q.id, q);
+              }
+            });
             msg.payload.questions.forEach((remoteQ: ProceedingsQuestion) => {
+              if (deletedQIds.has(remoteQ.id)) return; // Exclude tombstoned deleted questions
               const local = pqMap.get(remoteQ.id);
               if (!local) {
                 pqMap.set(remoteQ.id, remoteQ);
@@ -3138,7 +3144,27 @@ class StorageService {
             );
             nextDeadlines.unshift(dl);
             this.setItem(STORAGE_KEYS.DEADLINES, nextDeadlines);
+
+            // Synchronously update in-memory event's social_coverage so getEventDeadline resolves instantaneously
+            const allEvs = this.getEvents();
+            const targetEv = allEvs.find(e => 
+              e.id === dl.event_id || 
+              (msg.payload.eventId && e.id === msg.payload.eventId) || 
+              (dl.event_slug && getEventSlug(e).toLowerCase() === dl.event_slug.toLowerCase()) ||
+              (msg.payload.eventSlug && getEventSlug(e).toLowerCase() === msg.payload.eventSlug.toLowerCase())
+            );
+            if (targetEv) {
+              const sc = (targetEv.social_coverage || {}) as Record<string, any>;
+              targetEv.social_coverage = {
+                ...sc,
+                event_deadline: dl,
+                is_question_window_open: dl.is_open !== false && dl.status !== 'CLOSED'
+              };
+              this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === targetEv.id ? targetEv : e));
+            }
+
             this.invalidateCache('portal_');
+            this.invalidateCache('events');
             this.notify();
             if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
           }
@@ -9776,30 +9802,31 @@ class StorageService {
     );
 
     // 1. Check if event has social_coverage.event_deadline
+    let scDeadline: EventDeadline | null = null;
     if (resolvedEvent?.social_coverage) {
       const sc = resolvedEvent.social_coverage as Record<string, any>;
       if (sc.event_deadline && typeof sc.event_deadline === 'object') {
         const dl = sc.event_deadline as EventDeadline;
-        return {
+        scDeadline = {
           ...dl,
           is_open: dl.is_open !== undefined ? dl.is_open : (dl.status !== undefined ? dl.status === 'OPEN' : true),
           status: dl.status || (dl.is_open === false ? 'CLOSED' : 'OPEN')
         };
-      }
-      if (typeof sc.is_question_window_open === 'boolean') {
-        return {
+      } else if (typeof sc.is_question_window_open === 'boolean') {
+        scDeadline = {
           id: `deadline-${resolvedEvent.id}`,
           event_id: resolvedEvent.id,
           event_slug: getEventSlug(resolvedEvent),
           is_open: sc.is_question_window_open,
           status: sc.is_question_window_open ? 'OPEN' : 'CLOSED',
-          updated_at: new Date().toISOString()
+          updated_at: sc.updated_at || new Date().toISOString()
         };
       }
     }
 
     // 2. Check local STORAGE_KEYS.DEADLINES
     const list: EventDeadline[] = this.getItem(STORAGE_KEYS.DEADLINES, []);
+    let localDeadline: EventDeadline | null = null;
     if (list.length > 0) {
       const targetId = resolvedEvent?.id?.toLowerCase();
       const targetSlug = resolvedEvent ? getEventSlug(resolvedEvent).toLowerCase() : undefined;
@@ -9816,13 +9843,22 @@ class StorageService {
       });
 
       if (found) {
-        return {
+        localDeadline = {
           ...found,
           is_open: found.is_open !== undefined ? found.is_open : (found.status !== undefined ? found.status === 'OPEN' : true),
           status: found.status || (found.is_open === false ? 'CLOSED' : 'OPEN')
         };
       }
     }
+
+    // If both exist, return the more recently updated one to guarantee freshest state
+    if (scDeadline && localDeadline) {
+      const scTime = new Date(scDeadline.updated_at || 0).getTime();
+      const localTime = new Date(localDeadline.updated_at || 0).getTime();
+      return localTime >= scTime ? localDeadline : scDeadline;
+    }
+    if (scDeadline) return scDeadline;
+    if (localDeadline) return localDeadline;
 
     // 3. Fallback default open deadline
     const defaultOpen = new Date().toISOString();
@@ -9894,23 +9930,46 @@ class StorageService {
       this.setItem(STORAGE_KEYS.EVENTS, updatedEvents);
     }
 
-    // Persist to Supabase college_events.social_coverage
     const syncId = targetEventId || resolvedEvent?.id;
+
+    // IMMEDIATE ZERO-LATENCY BROADCAST to all connected clients
+    this.broadcast('event_deadline_update', {
+      eventId: syncId,
+      eventSlug: resolvedSlug,
+      deadline: target,
+      isOpen
+    }).catch(err => {
+      console.warn('[Supabase] broadcast event_deadline_update error:', err);
+    });
+
+    // Targeted fast Supabase patch for instant DB persistence
+    const sb = supabase;
+    if (sb && syncId && isValidUuid(syncId)) {
+      sb.from('college_events').select('social_coverage').eq('id', syncId).single().then(
+        ({ data }) => {
+          const currentSc = (data?.social_coverage || {}) as Record<string, any>;
+          const patchedSc = {
+            ...currentSc,
+            event_deadline: target,
+            is_question_window_open: isOpen,
+            updated_at: now
+          };
+          sb.from('college_events').update({ social_coverage: patchedSc }).eq('id', syncId).then(
+            () => {},
+            (err: any) => {
+              console.warn('[Supabase] fast deadline patch error:', err);
+            }
+          );
+        },
+        () => {}
+      );
+    }
+
+    // Persist full state to Supabase college_events in background
     if (syncId) {
       this.syncEventStateToSupabase(syncId).catch(err => {
         console.warn('[Supabase] syncEventStateToSupabase error in updateEventDeadlineStatus:', err);
       });
-    }
-
-    // Zero-latency Realtime broadcast
-    if (this.realtimeChannel) {
-      try {
-        this.realtimeChannel.send({
-          type: 'broadcast',
-          event: 'event_deadline_update',
-          payload: { eventId: syncId, eventSlug: resolvedSlug, deadline: target, isOpen }
-        }).catch(() => {});
-      } catch {}
     }
 
     this.notify();
@@ -9942,6 +10001,7 @@ class StorageService {
       (e.slug && e.slug.toLowerCase() === cleanKey)
     );
     const targetEventId = resolvedEvent?.id || fallbackEventId;
+    const resolvedSlug = resolvedEvent ? getEventSlug(resolvedEvent) : (eventSlug || 'jkkncet-tn-assembly-2026');
 
     const filtered = list.filter(d => 
       !(targetEventId && d.event_id === targetEventId) && 
@@ -9962,20 +10022,21 @@ class StorageService {
     }
 
     const syncId = targetEventId || resolvedEvent?.id;
+
+    // IMMEDIATE ZERO-LATENCY BROADCAST
+    this.broadcast('event_deadline_update', {
+      eventId: syncId,
+      eventSlug: resolvedSlug,
+      deadline: updated,
+      isOpen: resolvedIsOpen
+    }).catch(err => {
+      console.warn('[Supabase] broadcast event_deadline_update error:', err);
+    });
+
     if (syncId) {
       this.syncEventStateToSupabase(syncId).catch(err => {
         console.warn('[Supabase] syncEventStateToSupabase error in updateEventDeadline:', err);
       });
-    }
-
-    if (this.realtimeChannel) {
-      try {
-        this.realtimeChannel.send({
-          type: 'broadcast',
-          event: 'event_deadline_update',
-          payload: { eventId: syncId, deadline: updated, isOpen: resolvedIsOpen }
-        }).catch(() => {});
-      } catch {}
     }
 
     this.notify();
@@ -10041,14 +10102,11 @@ class StorageService {
       } else if (data && data.length > 0) {
         const ev = data[0];
         const sc = (ev.social_coverage || {}) as Record<string, any>;
+        let fetchedDeadline: EventDeadline | null = null;
         if (sc.event_deadline && typeof sc.event_deadline === 'object') {
-          const dl = sc.event_deadline as EventDeadline;
-          const localDeadlines = this.getItem<EventDeadline[]>(STORAGE_KEYS.DEADLINES, []);
-          const filtered = localDeadlines.filter(d => d.event_id !== dl.event_id && d.event_slug !== dl.event_slug);
-          filtered.unshift(dl);
-          this.setItem(STORAGE_KEYS.DEADLINES, filtered);
+          fetchedDeadline = sc.event_deadline as EventDeadline;
         } else if (typeof sc.is_question_window_open === 'boolean') {
-          const dl: EventDeadline = {
+          fetchedDeadline = {
             id: `deadline-${ev.id}`,
             event_id: ev.id,
             event_slug: ev.slug || getEventSlug(ev as any),
@@ -10056,10 +10114,24 @@ class StorageService {
             status: sc.is_question_window_open ? 'OPEN' : 'CLOSED',
             updated_at: new Date().toISOString()
           };
+        }
+
+        if (fetchedDeadline) {
           const localDeadlines = this.getItem<EventDeadline[]>(STORAGE_KEYS.DEADLINES, []);
-          const filtered = localDeadlines.filter(d => d.event_id !== dl.event_id && d.event_slug !== dl.event_slug);
-          filtered.unshift(dl);
+          const filtered = localDeadlines.filter(d => d.event_id !== fetchedDeadline!.event_id && d.event_slug !== fetchedDeadline!.event_slug);
+          filtered.unshift(fetchedDeadline);
           this.setItem(STORAGE_KEYS.DEADLINES, filtered);
+
+          // Keep in-memory event social_coverage synchronized
+          const targetEv = allEvs.find(e => e.id === ev.id);
+          if (targetEv) {
+            targetEv.social_coverage = {
+              ...((targetEv.social_coverage as any) || {}),
+              event_deadline: fetchedDeadline,
+              is_question_window_open: fetchedDeadline.is_open !== false && fetchedDeadline.status !== 'CLOSED'
+            };
+            this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === targetEv.id ? targetEv : e));
+          }
         }
 
         const remotePQs: ProceedingsQuestion[] = Array.isArray(sc.proceedings_questions)

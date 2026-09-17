@@ -86,13 +86,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const eventSlug = event ? getEventSlug(event) : 'jkkncet-tn-assembly-2026';
   const resolvedEventId = event?.id || storageService.getEvents().find(e => getEventSlug(e) === eventSlug)?.id || eventSlug;
   const targetEventId = resolvedEventId;
-  const [deadline, setDeadline] = useState<EventDeadline>({
-    id: `deadline-${eventSlug}`,
-    event_id: targetEventId,
-    event_slug: eventSlug,
-    questions_open_at: undefined,
-    questions_deadline_at: undefined,
-    updated_at: new Date().toISOString()
+  const [deadline, setDeadline] = useState<EventDeadline>(() => {
+    return storageService.getEventDeadline(eventSlug) || storageService.getEventDeadline(resolvedEventId);
   });
   const [studentQuestions, setStudentQuestions] = useState<ProceedingsQuestion[]>([]);
   const [approvedHouseQuestions, setApprovedHouseQuestions] = useState<ProceedingsQuestion[]>([]);
@@ -124,10 +119,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   }, [nominations]);
 
   useEffect(() => {
+    // Ensure realtime broadcast channel is active on student client
+    storageService.setupRealtimeSync();
+
     const refreshLiveState = () => {
       const currentResolvedId = event?.id || storageService.getEvents().find(e => getEventSlug(e) === eventSlug)?.id || targetEventId;
       if (eventSlug || currentResolvedId) {
-        setDeadline(storageService.getEventDeadline(eventSlug) || storageService.getEventDeadline(currentResolvedId));
+        const freshDeadline = storageService.getEventDeadline(eventSlug) || storageService.getEventDeadline(currentResolvedId);
+        setDeadline(freshDeadline);
         const allQ = [...storageService.getProceedingsQuestions(eventSlug), ...storageService.getProceedingsQuestions(currentResolvedId)];
         const uniqueQ = Array.from(new Map(allQ.map(q => [q.id, q])).values());
         setStudentQuestions(uniqueQ.filter(q => q.student_id === student.id || q.student_name === student.full_name));
@@ -163,7 +162,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     const unsub = storageService.subscribe(() => {
       refreshLiveState();
     });
-    return () => unsub();
+
+    const handleStorageEvent = () => refreshLiveState();
+    window.addEventListener('storage', handleStorageEvent);
+
+    return () => {
+      unsub();
+      window.removeEventListener('storage', handleStorageEvent);
+    };
   }, [eventSlug, targetEventId, event?.id, student.id, student.full_name]);
 
   // Derived live voting lists
@@ -1221,6 +1227,30 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <span>{isQuestionWindowOpen ? '🟢 Open for Submissions' : '🔴 Submission Window Closed'}</span>
               </div>
             </div>
+
+            {/* Clear Status Notice */}
+            {!isQuestionWindowOpen ? (
+              <div className="p-3.5 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300 flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-rose-500/20 text-rose-500 shrink-0">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-black uppercase tracking-wider">Question Submissions Closed</h4>
+                  <p className="text-[11px] text-rose-600/90 dark:text-rose-400 mt-0.5 font-medium">
+                    The Speaker / Organizer has locked the submission window. Questions cannot be drafted or submitted at this time.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="p-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 flex items-center gap-2.5">
+                <div className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-500 shrink-0">
+                  <Unlock className="w-4 h-4 animate-pulse" />
+                </div>
+                <p className="text-xs font-bold">
+                  Question Hour submissions are <strong className="font-extrabold text-emerald-600 dark:text-emerald-400">ACTIVE & OPEN</strong>. Submit your parliamentary questions for the Cabinet Ministers below.
+                </p>
+              </div>
+            )}
 
             {/* Form */}
             <form onSubmit={handleQuestionSubmit} className="space-y-4">
