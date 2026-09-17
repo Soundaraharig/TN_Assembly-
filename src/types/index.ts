@@ -422,11 +422,16 @@ export interface ProceedingsQuestion {
   bench: 'Ruling' | 'Opposition';
   constituency?: string;
   ministry: string;
+  target_ministry_id?: string;
+  target_ministry_name?: string;
   question_text: string;
   question_type: 'Standard' | 'Starred' | 'Unstarred' | 'Zero Hour' | 'Calling Attention';
   status: 'Submitted' | 'Approved' | 'Starred' | 'Rejected';
   queue_order?: number;
   created_at: string;
+  updated_at?: string;
+  approved_by?: string;
+  approved_at?: string;
 }
 
 export interface ProceedingsMotion {

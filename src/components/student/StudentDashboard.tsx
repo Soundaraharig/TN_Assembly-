@@ -84,7 +84,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   // Parliamentary Question Hour State
   const eventSlug = event ? getEventSlug(event) : 'jkkncet-tn-assembly-2026';
-  const targetEventId = event?.id || eventSlug;
+  const resolvedEventId = event?.id || storageService.getEvents().find(e => getEventSlug(e) === eventSlug)?.id || eventSlug;
+  const targetEventId = resolvedEventId;
   const [deadline, setDeadline] = useState<EventDeadline>({
     id: `deadline-${eventSlug}`,
     event_id: targetEventId,
@@ -95,9 +96,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   });
   const [studentQuestions, setStudentQuestions] = useState<ProceedingsQuestion[]>([]);
   const [approvedHouseQuestions, setApprovedHouseQuestions] = useState<ProceedingsQuestion[]>([]);
-  const [questionMinistry, setQuestionMinistry] = useState<string>('Ministry of Education');
+  const [eventMinistries, setEventMinistries] = useState<string[]>(() => storageService.getCabinetMinistries(resolvedEventId));
+  const [questionMinistry, setQuestionMinistry] = useState<string>(() => {
+    const mins = storageService.getCabinetMinistries(resolvedEventId);
+    return mins.length > 0 ? mins[0] : '';
+  });
   const [questionType, setQuestionType] = useState<ProceedingsQuestion['question_type']>('Standard');
   const [questionText, setQuestionText] = useState<string>('');
+  const [isSubmittingQuestion, setIsSubmittingQuestion] = useState<boolean>(false);
   const [questionViewMode, setQuestionViewMode] = useState<'my_questions' | 'approved_house'>('my_questions');
 
   // Live synced elections and flash votes (driven by storageService.subscribe for zero-latency live updates)
@@ -119,19 +125,27 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   useEffect(() => {
     const refreshLiveState = () => {
-      const resolvedEventId = event?.id || storageService.getEvents().find(e => getEventSlug(e) === eventSlug)?.id || targetEventId;
-      if (eventSlug || resolvedEventId) {
-        setDeadline(storageService.getEventDeadline(eventSlug) || storageService.getEventDeadline(resolvedEventId));
-        const allQ = [...storageService.getProceedingsQuestions(eventSlug), ...storageService.getProceedingsQuestions(resolvedEventId)];
+      const currentResolvedId = event?.id || storageService.getEvents().find(e => getEventSlug(e) === eventSlug)?.id || targetEventId;
+      if (eventSlug || currentResolvedId) {
+        setDeadline(storageService.getEventDeadline(eventSlug) || storageService.getEventDeadline(currentResolvedId));
+        const allQ = [...storageService.getProceedingsQuestions(eventSlug), ...storageService.getProceedingsQuestions(currentResolvedId)];
         const uniqueQ = Array.from(new Map(allQ.map(q => [q.id, q])).values());
         setStudentQuestions(uniqueQ.filter(q => q.student_id === student.id || q.student_name === student.full_name));
         setApprovedHouseQuestions(uniqueQ.filter(q => q.status === 'Approved' || q.status === 'Starred'));
 
-        const updatedElecs = storageService.getElections(resolvedEventId, 'student', student.id);
+        // Refresh configured ministries from Cabinet & Shadow Ministry system
+        const activeMins = storageService.getCabinetMinistries(currentResolvedId);
+        setEventMinistries(activeMins);
+        setQuestionMinistry(prev => {
+          if (activeMins.includes(prev)) return prev;
+          return activeMins.length > 0 ? activeMins[0] : '';
+        });
+
+        const updatedElecs = storageService.getElections(currentResolvedId, 'student', student.id);
         setSyncedElections(updatedElecs);
-        const updatedFV = storageService.getFlashVotes(resolvedEventId, 'student', student.id);
+        const updatedFV = storageService.getFlashVotes(currentResolvedId, 'student', student.id);
         setSyncedFlashVotes(updatedFV);
-        const updatedNoms = storageService.getNominations(resolvedEventId, 'student', student.id);
+        const updatedNoms = storageService.getNominations(currentResolvedId, 'student', student.id);
         setSyncedNominations(updatedNoms);
       }
     };
@@ -187,34 +201,54 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     return new Date().getTime() <= new Date(deadline.questions_deadline_at).getTime();
   }, [deadline.is_open, deadline.status, deadline.questions_deadline_at]);
 
-  const handleQuestionSubmit = (e: React.FormEvent) => {
+  const handleQuestionSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!questionText.trim()) return;
+    if (isSubmittingQuestion) return;
     if (!isQuestionWindowOpen) {
       onShowToast('Submission Closed', 'Question submission deadline has passed.', 'error');
       return;
     }
+    if (!questionMinistry || eventMinistries.length === 0) {
+      onShowToast('Ministry Required', 'No ministries configured for this event or no ministry selected.', 'error');
+      return;
+    }
 
-    const studentBench: 'Ruling' | 'Opposition' = student.bench === 'Opposition' ? 'Opposition' : 'Ruling';
+    setIsSubmittingQuestion(true);
+    try {
+      const studentBench: 'Ruling' | 'Opposition' = student.bench === 'Opposition' ? 'Opposition' : 'Ruling';
 
-    const newQ: ProceedingsQuestion = {
-      id: `q-${Date.now()}`,
-      event_id: targetEventId,
-      event_slug: eventSlug,
-      student_id: student.id,
-      student_name: student.full_name,
-      bench: studentBench,
-      constituency: student.constituency_name || 'General',
-      ministry: questionMinistry,
-      question_type: questionType,
-      question_text: questionText.trim(),
-      status: 'Submitted',
-      created_at: new Date().toISOString()
-    };
+      const newQ: Partial<ProceedingsQuestion> = {
+        id: `q-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        event_id: resolvedEventId,
+        event_slug: eventSlug,
+        student_id: student.id,
+        student_name: student.full_name,
+        bench: studentBench,
+        constituency: student.constituency_name || (student.constituency_number ? `#${student.constituency_number}` : 'Assembly Delegate'),
+        ministry: questionMinistry,
+        target_ministry_id: questionMinistry.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        target_ministry_name: questionMinistry,
+        question_type: questionType,
+        question_text: questionText.trim(),
+        status: 'Submitted'
+      };
 
-    storageService.addProceedingsQuestion(newQ);
-    setQuestionText('');
-    onShowToast('Question Submitted', 'Your parliamentary question has been submitted to the Speaker desk.', 'success');
+      const result = await storageService.submitProceedingsQuestion(newQ);
+      if (result.success) {
+        setQuestionText('');
+        onShowToast('Question Submitted', 'Question submitted successfully and is awaiting approval.', 'success');
+        const allQ = [...storageService.getProceedingsQuestions(eventSlug), ...storageService.getProceedingsQuestions(resolvedEventId)];
+        const uniqueQ = Array.from(new Map(allQ.map(q => [q.id, q])).values());
+        setStudentQuestions(uniqueQ.filter(q => q.student_id === student.id || q.student_name === student.full_name));
+      } else {
+        onShowToast('Submission Failed', result.error || 'Failed to submit question to the database.', 'error');
+      }
+    } catch (err: any) {
+      onShowToast('Submission Error', err?.message || 'An error occurred while submitting.', 'error');
+    } finally {
+      setIsSubmittingQuestion(false);
+    }
   };
 
   // Check if current student is assigned as Speaker or Deputy Speaker
@@ -1184,27 +1218,25 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <div>
                   <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Target Ministry</label>
                   <select
-                    disabled={!isQuestionWindowOpen}
+                    disabled={!isQuestionWindowOpen || eventMinistries.length === 0 || isSubmittingQuestion}
                     value={questionMinistry}
                     onChange={(e) => setQuestionMinistry(e.target.value)}
                     className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white font-semibold focus:outline-none focus:border-amber-500 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <option value="Ministry of Education">Ministry of Education</option>
-                    <option value="Ministry of Women & Child Development">Ministry of Women & Child Development</option>
-                    <option value="Ministry of Youth Affairs & Sports">Ministry of Youth Affairs & Sports</option>
-                    <option value="Ministry of Health & Family Welfare">Ministry of Health & Family Welfare</option>
-                    <option value="Ministry of Skill Development">Ministry of Skill Development</option>
-                    <option value="Ministry of Finance">Ministry of Finance</option>
-                    <option value="Ministry of Home Affairs">Ministry of Home Affairs</option>
-                    <option value="Ministry of Defence">Ministry of Defence</option>
-                    <option value="Ministry of Agriculture">Ministry of Agriculture</option>
+                    {eventMinistries.length === 0 ? (
+                      <option value="" disabled>No ministries configured for this event.</option>
+                    ) : (
+                      eventMinistries.map(m => (
+                        <option key={m} value={m}>{m}</option>
+                      ))
+                    )}
                   </select>
                 </div>
 
                 <div>
                   <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Question Type</label>
                   <select
-                    disabled={!isQuestionWindowOpen}
+                    disabled={!isQuestionWindowOpen || isSubmittingQuestion}
                     value={questionType}
                     onChange={(e) => setQuestionType(e.target.value as any)}
                     className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white font-semibold focus:outline-none focus:border-amber-500 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1233,7 +1265,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <textarea
                   rows={3}
                   required
-                  disabled={!isQuestionWindowOpen}
+                  disabled={!isQuestionWindowOpen || isSubmittingQuestion}
                   value={questionText}
                   onChange={(e) => setQuestionText(e.target.value)}
                   placeholder={isQuestionWindowOpen ? "State your question clearly for the Minister during Question Hour..." : "Question submission window is currently closed by the Speaker / Admin."}
@@ -1248,11 +1280,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
                 <button
                   type="submit"
-                  disabled={!isQuestionWindowOpen || !questionText.trim()}
+                  disabled={!isQuestionWindowOpen || !questionText.trim() || eventMinistries.length === 0 || isSubmittingQuestion}
                   className="px-5 py-2.5 rounded-xl font-bold text-xs bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white shadow-lg flex items-center gap-2 cursor-pointer transition-all"
                 >
                   <Send className="w-4 h-4" />
-                  <span>Submit Question</span>
+                  <span>{isSubmittingQuestion ? 'Submitting...' : 'Submit Question'}</span>
                 </button>
               </div>
             </form>
@@ -1296,17 +1328,24 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       >
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-amber-600 dark:text-amber-400">{q.ministry} • {q.question_type}</span>
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                            q.status === 'Approved'
-                              ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
-                              : q.status === 'Starred'
-                              ? 'bg-amber-500/10 text-amber-500 border-amber-500/30'
-                              : q.status === 'Rejected'
-                              ? 'bg-rose-500/10 text-rose-600 border-rose-500/30'
-                              : 'bg-slate-500/10 text-slate-500 border-slate-500/30'
-                          }`}>
-                            {q.status}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            {q.created_at && (
+                              <span className="text-[10px] text-slate-400 font-mono">
+                                {new Date(q.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            )}
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                              q.status === 'Approved'
+                                ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
+                                : q.status === 'Starred'
+                                ? 'bg-amber-500/10 text-amber-500 border-amber-500/30'
+                                : q.status === 'Rejected'
+                                ? 'bg-rose-500/10 text-rose-600 border-rose-500/30'
+                                : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30'
+                            }`}>
+                              {q.status === 'Submitted' ? 'Pending Approval' : q.status}
+                            </span>
+                          </div>
                         </div>
                         <p className="text-slate-800 dark:text-slate-200">{q.question_text}</p>
                       </div>

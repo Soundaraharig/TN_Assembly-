@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import type { ParliamentQuestion, Learner } from '../../types';
+import { storageService } from '../../services/storageService';
 import {
   HelpCircle,
   Plus,
@@ -24,6 +25,10 @@ export const QuestionnaireTab: React.FC<QuestionnaireTabProps> = ({
   onAnswerQuestion,
   onShowToast
 }) => {
+  const configuredMinistries = useMemo(() => {
+    return storageService.getCabinetMinistries(eventId);
+  }, [eventId]);
+
   const [selectedType, setSelectedType] = useState<string>('ALL');
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [activeAnswerId, setActiveAnswerId] = useState<string | null>(null);
@@ -31,7 +36,10 @@ export const QuestionnaireTab: React.FC<QuestionnaireTabProps> = ({
 
   // Form State
   const [qType, setQType] = useState<ParliamentQuestion['type']>('Starred');
-  const [qMinistry, setQMinistry] = useState('Higher Education & Skill Development');
+  const [qMinistry, setQMinistry] = useState(() => {
+    const mins = storageService.getCabinetMinistries(eventId);
+    return mins.length > 0 ? mins[0] : '';
+  });
   const [qSubmitterId, setQSubmitterId] = useState('');
   const [qText, setQText] = useState('');
 
@@ -279,18 +287,19 @@ export const QuestionnaireTab: React.FC<QuestionnaireTabProps> = ({
                 <div>
                   <label className="block font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>Target Ministry</label>
                   <select
+                    disabled={configuredMinistries.length === 0}
                     value={qMinistry}
                     onChange={(e) => setQMinistry(e.target.value)}
                     className="w-full p-2 rounded-xl border focus:outline-none"
                     style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
                   >
-                    <option value="Higher Education & Skill Development">Higher Education</option>
-                    <option value="Public Health & Family Welfare">Public Health</option>
-                    <option value="Information Technology & Digital Services">IT & Digital Services</option>
-                    <option value="Finance & Revenue">Finance & Revenue</option>
-                    <option value="Home & Public Administration">Home & Public Admin</option>
-                    <option value="Agriculture & Farmers Welfare">Agriculture</option>
-                    <option value="Transport & Highways">Transport & Highways</option>
+                    {configuredMinistries.length === 0 ? (
+                      <option value="" disabled>No ministries configured for this event</option>
+                    ) : (
+                      configuredMinistries.map(m => (
+                        <option key={m} value={m}>{m}</option>
+                      ))
+                    )}
                   </select>
                 </div>
               </div>

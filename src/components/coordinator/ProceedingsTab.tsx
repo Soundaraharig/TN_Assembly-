@@ -74,7 +74,12 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   // Sync data on tab or storage updates
   const refreshData = () => {
     setDeadline(storageService.getEventDeadline(targetSlug));
-    setQuestions(storageService.getProceedingsQuestions(targetSlug));
+    const allQ = [
+      ...storageService.getProceedingsQuestions(targetSlug),
+      ...(eventId && eventId !== targetSlug ? storageService.getProceedingsQuestions(eventId) : [])
+    ];
+    const uniqueQ = Array.from(new Map(allQ.map(q => [q.id, q])).values());
+    setQuestions(uniqueQ);
     setMotions(storageService.getProceedingsMotions(targetSlug));
   };
 
@@ -402,7 +407,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                         : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
                     }`}
                   >
-                    {st}
+                    {st === 'Submitted' ? 'Pending' : st}
                   </button>
                 ))}
               </div>
@@ -512,9 +517,9 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                               ? 'bg-amber-500/10 text-amber-500 border-amber-500/30'
                               : q.status === 'Rejected'
                               ? 'bg-rose-500/10 text-rose-600 border-rose-500/30'
-                              : 'bg-slate-500/10 text-slate-500 border-slate-500/30'
+                              : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30'
                           }`}>
-                            {q.status}
+                            {q.status === 'Submitted' ? 'Pending Approval' : q.status}
                           </span>
                         </td>
                         <td className="p-3.5 font-mono text-slate-400">#{q.queue_order || idx + 1}</td>

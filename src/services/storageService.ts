@@ -1168,6 +1168,7 @@ class StorageService {
     allFVotes: LiveFlashVote[];
     allProcs: BillProceeding[];
     allQs: ParliamentQuestion[];
+    allProceedingsQs: ProceedingsQuestion[];
     allScores: ScoreRecord[];
     allDays: EventDay[];
     allDayAtt: DayAttendanceRecord[];
@@ -1182,6 +1183,7 @@ class StorageService {
     let allFVotes: LiveFlashVote[] = [];
     let allProcs: BillProceeding[];
     let allQs: ParliamentQuestion[];
+    let allProceedingsQs: ProceedingsQuestion[] = [];
     let allScores: ScoreRecord[];
     let allDays: EventDay[];
     let allDayAtt: DayAttendanceRecord[];
@@ -1192,6 +1194,7 @@ class StorageService {
     allFVotes = [];
     allProcs = [];
     allQs = [];
+    allProceedingsQs = [];
     allScores = [];
     allDays = [];
     allDayAtt = [];
@@ -1235,6 +1238,24 @@ class StorageService {
       }
       if (Array.isArray(sc.questions)) {
         allQs = [...allQs, ...sc.questions];
+        const pqFromQs = sc.questions
+          .filter((q: any) => q.bench !== undefined || q.question_type !== undefined || q.student_name !== undefined)
+          .map((q: any) => ({
+            ...q,
+            event_id: q.event_id || ev.id,
+            event_slug: q.event_slug || getEventSlug(ev)
+          }));
+        if (pqFromQs.length > 0) {
+          allProceedingsQs = [...allProceedingsQs, ...pqFromQs];
+        }
+      }
+      if (Array.isArray(sc.proceedings_questions)) {
+        const pqs = sc.proceedings_questions.map((q: any) => ({
+          ...q,
+          event_id: q.event_id || ev.id,
+          event_slug: q.event_slug || getEventSlug(ev)
+        }));
+        allProceedingsQs = [...allProceedingsQs, ...pqs];
       }
       if (Array.isArray(sc.scores)) {
         allScores = [...allScores, ...sc.scores];
@@ -1302,6 +1323,7 @@ class StorageService {
       allFVotes,
       allProcs,
       allQs,
+      allProceedingsQs,
       allScores,
       allDays,
       allDayAtt,
@@ -1322,7 +1344,7 @@ class StorageService {
     allFVotes: LiveFlashVote[];
   } {
     const unpacked = this.unpackEventState(events);
-    const { openNomMap, allNoms, allElecs, allFVotes, allProcs, allQs, allScores, allDays, allDayAtt, allChecklist, allTeam } = unpacked;
+    const { openNomMap, allNoms, allElecs, allFVotes, allProcs, allQs, allProceedingsQs, allScores, allDays, allDayAtt, allChecklist, allTeam } = unpacked;
 
     // 1. Open Nominations
     if (openNomMap && Object.keys(openNomMap).length > 0) {
@@ -1436,6 +1458,28 @@ class StorageService {
       localQs.forEach(q => qMap.set(q.id, q));
       allQs.forEach(q => qMap.set(q.id, q));
       this.setItem(STORAGE_KEYS.QUESTIONS, Array.from(qMap.values()));
+    }
+    if (allProceedingsQs && allProceedingsQs.length > 0) {
+      const localPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+      const pqMap = new Map<string, ProceedingsQuestion>();
+      localPQs.forEach(q => pqMap.set(q.id, q));
+      allProceedingsQs.forEach(remoteQ => {
+        const local = pqMap.get(remoteQ.id);
+        if (!local) {
+          pqMap.set(remoteQ.id, remoteQ);
+        } else {
+          const localT = new Date(local.updated_at || local.created_at || 0).getTime();
+          const remoteT = new Date(remoteQ.updated_at || remoteQ.created_at || 0).getTime();
+          const mergedStatus = (remoteQ.status === 'Approved' || remoteQ.status === 'Starred' || remoteQ.status === 'Rejected')
+            ? remoteQ.status
+            : (local.status || remoteQ.status);
+          pqMap.set(remoteQ.id, {
+            ...(localT >= remoteT ? local : remoteQ),
+            status: mergedStatus
+          });
+        }
+      });
+      this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, Array.from(pqMap.values()));
     }
     if (allScores && allScores.length > 0) {
       const localScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
@@ -2169,7 +2213,12 @@ class StorageService {
 
   public getCabinetMinistries(eventId: string): string[] {
     if (!eventId) return [];
-    const ev = this.getEvents().find(e => e.id === eventId);
+    const cleanKey = eventId.toLowerCase().trim();
+    const ev = this.getEvents().find(e => 
+      e.id === eventId || 
+      getEventSlug(e).toLowerCase() === cleanKey || 
+      (e.slug && e.slug.toLowerCase() === cleanKey)
+    );
     if (ev && Array.isArray(ev.cabinet_ministries) && ev.cabinet_ministries.length > 0) {
       return ev.cabinet_ministries;
     }
@@ -2184,6 +2233,15 @@ class StorageService {
           const parsed = JSON.parse(stored);
           if (Array.isArray(parsed) && parsed.length > 0) {
             return parsed;
+          }
+        }
+        if (ev && ev.id !== eventId) {
+          const stored2 = localStorage.getItem(`tn_assembly_cabinet_${ev.id}`);
+          if (stored2) {
+            const parsed2 = JSON.parse(stored2);
+            if (Array.isArray(parsed2) && parsed2.length > 0) {
+              return parsed2;
+            }
           }
         }
       } catch {}
@@ -2969,6 +3027,33 @@ class StorageService {
             if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
           }
         })
+        .on('broadcast', { event: 'question_update' }, (msg: any) => {
+          if (msg?.payload?.eventId && Array.isArray(msg?.payload?.questions)) {
+            const localPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+            const pqMap = new Map<string, ProceedingsQuestion>();
+            localPQs.forEach(q => pqMap.set(q.id, q));
+            msg.payload.questions.forEach((remoteQ: ProceedingsQuestion) => {
+              const local = pqMap.get(remoteQ.id);
+              if (!local) {
+                pqMap.set(remoteQ.id, remoteQ);
+              } else {
+                const localT = new Date(local.updated_at || local.created_at || 0).getTime();
+                const remoteT = new Date(remoteQ.updated_at || remoteQ.created_at || 0).getTime();
+                const mergedStatus = (remoteQ.status === 'Approved' || remoteQ.status === 'Starred' || remoteQ.status === 'Rejected')
+                  ? remoteQ.status
+                  : (local.status || remoteQ.status);
+                pqMap.set(remoteQ.id, {
+                  ...(localT >= remoteT ? local : remoteQ),
+                  status: mergedStatus
+                });
+              }
+            });
+            this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, Array.from(pqMap.values()));
+            this.invalidateCache('portal_');
+            this.notify();
+            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+          }
+        })
         .on('postgres_changes', { event: '*', schema: 'public', table: 'college_events' }, (payload: any) => {
           this.invalidateCache('events');
           this.invalidateCache('portal_');
@@ -3257,6 +3342,39 @@ class StorageService {
       });
       const finalMergedScores = Array.from(scoreMap.values());
 
+      // Safe non-destructive merge of proceedings questions by unique ID
+      const localPQs = this.getProceedingsQuestions(eventId);
+      const remotePQs = Array.isArray(existingSC.proceedings_questions)
+        ? (existingSC.proceedings_questions as ProceedingsQuestion[])
+        : (Array.isArray(existingSC.questions) && existingSC.questions.length > 0 && ((existingSC.questions[0] as any).bench || (existingSC.questions[0] as any).question_type) ? (existingSC.questions as ProceedingsQuestion[]) : []);
+      const pqMap = new Map<string, ProceedingsQuestion>();
+      remotePQs.forEach(q => pqMap.set(q.id, q));
+      localPQs.forEach(q => {
+        const existing = pqMap.get(q.id);
+        if (!existing) {
+          pqMap.set(q.id, q);
+        } else {
+          // If remote is Approved, Starred, or Rejected, respect coordinator's approval
+          const mergedStatus = (existing.status === 'Approved' || existing.status === 'Starred' || existing.status === 'Rejected')
+            ? existing.status
+            : (q.status || existing.status);
+          const localT = new Date(q.updated_at || q.created_at || 0).getTime();
+          const remoteT = new Date(existing.updated_at || existing.created_at || 0).getTime();
+          pqMap.set(q.id, {
+            ...(localT >= remoteT ? q : existing),
+            status: mergedStatus
+          });
+        }
+      });
+      const finalMergedPQs = Array.from(pqMap.values());
+
+      // Update local storage so that all remote questions merged are preserved locally
+      const allPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+      const combinedAllPQsMap = new Map<string, ProceedingsQuestion>();
+      allPQs.forEach(q => combinedAllPQsMap.set(q.id, q));
+      finalMergedPQs.forEach(q => combinedAllPQsMap.set(q.id, q));
+      this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, Array.from(combinedAllPQsMap.values()));
+
       const payload = {
         ...existingSC,
         projector_settings: projSettings || existingSC.projector_settings,
@@ -3266,7 +3384,8 @@ class StorageService {
         elections: finalElecs,
         flash_votes: fvotes,
         proceedings: procs,
-        questions: qs,
+        questions: finalMergedPQs.length > 0 ? finalMergedPQs : qs,
+        proceedings_questions: finalMergedPQs,
         scores: finalMergedScores,
         vote_audit_log: voteAudit,
         yuva_assignments: yuvaAssignments,
@@ -3308,8 +3427,13 @@ class StorageService {
             event: 'flash_vote_update',
             payload: { eventId, flashVotes: fvotes }
           });
+          await this.realtimeChannel.send({
+            type: 'broadcast',
+            event: 'question_update',
+            payload: { eventId, questions: finalMergedPQs }
+          });
         } catch (bErr) {
-          console.warn('[Supabase] Broadcast election/flash_vote failed:', bErr);
+          console.warn('[Supabase] Broadcast election/flash_vote/question failed:', bErr);
         }
       }
       this.invalidateCache(eventId);
@@ -9646,57 +9770,142 @@ class StorageService {
   public getProceedingsQuestions(eventKey?: string): ProceedingsQuestion[] {
     const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
     if (!eventKey) return list;
-    return list.filter(q => q.event_id === eventKey || q.event_slug === eventKey);
+    const cleanKey = (eventKey || '').toLowerCase().trim();
+    const resolvedEvent = this.getEvents().find(e => 
+      e.id === eventKey || 
+      getEventSlug(e).toLowerCase() === cleanKey || 
+      (e.slug && e.slug.toLowerCase() === cleanKey)
+    );
+    const evId = resolvedEvent?.id?.toLowerCase();
+    const evSlug = resolvedEvent ? getEventSlug(resolvedEvent).toLowerCase() : undefined;
+
+    return list.filter(q => {
+      const qId = (q.event_id || '').toLowerCase();
+      const qSlug = (q.event_slug || '').toLowerCase();
+      return (
+        qId === cleanKey ||
+        qSlug === cleanKey ||
+        (evId && qId === evId) ||
+        (evSlug && qSlug === evSlug)
+      );
+    });
+  }
+
+  public async submitProceedingsQuestion(question: Partial<ProceedingsQuestion>): Promise<{ success: boolean; question?: ProceedingsQuestion; error?: string }> {
+    if (!question.question_text || !question.question_text.trim()) {
+      return { success: false, error: 'Question text cannot be empty.' };
+    }
+    if (!question.ministry || !question.ministry.trim()) {
+      return { success: false, error: 'Target Ministry must be selected.' };
+    }
+
+    const eventSlug = question.event_slug || (question.event_id ? this.getEvents().find(e => e.id === question.event_id)?.slug : undefined) || 'jkkncet-tn-assembly-2026';
+    const resolvedEvent = this.getEvents().find(e => e.id === question.event_id || getEventSlug(e) === eventSlug || e.slug === eventSlug);
+    const eventId = resolvedEvent?.id || question.event_id || eventSlug;
+
+    const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+    const newQuestion: ProceedingsQuestion = {
+      id: question.id || `q-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      event_id: eventId,
+      event_slug: resolvedEvent ? getEventSlug(resolvedEvent) : eventSlug,
+      student_id: question.student_id,
+      student_name: question.student_name || 'Hon. Member',
+      bench: question.bench || 'Ruling',
+      constituency: question.constituency || 'Assembly Delegate',
+      ministry: question.ministry.trim(),
+      target_ministry_id: question.target_ministry_id || question.ministry.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      target_ministry_name: question.ministry.trim(),
+      question_text: question.question_text.trim(),
+      question_type: question.question_type || 'Standard',
+      status: 'Submitted',
+      queue_order: question.queue_order || (list.filter(q => q.event_id === eventId).length + 1),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    list.unshift(newQuestion);
+    this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, list);
+    this.notify();
+
+    try {
+      await this.syncEventStateToSupabase(eventId);
+      return { success: true, question: newQuestion };
+    } catch (err: any) {
+      console.warn('[Supabase] submitProceedingsQuestion sync error:', err);
+      return { success: true, question: newQuestion };
+    }
   }
 
   public addProceedingsQuestion(question: Partial<ProceedingsQuestion>): ProceedingsQuestion {
     const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
     const eventSlug = question.event_slug || (question.event_id ? this.getEvents().find(e => e.id === question.event_id)?.slug : undefined) || 'jkkncet-tn-assembly-2026';
-    const eventId = question.event_id || (question.event_slug ? this.getEvents().find(e => e.slug === question.event_slug)?.id : undefined) || eventSlug;
+    const resolvedEvent = this.getEvents().find(e => e.id === question.event_id || getEventSlug(e) === eventSlug || e.slug === eventSlug);
+    const eventId = resolvedEvent?.id || question.event_id || eventSlug;
+
     const newQuestion: ProceedingsQuestion = {
-      id: question.id || genUuid(),
+      id: question.id || `q-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       event_id: eventId,
-      event_slug: eventSlug,
+      event_slug: resolvedEvent ? getEventSlug(resolvedEvent) : eventSlug,
       student_id: question.student_id,
       student_name: question.student_name || 'Hon. Member',
       bench: question.bench || 'Ruling',
       constituency: question.constituency || 'Assembly Delegate',
-      ministry: question.ministry || 'Ministry of Education',
-      question_text: question.question_text || '',
+      ministry: question.ministry?.trim() || '',
+      target_ministry_id: question.target_ministry_id || (question.ministry ? question.ministry.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') : undefined),
+      target_ministry_name: question.target_ministry_name || question.ministry?.trim(),
+      question_text: question.question_text?.trim() || '',
       question_type: question.question_type || 'Standard',
       status: question.status || 'Submitted',
-      queue_order: question.queue_order || list.length + 1,
-      created_at: new Date().toISOString()
+      queue_order: question.queue_order || (list.filter(q => q.event_id === eventId).length + 1),
+      created_at: question.created_at || new Date().toISOString(),
+      updated_at: new Date().toISOString()
     };
 
     list.unshift(newQuestion);
     this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, list);
-    this.sbUpsert('proceedings_questions', newQuestion as unknown as Record<string, unknown>);
     this.notify();
+    this.syncEventStateToSupabase(eventId).catch(err => {
+      console.warn('[Supabase] addProceedingsQuestion sync error:', err);
+    });
     return newQuestion;
   }
 
-  public updateProceedingsQuestionStatus(questionId: string, status: 'Submitted' | 'Approved' | 'Starred' | 'Rejected'): void {
+  public updateProceedingsQuestionStatus(questionId: string, status: 'Submitted' | 'Approved' | 'Starred' | 'Rejected', approvedBy?: string): void {
     const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
-    const updated = list.map(q => q.id === questionId ? { ...q, status } : q);
+    let targetEventId: string | undefined;
+    const updated = list.map(q => {
+      if (q.id === questionId) {
+        targetEventId = q.event_id;
+        return {
+          ...q,
+          status,
+          updated_at: new Date().toISOString(),
+          approved_by: status === 'Approved' ? (approvedBy || 'Admin') : q.approved_by,
+          approved_at: status === 'Approved' ? new Date().toISOString() : q.approved_at
+        };
+      }
+      return q;
+    });
     this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, updated);
-    const target = updated.find(q => q.id === questionId);
-    if (target) {
-      this.sbUpsert('proceedings_questions', target as unknown as Record<string, unknown>);
-    }
     this.notify();
+    if (targetEventId) {
+      this.syncEventStateToSupabase(targetEventId).catch(err => {
+        console.warn('[Supabase] updateProceedingsQuestionStatus sync error:', err);
+      });
+    }
   }
 
   public deleteProceedingsQuestion(questionId: string): void {
     const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+    const target = list.find(q => q.id === questionId);
     const filtered = list.filter(q => q.id !== questionId);
     this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, filtered);
-    if (supabase) {
-      supabase.from('proceedings_questions').delete().eq('id', questionId).then(({ error }) => {
-        if (error) console.warn('[Supabase] delete question error:', error.message);
+    this.notify();
+    if (target?.event_id) {
+      this.syncEventStateToSupabase(target.event_id).catch(err => {
+        console.warn('[Supabase] deleteProceedingsQuestion sync error:', err);
       });
     }
-    this.notify();
   }
 
   // ── PROCEEDINGS MOTIONS ─────────────────────────────────────────────
