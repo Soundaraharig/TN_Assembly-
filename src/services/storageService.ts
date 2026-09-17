@@ -1810,10 +1810,11 @@ class StorageService {
           this.setItem(STORAGE_KEYS.QUESTIONS, allQs);
 
           // Smart merge local and remote proceedings questions by unique ID
-          const localPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+          const deletedQIds = new Set(this.getItem<string[]>('tn_assembly_deleted_question_ids', []));
+          const localPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []).filter(q => !deletedQIds.has(q.id));
           const pqMap = new Map<string, ProceedingsQuestion>();
           localPQs.forEach(q => pqMap.set(q.id, q));
-          (allProceedingsQs || []).forEach(remoteQ => {
+          (allProceedingsQs || []).filter(remoteQ => !deletedQIds.has(remoteQ.id)).forEach(remoteQ => {
             const local = pqMap.get(remoteQ.id);
             if (!local) {
               pqMap.set(remoteQ.id, remoteQ);
@@ -3365,11 +3366,13 @@ class StorageService {
       });
       const finalMergedScores = Array.from(scoreMap.values());
 
-      // Safe non-destructive merge of proceedings questions by unique ID
-      const localPQs = this.getProceedingsQuestions(eventId);
-      const remotePQs = Array.isArray(existingSC.proceedings_questions)
+      // Safe non-destructive merge of proceedings questions by unique ID, respecting deletions
+      const deletedQIds = new Set(this.getItem<string[]>('tn_assembly_deleted_question_ids', []));
+      const localPQs = this.getProceedingsQuestions(eventId).filter(q => !deletedQIds.has(q.id));
+      const rawRemotePQs = Array.isArray(existingSC.proceedings_questions)
         ? (existingSC.proceedings_questions as ProceedingsQuestion[])
         : (Array.isArray(existingSC.questions) && existingSC.questions.length > 0 && ((existingSC.questions[0] as any).bench || (existingSC.questions[0] as any).question_type) ? (existingSC.questions as ProceedingsQuestion[]) : []);
+      const remotePQs = rawRemotePQs.filter(q => !deletedQIds.has(q.id));
       const pqMap = new Map<string, ProceedingsQuestion>();
       remotePQs.forEach(q => pqMap.set(q.id, q));
       localPQs.forEach(q => {
@@ -3388,10 +3391,10 @@ class StorageService {
           });
         }
       });
-      const finalMergedPQs = Array.from(pqMap.values());
+      const finalMergedPQs = Array.from(pqMap.values()).filter(q => !deletedQIds.has(q.id));
 
-      // Update local storage so that all remote questions merged are preserved locally
-      const allPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+      // Update local storage so that all remote questions merged are preserved locally, excluding deleted
+      const allPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []).filter(q => !deletedQIds.has(q.id));
       const combinedAllPQsMap = new Map<string, ProceedingsQuestion>();
       allPQs.forEach(q => combinedAllPQsMap.set(q.id, q));
       finalMergedPQs.forEach(q => combinedAllPQsMap.set(q.id, q));
@@ -9848,11 +9851,12 @@ class StorageService {
               ? sc.questions
               : []);
 
-        const localPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+        const deletedQIds = new Set(this.getItem<string[]>('tn_assembly_deleted_question_ids', []));
+        const localPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []).filter(q => !deletedQIds.has(q.id));
         const pqMap = new Map<string, ProceedingsQuestion>();
         localPQs.forEach(q => pqMap.set(q.id, q));
 
-        remotePQs.forEach(rq => {
+        remotePQs.filter(rq => !deletedQIds.has(rq.id)).forEach(rq => {
           const normalizedRq: ProceedingsQuestion = {
             ...rq,
             event_id: rq.event_id || ev.id,
@@ -9996,6 +10000,13 @@ class StorageService {
   }
 
   public deleteProceedingsQuestion(questionId: string, fallbackEventId?: string): void {
+    // Record persistent deletion tombstone
+    const deletedQIds = this.getItem<string[]>('tn_assembly_deleted_question_ids', []);
+    if (!deletedQIds.includes(questionId)) {
+      deletedQIds.push(questionId);
+      this.setItem('tn_assembly_deleted_question_ids', deletedQIds);
+    }
+
     const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
     const target = list.find(q => q.id === questionId);
     const targetEventId = target?.event_id || fallbackEventId;

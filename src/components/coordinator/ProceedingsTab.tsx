@@ -146,9 +146,11 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   };
 
   const handleDeleteQuestion = (id: string) => {
+    // Immediate optimistic UI update
+    setQuestions(prev => prev.filter(q => q.id !== id));
     storageService.deleteProceedingsQuestion(id, eventId || targetSlug);
     refreshData();
-    onShowToast('Question Deleted', 'Removed question from queue', 'info');
+    onShowToast('Question Deleted', 'Removed question from floor queue', 'info');
   };
 
   // Motion Submissions
