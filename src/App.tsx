@@ -291,7 +291,6 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
 
   useEffect(() => {
     if (activeEventId && isSupabaseEnabled) {
-      storageService.fetchEventLearners(activeEventId);
       const currentDelegates = storageService.getLearners(activeEventId);
       if (currentDelegates.length === 0 || !storageService.isEventHydrated(activeEventId)) {
         storageService.hydrateFullEventData(activeEventId);

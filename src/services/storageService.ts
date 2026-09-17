@@ -548,6 +548,51 @@ class StorageService {
     return this.dedupeInFlight(key, fn);
   }
 
+  // ── Universal Fetch Cache Gate (60-second TTL, in-flight deduplication) ──
+  // The single authoritative entry point for all Supabase read operations.
+  // Checks a 60-second memory TTL first, coalesces concurrent identical fetches
+  // into a single in-flight promise, and updates cache on resolution.
+  private readonly FETCH_TTL = 60 * 1000; // 60-second freshness window
+
+  public async fetchCached<T>(
+    key: string,
+    fetcher: () => Promise<T>,
+    options: { force?: boolean; ttl?: number } = {}
+  ): Promise<T> {
+    const ttl = options.ttl ?? this.FETCH_TTL;
+    const cacheStatus = this.getCacheStatus<T>(key, ttl);
+
+    // 1. Return from memory/localStorage cache if fresh and not forced
+    if (!options.force && cacheStatus.status === 'fresh' && cacheStatus.entry) {
+      return cacheStatus.entry.data;
+    }
+
+    // 2. Stale-While-Revalidate: serve stale cache instantly, revalidate in background
+    if (!options.force && cacheStatus.status === 'stale' && cacheStatus.entry) {
+      this.dedupeInFlight<T>(key, async () => {
+        const result = await fetcher();
+        if (result !== undefined) {
+          this.setCacheEntry(key, result);
+        } else if (!this.getCacheEntry(key)) {
+          this.setCacheEntry(key, true as unknown as T);
+        }
+        return result;
+      }).catch(err => console.warn(`[fetchCached] SWR background revalidation error for "${key}":`, err));
+      return cacheStatus.entry.data;
+    }
+
+    // 3. Cache miss or forced refresh — dispatch single request and cache result
+    return this.dedupeInFlight<T>(key, async () => {
+      const result = await fetcher();
+      if (result !== undefined) {
+        this.setCacheEntry(key, result);
+      } else if (!this.getCacheEntry(key)) {
+        this.setCacheEntry(key, true as unknown as T);
+      }
+      return result;
+    });
+  }
+
   public invalidateCache(prefix?: string): void {
     if (!prefix) {
       this.hydratedEventIds.clear();
@@ -558,7 +603,7 @@ class StorageService {
           const toRemove: string[] = [];
           for (let i = 0; i < localStorage.length; i++) {
             const k = localStorage.key(i);
-            if (k && (k.startsWith('tn_cache_') || k.startsWith('portal_') || k.startsWith('sync_') || k.startsWith('meta_'))) {
+            if (k && (k.startsWith('tn_cache_') || k.startsWith('portal_') || k.startsWith('sync_') || k.startsWith('meta_') || k.startsWith('fetch_') || k.startsWith('learners_') || k.startsWith('hydrate_full_'))) {
               toRemove.push(k);
             }
           }
@@ -572,7 +617,7 @@ class StorageService {
     }
     this.hydratedEventIds.delete(prefix);
     for (const k of Array.from(this.memoryCache.keys())) {
-      if (k.startsWith(prefix) || k.startsWith(`tn_cache_${prefix}`)) {
+      if (k.startsWith(prefix) || k.startsWith(`tn_cache_${prefix}`) || k.includes(prefix)) {
         this.memoryCache.delete(k);
       }
     }
@@ -581,7 +626,7 @@ class StorageService {
         const toRemove: string[] = [];
         for (let i = 0; i < localStorage.length; i++) {
           const k = localStorage.key(i);
-          if (k && (k.startsWith(prefix) || k.startsWith(`tn_cache_${prefix}`))) {
+          if (k && (k.startsWith(prefix) || k.startsWith(`tn_cache_${prefix}`) || k.includes(prefix))) {
             toRemove.push(k);
           }
         }
@@ -2093,7 +2138,7 @@ class StorageService {
     }
 
     const cacheKey = 'fetch_all_events';
-    return this.dedupeInFlight(cacheKey, async () => {
+    return this.fetchCached<CollegeEvent[]>(cacheKey, async () => {
       try {
         const { data, error } = await sb
           .from('college_events')
@@ -2114,7 +2159,7 @@ class StorageService {
         console.warn('[StorageService] fetchAllEvents fatal error:', err);
       }
       return this.getEvents();
-    });
+    }, { force });
   }
 
   /**
@@ -2130,7 +2175,7 @@ class StorageService {
     }
 
     const cacheKey = `fetch_learners_${eventId}`;
-    return this.dedupeInFlight(cacheKey, async () => {
+    return this.fetchCached<Learner[]>(cacheKey, async () => {
       try {
         let learnersData: any[] | null = null;
         // Query learners for this event, including legacy delegates with null event_id
@@ -2173,7 +2218,7 @@ class StorageService {
         console.error('[StorageService] fetchEventLearners fatal error:', err);
       }
       return this.getLearners(eventId);
-    });
+    }, { force });
   }
 
   /**
@@ -2207,7 +2252,7 @@ class StorageService {
     } catch {}
 
     const cacheKey = `hydrate_full_${eventId}`;
-    return this.dedupeInFlight(cacheKey, async () => {
+    return this.fetchCached<boolean>(cacheKey, async () => {
       if (!force && this.hydratedEventIds.has(eventId) && this.getLearners(eventId).length > 0) {
         return true;
       }
@@ -2330,7 +2375,7 @@ class StorageService {
         console.error('[StorageService] hydrateFullEventData fatal error:', err);
         return false;
       }
-    });
+    }, { force });
   }
 
   /**
@@ -2430,17 +2475,7 @@ class StorageService {
     if (!sb || !eventId) return;
     const cacheKey = `portal_student_${eventId}_${studentId}`;
 
-    if (!force) {
-      const cacheStatus = this.getCacheStatus(cacheKey);
-      if (cacheStatus.status === 'fresh') return;
-      if (cacheStatus.status === 'stale') {
-        this.dedupeInFlight(cacheKey, () => this.executeStudentPortalFetch(eventId, studentId, cacheKey))
-          .catch(err => console.warn('[StorageService] SWR background student fetch error:', err));
-        return;
-      }
-    }
-
-    return this.dedupeInFlight(cacheKey, () => this.executeStudentPortalFetch(eventId, studentId, cacheKey));
+    return this.fetchCached<void>(cacheKey, () => this.executeStudentPortalFetch(eventId, studentId, cacheKey), { force });
   }
 
   private async executeStudentPortalFetch(eventId: string, studentId: string, cacheKey: string): Promise<void> {
@@ -2494,18 +2529,7 @@ class StorageService {
     if (!sb || !eventId) return;
     const cacheKey = `portal_jury_${eventId}_${juryId}`;
 
-    if (!force) {
-      const cacheStatus = this.getCacheStatus(cacheKey);
-      if (cacheStatus.status === 'fresh') return;
-      if (cacheStatus.status === 'stale') {
-        // Stale-While-Revalidate: Trigger background fetch to update stale data automatically
-        this.dedupeInFlight(cacheKey, () => this.executeJuryPortalFetch(eventId, juryId, cacheKey))
-          .catch(err => console.warn('[StorageService] SWR background jury fetch error:', err));
-        return;
-      }
-    }
-
-    return this.dedupeInFlight(cacheKey, () => this.executeJuryPortalFetch(eventId, juryId, cacheKey));
+    return this.fetchCached<void>(cacheKey, () => this.executeJuryPortalFetch(eventId, juryId, cacheKey), { force });
   }
 
   private async executeJuryPortalFetch(eventId: string, juryId: string, cacheKey: string): Promise<void> {
@@ -2580,18 +2604,7 @@ class StorageService {
     if (!sb || !eventId) return;
     const cacheKey = `portal_volunteer_${eventId}_${volunteerId}`;
 
-    if (!force) {
-      const cacheStatus = this.getCacheStatus(cacheKey);
-      if (cacheStatus.status === 'fresh') return;
-      if (cacheStatus.status === 'stale') {
-        // Stale-While-Revalidate: Trigger background fetch to update stale data automatically
-        this.dedupeInFlight(cacheKey, () => this.executeVolunteerPortalFetch(eventId, volunteerId, cacheKey))
-          .catch(err => console.warn('[StorageService] SWR background volunteer fetch error:', err));
-        return;
-      }
-    }
-
-    return this.dedupeInFlight(cacheKey, () => this.executeVolunteerPortalFetch(eventId, volunteerId, cacheKey));
+    return this.fetchCached<void>(cacheKey, () => this.executeVolunteerPortalFetch(eventId, volunteerId, cacheKey), { force });
   }
 
   private async executeVolunteerPortalFetch(eventId: string, volunteerId: string, cacheKey: string): Promise<void> {
@@ -2678,17 +2691,7 @@ class StorageService {
 
     const cacheKey = `portal_display_${resolvedEventId}`;
 
-    if (!force) {
-      const cacheStatus = this.getCacheStatus(cacheKey);
-      if (cacheStatus.status === 'fresh') return;
-      if (cacheStatus.status === 'stale') {
-        this.dedupeInFlight(cacheKey, () => this.executeDisplayPortalFetch(resolvedEventId, slugOrId, cacheKey))
-          .catch(err => console.warn('[StorageService] SWR background display fetch error:', err));
-        return;
-      }
-    }
-
-    return this.dedupeInFlight(cacheKey, () => this.executeDisplayPortalFetch(resolvedEventId, slugOrId, cacheKey));
+    return this.fetchCached<void>(cacheKey, () => this.executeDisplayPortalFetch(resolvedEventId, slugOrId, cacheKey), { force });
   }
 
   private async executeDisplayPortalFetch(resolvedEventId: string, slugOrId: string, cacheKey: string): Promise<void> {
@@ -3214,6 +3217,7 @@ class StorageService {
           console.warn('[Supabase] Broadcast election/flash_vote failed:', bErr);
         }
       }
+      this.invalidateCache(eventId);
     } catch (e) {
       console.warn('[Supabase] syncEventStateToSupabase error:', e);
     }
@@ -4618,6 +4622,9 @@ class StorageService {
     }
 
     await this.sbUpsert('learners', newLearner as unknown as Record<string, unknown>);
+    if (newLearner.event_id) {
+      this.invalidateCache(newLearner.event_id);
+    }
     return newLearner;
   }
 
@@ -4869,6 +4876,9 @@ class StorageService {
     }
 
     this.notify();
+    if (eventId) {
+      this.invalidateCache(eventId);
+    }
     return {
       success: true,
       count: allToSync.length,
@@ -4891,6 +4901,9 @@ class StorageService {
     const all = this.getLearners().map(l => (l.id === learner.id ? withUpdated : l));
     this.setItem(STORAGE_KEYS.LEARNERS, all);
     await this.sbUpsert('learners', withUpdated as unknown as Record<string, unknown>);
+    if (withUpdated.event_id) {
+      this.invalidateCache(withUpdated.event_id);
+    }
   }
 
   public async deleteLearner(learnerId: string): Promise<void> {
@@ -4911,6 +4924,9 @@ class StorageService {
       }
     }
     await this.sbDelete('learners', learnerId);
+    if (target.event_id) {
+      this.invalidateCache(target.event_id);
+    }
   }
 
   public async deleteLearners(learnerIds: string[], eventId?: string): Promise<void> {
@@ -4943,6 +4959,9 @@ class StorageService {
       const { error } = await supabase.from('learners').delete().in('id', Array.from(idsActuallyDeleted));
       if (error) console.warn('[Supabase] bulk delete error:', error.message);
     }
+    if (eventId) {
+      this.invalidateCache(eventId);
+    }
   }
 
   public async clearAllLearners(eventId: string, confirmationToken?: string): Promise<{ success: boolean; error?: string }> {
@@ -4964,6 +4983,9 @@ class StorageService {
       const { error } = await supabase.from('learners').delete().eq('event_id', eventId);
       if (error) console.warn('[Supabase] clear all learners error:', error.message);
       await supabase.from('college_events').update({ participant_count: 0 }).eq('id', eventId);
+    }
+    if (eventId) {
+      this.invalidateCache(eventId);
     }
     return { success: true };
   }
@@ -5454,6 +5476,7 @@ class StorageService {
 
     this.persistEventDaysToSocialCoverage(eventId);
     this.notify();
+    this.invalidateCache(eventId);
     this.broadcastAttendanceMarked({
       eventId,
       dayId,
@@ -5626,6 +5649,7 @@ class StorageService {
 
     this.persistEventDaysToSocialCoverage(eventId);
     this.notify();
+    this.invalidateCache(eventId);
     this.broadcastAttendanceMarked({
       eventId,
       dayId,
@@ -5710,6 +5734,9 @@ class StorageService {
     this.removeDeletedId(newParty.id);
     this.setItem(STORAGE_KEYS.PARTIES, all);
     await this.sbUpsert('political_parties', newParty as unknown as Record<string, unknown>);
+    if (newParty.event_id) {
+      this.invalidateCache(newParty.event_id);
+    }
     return newParty;
   }
 
@@ -5786,6 +5813,9 @@ class StorageService {
     }
 
     this.notify();
+    if (targetEventId) {
+      this.invalidateCache(targetEventId);
+    }
   }
 
   public async setPartyBench(partyId: string, bench: 'Ruling' | 'Opposition' | 'Independent', eventId?: string): Promise<void> {
@@ -5937,6 +5967,9 @@ class StorageService {
       await this.sbUpsertBatch('learners', changedLearners as unknown as Record<string, unknown>[]);
     }
     this.notify();
+    if (targetEventId) {
+      this.invalidateCache(targetEventId);
+    }
   }
 
   // ── COMMITTEES ────────────────────────────────────────────────────────────
@@ -6056,6 +6089,9 @@ class StorageService {
     this.removeDeletedId(newComm.id);
     this.setItem(STORAGE_KEYS.COMMITTEES, all);
     this.notify();
+    if (newComm.event_id) {
+      this.invalidateCache(newComm.event_id);
+    }
     return newComm;
   }
 
@@ -6092,6 +6128,9 @@ class StorageService {
       }
     }
     this.notify();
+    if (targetEventId) {
+      this.invalidateCache(targetEventId);
+    }
   }
 
   public async deleteCommittee(comId: string): Promise<void> {
@@ -6121,6 +6160,9 @@ class StorageService {
       await this.sbUpsertBatch('learners', changedLearners as unknown as Record<string, unknown>[]);
     }
     this.notify();
+    if (targetEventId) {
+      this.invalidateCache(targetEventId);
+    }
   }
 
   // ── AGENDA ────────────────────────────────────────────────────────────────
@@ -6499,10 +6541,14 @@ class StorageService {
     all.push(newMember);
     this.setItem(STORAGE_KEYS.JURY, all);
     this.notify();
+    if (newMember.event_id) {
+      this.invalidateCache(newMember.event_id);
+    }
     return newMember;
   }
 
   public async deleteJuryMember(memberId: string): Promise<void> {
+    const target = this.getJury().find(j => j.id === memberId);
     if (supabase) {
       const res = await this.sbDelete('jury_members', memberId);
       if (!res.success) {
@@ -6512,6 +6558,9 @@ class StorageService {
     }
     this.setItem(STORAGE_KEYS.JURY, this.getJury().filter(j => j.id !== memberId));
     this.notify();
+    if (target?.event_id) {
+      this.invalidateCache(target.event_id);
+    }
   }
 
   // ── VOLUNTEERS ────────────────────────────────────────────────────────────
@@ -6570,6 +6619,9 @@ class StorageService {
     all.push(newVol);
     this.setItem(STORAGE_KEYS.VOLUNTEERS, all);
     this.notify();
+    if (newVol.event_id) {
+      this.invalidateCache(newVol.event_id);
+    }
     return newVol;
   }
 
@@ -6618,10 +6670,14 @@ class StorageService {
     }
     this.setItem(STORAGE_KEYS.VOLUNTEERS, [...existing, ...newItems]);
     this.notify();
+    if (eventId) {
+      this.invalidateCache(eventId);
+    }
     return { success: true, count: newItems.length };
   }
 
   public async deleteVolunteer(volunteerId: string): Promise<void> {
+    const target = this.getVolunteers().find(v => v.id === volunteerId);
     if (supabase) {
       const res = await this.sbDelete('volunteers', volunteerId);
       if (!res.success) {
@@ -6631,6 +6687,9 @@ class StorageService {
     }
     this.setItem(STORAGE_KEYS.VOLUNTEERS, this.getVolunteers().filter(v => v.id !== volunteerId));
     this.notify();
+    if (target?.event_id) {
+      this.invalidateCache(target.event_id);
+    }
   }
 
   public async saveCabinetMinistries(eventId: string, ministries: string[]): Promise<{ success: boolean; error?: any }> {
@@ -8177,6 +8236,7 @@ class StorageService {
             }
           })
           .eq('id', eventId);
+        this.invalidateCache(eventId);
       } catch (err) {
         console.warn('[StorageService] Error syncing scores to Supabase:', err);
       }
