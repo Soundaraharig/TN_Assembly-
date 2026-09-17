@@ -9962,12 +9962,17 @@ class StorageService {
     return newQuestion;
   }
 
-  public updateProceedingsQuestionStatus(questionId: string, status: 'Submitted' | 'Approved' | 'Starred' | 'Rejected', approvedBy?: string): void {
+  public updateProceedingsQuestionStatus(
+    questionId: string,
+    status: 'Submitted' | 'Approved' | 'Starred' | 'Rejected',
+    approvedBy?: string,
+    fallbackEventId?: string
+  ): void {
     const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
-    let targetEventId: string | undefined;
+    let targetEventId: string | undefined = fallbackEventId;
     const updated = list.map(q => {
       if (q.id === questionId) {
-        targetEventId = q.event_id;
+        targetEventId = q.event_id || fallbackEventId;
         return {
           ...q,
           status,
@@ -9981,20 +9986,27 @@ class StorageService {
     this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, updated);
     this.notify();
     if (targetEventId) {
-      this.syncEventStateToSupabase(targetEventId).catch(err => {
+      const allEvs = this.getEvents();
+      const matched = findEventBySlug(allEvs, targetEventId) || allEvs.find(e => e.id === targetEventId);
+      const syncId = matched?.id || targetEventId;
+      this.syncEventStateToSupabase(syncId).catch(err => {
         console.warn('[Supabase] updateProceedingsQuestionStatus sync error:', err);
       });
     }
   }
 
-  public deleteProceedingsQuestion(questionId: string): void {
+  public deleteProceedingsQuestion(questionId: string, fallbackEventId?: string): void {
     const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
     const target = list.find(q => q.id === questionId);
+    const targetEventId = target?.event_id || fallbackEventId;
     const filtered = list.filter(q => q.id !== questionId);
     this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, filtered);
     this.notify();
-    if (target?.event_id) {
-      this.syncEventStateToSupabase(target.event_id).catch(err => {
+    if (targetEventId) {
+      const allEvs = this.getEvents();
+      const matched = findEventBySlug(allEvs, targetEventId) || allEvs.find(e => e.id === targetEventId);
+      const syncId = matched?.id || targetEventId;
+      this.syncEventStateToSupabase(syncId).catch(err => {
         console.warn('[Supabase] deleteProceedingsQuestion sync error:', err);
       });
     }

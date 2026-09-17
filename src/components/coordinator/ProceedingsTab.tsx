@@ -126,17 +126,29 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
     );
   };
 
-  // Question Actions
-  const handleUpdateQuestionStatus = (id: string, status: 'Submitted' | 'Approved' | 'Starred' | 'Rejected') => {
-    storageService.updateProceedingsQuestionStatus(id, status);
+  // Question Actions with toggle support
+  const handleUpdateQuestionStatus = (id: string, actionStatus: 'Submitted' | 'Approved' | 'Starred' | 'Rejected') => {
+    const targetQ = questions.find(q => q.id === id);
+    const currentStatus = normalizeStatus(targetQ?.status);
+
+    // Toggle: if already in this state, clicking it reverts back to Submitted (Pending)
+    const nextStatus = currentStatus === actionStatus ? 'Submitted' : actionStatus;
+
+    storageService.updateProceedingsQuestionStatus(id, nextStatus, 'Speaker / Admin', eventId || targetSlug);
     refreshData();
-    onShowToast('Status Updated', `Question status changed to ${status}`, 'success');
+    onShowToast(
+      'Status Updated',
+      nextStatus === 'Submitted'
+        ? 'Question status reverted to Pending Approval'
+        : `Question status changed to ${nextStatus}`,
+      'success'
+    );
   };
 
   const handleDeleteQuestion = (id: string) => {
-    storageService.deleteProceedingsQuestion(id);
+    storageService.deleteProceedingsQuestion(id, eventId || targetSlug);
     refreshData();
-    onShowToast('Question Deleted', 'Removed test question from queue', 'info');
+    onShowToast('Question Deleted', 'Removed question from queue', 'info');
   };
 
   // Motion Submissions
@@ -598,43 +610,64 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                         </td>
                         <td className="p-3.5 font-mono text-slate-400">#{q.queue_order || idx + 1}</td>
                         <td className="p-3.5 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => handleUpdateQuestionStatus(q.id, 'Approved')}
-                              title="Approve Question"
-                              className="p-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500 hover:text-white text-emerald-600 transition-colors cursor-pointer"
-                            >
-                              <Check className="w-3.5 h-3.5" />
-                            </button>
+                          {(() => {
+                            const currentCanonical = normalizeStatus(q.status);
+                            const isApproved = currentCanonical === 'Approved';
+                            const isStarred = currentCanonical === 'Starred';
+                            const isRejected = currentCanonical === 'Rejected';
 
-                            <button
-                              type="button"
-                              onClick={() => handleUpdateQuestionStatus(q.id, 'Starred')}
-                              title="Star Question"
-                              className="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500 hover:text-white text-amber-500 transition-colors cursor-pointer"
-                            >
-                              <Star className="w-3.5 h-3.5" />
-                            </button>
+                            return (
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateQuestionStatus(q.id, 'Approved')}
+                                  title={isApproved ? "Approved (Click to revert to Pending)" : "Approve Question"}
+                                  className={`p-1.5 rounded-lg transition-all duration-200 cursor-pointer flex items-center justify-center ${
+                                    isApproved
+                                      ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/30 ring-2 ring-emerald-400 scale-105 font-bold'
+                                      : 'bg-emerald-500/10 hover:bg-emerald-500 hover:text-white text-emerald-600'
+                                  }`}
+                                >
+                                  <Check className={`w-3.5 h-3.5 ${isApproved ? 'stroke-[3]' : 'stroke-2'}`} />
+                                </button>
 
-                            <button
-                              type="button"
-                              onClick={() => handleUpdateQuestionStatus(q.id, 'Rejected')}
-                              title="Reject Question"
-                              className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500 hover:text-white text-rose-600 transition-colors cursor-pointer"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateQuestionStatus(q.id, 'Starred')}
+                                  title={isStarred ? "Starred (Click to unstar)" : "Star Question"}
+                                  className={`p-1.5 rounded-lg transition-all duration-200 cursor-pointer flex items-center justify-center ${
+                                    isStarred
+                                      ? 'bg-amber-500 text-white shadow-md shadow-amber-500/30 ring-2 ring-amber-400 scale-105 font-bold'
+                                      : 'bg-amber-500/10 hover:bg-amber-500 hover:text-white text-amber-500'
+                                  }`}
+                                >
+                                  <Star className={`w-3.5 h-3.5 ${isStarred ? 'fill-white stroke-white stroke-[2.5]' : 'stroke-2'}`} />
+                                </button>
 
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteQuestion(q.id)}
-                              title="Delete Question"
-                              className="p-1.5 rounded-lg hover:bg-rose-500/20 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateQuestionStatus(q.id, 'Rejected')}
+                                  title={isRejected ? "Rejected (Click to revert to Pending)" : "Reject Question"}
+                                  className={`p-1.5 rounded-lg transition-all duration-200 cursor-pointer flex items-center justify-center ${
+                                    isRejected
+                                      ? 'bg-rose-500 text-white shadow-md shadow-rose-500/30 ring-2 ring-rose-400 scale-105 font-bold'
+                                      : 'bg-rose-500/10 hover:bg-rose-500 hover:text-white text-rose-600'
+                                  }`}
+                                >
+                                  <X className={`w-3.5 h-3.5 ${isRejected ? 'stroke-[3]' : 'stroke-2'}`} />
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteQuestion(q.id)}
+                                  title="Delete Question"
+                                  className="p-1.5 rounded-lg hover:bg-rose-500/20 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer flex items-center justify-center"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5 stroke-2" />
+                                </button>
+                              </div>
+                            );
+                          })()}
                         </td>
                       </tr>
                     ))
