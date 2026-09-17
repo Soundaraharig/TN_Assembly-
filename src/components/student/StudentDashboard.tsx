@@ -91,10 +91,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   });
   const [studentQuestions, setStudentQuestions] = useState<ProceedingsQuestion[]>([]);
   const [approvedHouseQuestions, setApprovedHouseQuestions] = useState<ProceedingsQuestion[]>([]);
-  const [eventMinistries, setEventMinistries] = useState<string[]>(() => storageService.getCabinetMinistries(resolvedEventId));
+  const [eventMinistries, setEventMinistries] = useState<string[]>(() => {
+    const fromId = storageService.getCabinetMinistries(resolvedEventId);
+    if (fromId.length > 0) return fromId;
+    return storageService.getCabinetMinistries(eventSlug);
+  });
   const [questionMinistry, setQuestionMinistry] = useState<string>(() => {
     const mins = storageService.getCabinetMinistries(resolvedEventId);
-    return mins.length > 0 ? mins[0] : '';
+    const resolved = mins.length > 0 ? mins : storageService.getCabinetMinistries(eventSlug);
+    return resolved.length > 0 ? resolved[0] : '';
   });
   const [questionType, setQuestionType] = useState<ProceedingsQuestion['question_type']>('Standard');
   const [questionText, setQuestionText] = useState<string>('');
@@ -133,7 +138,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         setApprovedHouseQuestions(uniqueQ.filter(q => q.status === 'Approved' || q.status === 'Starred'));
 
         // Refresh configured ministries from Cabinet & Shadow Ministry system
-        const activeMins = storageService.getCabinetMinistries(currentResolvedId);
+        const fromId = storageService.getCabinetMinistries(currentResolvedId);
+        const activeMins = fromId.length > 0 ? fromId : storageService.getCabinetMinistries(eventSlug);
         setEventMinistries(activeMins);
         setQuestionMinistry(prev => {
           if (activeMins.includes(prev)) return prev;

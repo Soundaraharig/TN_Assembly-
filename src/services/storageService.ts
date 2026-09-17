@@ -2304,20 +2304,38 @@ class StorageService {
         const stored = localStorage.getItem(`tn_assembly_cabinet_${eventId}`);
         if (stored) {
           const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) {
+          if (Array.isArray(parsed)) {
             return parsed;
           }
         }
-        if (ev && ev.id !== eventId) {
-          const stored2 = localStorage.getItem(`tn_assembly_cabinet_${ev.id}`);
-          if (stored2) {
-            const parsed2 = JSON.parse(stored2);
-            if (Array.isArray(parsed2) && parsed2.length > 0) {
-              return parsed2;
+        if (ev) {
+          if (ev.id && ev.id !== eventId) {
+            const stored2 = localStorage.getItem(`tn_assembly_cabinet_${ev.id}`);
+            if (stored2) {
+              const parsed2 = JSON.parse(stored2);
+              if (Array.isArray(parsed2)) {
+                return parsed2;
+              }
+            }
+          }
+          const evSlug = getEventSlug(ev);
+          if (evSlug && evSlug !== eventId) {
+            const stored3 = localStorage.getItem(`tn_assembly_cabinet_${evSlug}`);
+            if (stored3) {
+              const parsed3 = JSON.parse(stored3);
+              if (Array.isArray(parsed3)) {
+                return parsed3;
+              }
             }
           }
         }
       } catch {}
+    }
+    if (ev && Array.isArray(ev.cabinet_ministries)) {
+      return ev.cabinet_ministries;
+    }
+    if (sc && Array.isArray(sc.cabinet_ministries)) {
+      return sc.cabinet_ministries;
     }
     return [];
   }
@@ -3169,6 +3187,76 @@ class StorageService {
             if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
           }
         })
+        .on('broadcast', { event: 'question_deleted' }, (msg: any) => {
+          if (msg?.payload?.questionId) {
+            const qId = msg.payload.questionId;
+            const deletedQIds = this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []);
+            if (!deletedQIds.includes(qId)) {
+              deletedQIds.push(qId);
+              this.setItem(STORAGE_KEYS.DELETED_IDS, deletedQIds);
+            }
+            const localPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+            this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, localPQs.filter(q => q.id !== qId));
+
+            // Also prune question from in-memory event state
+            const allEvs = this.getEvents();
+            let eventsChanged = false;
+            allEvs.forEach(ev => {
+              if (ev.social_coverage && typeof ev.social_coverage === 'object') {
+                const sc = ev.social_coverage as Record<string, any>;
+                if (Array.isArray(sc.proceedings_questions)) {
+                  sc.proceedings_questions = sc.proceedings_questions.filter((q: any) => q.id !== qId);
+                  eventsChanged = true;
+                }
+                if (Array.isArray(sc.questions)) {
+                  sc.questions = sc.questions.filter((q: any) => q.id !== qId);
+                  eventsChanged = true;
+                }
+                if (Array.isArray(sc.deleted_question_ids) && !sc.deleted_question_ids.includes(qId)) {
+                  sc.deleted_question_ids.push(qId);
+                  eventsChanged = true;
+                }
+              }
+            });
+            if (eventsChanged) {
+              this.setItem(STORAGE_KEYS.EVENTS, allEvs);
+            }
+
+            this.invalidateCache('portal_');
+            this.notify();
+            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+          }
+        })
+        .on('broadcast', { event: 'ministries_update' }, (msg: any) => {
+          if (msg?.payload?.eventId && Array.isArray(msg?.payload?.ministries)) {
+            const evId = msg.payload.eventId;
+            const nextMins = msg.payload.ministries as string[];
+            if (typeof localStorage !== 'undefined') {
+              try {
+                localStorage.setItem(`tn_assembly_cabinet_${evId}`, JSON.stringify(nextMins));
+                if (msg.payload.eventSlug) {
+                  localStorage.setItem(`tn_assembly_cabinet_${msg.payload.eventSlug}`, JSON.stringify(nextMins));
+                }
+              } catch {}
+            }
+            const allEvs = this.getEvents();
+            const targetEv = allEvs.find(e => 
+              e.id === evId || 
+              (msg.payload.eventSlug && getEventSlug(e).toLowerCase() === msg.payload.eventSlug.toLowerCase()) ||
+              getEventSlug(e).toLowerCase() === evId.toLowerCase()
+            );
+            if (targetEv) {
+              targetEv.cabinet_ministries = nextMins;
+              const sc = (targetEv.social_coverage || {}) as Record<string, any>;
+              targetEv.social_coverage = { ...sc, cabinet_ministries: nextMins };
+              this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === targetEv.id ? targetEv : e));
+            }
+            this.invalidateCache('portal_');
+            this.invalidateCache('events');
+            this.notify();
+            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+          }
+        })
         .on('postgres_changes', { event: '*', schema: 'public', table: 'college_events' }, (payload: any) => {
           this.invalidateCache('events');
           this.invalidateCache('portal_');
@@ -3502,6 +3590,7 @@ class StorageService {
         proceedings: procs,
         questions: finalMergedPQs.length > 0 ? finalMergedPQs : qs,
         proceedings_questions: finalMergedPQs,
+        deleted_question_ids: Array.from(deletedQIds),
         scores: finalMergedScores,
         vote_audit_log: voteAudit,
         yuva_assignments: yuvaAssignments,
@@ -3555,8 +3644,13 @@ class StorageService {
             event: 'event_deadline_update',
             payload: { eventId, deadline: payload.event_deadline }
           });
+          await this.realtimeChannel.send({
+            type: 'broadcast',
+            event: 'ministries_update',
+            payload: { eventId, ministries: payload.cabinet_ministries }
+          });
         } catch (bErr) {
-          console.warn('[Supabase] Broadcast election/flash_vote/question/deadline failed:', bErr);
+          console.warn('[Supabase] Broadcast election/flash_vote/question/deadline/ministries failed:', bErr);
         }
       }
       this.invalidateCache(eventId);
@@ -7036,17 +7130,24 @@ class StorageService {
   }
 
   public async saveCabinetMinistries(eventId: string, ministries: string[]): Promise<{ success: boolean; error?: any }> {
+    const allEvs = this.getEvents();
+    const target = allEvs.find(e => e.id === eventId || getEventSlug(e) === eventId);
+    const resolvedSlug = target ? getEventSlug(target) : eventId;
+
     if (typeof localStorage !== 'undefined' && eventId) {
       try {
         localStorage.setItem(`tn_assembly_cabinet_${eventId}`, JSON.stringify(ministries));
+        if (resolvedSlug) {
+          localStorage.setItem(`tn_assembly_cabinet_${resolvedSlug}`, JSON.stringify(ministries));
+        }
       } catch (err) {
         console.warn('Failed to cache cabinet ministries to localStorage:', err);
       }
     }
 
     // Update both cabinet_ministries AND social_coverage.cabinet_ministries so both persist to Supabase
-    const events = this.getEvents().map(e => {
-      if (e.id === eventId) {
+    const events = allEvs.map(e => {
+      if (e.id === eventId || e.id === target?.id) {
         const sc = { ...((e.social_coverage as Record<string, unknown>) || {}) };
         sc.cabinet_ministries = ministries;
         return { ...e, cabinet_ministries: ministries, social_coverage: sc };
@@ -7054,14 +7155,26 @@ class StorageService {
       return e;
     });
     this.setItem(STORAGE_KEYS.EVENTS, events);
-    this.notify();
 
-    const target = events.find(e => e.id === eventId);
-    if (target && supabase) {
+    // ZERO-LATENCY REALTIME BROADCAST to all connected students and coordinators
+    this.broadcast('ministries_update', {
+      eventId,
+      eventSlug: resolvedSlug,
+      ministries
+    }).catch(err => {
+      console.warn('[Supabase] broadcast ministries_update error:', err);
+    });
+
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+
+    const syncTarget = events.find(e => e.id === eventId || e.id === target?.id);
+    if (syncTarget && supabase) {
       try {
         const { error } = await supabase.from('college_events').update({
-          social_coverage: target.social_coverage
-        }).eq('id', eventId);
+          social_coverage: syncTarget.social_coverage,
+          cabinet_ministries: ministries
+        }).eq('id', syncTarget.id || eventId);
         if (error) {
           console.error('[Supabase] saveCabinetMinistries error:', error.message);
           return { success: false, error };
@@ -10089,7 +10202,7 @@ class StorageService {
       const matched = cleanKey ? (findEventBySlug(allEvs, cleanKey) || allEvs.find(e => e.id === cleanKey)) : undefined;
       const targetEventId = matched?.id || (isUuid ? cleanKey : undefined);
 
-      let query = sb.from('college_events').select('id, college_name, slug, social_coverage');
+      let query = sb.from('college_events').select('id, college_name, slug, social_coverage, cabinet_ministries');
       if (targetEventId) {
         query = query.eq('id', targetEventId);
       } else if (cleanKey) {
@@ -10102,6 +10215,36 @@ class StorageService {
       } else if (data && data.length > 0) {
         const ev = data[0];
         const sc = (ev.social_coverage || {}) as Record<string, any>;
+
+        // Synchronize remote cabinet_ministries immediately so target ministry is available on initial load
+        const remoteMinistries: string[] = (Array.isArray(sc.cabinet_ministries) && sc.cabinet_ministries.length > 0)
+          ? sc.cabinet_ministries
+          : (Array.isArray((ev as any).cabinet_ministries) && (ev as any).cabinet_ministries.length > 0 ? (ev as any).cabinet_ministries : []);
+        if (remoteMinistries.length > 0) {
+          if (typeof localStorage !== 'undefined') {
+            try {
+              localStorage.setItem(`tn_assembly_cabinet_${ev.id}`, JSON.stringify(remoteMinistries));
+              if (ev.slug) {
+                localStorage.setItem(`tn_assembly_cabinet_${ev.slug}`, JSON.stringify(remoteMinistries));
+              }
+            } catch {}
+          }
+          const targetEv = allEvs.find(e => e.id === ev.id);
+          if (targetEv) {
+            targetEv.cabinet_ministries = remoteMinistries;
+            const scEv = (targetEv.social_coverage || {}) as Record<string, any>;
+            targetEv.social_coverage = { ...scEv, cabinet_ministries: remoteMinistries };
+            this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === targetEv.id ? targetEv : e));
+          }
+        }
+
+        // Synchronize remote deleted_question_ids tombstones
+        if (Array.isArray(sc.deleted_question_ids) && sc.deleted_question_ids.length > 0) {
+          const curDeleted = this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []);
+          const mergedDeleted = Array.from(new Set([...curDeleted, ...sc.deleted_question_ids]));
+          this.setItem(STORAGE_KEYS.DELETED_IDS, mergedDeleted);
+        }
+
         let fetchedDeadline: EventDeadline | null = null;
         if (sc.event_deadline && typeof sc.event_deadline === 'object') {
           fetchedDeadline = sc.event_deadline as EventDeadline;
@@ -10141,32 +10284,68 @@ class StorageService {
               : []);
 
         const deletedQIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
-        const localPQs = this.getProceedingsQuestions(eventKey);
-        const pqMap = new Map<string, ProceedingsQuestion>();
-        localPQs.forEach(q => pqMap.set(q.id, q));
+        const allLocalPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+        const cleanEventKey = (eventKey || '').trim().toLowerCase();
+        const evId = ev.id.toLowerCase();
+        const evSlug = (ev.slug || getEventSlug(ev as any)).toLowerCase();
 
-        remotePQs.filter(rq => !deletedQIds.has(rq.id)).forEach(rq => {
-          const normalizedRq: ProceedingsQuestion = {
+        // Separate questions for other events (keep 100% untouched)
+        const otherEventsPQs = allLocalPQs.filter(q => {
+          const qId = (q.event_id || '').toLowerCase();
+          const qSlug = (q.event_slug || '').toLowerCase();
+          const isThisEvent = (qId && (qId === evId || qId === cleanEventKey)) ||
+                              (qSlug && (qSlug === evSlug || qSlug === cleanEventKey));
+          return !isThisEvent;
+        });
+
+        // Current event questions from local storage
+        const thisEventLocalPQs = allLocalPQs.filter(q => {
+          const qId = (q.event_id || '').toLowerCase();
+          const qSlug = (q.event_slug || '').toLowerCase();
+          return ((qId && (qId === evId || qId === cleanEventKey)) ||
+                  (qSlug && (qSlug === evSlug || qSlug === cleanEventKey))) &&
+                 !deletedQIds.has(q.id);
+        });
+
+        const validRemotePQs = remotePQs.filter(rq => !deletedQIds.has(rq.id));
+        const remoteQIdSet = new Set(validRemotePQs.map(rq => rq.id));
+        const now = Date.now();
+        const pqMap = new Map<string, ProceedingsQuestion>();
+
+        validRemotePQs.forEach(rq => {
+          pqMap.set(rq.id, {
             ...rq,
             event_id: rq.event_id || ev.id,
             event_slug: rq.event_slug || ev.slug || getEventSlug(ev as any)
-          };
-          const local = pqMap.get(normalizedRq.id);
-          if (!local) {
-            pqMap.set(normalizedRq.id, normalizedRq);
-          } else {
-            const localT = new Date(local.updated_at || local.created_at || 0).getTime();
-            const remoteT = new Date(normalizedRq.updated_at || normalizedRq.created_at || 0).getTime();
-            pqMap.set(normalizedRq.id, {
-              ...normalizedRq,
-              ...local,
-              status: localT >= remoteT ? (local.status || normalizedRq.status) : (normalizedRq.status || local.status),
-              updated_at: localT >= remoteT ? local.updated_at : normalizedRq.updated_at
+          });
+        });
+
+        thisEventLocalPQs.forEach(lq => {
+          if (remoteQIdSet.has(lq.id)) {
+            const remote = pqMap.get(lq.id)!;
+            const localT = new Date(lq.updated_at || lq.created_at || 0).getTime();
+            const remoteT = new Date(remote.updated_at || remote.created_at || 0).getTime();
+            pqMap.set(lq.id, {
+              ...remote,
+              ...lq,
+              status: localT >= remoteT ? (lq.status || remote.status) : (remote.status || lq.status),
+              updated_at: localT >= remoteT ? lq.updated_at : remote.updated_at
             });
+          } else {
+            // Question exists locally but missing from remote
+            const createdAge = now - new Date(lq.created_at || 0).getTime();
+            if (createdAge < 15000) {
+              // In-flight question submitted just moments ago
+              pqMap.set(lq.id, lq);
+            } else {
+              // Question was deleted by Admin on Supabase: record tombstone and purge
+              deletedQIds.add(lq.id);
+            }
           }
         });
 
-        this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, Array.from(pqMap.values()));
+        this.setItem(STORAGE_KEYS.DELETED_IDS, Array.from(deletedQIds));
+        this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, [...otherEventsPQs, ...Array.from(pqMap.values())]);
         this.notify();
       }
     } catch (err) {
@@ -10303,18 +10482,58 @@ class StorageService {
     const targetEventId = target?.event_id || fallbackEventId;
     const filtered = list.filter(q => q.id !== questionId);
     this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, filtered);
-    this.notify();
 
-    // Push deletion to Supabase — syncEventStateToSupabase reads DELETED_IDS and strips
-    // the deleted question from the social_coverage.proceedings_questions blob before saving.
-    if (targetEventId) {
-      const allEvs = this.getEvents();
-      const matched = findEventBySlug(allEvs, targetEventId) || allEvs.find(e => e.id === targetEventId);
-      const syncId = matched?.id || targetEventId;
+    const allEvs = this.getEvents();
+    const matched = targetEventId ? (findEventBySlug(allEvs, targetEventId) || allEvs.find(e => e.id === targetEventId)) : undefined;
+    const syncId = matched?.id || targetEventId;
+    const resolvedSlug = matched ? getEventSlug(matched) : targetEventId;
+
+    // IMMEDIATE ZERO-LATENCY REALTIME BROADCAST to all connected students and coordinators
+    this.broadcast('question_deleted', {
+      eventId: syncId,
+      eventSlug: resolvedSlug,
+      questionId
+    }).catch(err => {
+      console.warn('[Supabase] broadcast question_deleted error:', err);
+    });
+
+    // Targeted fast Supabase patch: strip question from social_coverage and record tombstone immediately
+    const sb = supabase;
+    if (sb && syncId && isValidUuid(syncId)) {
+      sb.from('college_events').select('social_coverage').eq('id', syncId).single().then(
+        ({ data }) => {
+          const currentSc = (data?.social_coverage || {}) as Record<string, any>;
+          const curPQs = Array.isArray(currentSc.proceedings_questions) ? currentSc.proceedings_questions : [];
+          const curQs = Array.isArray(currentSc.questions) ? currentSc.questions : [];
+          const curDeletedIds = Array.isArray(currentSc.deleted_question_ids) ? currentSc.deleted_question_ids : [];
+          if (!curDeletedIds.includes(questionId)) {
+            curDeletedIds.push(questionId);
+          }
+          const patchedSc = {
+            ...currentSc,
+            proceedings_questions: curPQs.filter((q: any) => q.id !== questionId),
+            questions: curQs.filter((q: any) => q.id !== questionId),
+            deleted_question_ids: curDeletedIds,
+            updated_at: new Date().toISOString()
+          };
+          sb.from('college_events').update({ social_coverage: patchedSc }).eq('id', syncId).then(
+            () => {},
+            (err: any) => console.warn('[Supabase] fast delete patch error:', err)
+          );
+        },
+        () => {}
+      );
+    }
+
+    // Push deletion to Supabase via full state sync in background
+    if (syncId) {
       this.syncEventStateToSupabase(syncId).catch(err => {
         console.warn('[Supabase] deleteProceedingsQuestion sync error:', err);
       });
     }
+
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
   }
 
   // ── PROCEEDINGS MOTIONS ─────────────────────────────────────────────
