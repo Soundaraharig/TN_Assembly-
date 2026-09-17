@@ -20,7 +20,7 @@ import {
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
-import type { JuryMember, Learner, ScoreRecord, CollegeEvent, AgendaItem } from '../../types';
+import type { JuryMember, Learner, ScoreRecord, CollegeEvent, AgendaItem, ScoringSession } from '../../types';
 import { useTheme } from '../../lib/theme';
 import { storageService } from '../../services/storageService';
 
@@ -58,6 +58,26 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
   const [search, setSearch] = useState('');
   const [filterBench, setFilterBench] = useState<'ALL' | 'Ruling' | 'Opposition' | 'Independent'>('ALL');
   const [activeTab, setActiveTab] = useState<'evaluate' | 'history' | 'agenda'>('evaluate');
+
+  // Available Scoring Sessions (Zero Hour, Question Hour, Bill Presenting, etc.)
+  const availableSessions = useMemo<ScoringSession[]>(() => {
+    return storageService.getScoringSessions(event?.id || '');
+  }, [event?.id, agenda]);
+
+  const [selectedSessionId, setSelectedSessionId] = useState<string>(() => {
+    const defaultSessions = storageService.getScoringSessions(event?.id || '');
+    return defaultSessions[0]?.id || 'zero_hour';
+  });
+
+  const selectedSession = useMemo<ScoringSession>(() => {
+    const found = availableSessions.find(s => s.id === selectedSessionId);
+    return found || availableSessions[0] || { id: 'zero_hour', name: 'Zero Hour', is_canonical: true };
+  }, [availableSessions, selectedSessionId]);
+
+  const handleSessionChange = (newSessionId: string) => {
+    setSelectedSessionId(newSessionId);
+    setLoadedKey(''); // Force reload for current delegate under new session
+  };
 
   // 6 Rubric Scores State
   const [researchScore, setResearchScore] = useState<number>(2);
@@ -103,16 +123,18 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
 
   const selectedLearner = learners.find(l => l.id === selectedLearnerId);
 
-  const [loadedLearnerId, setLoadedLearnerId] = useState<string>('');
+  const [loadedKey, setLoadedKey] = useState<string>('');
 
-  // Load existing score ONLY when the selected learner changes (different delegate picked)
+  // Load existing score when selected learner OR selected session changes
   useEffect(() => {
-    if (!selectedLearnerId) return;
-    if (loadedLearnerId === selectedLearnerId) return;
+    if (!selectedLearnerId || !selectedSession) return;
+    const currentKey = `${selectedLearnerId}:::${selectedSession.id}`;
+    if (loadedKey === currentKey) return;
 
     const existing = scores.find(s =>
       s.learner_id === selectedLearnerId &&
       (!event || !s.event_id || s.event_id === event.id) &&
+      (s.session_id === selectedSession.id || s.session_name === selectedSession.name) &&
       ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))
     );
     if (existing) {
@@ -135,9 +157,9 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       setIsLocked(false);
       setFeedback('');
     }
-    setLoadedLearnerId(selectedLearnerId);
+    setLoadedKey(currentKey);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedLearnerId]);
+  }, [selectedLearnerId, selectedSession.id, scores]);
 
   const totalScore = researchScore + relevanceScore + commScore + conductScore + originalityScore + timeScore;
 
@@ -168,13 +190,18 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     const existing = scores.find(s =>
       s.learner_id === selectedLearner.id &&
       (!event || !s.event_id || s.event_id === event.id) &&
+      (s.session_id === selectedSession.id || s.session_name === selectedSession.name) &&
       ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))
     );
     const record: ScoreRecord = {
-      id: existing?.id || `score_${selectedLearner.id}_${jury?.id || 'jury'}_${Date.now()}`,
+      id: existing?.id || `score_${selectedLearner.id}_${selectedSession.id}_${jury?.id || 'jury'}_${Date.now()}`,
       event_id: event?.id || selectedLearner.event_id || '',
+      session_id: selectedSession.id,
+      session_name: selectedSession.name,
       learner_id: selectedLearner.id,
       learner_name: selectedLearner.full_name,
+      constituency_number: selectedLearner.constituency_number,
+      constituency_name: selectedLearner.constituency_name,
       party_name: selectedLearner.party_name || 'Independent',
       bench: selectedLearner.bench || 'Ruling',
       jury_id: jury?.id,
@@ -196,6 +223,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       feedback: fb.trim(),
       juror_name: jury?.name || 'Evaluator',
       is_locked: lk,
+      created_at: existing?.created_at || new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
 
@@ -408,6 +436,68 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 space-y-6">
+        {/* PROMINENT SESSION SELECTOR BANNER */}
+        <div
+          className="rounded-2xl p-4 md:p-5 border shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4"
+          style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+        >
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/20">
+              <Calendar className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black tracking-widest uppercase text-amber-600 dark:text-amber-400">
+                  SCORING SESSION
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                  Independent Scores
+                </span>
+              </div>
+              <h2 className="text-base md:text-lg font-black" style={{ color: 'var(--text-primary)' }}>
+                Current Session: <span className="text-amber-600 dark:text-amber-400">{selectedSession.name}</span>
+              </h2>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                Current Jury: <strong style={{ color: 'var(--text-primary)' }}>{jury?.name || 'Evaluator'}</strong>
+                {selectedSession.day && ` • ${selectedSession.day}`}
+                {selectedSession.time && ` • ${selectedSession.time}`}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-extrabold uppercase tracking-wider text-slate-500 shrink-0">
+                Session:
+              </label>
+              <select
+                value={selectedSession.id}
+                onChange={e => handleSessionChange(e.target.value)}
+                className="font-extrabold text-sm py-2 px-3.5 rounded-xl border border-amber-500/40 bg-white dark:bg-slate-900 text-slate-900 dark:text-white cursor-pointer shadow-sm focus:ring-2 focus:ring-amber-500/50"
+              >
+                {availableSessions.map(sess => (
+                  <option key={sess.id} value={sess.id}>
+                    {sess.name} {sess.day ? `(${sess.day})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="text-right hidden sm:block pl-2 border-l border-slate-200 dark:border-slate-800">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                Session Progress
+              </span>
+              <span className="text-xs font-mono font-black text-emerald-600 dark:text-emerald-400">
+                {scores.filter(s =>
+                  (!event || !s.event_id || s.event_id === event.id) &&
+                  (s.session_id === selectedSession.id || s.session_name === selectedSession.name) &&
+                  ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))
+                ).length} / {learners.length} Evaluated
+              </span>
+            </div>
+          </div>
+        </div>
+
         {activeTab === 'evaluate' && (
           <div className="space-y-6">
             {/* MOBILE QUICK SEARCH & DELEGATE SWITCHER (Prominent at top on mobile) */}
@@ -538,7 +628,8 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       const isSelected = learner.id === selectedLearnerId;
                       const existingScore = scores.find(s =>
                         s.learner_id === learner.id &&
-                        (!event || s.event_id === event.id) &&
+                        (!event || !s.event_id || s.event_id === event.id) &&
+                        (s.session_id === selectedSession.id || s.session_name === selectedSession.name) &&
                         ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))
                       );
 
@@ -1162,7 +1253,8 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       const isSelected = learner.id === selectedLearnerId;
                       const existingScore = scores.find(s =>
                         s.learner_id === learner.id &&
-                        (!event || s.event_id === event.id) &&
+                        (!event || !s.event_id || s.event_id === event.id) &&
+                        (s.session_id === selectedSession.id || s.session_name === selectedSession.name) &&
                         ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))
                       );
 
@@ -1237,6 +1329,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     <thead className="border-b" style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
                       <tr>
                         <th className="py-2.5 px-3">Delegate</th>
+                        <th className="py-2.5 px-3">Session</th>
                         <th className="py-2.5 px-3">Party & Bench</th>
                         <th className="py-2.5 px-3 text-center">Research (30)</th>
                         <th className="py-2.5 px-3 text-center">Agenda (20)</th>
@@ -1253,6 +1346,11 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                         <tr key={s.id} className="hover:opacity-80">
                           <td className="py-3 px-3 font-bold" style={{ color: 'var(--text-primary)' }}>
                             {s.learner_name}
+                          </td>
+                          <td className="py-3 px-3">
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                              {s.session_name || 'Session'}
+                            </span>
                           </td>
                           <td className="py-3 px-3" style={{ color: 'var(--text-secondary)' }}>
                             {s.party_name} ({s.bench})

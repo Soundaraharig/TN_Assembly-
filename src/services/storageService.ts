@@ -20,6 +20,7 @@ import type {
   LiveFlashVote,
   BillProceeding,
   ScoreRecord,
+  ScoringSession,
   VoteAuditEntry,
   AggregatedScore,
   ParliamentQuestion,
@@ -1440,16 +1441,18 @@ class StorageService {
       const localScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
       const scoreMap = new Map<string, ScoreRecord>();
       localScores.forEach(s => {
-        const key = `${s.event_id || ''}_${s.learner_id || ''}_${s.jury_id || ''}`;
+        const key = this.getScoreCompositeKey(s, targetEventId);
         scoreMap.set(key, s);
       });
       allScores.forEach(remoteS => {
-        const key = `${remoteS.event_id || ''}_${remoteS.learner_id || ''}_${remoteS.jury_id || ''}`;
+        const key = this.getScoreCompositeKey(remoteS, targetEventId);
         const local = scoreMap.get(key);
         if (!local) {
           scoreMap.set(key, remoteS);
         } else {
-          scoreMap.set(key, { ...remoteS, ...local });
+          const localTime = new Date(local.updated_at || 0).getTime();
+          const remoteTime = new Date(remoteS.updated_at || 0).getTime();
+          scoreMap.set(key, localTime >= remoteTime ? local : { ...local, ...remoteS });
         }
       });
       this.setItem(STORAGE_KEYS.SCORES, Array.from(scoreMap.values()));
@@ -2625,12 +2628,22 @@ class StorageService {
           const socialCoverage = (ev as any).social_coverage;
           if (socialCoverage && typeof socialCoverage === 'object' && Array.isArray(socialCoverage.scores)) {
             const allScores: ScoreRecord[] = socialCoverage.scores;
-            const juryScores = juryId ? allScores.filter((s: ScoreRecord) => s.jury_id === juryId) : allScores;
+            const juryScores = juryId ? allScores.filter((s: ScoreRecord) => s.jury_id === juryId || s.juror_name === juryId) : allScores;
             if (juryScores.length > 0) {
               const existingScores = this.getScores(eventId);
               const mergedMap = new Map<string, ScoreRecord>();
-              existingScores.forEach(s => mergedMap.set(s.id, s));
-              juryScores.forEach(s => mergedMap.set(s.id, s));
+              existingScores.forEach(s => mergedMap.set(this.getScoreCompositeKey(s, eventId), s));
+              juryScores.forEach(s => {
+                const k = this.getScoreCompositeKey(s, eventId);
+                const cur = mergedMap.get(k);
+                if (!cur) {
+                  mergedMap.set(k, s);
+                } else {
+                  const curT = new Date(cur.updated_at || 0).getTime();
+                  const newT = new Date(s.updated_at || 0).getTime();
+                  if (newT >= curT) mergedMap.set(k, s);
+                }
+              });
               this.setItem(STORAGE_KEYS.SCORES, Array.from(mergedMap.values()));
             }
           }
@@ -3227,6 +3240,23 @@ class StorageService {
 
       const voteAudit = this.getVoteAuditLog(eventId);
 
+      // Safe non-destructive merge of scores by 4-part composite key (event, session, jury, learner)
+      const remoteScores = Array.isArray(existingSC.scores) ? (existingSC.scores as ScoreRecord[]) : [];
+      const scoreMap = new Map<string, ScoreRecord>();
+      remoteScores.forEach(s => scoreMap.set(this.getScoreCompositeKey(s, eventId), s));
+      scs.forEach(s => {
+        const k = this.getScoreCompositeKey(s, eventId);
+        const existing = scoreMap.get(k);
+        if (!existing) {
+          scoreMap.set(k, s);
+        } else {
+          const curT = new Date(s.updated_at || 0).getTime();
+          const remT = new Date(existing.updated_at || 0).getTime();
+          if (curT >= remT) scoreMap.set(k, s);
+        }
+      });
+      const finalMergedScores = Array.from(scoreMap.values());
+
       const payload = {
         ...existingSC,
         projector_settings: projSettings || existingSC.projector_settings,
@@ -3237,7 +3267,7 @@ class StorageService {
         flash_votes: fvotes,
         proceedings: procs,
         questions: qs,
-        scores: scs,
+        scores: finalMergedScores,
         vote_audit_log: voteAudit,
         yuva_assignments: yuvaAssignments,
         cabinet_ministries: (Array.isArray(currentEv?.cabinet_ministries) && currentEv!.cabinet_ministries.length > 0)
@@ -8180,11 +8210,141 @@ class StorageService {
     this.setItem(STORAGE_KEYS.PROCEEDINGS, all);
   }
 
-  // ── SCORE GRID ────────────────────────────────────────────────────────────
+  // ── SCORE GRID (SESSION-BASED SCORING ENGINE) ─────────────────────────────
 
-  public getScores(eventId?: string): ScoreRecord[] {
-    const all = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, INITIAL_SCORES);
-    if (eventId) return all.filter(s => s.event_id === eventId);
+  /**
+   * Generates a deterministic composite key for a score record:
+   * event_id ::: session_id ::: jury_id ::: learner_id
+   * 
+   * Strict identity hierarchy:
+   * 1. Uses stable session_id when available; canonicalizes session_name fallback
+   * 2. Uses stable jury_id when available; canonicalizes juror_name fallback
+   * 3. Uses stable learner_id
+   * Guarantees sessions, juries, and delegates NEVER overwrite each other.
+   */
+  public getScoreCompositeKey(score: Partial<ScoreRecord>, eventIdFallback = ''): string {
+    const evId = score.event_id || eventIdFallback || '';
+    
+    // Stable session resolution (prefer stable session_id)
+    let sessKey = score.session_id;
+    if (!sessKey && score.session_name) {
+      const sNameLower = score.session_name.toLowerCase();
+      if (sNameLower.includes('zero')) sessKey = 'zero_hour';
+      else if (sNameLower.includes('question')) sessKey = 'question_hour';
+      else if (sNameLower.includes('bill')) sessKey = 'bill_presenting';
+      else sessKey = score.session_name.trim().toLowerCase().replace(/\s+/g, '_');
+    }
+    if (!sessKey) sessKey = 'default_session';
+
+    // Stable jury resolution (prefer stable jury_id)
+    let juryKey = score.jury_id;
+    if (!juryKey && score.juror_name) {
+      juryKey = score.juror_name.trim().toLowerCase().replace(/\s+/g, '_');
+    }
+    if (!juryKey) juryKey = 'default_jury';
+
+    const learnerKey = score.learner_id || '';
+    return `${evId}:::${sessKey}:::${juryKey}:::${learnerKey}`;
+  }
+
+  /**
+   * Returns all available scoring sessions for an event.
+   * Dynamically inspects session_agenda from Supabase while guaranteeing
+   * the canonical parliamentary sessions (Zero Hour, Question Hour, Bill Presenting)
+   * are ALWAYS present.
+   */
+  public getScoringSessions(eventId: string): ScoringSession[] {
+    const agendaItems = this.getAgenda(eventId);
+    const sessions: ScoringSession[] = [];
+    const seenIds = new Set<string>();
+
+    const canonicalConfigs: Array<{ pattern: RegExp; id: string; name: string; order: number }> = [
+      { pattern: /zero\s*hour/i, id: 'zero_hour', name: 'Zero Hour', order: 1 },
+      { pattern: /question\s*hour/i, id: 'question_hour', name: 'Question Hour', order: 2 },
+      { pattern: /bill\s*(present|intro|vot|read)/i, id: 'bill_presenting', name: 'Bill Presenting', order: 3 }
+    ];
+
+    canonicalConfigs.forEach(canon => {
+      const matched = agendaItems.find(a => canon.pattern.test(a.title || '') || canon.pattern.test(a.description || ''));
+      if (matched) {
+        sessions.push({
+          id: matched.id,
+          name: matched.title || canon.name,
+          day: matched.day,
+          time: matched.time,
+          description: matched.description,
+          is_canonical: true,
+          order_number: canon.order
+        });
+        seenIds.add(matched.id);
+      } else {
+        sessions.push({
+          id: canon.id,
+          name: canon.name,
+          is_canonical: true,
+          order_number: canon.order
+        });
+        seenIds.add(canon.id);
+      }
+    });
+
+    // Also include any other agenda items that could be custom scored sessions
+    agendaItems.forEach((a, idx) => {
+      if (!seenIds.has(a.id) && a.title && (a.category === 'DEBATE' || a.category === 'PRESENTATION' || a.category === 'VOTING' || /hour|debate|speech|motion/i.test(a.title))) {
+        sessions.push({
+          id: a.id,
+          name: a.title,
+          day: a.day,
+          time: a.time,
+          description: a.description,
+          is_canonical: false,
+          order_number: 10 + idx
+        });
+        seenIds.add(a.id);
+      }
+    });
+
+    return sessions;
+  }
+
+  public getScores(eventId?: string, sessionId?: string, juryId?: string): ScoreRecord[] {
+    let all = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, INITIAL_SCORES);
+
+    // Read dedicated backup for event if available
+    if (eventId && typeof localStorage !== 'undefined') {
+      try {
+        const stored = localStorage.getItem(`tn_assembly_scores_${eventId}`);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const map = new Map<string, ScoreRecord>();
+            all.forEach(s => map.set(this.getScoreCompositeKey(s, eventId), s));
+            parsed.forEach((s: ScoreRecord) => {
+              const k = this.getScoreCompositeKey(s, eventId);
+              const cur = map.get(k);
+              if (!cur) {
+                map.set(k, s);
+              } else {
+                const curT = new Date(cur.updated_at || 0).getTime();
+                const bkpT = new Date(s.updated_at || 0).getTime();
+                if (bkpT > curT) map.set(k, s);
+              }
+            });
+            all = Array.from(map.values());
+          }
+        }
+      } catch {}
+    }
+
+    if (eventId) {
+      all = all.filter(s => s.event_id === eventId);
+    }
+    if (sessionId && sessionId !== 'ALL') {
+      all = all.filter(s => s.session_id === sessionId || s.session_name === sessionId);
+    }
+    if (juryId && juryId !== 'ALL') {
+      all = all.filter(s => s.jury_id === juryId || s.juror_name === juryId);
+    }
     return all;
   }
 
@@ -8197,7 +8357,7 @@ class StorageService {
     }
 
     const all = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, INITIAL_SCORES);
-    const juryKey = score.jury_id || score.juror_name || 'default_jury';
+    const targetKey = this.getScoreCompositeKey(score, score.event_id);
 
     // Validation and rubric normalization
     const research = Math.max(0, Math.min(30, Number(score.research_constituency ?? 0)));
@@ -8211,13 +8371,36 @@ class StorageService {
     const computedTotal = research + relevance + comm + conduct + originality + timeMgmt;
     const finalTotal = computedTotal > 0 ? computedTotal : (score.total ?? 0);
 
+    const now = new Date().toISOString();
+
+    // Ensure stable session_id and jury_id are always assigned
+    let sessId = score.session_id;
+    let sessName = score.session_name || 'Session';
+    if (!sessId && score.session_name) {
+      const sNameLower = score.session_name.toLowerCase();
+      if (sNameLower.includes('zero')) { sessId = 'zero_hour'; sessName = 'Zero Hour'; }
+      else if (sNameLower.includes('question')) { sessId = 'question_hour'; sessName = 'Question Hour'; }
+      else if (sNameLower.includes('bill')) { sessId = 'bill_presenting'; sessName = 'Bill Presenting'; }
+      else { sessId = score.session_name.trim().toLowerCase().replace(/\s+/g, '_'); }
+    }
+    if (!sessId) sessId = 'default_session';
+
+    let juryId = score.jury_id;
+    let jurorName = score.juror_name || 'Juror';
+    if (!juryId && score.juror_name) {
+      juryId = score.juror_name.trim().toLowerCase().replace(/\s+/g, '_');
+    }
+    if (!juryId) juryId = 'default_jury';
+
     const normalizedScore: ScoreRecord = {
       ...score,
       id: score.id || uid('score'),
       event_id: score.event_id || '',
+      session_id: sessId,
+      session_name: sessName,
       learner_id: score.learner_id,
-      jury_id: score.jury_id || 'default_jury',
-      juror_name: score.juror_name || 'Juror',
+      jury_id: juryId,
+      juror_name: jurorName,
       research_constituency: research,
       relevance_agenda: relevance,
       communication_delivery: comm,
@@ -8225,18 +8408,14 @@ class StorageService {
       originality_preparation: originality,
       time_management: timeMgmt,
       total: finalTotal,
-      updated_at: new Date().toISOString()
+      created_at: score.created_at || now,
+      updated_at: now
     };
 
-    // Composite key match: (event_id, learner_id, jury_id)
+    // Composite key match: (event_id, session_id, jury_id, learner_id)
     const idx = all.findIndex(s => {
       if (s.id && normalizedScore.id && s.id === normalizedScore.id) return true;
-      const sJury = s.jury_id || s.juror_name || 'default_jury';
-      return (
-        s.learner_id === normalizedScore.learner_id &&
-        (!normalizedScore.event_id || !s.event_id || s.event_id === normalizedScore.event_id) &&
-        sJury === juryKey
-      );
+      return this.getScoreCompositeKey(s, normalizedScore.event_id) === targetKey;
     });
 
     if (idx >= 0) {
@@ -8245,6 +8424,15 @@ class StorageService {
       all.push(normalizedScore);
     }
     this.setItem(STORAGE_KEYS.SCORES, all);
+
+    // Dedicated local backup per event
+    if (normalizedScore.event_id && typeof localStorage !== 'undefined') {
+      try {
+        const evScores = all.filter(s => s.event_id === normalizedScore.event_id);
+        localStorage.setItem(`tn_assembly_scores_${normalizedScore.event_id}`, JSON.stringify(evScores));
+      } catch {}
+    }
+
     this.notify();
 
     if (normalizedScore.event_id) {
@@ -8252,7 +8440,7 @@ class StorageService {
     }
   }
 
-  // Debounced read-merge-write to Supabase to prevent parallel juror clobbering
+  // Debounced read-merge-write to Supabase to prevent parallel juror/session clobbering
   private scheduleScoreSync(eventId: string) {
     if (!supabase || !eventId) return;
     const existingTimer = this.scoreSyncTimers.get(eventId);
@@ -8273,15 +8461,14 @@ class StorageService {
         const remoteScores = Array.isArray(remoteSC.scores) ? (remoteSC.scores as ScoreRecord[]) : [];
         const localScores = this.getScores(eventId);
 
-        // Merge by composite key: (event_id, learner_id, jury_id)
+        // Merge by 4-part composite key: (event_id, session, jury, learner)
         const scoreMap = new Map<string, ScoreRecord>();
         remoteScores.forEach(s => {
-          const jKey = s.jury_id || s.juror_name || 'default_jury';
-          scoreMap.set(`${s.event_id || eventId}:::${s.learner_id}:::${jKey}`, s);
+          const k = this.getScoreCompositeKey(s, eventId);
+          scoreMap.set(k, s);
         });
         localScores.forEach(s => {
-          const jKey = s.jury_id || s.juror_name || 'default_jury';
-          const k = `${s.event_id || eventId}:::${s.learner_id}:::${jKey}`;
+          const k = this.getScoreCompositeKey(s, eventId);
           const existing = scoreMap.get(k);
           if (!existing) {
             scoreMap.set(k, s);
@@ -8299,6 +8486,12 @@ class StorageService {
           ...this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []).filter(s => s.event_id !== eventId),
           ...mergedScores
         ]);
+
+        if (typeof localStorage !== 'undefined') {
+          try {
+            localStorage.setItem(`tn_assembly_scores_${eventId}`, JSON.stringify(mergedScores));
+          } catch {}
+        }
 
         await supabase
           .from('college_events')
@@ -8320,8 +8513,8 @@ class StorageService {
   }
 
   // Multi-juror rubric aggregation engine (Issue #3)
-  public getAggregatedScores(eventId?: string): Record<string, AggregatedScore> {
-    const scores = this.getScores(eventId);
+  public getAggregatedScores(eventId?: string, sessionId?: string): Record<string, AggregatedScore> {
+    const scores = this.getScores(eventId, sessionId);
     const learners = this.getLearners(eventId);
     const learnerMap = new Map<string, Learner>();
     learners.forEach(l => learnerMap.set(l.id, l));

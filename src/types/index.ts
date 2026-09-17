@@ -308,11 +308,25 @@ export interface BillProceeding {
   created_at: string;
 }
 
+export interface ScoringSession {
+  id: string;
+  name: string;
+  day?: string;
+  time?: string;
+  description?: string;
+  is_canonical?: boolean;
+  order_number?: number;
+}
+
 export interface ScoreRecord {
   id: string;
   event_id: string;
+  session_id?: string;
+  session_name?: string;
   learner_id: string;
   learner_name: string;
+  constituency_number?: number;
+  constituency_name?: string;
   party_name: string;
   bench: BenchType;
   jury_id?: string;
@@ -329,6 +343,7 @@ export interface ScoreRecord {
   feedback?: string;
   juror_name?: string;
   is_locked?: boolean;
+  created_at?: string;
   updated_at: string;
 }
 
