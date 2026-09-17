@@ -1174,6 +1174,7 @@ class StorageService {
     allDayAtt: DayAttendanceRecord[];
     allChecklist: ChecklistItem[];
     allTeam: TeamMember[];
+    allDeadlines: EventDeadline[];
     extendedLearnerMap: Map<string, any>;
   } {
     const extendedLearnerMap = new Map<string, any>();
@@ -1189,6 +1190,7 @@ class StorageService {
     let allDayAtt: DayAttendanceRecord[];
     let allChecklist: ChecklistItem[];
     let allTeam: TeamMember[];
+    let allDeadlines: EventDeadline[] = [];
 
     allElecs = [];
     allFVotes = [];
@@ -1200,6 +1202,7 @@ class StorageService {
     allDayAtt = [];
     allChecklist = [];
     allTeam = [];
+    allDeadlines = [];
 
     const now = Date.now();
     const lockTimestamps = this.getItem<Record<string, number>>(STORAGE_KEYS.LOCK_UPDATED_AT, {});
@@ -1314,6 +1317,23 @@ class StorageService {
       if (sc.last_bell_ring) {
         this.setItem(`tn_assembly_last_bell_${ev.id}`, sc.last_bell_ring);
       }
+      if (sc.event_deadline && typeof sc.event_deadline === 'object') {
+        const dl: EventDeadline = {
+          ...sc.event_deadline,
+          event_id: sc.event_deadline.event_id || ev.id,
+          event_slug: sc.event_deadline.event_slug || getEventSlug(ev)
+        };
+        allDeadlines.push(dl);
+      } else if (typeof sc.is_question_window_open === 'boolean') {
+        allDeadlines.push({
+          id: `deadline-${ev.id}`,
+          event_id: ev.id,
+          event_slug: getEventSlug(ev),
+          is_open: sc.is_question_window_open,
+          status: sc.is_question_window_open ? 'OPEN' : 'CLOSED',
+          updated_at: new Date().toISOString()
+        });
+      }
     });
 
     return {
@@ -1329,6 +1349,7 @@ class StorageService {
       allDayAtt,
       allChecklist,
       allTeam,
+      allDeadlines,
       extendedLearnerMap
     };
   }
@@ -1542,6 +1563,30 @@ class StorageService {
     events.forEach(ev => {
       this.resyncMainDaysAttendance(ev.id);
     });
+
+    // 7. Deadlines (Question Hour window)
+    if (unpacked.allDeadlines && unpacked.allDeadlines.length > 0) {
+      const localDeadlines = this.getItem<EventDeadline[]>(STORAGE_KEYS.DEADLINES, []);
+      const deadlineMap = new Map<string, EventDeadline>();
+      localDeadlines.forEach(d => {
+        const k = (d.event_id || d.event_slug || '').toLowerCase();
+        if (k) deadlineMap.set(k, d);
+      });
+      unpacked.allDeadlines.forEach(remoteD => {
+        const k = (remoteD.event_id || remoteD.event_slug || '').toLowerCase();
+        if (k) {
+          const local = deadlineMap.get(k);
+          if (!local) {
+            deadlineMap.set(k, remoteD);
+          } else {
+            const localT = new Date(local.updated_at || 0).getTime();
+            const remoteT = new Date(remoteD.updated_at || 0).getTime();
+            deadlineMap.set(k, remoteT >= localT ? remoteD : local);
+          }
+        }
+      });
+      this.setItem(STORAGE_KEYS.DEADLINES, Array.from(deadlineMap.values()));
+    }
 
     return {
       openNomMap,
@@ -3078,6 +3123,22 @@ class StorageService {
             if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
           }
         })
+        .on('broadcast', { event: 'event_deadline_update' }, (msg: any) => {
+          if (msg?.payload?.deadline) {
+            const dl = msg.payload.deadline as EventDeadline;
+            const localDeadlines = this.getItem<EventDeadline[]>(STORAGE_KEYS.DEADLINES, []);
+            const nextDeadlines = localDeadlines.filter(d => 
+              d.event_id !== dl.event_id && 
+              d.event_slug !== dl.event_slug &&
+              (!msg.payload.eventId || d.event_id !== msg.payload.eventId)
+            );
+            nextDeadlines.unshift(dl);
+            this.setItem(STORAGE_KEYS.DEADLINES, nextDeadlines);
+            this.invalidateCache('portal_');
+            this.notify();
+            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+          }
+        })
         .on('postgres_changes', { event: '*', schema: 'public', table: 'college_events' }, (payload: any) => {
           this.invalidateCache('events');
           this.invalidateCache('portal_');
@@ -3425,6 +3486,8 @@ class StorageService {
           party_group_link: l.party_group_link,
           committee_group_link: l.committee_group_link
         })).filter(l => l.school_name || l.party_group_link || l.committee_group_link),
+        event_deadline: this.getEventDeadline(eventId),
+        is_question_window_open: this.getEventDeadline(eventId).is_open !== false && this.getEventDeadline(eventId).status !== 'CLOSED',
         allocation_lock: allocLock,
         registrations_frozen: regFrozen,
         scores_locked: scLocked,
@@ -3457,8 +3520,13 @@ class StorageService {
             event: 'question_update',
             payload: { eventId, questions: finalMergedPQs }
           });
+          await this.realtimeChannel.send({
+            type: 'broadcast',
+            event: 'event_deadline_update',
+            payload: { eventId, deadline: payload.event_deadline }
+          });
         } catch (bErr) {
-          console.warn('[Supabase] Broadcast election/flash_vote/question failed:', bErr);
+          console.warn('[Supabase] Broadcast election/flash_vote/question/deadline failed:', bErr);
         }
       }
       this.invalidateCache(eventId);
@@ -9695,99 +9763,219 @@ class StorageService {
 
   // ── DEADLINES CONFIGURATION ─────────────────────────────────────────
   public getEventDeadline(eventSlug: string): EventDeadline {
-    const list: EventDeadline[] = this.getItem(STORAGE_KEYS.DEADLINES, []);
+    const cleanKey = (eventSlug || '').toLowerCase().trim();
+    const allEvs = this.getEvents();
+    const resolvedEvent = findEventBySlug(allEvs, cleanKey) || allEvs.find(e =>
+      e.id === eventSlug ||
+      getEventSlug(e).toLowerCase() === cleanKey ||
+      (e.slug && e.slug.toLowerCase() === cleanKey)
+    );
 
+    // 1. Check if event has social_coverage.event_deadline
+    if (resolvedEvent?.social_coverage) {
+      const sc = resolvedEvent.social_coverage as Record<string, any>;
+      if (sc.event_deadline && typeof sc.event_deadline === 'object') {
+        const dl = sc.event_deadline as EventDeadline;
+        return {
+          ...dl,
+          is_open: dl.is_open !== undefined ? dl.is_open : (dl.status !== undefined ? dl.status === 'OPEN' : true),
+          status: dl.status || (dl.is_open === false ? 'CLOSED' : 'OPEN')
+        };
+      }
+      if (typeof sc.is_question_window_open === 'boolean') {
+        return {
+          id: `deadline-${resolvedEvent.id}`,
+          event_id: resolvedEvent.id,
+          event_slug: getEventSlug(resolvedEvent),
+          is_open: sc.is_question_window_open,
+          status: sc.is_question_window_open ? 'OPEN' : 'CLOSED',
+          updated_at: new Date().toISOString()
+        };
+      }
+    }
+
+    // 2. Check local STORAGE_KEYS.DEADLINES
+    const list: EventDeadline[] = this.getItem(STORAGE_KEYS.DEADLINES, []);
     if (list.length > 0) {
-      // Find matching item or return primary deadline entry
-      const cleanKey = (eventSlug || '').toLowerCase().trim();
+      const targetId = resolvedEvent?.id?.toLowerCase();
+      const targetSlug = resolvedEvent ? getEventSlug(resolvedEvent).toLowerCase() : undefined;
       const found = list.find(d => {
         const s = (d.event_slug || '').toLowerCase().trim();
         const id = (d.event_id || '').toLowerCase().trim();
-        return s === cleanKey || id === cleanKey || (cleanKey.length >= 3 && (s.includes(cleanKey) || cleanKey.includes(s)));
-      }) || list[0];
+        return (targetId && id === targetId) ||
+               (targetSlug && s === targetSlug) ||
+               s === cleanKey ||
+               id === cleanKey;
+      }) || list.find(d => {
+        const s = (d.event_slug || '').toLowerCase().trim();
+        return cleanKey.length >= 4 && (s.includes(cleanKey) || cleanKey.includes(s));
+      });
 
-      if (found.is_open === undefined) {
-        found.is_open = true;
-        found.status = 'OPEN';
+      if (found) {
+        return {
+          ...found,
+          is_open: found.is_open !== undefined ? found.is_open : (found.status !== undefined ? found.status === 'OPEN' : true),
+          status: found.status || (found.is_open === false ? 'CLOSED' : 'OPEN')
+        };
       }
-      return found;
     }
 
+    // 3. Fallback default open deadline
     const defaultOpen = new Date().toISOString();
     const defaultDeadline = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     const created: EventDeadline = {
       id: genUuid(),
-      event_id: eventSlug || 'jkkncet-tn-assembly-2026',
-      event_slug: eventSlug || 'jkkncet-tn-assembly-2026',
+      event_id: resolvedEvent?.id || eventSlug || 'jkkncet-tn-assembly-2026',
+      event_slug: resolvedEvent ? getEventSlug(resolvedEvent) : (eventSlug || 'jkkncet-tn-assembly-2026'),
       is_open: true,
       status: 'OPEN',
       questions_open_at: defaultOpen,
       questions_deadline_at: defaultDeadline,
       updated_at: new Date().toISOString()
     };
-    this.setItem(STORAGE_KEYS.DEADLINES, [created]);
     return created;
   }
 
-  public updateEventDeadlineStatus(eventSlug: string, isOpen: boolean): EventDeadline {
+  public updateEventDeadlineStatus(eventSlug: string, isOpen: boolean, fallbackEventId?: string): EventDeadline {
     const list: EventDeadline[] = this.getItem(STORAGE_KEYS.DEADLINES, []);
     const now = new Date().toISOString();
-
     const updatedStatus: 'OPEN' | 'CLOSED' = isOpen ? 'OPEN' : 'CLOSED';
 
-    let target: EventDeadline;
-    if (list.length > 0) {
-      target = {
-        ...list[0],
-        event_slug: eventSlug || list[0].event_slug,
-        is_open: isOpen,
-        status: updatedStatus,
-        updated_at: now
-      };
-    } else {
-      target = {
-        id: genUuid(),
-        event_id: eventSlug || 'jkkncet-tn-assembly-2026',
-        event_slug: eventSlug || 'jkkncet-tn-assembly-2026',
-        is_open: isOpen,
-        status: updatedStatus,
-        questions_open_at: now,
-        questions_deadline_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        updated_at: now
-      };
-    }
+    const cleanKey = (eventSlug || '').toLowerCase().trim();
+    const allEvs = this.getEvents();
+    const resolvedEvent = findEventBySlug(allEvs, cleanKey) || allEvs.find(e =>
+      e.id === eventSlug ||
+      e.id === fallbackEventId ||
+      getEventSlug(e).toLowerCase() === cleanKey ||
+      (e.slug && e.slug.toLowerCase() === cleanKey)
+    );
+    const targetEventId = resolvedEvent?.id || fallbackEventId || (cleanKey.length === 36 ? cleanKey : undefined);
+    const resolvedSlug = resolvedEvent ? getEventSlug(resolvedEvent) : (eventSlug || 'jkkncet-tn-assembly-2026');
 
-    // Unconditionally update ALL deadline records in storage to this status
-    const updatedList = list.length > 0
-      ? list.map(item => ({ ...item, is_open: isOpen, status: updatedStatus, updated_at: now }))
-      : [target];
+    const existing = list.find(d => 
+      (targetEventId && (d.event_id === targetEventId || d.event_slug === targetEventId)) || 
+      (resolvedSlug && d.event_slug === resolvedSlug) ||
+      (cleanKey && (d.event_id?.toLowerCase() === cleanKey || d.event_slug?.toLowerCase() === cleanKey))
+    );
 
-    if (!updatedList.some(item => item.event_slug === eventSlug || item.event_id === eventSlug)) {
-      updatedList.push(target);
-    }
+    const target: EventDeadline = {
+      id: existing?.id || `deadline-${targetEventId || resolvedSlug}`,
+      event_id: targetEventId || existing?.event_id || resolvedSlug,
+      event_slug: resolvedSlug,
+      is_open: isOpen,
+      status: updatedStatus,
+      questions_open_at: existing?.questions_open_at || now,
+      questions_deadline_at: existing?.questions_deadline_at || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      updated_at: now
+    };
 
+    // Update local storage
+    const updatedList = list.filter(d => 
+      !(targetEventId && d.event_id === targetEventId) && 
+      !(resolvedSlug && d.event_slug === resolvedSlug) &&
+      !(cleanKey && (d.event_id?.toLowerCase() === cleanKey || d.event_slug?.toLowerCase() === cleanKey))
+    );
+    updatedList.unshift(target);
     this.setItem(STORAGE_KEYS.DEADLINES, updatedList);
-    this.sbUpsert('event_deadlines', target as unknown as Record<string, unknown>);
+
+    // Update in-memory event social_coverage
+    if (resolvedEvent) {
+      const sc = (resolvedEvent.social_coverage || {}) as Record<string, any>;
+      resolvedEvent.social_coverage = {
+        ...sc,
+        event_deadline: target,
+        is_question_window_open: isOpen
+      };
+      const updatedEvents = allEvs.map(e => e.id === resolvedEvent.id ? resolvedEvent : e);
+      this.setItem(STORAGE_KEYS.EVENTS, updatedEvents);
+    }
+
+    // Persist to Supabase college_events.social_coverage
+    const syncId = targetEventId || resolvedEvent?.id;
+    if (syncId) {
+      this.syncEventStateToSupabase(syncId).catch(err => {
+        console.warn('[Supabase] syncEventStateToSupabase error in updateEventDeadlineStatus:', err);
+      });
+    }
+
+    // Zero-latency Realtime broadcast
+    if (this.realtimeChannel) {
+      try {
+        this.realtimeChannel.send({
+          type: 'broadcast',
+          event: 'event_deadline_update',
+          payload: { eventId: syncId, eventSlug: resolvedSlug, deadline: target, isOpen }
+        }).catch(() => {});
+      } catch {}
+    }
+
     this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
     return target;
   }
 
-  public updateEventDeadline(eventSlug: string, openAt?: string, deadlineAt?: string, isOpen?: boolean): EventDeadline {
+  public updateEventDeadline(eventSlug: string, openAt?: string, deadlineAt?: string, isOpen?: boolean, fallbackEventId?: string): EventDeadline {
     const list: EventDeadline[] = this.getItem(STORAGE_KEYS.DEADLINES, []);
-    const existing = list.length > 0 ? list[0] : this.getEventDeadline(eventSlug);
+    const existing = this.getEventDeadline(eventSlug);
+    const now = new Date().toISOString();
 
+    const resolvedIsOpen = isOpen !== undefined ? isOpen : (existing.is_open !== undefined ? existing.is_open : true);
     const updated: EventDeadline = {
       ...existing,
-      is_open: isOpen !== undefined ? isOpen : (existing.is_open !== undefined ? existing.is_open : true),
-      status: (isOpen !== undefined ? isOpen : (existing.is_open !== undefined ? existing.is_open : true)) ? 'OPEN' : 'CLOSED',
+      is_open: resolvedIsOpen,
+      status: resolvedIsOpen ? 'OPEN' : 'CLOSED',
       questions_open_at: openAt !== undefined ? openAt : existing.questions_open_at,
       questions_deadline_at: deadlineAt !== undefined ? deadlineAt : existing.questions_deadline_at,
-      updated_at: new Date().toISOString()
+      updated_at: now
     };
 
-    this.setItem(STORAGE_KEYS.DEADLINES, [updated]);
-    this.sbUpsert('event_deadlines', updated as unknown as Record<string, unknown>);
+    const cleanKey = (eventSlug || '').toLowerCase().trim();
+    const allEvs = this.getEvents();
+    const resolvedEvent = findEventBySlug(allEvs, cleanKey) || allEvs.find(e =>
+      e.id === eventSlug ||
+      e.id === fallbackEventId ||
+      getEventSlug(e).toLowerCase() === cleanKey ||
+      (e.slug && e.slug.toLowerCase() === cleanKey)
+    );
+    const targetEventId = resolvedEvent?.id || fallbackEventId;
+
+    const filtered = list.filter(d => 
+      !(targetEventId && d.event_id === targetEventId) && 
+      !(existing.event_slug && d.event_slug === existing.event_slug)
+    );
+    filtered.unshift(updated);
+    this.setItem(STORAGE_KEYS.DEADLINES, filtered);
+
+    if (resolvedEvent) {
+      const sc = (resolvedEvent.social_coverage || {}) as Record<string, any>;
+      resolvedEvent.social_coverage = {
+        ...sc,
+        event_deadline: updated,
+        is_question_window_open: resolvedIsOpen
+      };
+      const updatedEvents = allEvs.map(e => e.id === resolvedEvent.id ? resolvedEvent : e);
+      this.setItem(STORAGE_KEYS.EVENTS, updatedEvents);
+    }
+
+    const syncId = targetEventId || resolvedEvent?.id;
+    if (syncId) {
+      this.syncEventStateToSupabase(syncId).catch(err => {
+        console.warn('[Supabase] syncEventStateToSupabase error in updateEventDeadline:', err);
+      });
+    }
+
+    if (this.realtimeChannel) {
+      try {
+        this.realtimeChannel.send({
+          type: 'broadcast',
+          event: 'event_deadline_update',
+          payload: { eventId: syncId, deadline: updated, isOpen: resolvedIsOpen }
+        }).catch(() => {});
+      } catch {}
+    }
+
     this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
     return updated;
   }
 
@@ -9845,6 +10033,27 @@ class StorageService {
       } else if (data && data.length > 0) {
         const ev = data[0];
         const sc = (ev.social_coverage || {}) as Record<string, any>;
+        if (sc.event_deadline && typeof sc.event_deadline === 'object') {
+          const dl = sc.event_deadline as EventDeadline;
+          const localDeadlines = this.getItem<EventDeadline[]>(STORAGE_KEYS.DEADLINES, []);
+          const filtered = localDeadlines.filter(d => d.event_id !== dl.event_id && d.event_slug !== dl.event_slug);
+          filtered.unshift(dl);
+          this.setItem(STORAGE_KEYS.DEADLINES, filtered);
+        } else if (typeof sc.is_question_window_open === 'boolean') {
+          const dl: EventDeadline = {
+            id: `deadline-${ev.id}`,
+            event_id: ev.id,
+            event_slug: ev.slug || getEventSlug(ev as any),
+            is_open: sc.is_question_window_open,
+            status: sc.is_question_window_open ? 'OPEN' : 'CLOSED',
+            updated_at: new Date().toISOString()
+          };
+          const localDeadlines = this.getItem<EventDeadline[]>(STORAGE_KEYS.DEADLINES, []);
+          const filtered = localDeadlines.filter(d => d.event_id !== dl.event_id && d.event_slug !== dl.event_slug);
+          filtered.unshift(dl);
+          this.setItem(STORAGE_KEYS.DEADLINES, filtered);
+        }
+
         const remotePQs: ProceedingsQuestion[] = Array.isArray(sc.proceedings_questions)
           ? sc.proceedings_questions
           : (Array.isArray(sc.questions) && sc.questions.length > 0 && ((sc.questions[0] as any).bench || (sc.questions[0] as any).question_type)
