@@ -9987,8 +9987,8 @@ class StorageService {
   public getProceedingsQuestions(eventKey?: string): ProceedingsQuestion[] {
     // Always filter out tombstoned (deleted) questions first
     const deletedQIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
-    const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []).filter(
-      q => !deletedQIds.has(q.id)
+    const list: ProceedingsQuestion[] = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []).filter(
+      (q: ProceedingsQuestion) => !deletedQIds.has(q.id)
     );
     if (!eventKey) return list;
     const cleanKey = (eventKey || '').toLowerCase().trim();
