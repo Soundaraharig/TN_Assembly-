@@ -448,6 +448,7 @@ class StorageService {
   private fixedLearnerIdsSynced = new Set<string>();
   private attendanceRealtimeChannel: any = null;
   private currentAttendanceEventId: string | null = null;
+  private syncDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private hydratedEventIds = new Set<string>();
   private eventsFetched = false;
   private isLoginRecordsConfigured: boolean = false;
@@ -3219,7 +3220,7 @@ class StorageService {
           }
         })
         .on('broadcast', { event: 'election_update' }, (msg: any) => {
-          if (msg?.payload?.eventId && Array.isArray(msg?.payload?.elections)) {
+          if (msg?.payload?.eventId) {
             const evId = msg.payload.eventId;
             const allPartiesForSync = this.getParties(evId);
             const localElecs = this.getItem<Election[]>(STORAGE_KEYS.ELECTIONS, []);
@@ -3228,7 +3229,10 @@ class StorageService {
               const k = getElectionCanonicalKey(e, allPartiesForSync) || e.id;
               elecCanonicalMap.set(k, e);
             });
-            msg.payload.elections.forEach((remoteE: Election) => {
+            const incoming = Array.isArray(msg.payload.elections)
+              ? msg.payload.elections
+              : (msg.payload.election ? [msg.payload.election] : []);
+            incoming.forEach((remoteE: Election) => {
               const k = getElectionCanonicalKey(remoteE, allPartiesForSync) || remoteE.id;
               const localE = elecCanonicalMap.get(k);
               elecCanonicalMap.set(k, localE ? mergeTwoElections(localE, remoteE) : remoteE);
@@ -3240,11 +3244,14 @@ class StorageService {
           }
         })
         .on('broadcast', { event: 'flash_vote_update' }, (msg: any) => {
-          if (msg?.payload?.eventId && Array.isArray(msg?.payload?.flashVotes)) {
+          if (msg?.payload?.eventId) {
             const localFVotes = this.getItem<LiveFlashVote[]>(STORAGE_KEYS.FLASH_VOTES, []);
             const fvoteMap = new Map<string, LiveFlashVote>();
             localFVotes.forEach(fv => fvoteMap.set(fv.id, fv));
-            msg.payload.flashVotes.forEach((remoteFV: LiveFlashVote) => {
+            const incoming = Array.isArray(msg.payload.flashVotes)
+              ? msg.payload.flashVotes
+              : (msg.payload.flashVote ? [msg.payload.flashVote] : []);
+            incoming.forEach((remoteFV: LiveFlashVote) => {
               fvoteMap.set(remoteFV.id, remoteFV);
             });
             this.setItem(STORAGE_KEYS.FLASH_VOTES, Array.from(fvoteMap.values()));
@@ -3254,7 +3261,7 @@ class StorageService {
           }
         })
         .on('broadcast', { event: 'question_update' }, (msg: any) => {
-          if (msg?.payload?.eventId && Array.isArray(msg?.payload?.questions)) {
+          if (msg?.payload?.eventId) {
             const deletedQIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
             const localPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
             const pqMap = new Map<string, ProceedingsQuestion>();
@@ -3263,7 +3270,10 @@ class StorageService {
                 pqMap.set(q.id, q);
               }
             });
-            msg.payload.questions.forEach((remoteQ: ProceedingsQuestion) => {
+            const incoming = Array.isArray(msg.payload.questions)
+              ? msg.payload.questions
+              : (msg.payload.question ? [msg.payload.question] : []);
+            incoming.forEach((remoteQ: ProceedingsQuestion) => {
               if (deletedQIds.has(remoteQ.id)) return;
               const local = pqMap.get(remoteQ.id);
               if (!local) {
@@ -3436,55 +3446,56 @@ class StorageService {
           }
         })
         .on('broadcast', { event: 'bill_update' }, (msg: any) => {
-          if (msg?.payload?.eventId && Array.isArray(msg?.payload?.bills)) {
+          if (msg?.payload?.eventId) {
             const evId = msg.payload.eventId;
-            const otherBills = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, []).filter(b => b.event_id !== evId);
-            this.setItem(STORAGE_KEYS.PROCEEDINGS, [...otherBills, ...msg.payload.bills]);
+            if (Array.isArray(msg.payload.bills)) {
+              const otherBills = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, []).filter(b => b.event_id !== evId);
+              this.setItem(STORAGE_KEYS.PROCEEDINGS, [...otherBills, ...msg.payload.bills]);
+            } else if (msg.payload.bill && (msg.payload.bill.id || msg.payload.billId)) {
+              const bId = msg.payload.billId || msg.payload.bill.id;
+              const allBills = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, []);
+              const updated = allBills.map(b => b.id === bId ? { ...b, ...msg.payload.bill } : b);
+              if (!updated.some(b => b.id === bId)) {
+                updated.push(msg.payload.bill);
+              }
+              this.setItem(STORAGE_KEYS.PROCEEDINGS, updated);
+            }
             this.notify();
             if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
           }
         })
         .on('broadcast', { event: 'agenda_update' }, (msg: any) => {
-          if (msg?.payload?.eventId && Array.isArray(msg?.payload?.agenda)) {
+          if (msg?.payload?.eventId) {
             const evId = msg.payload.eventId;
-            const otherAgenda = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, []).filter(a => a.event_id !== evId);
-            this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...msg.payload.agenda]);
+            if (Array.isArray(msg.payload.agenda)) {
+              const otherAgenda = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, []).filter(a => a.event_id !== evId);
+              this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...msg.payload.agenda]);
+            } else if (msg.payload.agendaItem && msg.payload.agendaItem.id) {
+              const aId = msg.payload.agendaItem.id;
+              const allAgenda = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, []);
+              const updated = allAgenda.map(a => a.id === aId ? { ...a, ...msg.payload.agendaItem } : a);
+              if (!updated.some(a => a.id === aId)) {
+                updated.push(msg.payload.agendaItem);
+              }
+              this.setItem(STORAGE_KEYS.AGENDA, updated);
+            }
             this.notify();
             if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
           }
-        });
-
-      // Targeted filtered postgres_changes for event_day_attendance
-      if (resolvedEventId) {
-        channel.on('postgres_changes', {
-          event: '*',
-          schema: 'public',
-          table: 'event_day_attendance',
-          filter: `event_id=eq.${resolvedEventId}`
-        }, (payload: any) => {
-          this.invalidateCache('attendance');
-          this.invalidateCache('portal_');
-          this.invalidateCache('sync_');
-          if (payload?.new && payload.new.id) {
-            const rawRec = payload.new as DayAttendanceRecord;
-            const { fn, an, overall } = getRecordSessionStatuses(rawRec);
-            const rec: DayAttendanceRecord = {
-              ...rawRec,
-              fn_status: rawRec.fn_status || fn,
-              an_status: rawRec.an_status || an,
-              status: overall
-            };
-            const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
-            const next = curAtt.filter(
-              a => a.id !== rec.id && !(a.event_id === rec.event_id && a.day_id === rec.day_id && a.student_id === rec.student_id)
-            );
-            next.push(rec);
-            this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, next);
-            this.notify();
-            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+        })
+        .on('broadcast', { event: 'login_recorded' }, (msg: any) => {
+          if (msg?.payload?.record) {
+            const rec = msg.payload.record as LoginRecord;
+            const records = this.getItem<LoginRecord[]>(STORAGE_KEYS.LOGIN_RECORDS, []);
+            if (!records.some(r => r.id === rec.id)) {
+              records.unshift(rec);
+              if (records.length > 1000) records.pop();
+              this.setItem(STORAGE_KEYS.LOGIN_RECORDS, records);
+              this.notify();
+              if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+            }
           }
         });
-      }
 
       channel.subscribe();
       this.realtimeChannel = channel;
@@ -3553,34 +3564,6 @@ class StorageService {
 
       this.attendanceRealtimeChannel = supabase
         .channel(channelName)
-        .on('postgres_changes', {
-          event: '*',
-          schema: 'public',
-          table: 'event_day_attendance',
-          filter: `event_id=eq.${activeEventId}`
-        }, (payload: any) => {
-          this.invalidateCache('attendance');
-          this.invalidateCache('portal_');
-          this.invalidateCache('sync_');
-          if (payload?.new && payload.new.id) {
-            const rawRec = payload.new as DayAttendanceRecord;
-            const { fn, an, overall } = getRecordSessionStatuses(rawRec);
-            const rec: DayAttendanceRecord = {
-              ...rawRec,
-              fn_status: rawRec.fn_status || fn,
-              an_status: rawRec.an_status || an,
-              status: overall
-            };
-            const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
-            const next = curAtt.filter(
-              a => a.id !== rec.id && !(a.event_id === rec.event_id && a.day_id === rec.day_id && a.student_id === rec.student_id)
-            );
-            next.push(rec);
-            this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, next);
-            this.notify();
-            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
-          }
-        })
         .on('broadcast', { event: 'attendance_marked' }, (msg: any) => {
           const p = msg?.payload;
           if (p && (p.eventId === activeEventId || !p.eventId)) {
@@ -3651,7 +3634,35 @@ class StorageService {
     await this.broadcast('attendance_marked', payload);
   }
 
-  public async syncEventStateToSupabase(eventId: string) {
+  public async syncEventStateToSupabase(eventId: string, forceImmediate = false): Promise<void> {
+    if (!supabase || !eventId) return;
+
+    if (!forceImmediate) {
+      const existing = this.syncDebounceTimers.get(eventId);
+      if (existing) clearTimeout(existing);
+
+      return new Promise<void>((resolve) => {
+        const timer = setTimeout(async () => {
+          this.syncDebounceTimers.delete(eventId);
+          try {
+            await this.performSyncEventStateToSupabase(eventId);
+          } finally {
+            resolve();
+          }
+        }, 1500);
+        this.syncDebounceTimers.set(eventId, timer);
+      });
+    }
+
+    const existing = this.syncDebounceTimers.get(eventId);
+    if (existing) {
+      clearTimeout(existing);
+      this.syncDebounceTimers.delete(eventId);
+    }
+    await this.performSyncEventStateToSupabase(eventId);
+  }
+
+  private async performSyncEventStateToSupabase(eventId: string) {
     if (!supabase || !eventId) return;
     try {
       const openNominationsMap = this.getItem<Record<string, string[]>>(STORAGE_KEYS.OPEN_NOMINATIONS, {});
@@ -3839,39 +3850,6 @@ class StorageService {
       }
 
       await supabase.from('college_events').update({ social_coverage: payload }).eq('id', eventId);
-
-      // Push-based Realtime broadcast to all connected clients (zero-REST egress)
-      if (this.realtimeChannel) {
-        try {
-          await this.realtimeChannel.send({
-            type: 'broadcast',
-            event: 'election_update',
-            payload: { eventId, elections: finalElecs }
-          });
-          await this.realtimeChannel.send({
-            type: 'broadcast',
-            event: 'flash_vote_update',
-            payload: { eventId, flashVotes: fvotes }
-          });
-          await this.realtimeChannel.send({
-            type: 'broadcast',
-            event: 'question_update',
-            payload: { eventId, questions: finalMergedPQs }
-          });
-          await this.realtimeChannel.send({
-            type: 'broadcast',
-            event: 'event_deadline_update',
-            payload: { eventId, deadline: payload.event_deadline }
-          });
-          await this.realtimeChannel.send({
-            type: 'broadcast',
-            event: 'ministries_update',
-            payload: { eventId, ministries: payload.cabinet_ministries }
-          });
-        } catch (bErr) {
-          console.warn('[Supabase] Broadcast election/flash_vote/question/deadline/ministries failed:', bErr);
-        }
-      }
       this.invalidateCache(eventId);
     } catch (e) {
       console.warn('[Supabase] syncEventStateToSupabase error:', e);
@@ -4783,6 +4761,12 @@ class StorageService {
           this.isLoginRecordsConfigured = false;
         });
     }
+
+    // Broadcast login to all active live screens/admins via shared broadcast channel
+    this.broadcast('login_recorded', {
+      eventId: entry.event_id,
+      record: entry
+    }).catch(() => {});
 
     console.log(`🔑 [Login Recorded] ${entry.role.toUpperCase()} ${entry.user_name} (${entry.access_code}) from ${entry.device_type} at ${entry.login_at}`);
     return entry;
@@ -8643,7 +8627,10 @@ class StorageService {
     };
     all.unshift(newVote);
     this.setItem(STORAGE_KEYS.FLASH_VOTES, all);
-    if (eventId) this.syncEventStateToSupabase(eventId);
+    if (eventId) {
+      this.broadcast('flash_vote_update', { eventId, flashVote: newVote }).catch(() => {});
+      this.syncEventStateToSupabase(eventId);
+    }
     return newVote;
   }
 
@@ -8698,28 +8685,41 @@ class StorageService {
     }
 
     this.setItem(STORAGE_KEYS.FLASH_VOTES, all);
-    if (target.event_id) this.syncEventStateToSupabase(target.event_id);
+    if (target.event_id) {
+      this.broadcast('flash_vote_update', { eventId: target.event_id, flashVote: target }).catch(() => {});
+      this.syncEventStateToSupabase(target.event_id);
+    }
     return true;
   }
 
   public closeFlashVote(voteId: string) {
     let targetEventId = '';
+    let updatedVote: LiveFlashVote | undefined;
     const all = this.getFlashVoteAll().map(v => {
       if (v.id === voteId) {
         targetEventId = v.event_id;
-        return { ...v, status: 'CLOSED' as const };
+        updatedVote = { ...v, status: 'CLOSED' as const };
+        return updatedVote;
       }
       return v;
     });
     this.setItem(STORAGE_KEYS.FLASH_VOTES, all);
-    if (targetEventId) this.syncEventStateToSupabase(targetEventId);
+    if (targetEventId) {
+      if (updatedVote) {
+        this.broadcast('flash_vote_update', { eventId: targetEventId, flashVote: updatedVote }).catch(() => {});
+      }
+      this.syncEventStateToSupabase(targetEventId);
+    }
   }
 
   public deleteFlashVote(voteId: string) {
     const target = this.getFlashVoteAll().find(f => f.id === voteId);
     const all = this.getFlashVoteAll().filter(f => f.id !== voteId);
     this.setItem(STORAGE_KEYS.FLASH_VOTES, all);
-    if (target?.event_id) this.syncEventStateToSupabase(target.event_id);
+    if (target?.event_id) {
+      this.broadcast('flash_vote_update', { eventId: target.event_id, flashVotes: all }).catch(() => {});
+      this.syncEventStateToSupabase(target.event_id);
+    }
   }
 
 
@@ -10982,6 +10982,7 @@ class StorageService {
 
     list.unshift(newQuestion);
     this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, list);
+    this.broadcast('question_update', { eventId, question: newQuestion }).catch(() => {});
     this.notify();
 
     try {
@@ -11020,6 +11021,7 @@ class StorageService {
 
     list.unshift(newQuestion);
     this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, list);
+    this.broadcast('question_update', { eventId, question: newQuestion }).catch(() => {});
     this.notify();
     this.syncEventStateToSupabase(eventId).catch(err => {
       console.warn('[Supabase] addProceedingsQuestion sync error:', err);
@@ -11035,22 +11037,27 @@ class StorageService {
   ): void {
     const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
     let targetEventId: string | undefined = fallbackEventId;
+    let updatedQ: ProceedingsQuestion | undefined;
     const updated = list.map(q => {
       if (q.id === questionId) {
         targetEventId = q.event_id || fallbackEventId;
-        return {
+        updatedQ = {
           ...q,
           status,
           updated_at: new Date().toISOString(),
           approved_by: status === 'Approved' ? (approvedBy || 'Admin') : q.approved_by,
           approved_at: status === 'Approved' ? new Date().toISOString() : q.approved_at
         };
+        return updatedQ;
       }
       return q;
     });
     this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, updated);
     this.notify();
     if (targetEventId) {
+      if (updatedQ) {
+        this.broadcast('question_update', { eventId: targetEventId, question: updatedQ }).catch(() => {});
+      }
       const allEvs = this.getEvents();
       const matched = findEventBySlug(allEvs, targetEventId) || allEvs.find(e => e.id === targetEventId);
       const syncId = matched?.id || targetEventId;

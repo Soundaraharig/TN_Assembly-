@@ -2,7 +2,6 @@ import React, { useState, useMemo, useEffect } from 'react';
 import type { EventDay, Learner, DayAttendanceRecord, CollegeEvent, Party, Committee, DayAttendanceStatus, LoginRecord } from '../../types';
 import { getRecordSessionStatuses, formatMarkedBy } from '../../types';
 import { storageService } from '../../services/storageService';
-import { supabase } from '../../lib/supabase';
 import { EditDayActivitiesModal } from './EditDayActivitiesModal';
 import {
   Plus,
@@ -109,10 +108,12 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
     };
     loadLoginRows();
 
-    // Re-sync when storageService updates
+    // Re-sync when storageService updates (handles real-time broadcast updates from all clients)
     const unsub = storageService.subscribe(() => {
       if (isMounted && loginPage === 1) {
-        setLoginRecords(storageService.getLoginRecords(event?.id).slice(0, LOGIN_PAGE_SIZE));
+        const local = storageService.getLoginRecords(event?.id);
+        setLoginRecords(local.slice(0, LOGIN_PAGE_SIZE));
+        setLoginTotalCount(local.length);
       }
     });
 
@@ -121,68 +122,6 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
       unsub();
     };
   }, [event?.id, loginPage]);
-
-  // Postgres Realtime listener for incoming login_records
-  useEffect(() => {
-    if (!supabase || !event?.id) return;
-    const activeEventId = event.id;
-
-    const channelName = `admin_login_records_stream_${activeEventId}`;
-    if (process.env.NODE_ENV !== 'production') {
-      console.log(`[Realtime] channel created: ${channelName}`);
-      console.log(`[Realtime] Active channels: ${supabase.getChannels().length + 1}`);
-    }
-
-    const channel = supabase
-      .channel(channelName)
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'login_records',
-        filter: `event_id=eq.${activeEventId}`
-      }, (payload: any) => {
-        if (payload?.new) {
-          const row = payload.new;
-          const dType = String(row.device_type || '').toLowerCase();
-          const normalizedDevice: 'mobile' | 'desktop' = (dType.includes('mobi') || dType.includes('tablet')) ? 'mobile' : 'desktop';
-          const ts = row.logged_in_at || row.login_at || row.created_at || new Date().toISOString();
-          const newEntry: LoginRecord = {
-            id: row.id,
-            event_id: row.event_id,
-            user_id: row.user_id || row.learner_id || row.volunteer_id || '',
-            learner_id: row.learner_id,
-            volunteer_id: row.volunteer_id,
-            user_name: row.user_name || 'User',
-            role: row.role,
-            access_code: row.access_code,
-            login_at: ts,
-            logged_in_at: ts,
-            device_type: normalizedDevice,
-            device_info: row.device_info || (normalizedDevice === 'mobile' ? 'Mobile Client' : 'Desktop Client'),
-            ip_address: row.ip_address,
-            details: row.details
-          };
-          setLoginRecords(prev => {
-            if (prev.some(r => r.id === newEntry.id)) return prev;
-            return [newEntry, ...prev].slice(0, LOGIN_PAGE_SIZE);
-          });
-          setLoginTotalCount(c => c + 1);
-        }
-      })
-      .subscribe();
-
-    return () => {
-      try {
-        if (supabase) {
-          supabase.removeChannel(channel);
-          if (process.env.NODE_ENV !== 'production') {
-            console.log(`[Realtime] channel removed: ${channelName}`);
-            console.log(`[Realtime] Active channels: ${supabase.getChannels().length}`);
-          }
-        }
-      } catch { }
-    };
-  }, [event?.id]);
 
   // Synchronized attendance state (updated via props, storageService.subscribe, and Realtime sync)
   const [syncedAttendance, setSyncedAttendance] = useState<DayAttendanceRecord[]>(() => dayAttendance);
@@ -199,19 +138,6 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
       }
     });
     return unsub;
-  }, [event?.id]);
-
-  // Supabase Postgres Realtime listener specifically for event_day_attendance
-  useEffect(() => {
-    if (!supabase || !event?.id) return;
-    const activeEventId = event.id;
-
-    // Activate Realtime listener in storageService
-    storageService.setupAttendanceRealtimeListener(activeEventId);
-
-    return () => {
-      storageService.cleanupAttendanceRealtimeListener();
-    };
   }, [event?.id]);
 
   // Modal State
