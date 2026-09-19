@@ -6,7 +6,7 @@ import { storageService } from '../../services/storageService';
 import { CreateEventModal } from './CreateEventModal';
 import { EditCoordinatorModal } from './EditCoordinatorModal';
 import { EditEventModal } from './EditEventModal';
-import { Plus, ArrowRight, Calendar, MapPin, Users, KeyRound, UserCheck, Edit3, Trash2, ShieldAlert } from 'lucide-react';
+import { Plus, ArrowRight, Calendar, MapPin, Users, KeyRound, UserCheck, Edit3, Trash2, ShieldAlert, AlertCircle, RefreshCw } from 'lucide-react';
 
 interface MyEventsDashboardProps {
   events: CollegeEvent[];
@@ -43,11 +43,26 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
   const [deletingEventId, setDeletingEventId] = useState<string | null>(null);
 
   const hasFetchedRef = React.useRef(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(storageService.getLastEventsError());
+
+  const loadEvents = async (force = false) => {
+    setIsLoading(true);
+    setFetchError(null);
+    try {
+      await storageService.fetchAllEvents(force);
+      setFetchError(storageService.getLastEventsError());
+    } catch (err: any) {
+      setFetchError(err?.message || 'Failed to communicate with database server.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   React.useEffect(() => {
     if (!hasFetchedRef.current) {
       hasFetchedRef.current = true;
-      storageService.fetchAllEvents();
+      loadEvents();
     }
   }, []);
 
@@ -167,8 +182,26 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
         </div>
       </div>
 
-      {/* Events Grid */}
-      {displayedEvents.length === 0 ? (
+      {/* Events Grid or Error / Empty State */}
+      {fetchError && displayedEvents.length === 0 ? (
+        <div
+          className="p-10 text-center rounded-2xl border text-xs space-y-3 bg-rose-50/60 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900/50 text-rose-800 dark:text-rose-300"
+        >
+          <div className="flex items-center justify-center gap-2 text-rose-600 dark:text-rose-400 font-bold text-sm">
+            <AlertCircle className="w-5 h-5" />
+            <span>Failed to Load Events</span>
+          </div>
+          <p className="max-w-md mx-auto text-rose-600/90 dark:text-rose-400/90 font-mono text-[11px] bg-rose-100/60 dark:bg-rose-900/40 p-2.5 rounded-lg border border-rose-200/60 dark:border-rose-800/40">{fetchError}</p>
+          <button
+            onClick={() => loadEvents(true)}
+            disabled={isLoading}
+            className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-sm transition-all cursor-pointer inline-flex items-center gap-1.5 disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+            <span>Retry Connection</span>
+          </button>
+        </div>
+      ) : displayedEvents.length === 0 ? (
         <div
           className="p-12 text-center rounded-2xl border italic text-xs space-y-2"
           style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-muted)' }}

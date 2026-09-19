@@ -130,8 +130,8 @@ const STORAGE_KEYS = {
 };
 
 export const SUPABASE_COLUMNS: Record<string, string> = {
-  COLLEGE_EVENTS_LIST: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,event_date,time_slot,start_time,end_time,chief_guest',
-  COLLEGE_EVENTS: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,event_date,time_slot,start_time,end_time,chief_guest,social_coverage',
+  COLLEGE_EVENTS_LIST: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at',
+  COLLEGE_EVENTS: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at,social_coverage',
   COORDINATORS: 'id,event_id,name,email,password_hash,raw_temp_password,created_at,updated_at',
   LEARNERS: 'id,event_id,access_code,full_name,email,phone,department,academic_year,constituency_number,constituency_name,party_id,party_name,party_group_link,bench,role,committee_id,committee_name,committee_group_link,school_name,day1_checked_in,day2_checked_in,district,created_at,updated_at',
   POLITICAL_PARTIES: 'id,event_id,name,bench,color,leader,manifesto,created_at,whatsapp_group_link',
@@ -452,6 +452,11 @@ class StorageService {
   private hydratedEventIds = new Set<string>();
   private eventsFetched = false;
   private isLoginRecordsConfigured: boolean = false;
+  private lastEventsError: string | null = null;
+
+  public getLastEventsError(): string | null {
+    return this.lastEventsError;
+  }
 
   public isEventHydrated(eventId: string): boolean {
     return this.hydratedEventIds.has(eventId);
@@ -2475,6 +2480,7 @@ class StorageService {
           .order('created_at', { ascending: false });
 
         if (!error && data && Array.isArray(data)) {
+          this.lastEventsError = null;
           const evs = (data as unknown as CollegeEvent[]).map(e => this.normalizeEvent(e));
           this.setItem(STORAGE_KEYS.EVENTS, evs);
           this.restoreJkkncetEvent();
@@ -2482,10 +2488,24 @@ class StorageService {
           this.notify();
           return evs;
         } else if (error) {
-          console.warn('[StorageService] fetchAllEvents query error:', error);
+          console.error('[StorageService] fetchAllEvents query error:', error);
+          this.lastEventsError = `PostgreSQL error: ${error.message} (code: ${error.code || 'unknown'})`;
+          this.notify();
+          const fallback = this.getEvents();
+          if (fallback.length === 0) {
+            throw new Error(this.lastEventsError);
+          }
+          return fallback;
         }
-      } catch (err) {
-        console.warn('[StorageService] fetchAllEvents fatal error:', err);
+      } catch (err: any) {
+        console.error('[StorageService] fetchAllEvents fatal error:', err);
+        this.lastEventsError = err?.message || 'Network error fetching events';
+        this.notify();
+        const fallback = this.getEvents();
+        if (fallback.length === 0) {
+          throw err;
+        }
+        return fallback;
       }
       return this.getEvents();
     }, { force });
