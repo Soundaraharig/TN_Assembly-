@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import type { CollegeEvent, AgendaItem, Election, LiveFlashVote, Learner } from '../../types';
-import { Radio, Volume2, VolumeX, Maximize2, Minimize2, Clock, Sparkles, Trophy, Crown, Shield } from 'lucide-react';
+import type { CollegeEvent, AgendaItem, Election, LiveFlashVote, Learner, BillProceeding, LiveTimerState } from '../../types';
+import { Radio, Maximize2, Minimize2, Clock, Sparkles, Trophy, Crown, Shield, FileText, CheckCircle2, XCircle } from 'lucide-react';
 import type { ProjectorStudioSettings } from '../../types';
 import { storageService } from '../../services/storageService';
 import { extractEventFromUrl, extractEventSlugCandidateFromUrl } from '../../utils/slug';
@@ -20,39 +20,57 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
   flashVotes: initialFlashVotes = [],
   learners: initialLearners = []
 }) => {
-  // Default sound enabled to TRUE as requested
-  const [isSoundEnabled, setIsSoundEnabled] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // Live Storage State
+  // Authoritative State
   const [currentEvent, setCurrentEvent] = useState<CollegeEvent | null>(initialEvent || null);
   const [agenda, setAgenda] = useState<AgendaItem[]>(initialAgenda);
   const [elections, setElections] = useState<Election[]>(initialElections);
   const [flashVotes, setFlashVotes] = useState<LiveFlashVote[]>(initialFlashVotes);
   const [learners, setLearners] = useState<Learner[]>(initialLearners);
+  const [bills, setBills] = useState<BillProceeding[]>(() => storageService.getBills(initialEvent?.id));
 
-  // Read real-time studio settings pushed from ProjectorTab / ElectionsTab
-  const [settings, setSettings] = useState<ProjectorStudioSettings>(() => storageService.getProjectorSettings(initialEvent?.id));
-  const [lastBellTime, setLastBellTime] = useState<number>(0);
+  // Authoritative studio settings pushed from ControlTab / ElectionsTab
+  const [settings, setSettings] = useState<ProjectorStudioSettings>(() =>
+    storageService.getProjectorSettings(initialEvent?.id)
+  );
 
-  const playBellSound = () => {
-    try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(880, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.5);
-      gain.gain.setValueAtTime(0.4, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.6);
-    } catch {}
-  };
+  // Authoritative Timer State (Synchronized without aggressive polling)
+  const [timerState, setTimerState] = useState<LiveTimerState>(() =>
+    storageService.getLiveTimerState(initialEvent?.id)
+  );
+  const [displaySeconds, setDisplaySeconds] = useState<number>(() => {
+    const ts = storageService.getLiveTimerState(initialEvent?.id);
+    if (ts.isRunning && ts.startedAt) {
+      const elapsed = Math.floor((Date.now() - ts.startedAt) / 1000);
+      return Math.max(0, ts.secondsLeft - elapsed);
+    }
+    return ts.secondsLeft;
+  });
 
-  // Strictly scoped on-demand Display portal fetch (runs at most once on mount)
+  // Client-side 1-second countdown tick: 0 network egress
+  useEffect(() => {
+    const timerInterval = setInterval(() => {
+      setTimerState(currentTs => {
+        if (!currentTs.isRunning) {
+          setDisplaySeconds(currentTs.secondsLeft);
+          return currentTs;
+        }
+        if (currentTs.startedAt) {
+          const elapsed = Math.floor((Date.now() - currentTs.startedAt) / 1000);
+          const remaining = Math.max(0, currentTs.secondsLeft - elapsed);
+          setDisplaySeconds(remaining);
+        } else {
+          setDisplaySeconds(prev => Math.max(0, prev - 1));
+        }
+        return currentTs;
+      });
+    }, 1000);
+
+    return () => clearInterval(timerInterval);
+  }, []);
+
+  // Scoped on-demand Display portal fetch (runs once on mount)
   const hasMountedDisplayFetchRef = useRef(false);
   useEffect(() => {
     if (hasMountedDisplayFetchRef.current) return;
@@ -67,15 +85,8 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
     }
   }, [initialEvent?.id, currentEvent?.id]);
 
-  // Sync state from storage & events
+  // Sync state from storage event listeners & subscription (NO aggressive network polling)
   useEffect(() => {
-    const onBell = () => {
-      if (isSoundEnabled) {
-        playBellSound();
-      }
-    };
-    window.addEventListener('tn_assembly_speaker_bell', onBell);
-
     const syncState = () => {
       const evs = storageService.getEvents();
       const urlEv = extractEventFromUrl(evs);
@@ -87,13 +98,15 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
         setElections(storageService.getElections(ev.id));
         setFlashVotes(storageService.getFlashVotes(ev.id));
         setLearners(storageService.getLearners(ev.id));
+        setBills(storageService.getBills(ev.id));
 
-        const sc = (ev.social_coverage || {}) as Record<string, any>;
-        if (sc.last_bell_ring && sc.last_bell_ring > lastBellTime) {
-          setLastBellTime(sc.last_bell_ring);
-          if (lastBellTime > 0 && isSoundEnabled) {
-            playBellSound();
-          }
+        const freshTimer = storageService.getLiveTimerState(ev.id);
+        setTimerState(freshTimer);
+        if (freshTimer.isRunning && freshTimer.startedAt) {
+          const elapsed = Math.floor((Date.now() - freshTimer.startedAt) / 1000);
+          setDisplaySeconds(Math.max(0, freshTimer.secondsLeft - elapsed));
+        } else {
+          setDisplaySeconds(freshTimer.secondsLeft);
         }
       }
     };
@@ -101,48 +114,42 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
     syncState();
     window.addEventListener('storage', syncState);
     const unsubscribe = storageService.subscribe(syncState);
-    const interval = setInterval(syncState, 5000);
 
     return () => {
       window.removeEventListener('storage', syncState);
-      window.removeEventListener('tn_assembly_speaker_bell', onBell);
       unsubscribe();
-      clearInterval(interval);
     };
-  }, [currentEvent?.id, initialEvent?.id, isSoundEnabled, lastBellTime]);
+  }, [currentEvent?.id, initialEvent?.id]);
 
-  // Selected or active agenda item
+  // Authoritative Current Agenda Item
   const selectedAgenda = agenda.find(a => a.id === settings.selectedAgendaId) || agenda.find(a => a.is_current) || agenda[0] || {
     title: 'Speaker Election & Floor Proceedings',
     description: 'Legislative Assembly Floor Proceedings',
     day: 'Day 1',
     time: '10:00 AM',
-    speaker_role: 'SPEAKER ELECTION'
+    speaker_role: 'CURRENT SESSION',
+    duration_minutes: 10
   };
 
-  // Active Live Election or target ballot for election scene
+  // Authoritative Election State
   const activeElection = elections.find(e => e.status === 'Live');
   const targetBallotElection = settings.revealedElectionId
     ? elections.find(e => e.id === settings.revealedElectionId)
     : (activeElection || elections.find(e => e.status === 'Closed') || elections[0]);
-  const isBallotClosed = targetBallotElection?.status === 'Closed';
-  // Active Flash Vote
-  const activeFlashVote = flashVotes.find(f => f.status === 'ACTIVE');
+  const isElectionLive = targetBallotElection?.status === 'Live';
+  const isElectionClosed = targetBallotElection?.status === 'Closed';
 
-  // Revealed Election Result (ONLY when explicitly requested by settings.revealedElectionId or displayScene === 'election_result')
+  // Revealed Election Candidate Tally
   const revealedElection = settings.revealedElectionId
     ? elections.find(e => e.id === settings.revealedElectionId)
     : elections.find(e => e.status === 'Closed' || (e.winner && e.winner.trim().length > 0)) || elections[0];
 
   const sortedCandidates = [...(revealedElection?.candidates || [])].sort((a, b) => (b.votes || 0) - (a.votes || 0));
-
-  // Determine winner candidate accurately
   const winnerCandidate = sortedCandidates.length > 0
     ? (sortedCandidates.find(c =>
         (revealedElection?.winner && (c.name.toLowerCase() === revealedElection.winner.toLowerCase() || c.id === revealedElection.winner))
       ) || sortedCandidates[0])
     : null;
-
   const runnerUpCandidate = sortedCandidates.length > 1 ? sortedCandidates[1] : null;
   const totalElectionVotes = (revealedElection?.total_votes || 0) > 0
     ? (revealedElection?.total_votes || 0)
@@ -155,6 +162,45 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
   const victoryMargin = winnerCandidate && runnerUpCandidate
     ? Math.max(0, winnerCandidate.votes - runnerUpCandidate.votes)
     : (winnerCandidate?.votes || 0);
+
+  // Authoritative Bill State
+  const activeBill = (settings.revealedBillId || settings.activeBillId)
+    ? bills.find(b => b.id === (settings.revealedBillId || settings.activeBillId))
+    : (bills.find(b => b.status === 'Vote Open' || b.status === 'Voting') ||
+       bills.find(b => b.is_result_revealed) ||
+       bills.find(b => b.status === 'Vote Closed') ||
+       bills[0]);
+
+  const isBillResultRevealed = !!(
+    settings.displayScene === 'bill_result' ||
+    (activeBill && activeBill.is_result_revealed && settings.displayScene !== 'agenda' && settings.displayScene !== 'welcome' && settings.displayScene !== 'break')
+  );
+
+  const isBillVotingActive = !!(
+    settings.displayScene === 'bill_voting' ||
+    (activeBill && (activeBill.status === 'Vote Open' || activeBill.status === 'Voting') && settings.displayScene === 'auto')
+  );
+
+  const isBillClosedUnrevealed = !!(
+    activeBill && activeBill.status === 'Vote Closed' && !activeBill.is_result_revealed &&
+    (settings.displayScene === 'bill_voting' || (settings.displayScene === 'auto' && !activeElection))
+  );
+
+  const isBillUpcoming = !!(
+    activeBill && (activeBill.status === 'Draft' || activeBill.status === 'Ready') &&
+    settings.displayScene === 'bill_voting'
+  );
+
+  // Active Flash Vote
+  const activeFlashVote = flashVotes.find(f => f.status === 'ACTIVE');
+
+  // Timer Display Derivations
+  const timerMins = Math.floor(displaySeconds / 60);
+  const timerSecs = displaySeconds % 60;
+  const formattedTimer = `${timerMins.toString().padStart(2, '0')}:${timerSecs.toString().padStart(2, '0')}`;
+  const isTimerRunning = timerState.isRunning;
+  const isTimerPaused = !timerState.isRunning && displaySeconds > 0 && displaySeconds < timerState.durationSec;
+  const isTimerExpired = displaySeconds === 0;
 
   const handleToggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -197,8 +243,49 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          <span className="px-4 py-1.5 rounded-full text-xs md:text-sm font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center gap-2 animate-pulse shadow-lg shadow-emerald-950/50">
+        {/* Live Status & Live Timer Widget */}
+        <div className="flex items-center gap-4">
+          {/* Synchronized Stage Timer Pill */}
+          <div
+            className={`px-5 py-2 rounded-2xl border flex items-center gap-3 transition-all ${
+              isTimerRunning
+                ? 'bg-emerald-950/60 border-emerald-500/60 shadow-lg shadow-emerald-950/80'
+                : isTimerPaused
+                  ? 'bg-amber-950/60 border-amber-500/60 shadow-lg shadow-amber-950/80'
+                  : isTimerExpired
+                    ? 'bg-rose-950/70 border-rose-500/70 shadow-lg shadow-rose-950/80'
+                    : 'bg-slate-900/80 border-slate-700/80'
+            }`}
+          >
+            <Clock
+              className={`w-5 h-5 ${
+                isTimerRunning
+                  ? 'text-emerald-400 animate-pulse'
+                  : isTimerPaused
+                    ? 'text-amber-400'
+                    : isTimerExpired
+                      ? 'text-rose-400 animate-bounce'
+                      : 'text-slate-400'
+              }`}
+            />
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-2xl md:text-3xl font-black tracking-tight text-white">
+                {formattedTimer}
+              </span>
+              {isTimerPaused && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-amber-500 text-slate-950">
+                  PAUSED
+                </span>
+              )}
+              {isTimerExpired && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-rose-600 text-white animate-pulse">
+                  00:00
+                </span>
+              )}
+            </div>
+          </div>
+
+          <span className="px-4 py-2 rounded-full text-xs md:text-sm font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center gap-2 animate-pulse shadow-lg shadow-emerald-950/50">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
             {currentEvent?.status ? `${currentEvent.status.toUpperCase()} LIVE` : 'STAGE LIVE'}
           </span>
@@ -206,9 +293,11 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
       </div>
 
       {/* Screen Main Center Content */}
-      <div className="my-auto text-center space-y-8 py-8 z-10">
+      <div className="my-auto text-center space-y-8 py-8 z-10 w-full">
         
-        {/* SCENE 1: WELCOME SCREEN */}
+        {/* ══════════════════════════════════════════════════════════════════════ */}
+        {/* SCENE 1: WELCOME SCREEN                                                */}
+        {/* ══════════════════════════════════════════════════════════════════════ */}
         {settings.displayScene === 'welcome' ? (
           <div className="space-y-6 animate-result-reveal max-w-5xl mx-auto">
             <span className="text-sm md:text-lg font-black uppercase tracking-widest text-amber-400 bg-amber-500/10 px-6 py-2 rounded-full border border-amber-500/30 inline-block shadow-lg">
@@ -222,7 +311,165 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
             </p>
           </div>
 
-        /* SCENE 2: ANIMATED ELECTION RESULT REVEAL SCREEN (Only when displayScene === 'election_result') */
+        /* ══════════════════════════════════════════════════════════════════════ */
+        /* SCENE 2: BILL VOTING RESULT REVEAL (VERY LARGE STAGE MESSAGE)          */
+        /* ══════════════════════════════════════════════════════════════════════ */
+        ) : isBillResultRevealed && activeBill ? (
+          <div className="space-y-8 animate-result-reveal max-w-5xl mx-auto w-full">
+            
+            {/* Header */}
+            <div className="space-y-3">
+              <span className="text-xs md:text-sm font-black uppercase tracking-widest text-purple-300 bg-purple-500/20 px-6 py-2 rounded-full border border-purple-400/40 inline-flex items-center gap-2 shadow-xl shadow-purple-950/40">
+                <FileText className="w-5 h-5 text-purple-400" /> LEGISLATIVE BILL RESULT DECLARED
+              </span>
+              <div className="text-xl md:text-2xl font-mono font-black text-purple-400">
+                {activeBill.bill_number}
+              </div>
+              <h1 className="text-4xl md:text-6xl font-black text-white tracking-tight leading-tight drop-shadow-2xl">
+                {activeBill.title}
+              </h1>
+              {activeBill.description && (
+                <p className="text-sm md:text-lg text-slate-300 max-w-3xl mx-auto font-medium">
+                  {activeBill.description}
+                </p>
+              )}
+              {activeBill.proposer && (
+                <p className="text-xs md:text-sm text-slate-400">
+                  Introduced by: <span className="text-slate-200 font-semibold">{activeBill.proposer}</span>
+                </p>
+              )}
+            </div>
+
+            {/* Vote Totals Breakdown Grid */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mx-auto pt-2">
+              <div className="p-6 rounded-3xl bg-emerald-950/50 border-2 border-emerald-500/60 shadow-xl text-center space-y-1">
+                <span className="text-xs md:text-sm uppercase font-black text-emerald-400 tracking-wider block">
+                  AYES (YES)
+                </span>
+                <span className="text-4xl md:text-6xl font-mono font-black text-white">
+                  {activeBill.ayes}
+                </span>
+              </div>
+
+              <div className="p-6 rounded-3xl bg-rose-950/50 border-2 border-rose-500/60 shadow-xl text-center space-y-1">
+                <span className="text-xs md:text-sm uppercase font-black text-rose-400 tracking-wider block">
+                  NOES (NO)
+                </span>
+                <span className="text-4xl md:text-6xl font-mono font-black text-white">
+                  {activeBill.noes}
+                </span>
+              </div>
+
+              <div className="p-6 rounded-3xl bg-slate-900/80 border-2 border-slate-700/60 shadow-xl text-center space-y-1">
+                <span className="text-xs md:text-sm uppercase font-black text-slate-400 tracking-wider block">
+                  ABSTAIN
+                </span>
+                <span className="text-4xl md:text-6xl font-mono font-black text-white">
+                  {activeBill.abstain || 0}
+                </span>
+              </div>
+
+              <div className="p-6 rounded-3xl bg-amber-950/50 border-2 border-amber-500/60 shadow-xl text-center space-y-1">
+                <span className="text-xs md:text-sm uppercase font-black text-amber-400 tracking-wider block">
+                  TOTAL VOTES
+                </span>
+                <span className="text-4xl md:text-6xl font-mono font-black text-amber-300">
+                  {activeBill.total_votes || (activeBill.ayes + activeBill.noes + (activeBill.abstain || 0))}
+                </span>
+              </div>
+            </div>
+
+            {/* GIANT BILL PASSED / BILL FAILED BANNER */}
+            <div className="pt-4 max-w-4xl mx-auto">
+              {activeBill.result === 'PASSED' ? (
+                <div className="p-8 md:p-12 rounded-3xl bg-gradient-to-b from-emerald-950/90 via-slate-900 to-emerald-950/90 border-4 border-emerald-400 text-emerald-400 shadow-2xl shadow-emerald-950/80 animate-gold-glow flex flex-col items-center justify-center gap-4">
+                  <CheckCircle2 className="w-16 h-16 md:w-20 md:h-20 text-emerald-400 animate-bounce" />
+                  <span className="text-5xl md:text-8xl font-black tracking-tight text-white drop-shadow-2xl">
+                    BILL PASSED
+                  </span>
+                  <p className="text-lg md:text-2xl text-emerald-300 font-semibold">
+                    The House has resolved in affirmative by majority division.
+                  </p>
+                </div>
+              ) : (
+                <div className="p-8 md:p-12 rounded-3xl bg-gradient-to-b from-rose-950/90 via-slate-900 to-rose-950/90 border-4 border-rose-500 text-rose-400 shadow-2xl shadow-rose-950/80 flex flex-col items-center justify-center gap-4">
+                  <XCircle className="w-16 h-16 md:w-20 md:h-20 text-rose-500 animate-bounce" />
+                  <span className="text-5xl md:text-8xl font-black tracking-tight text-white drop-shadow-2xl">
+                    BILL FAILED
+                  </span>
+                  <p className="text-lg md:text-2xl text-rose-300 font-semibold">
+                    The House has declined the motion. Division vote defeated.
+                  </p>
+                </div>
+              )}
+            </div>
+
+          </div>
+
+        /* ══════════════════════════════════════════════════════════════════════ */
+        /* SCENE 3: BILL VOTING LIVE STAGE (VOTING NOT OPEN / OPEN / CLOSED)     */
+        /* ══════════════════════════════════════════════════════════════════════ */
+        ) : (isBillVotingActive || isBillClosedUnrevealed || isBillUpcoming) && activeBill ? (
+          <div className="flex flex-col items-center justify-center space-y-6 animate-slide-up max-w-4xl mx-auto text-center py-6 w-full">
+            <span className="text-xs md:text-sm font-black uppercase tracking-widest text-purple-400 bg-purple-500/10 px-6 py-2 rounded-full border border-purple-500/30 inline-flex items-center gap-2 shadow-lg">
+              <FileText className="w-4 h-4" /> BILL VOTING • FLOOR DIVISION
+            </span>
+
+            <div className="text-xl md:text-2xl font-mono font-bold text-purple-400">
+              {activeBill.bill_number}
+            </div>
+
+            <h1 className="text-4xl md:text-6xl font-black text-white tracking-tight leading-tight drop-shadow-2xl">
+              {activeBill.title}
+            </h1>
+
+            {activeBill.description && (
+              <p className="text-lg md:text-xl text-slate-300 max-w-2xl mx-auto font-medium">
+                {activeBill.description}
+              </p>
+            )}
+
+            {/* Voting State Pill & Directions */}
+            {isBillVotingActive ? (
+              <div className="space-y-4 pt-4">
+                <div className="px-10 py-4 rounded-full border-2 border-emerald-500/80 bg-emerald-950/60 text-emerald-400 text-3xl md:text-5xl font-black flex items-center justify-center gap-3 shadow-2xl shadow-emerald-500/30">
+                  <span className="w-5 h-5 rounded-full bg-emerald-400 animate-ping" />
+                  <span>VOTING OPEN</span>
+                </div>
+                <p className="text-2xl md:text-3xl font-bold text-slate-200">
+                  Cast your vote (AYE / NO / ABSTAIN)
+                </p>
+                <div className="px-6 py-2 rounded-2xl bg-slate-900/80 border border-slate-800 text-xs md:text-sm text-slate-400 font-mono inline-block">
+                  Votes Submitted: <span className="text-purple-400 font-bold">{activeBill.voted_delegate_ids?.length || activeBill.total_votes || 0}</span>
+                </div>
+              </div>
+            ) : isBillClosedUnrevealed ? (
+              <div className="space-y-4 pt-4">
+                <div className="px-10 py-4 rounded-full border-2 border-amber-500/80 bg-amber-950/60 text-amber-400 text-3xl md:text-5xl font-black flex items-center justify-center gap-3 shadow-2xl shadow-amber-500/30">
+                  <span>VOTING CLOSED</span>
+                </div>
+                <p className="text-2xl md:text-3xl font-bold text-slate-300">
+                  RESULT NOT YET REVEALED
+                </p>
+                <p className="text-sm md:text-base text-slate-500 font-medium">
+                  The House division tally is being prepared by the Speaker.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4 pt-4">
+                <div className="px-10 py-4 rounded-full border-2 border-slate-600 bg-slate-900/80 text-slate-400 text-2xl md:text-4xl font-bold flex items-center justify-center gap-3 shadow-xl">
+                  <span>VOTING NOT OPEN</span>
+                </div>
+                <p className="text-xl md:text-2xl font-medium text-slate-400">
+                  Awaiting Speaker call for division
+                </p>
+              </div>
+            )}
+          </div>
+
+        /* ══════════════════════════════════════════════════════════════════════ */
+        /* SCENE 4: ANIMATED CANDIDATE ELECTION RESULT REVEAL SCREEN              */
+        /* ══════════════════════════════════════════════════════════════════════ */
         ) : settings.displayScene === 'election_result' ? (
           <div className="space-y-8 animate-result-reveal max-w-6xl mx-auto w-full">
             
@@ -322,7 +569,6 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
                       </div>
                     </div>
 
-                    {/* Animated Progress Bar */}
                     <div className="w-full h-3 rounded-full bg-slate-950 overflow-hidden border border-slate-800">
                       <div
                         className={`h-full animate-bar-grow transition-all duration-1000 ${
@@ -340,47 +586,59 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
 
           </div>
 
-        /* SCENE 3: PARLIAMENTARY ELECTION VOTING STAGE */
-        ) : settings.displayScene === 'election' || (settings.displayScene === 'auto' && activeElection) ? (
-          <div className="flex flex-col items-center justify-center space-y-6 animate-slide-up max-w-4xl mx-auto text-center py-10 w-full">
-            {isBallotClosed ? (
-              <>
-                <div className="px-10 py-3.5 rounded-full border-2 border-amber-500/80 bg-amber-950/40 text-amber-400 text-2xl md:text-4xl font-extrabold flex items-center justify-center gap-3 shadow-2xl shadow-amber-500/20">
+        /* ══════════════════════════════════════════════════════════════════════ */
+        /* SCENE 5: PARLIAMENTARY ELECTION VOTING STAGE                          */
+        /* ══════════════════════════════════════════════════════════════════════ */
+        ) : settings.displayScene === 'election' || (settings.displayScene === 'auto' && (isElectionLive || isElectionClosed)) ? (
+          <div className="flex flex-col items-center justify-center space-y-6 animate-slide-up max-w-4xl mx-auto text-center py-6 w-full">
+            <span className="text-xs md:text-sm font-black uppercase tracking-widest text-amber-400 bg-amber-500/10 px-6 py-2 rounded-full border border-amber-500/30 inline-block shadow-lg">
+              PARLIAMENTARY ELECTION
+            </span>
+
+            <h1 className="text-4xl md:text-6xl font-black text-white tracking-tight leading-tight drop-shadow-2xl">
+              {targetBallotElection?.title || 'Speaker Election'}
+            </h1>
+
+            {isElectionClosed ? (
+              <div className="space-y-4 pt-4">
+                <div className="px-10 py-3.5 rounded-full border-2 border-amber-500/80 bg-amber-950/40 text-amber-400 text-3xl md:text-5xl font-extrabold flex items-center justify-center gap-3 shadow-2xl shadow-amber-500/20">
                   <span>VOTING CLOSED</span>
                 </div>
-                
                 <p className="text-xl md:text-3xl font-medium text-slate-300">
-                  Tallying results...
+                  RESULT NOT YET REVEALED
                 </p>
-                
-                <p className="text-sm md:text-lg text-slate-400 font-semibold uppercase tracking-wider">
-                  {targetBallotElection?.title || 'Speaker Election'}
+                <p className="text-sm md:text-base text-slate-500 font-medium">
+                  Awaiting Speaker declaration of final election results.
                 </p>
-              </>
-            ) : (
-              <>
-                <div className="px-8 py-3 rounded-full border-2 border-emerald-500/80 bg-emerald-950/40 text-emerald-400 text-2xl md:text-4xl font-extrabold flex items-center justify-center gap-3 shadow-2xl shadow-emerald-500/20">
+              </div>
+            ) : isElectionLive ? (
+              <div className="space-y-4 pt-4">
+                <div className="px-8 py-3.5 rounded-full border-2 border-emerald-500/80 bg-emerald-950/40 text-emerald-400 text-3xl md:text-5xl font-extrabold flex items-center justify-center gap-3 shadow-2xl shadow-emerald-500/20">
                   <span className="w-4 h-4 rounded-full bg-emerald-500 animate-ping" />
-                  <span>• VOTING IS OPEN</span>
+                  <span>VOTING OPEN</span>
                 </div>
-                
-                <p className="text-xl md:text-3xl font-medium text-slate-200">
-                  Cast your vote on your phone
+                <p className="text-2xl md:text-3xl font-bold text-slate-200">
+                  Cast your vote on your device
                 </p>
-                
-                <p className="text-sm md:text-lg text-slate-400 font-semibold uppercase tracking-wider">
-                  {targetBallotElection?.title || 'Speaker Election'}
+                <div className="mt-4 px-6 py-2.5 rounded-2xl bg-slate-900/80 border border-slate-800 text-xs md:text-sm text-slate-400 font-mono inline-block">
+                  House Ballots Cast: <span className="text-amber-400 font-bold">{targetBallotElection?.voted_delegate_ids?.length || targetBallotElection?.total_votes || 0}</span> / {learners.length || 117}
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4 pt-4">
+                <div className="px-8 py-3.5 rounded-full border-2 border-slate-600 bg-slate-900/80 text-slate-400 text-2xl md:text-4xl font-bold flex items-center justify-center gap-3 shadow-xl">
+                  <span>VOTING NOT OPEN</span>
+                </div>
+                <p className="text-xl md:text-2xl font-medium text-slate-400">
+                  Ballot is scheduled to open shortly
                 </p>
-              </>
+              </div>
             )}
-
-            {/* Turnout Stats Box */}
-            <div className="mt-4 px-6 py-2.5 rounded-2xl bg-slate-900/80 border border-slate-800 text-xs md:text-sm text-slate-400 font-mono">
-              House Ballots Cast: <span className="text-amber-400 font-bold">{targetBallotElection?.voted_delegate_ids?.length || targetBallotElection?.total_votes || 0}</span> / {learners.length || 117}
-            </div>
           </div>
 
-        /* SCENE 4: LIVE FLOOR DIVISION (FLASH VOTE) STAGE */
+        /* ══════════════════════════════════════════════════════════════════════ */
+        /* SCENE 6: LIVE FLOOR DIVISION (FLASH VOTE) STAGE                       */
+        /* ══════════════════════════════════════════════════════════════════════ */
         ) : settings.displayScene === 'flash_vote' || (settings.displayScene === 'auto' && activeFlashVote) ? (
           <div className="space-y-6 animate-slide-up max-w-5xl mx-auto">
             <span className="text-sm md:text-base font-black uppercase tracking-widest text-amber-400 bg-amber-500/10 px-6 py-2 rounded-full border border-amber-500/30 inline-block shadow-lg">
@@ -405,7 +663,9 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
             </div>
           </div>
 
-        /* SCENE 5: HOUSE RECESS / BREAK */
+        /* ══════════════════════════════════════════════════════════════════════ */
+        /* SCENE 7: HOUSE RECESS / BREAK                                         */
+        /* ══════════════════════════════════════════════════════════════════════ */
         ) : settings.displayScene === 'break' ? (
           <div className="space-y-6 animate-slide-up max-w-5xl mx-auto">
             <span className="text-sm md:text-lg font-black uppercase tracking-widest text-indigo-400 bg-indigo-500/10 px-6 py-2 rounded-full border border-indigo-500/30 inline-block shadow-lg">
@@ -419,14 +679,14 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
             </p>
           </div>
 
-        /* SCENE 6: DEFAULT AGENDA BROADCAST STAGE */
+        /* ══════════════════════════════════════════════════════════════════════ */
+        /* SCENE 8: DEFAULT AUTHORITATIVE AGENDA BROADCAST STAGE                 */
+        /* ══════════════════════════════════════════════════════════════════════ */
         ) : (
           <div className="space-y-6 animate-slide-up max-w-5xl mx-auto">
-            {settings.showSpeakerBadge && (
-              <span className="text-sm md:text-base font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/10 px-6 py-2 rounded-full border border-emerald-500/30 inline-block">
-                {selectedAgenda.speaker_role || 'CURRENT LEGISLATIVE SESSION'}
-              </span>
-            )}
+            <span className="text-xs md:text-sm font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/10 px-6 py-2 rounded-full border border-emerald-500/30 inline-block shadow-md">
+              {selectedAgenda.speaker_role || 'CURRENT SESSION'}
+            </span>
             
             <h1 className="text-5xl md:text-8xl font-black text-white tracking-tight leading-none drop-shadow-2xl">
               {selectedAgenda.title}
@@ -438,16 +698,14 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
               </p>
             )}
 
-            <div className="flex items-center justify-center gap-4 pt-4">
-              {settings.showClock && (
-                <span className="px-5 py-2 rounded-xl bg-slate-900 border border-slate-800 text-base md:text-lg font-mono font-bold text-amber-400 flex items-center gap-2">
-                  <Clock className="w-5 h-5 text-amber-400" />
-                  {selectedAgenda.time} {selectedAgenda.duration_minutes ? `(${selectedAgenda.duration_minutes} min)` : ''}
-                </span>
-              )}
+            <div className="flex flex-wrap items-center justify-center gap-4 pt-4">
+              <span className="px-6 py-2.5 rounded-2xl bg-slate-900 border border-slate-800 text-base md:text-lg font-mono font-bold text-amber-400 flex items-center gap-2">
+                <Clock className="w-5 h-5 text-amber-400" />
+                Planned Duration: {selectedAgenda.duration_minutes ? `${selectedAgenda.duration_minutes} min` : (selectedAgenda.time || '10 min')}
+              </span>
 
               {selectedAgenda.category && (
-                <span className="px-5 py-2 rounded-xl bg-slate-900 border border-slate-800 text-base md:text-lg font-bold text-slate-300">
+                <span className="px-6 py-2.5 rounded-2xl bg-slate-900 border border-slate-800 text-base md:text-lg font-bold text-slate-300">
                   {selectedAgenda.category}
                 </span>
               )}
@@ -469,27 +727,18 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
         </div>
       )}
 
-      {/* Screen Bottom Protocol & Controls Bar */}
+      {/* Screen Bottom Protocol & Display-Only Controls Bar */}
       <div className="flex items-center justify-between pt-6 border-t border-slate-800/80 z-10">
         <div className="text-xs md:text-sm text-slate-500 font-mono flex items-center gap-2">
           <Radio className="w-4 h-4 text-emerald-500 animate-pulse" />
-          <span>TN Legislative Assembly Stage Presentation Screen (Unauthenticated Public Link)</span>
+          <span>TN Legislative Assembly Live Stage Presentation</span>
         </div>
 
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={() => setIsSoundEnabled(!isSoundEnabled)}
-            className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-bold text-slate-300 flex items-center gap-2 transition-colors cursor-pointer"
-          >
-            {isSoundEnabled ? <Volume2 className="w-4 h-4 text-emerald-400" /> : <VolumeX className="w-4 h-4 text-slate-500" />}
-            <span>{isSoundEnabled ? 'Sound On' : 'Enable Sound'}</span>
-          </button>
-
-          <button
-            type="button"
             onClick={handleToggleFullscreen}
-            className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-md flex items-center gap-2 transition-colors cursor-pointer"
+            className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs md:text-sm shadow-md flex items-center gap-2 transition-colors cursor-pointer"
           >
             {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             <span>{isFullscreen ? 'Exit Fullscreen' : 'Stage Fullscreen'}</span>

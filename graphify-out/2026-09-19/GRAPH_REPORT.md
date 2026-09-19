@@ -1,31 +1,32 @@
-# Graph Report - TN_Assembly-  (2026-09-19)
+# Graph Report - TN_Assembly-  (2026-09-17)
 
 ## Corpus Check
-- 150 files · ~229,258 words
+- 150 files · ~224,568 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1249 nodes · 3455 edges · 97 communities (71 shown, 20 thin omitted)
+- 1232 nodes · 3371 edges · 95 communities (67 shown, 23 thin omitted)
 - Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `b568598e`
+- Built from commit: `ec1f0628`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
-- csvHelper.ts
+- .notify
+- getRecordSessionStatuses
 - package.json
 - test_bug_9_systemic_audit.cjs
-- .getLearners
+- storageService
 - index.ts
 - test_clean_data_and_leadership_sync.cjs
 - storageService.ts
-- UserRole
-- .getEvents
+- lucide-react
+- .getItem
 - CollegeEvent
-- StudentDashboard.tsx
+- getEventSlug
 - JuryDashboard.tsx
 - test_bug_10_supabase_writes.cjs
 - check_db.cjs
@@ -33,16 +34,16 @@
 - compilerOptions
 - Learner
 - App.tsx
-- storageService
+- .setItem
 - test_attendance_409_fix.cjs
 - compilerOptions
 - test_event_data_integrity.cjs
 - ParticipantsTab.tsx
-- .authenticateAccessCodeAsync
+- Volunteer
 - test_bug_10c_coordinator_save.cjs
 - test_routing_logic.js
 - .getParties
-- check_details.cjs
+- @supabase/supabase-js
 - parse_exact_records.cjs
 - test_supabase_attendance_save.js
 - db_audit.cjs
@@ -73,20 +74,20 @@
 - Context
 - VolunteerDashboard.tsx
 - React + TypeScript + Vite
-- supabase.ts
+- presenceService
 - diagnose_bugs.cjs
 - dump_keys.cjs
 - extract_chrome_data.cjs
 - investigate_jkkncet_db.cjs
 - search_active_chrome.cjs
 - search_actual_leveldb.cjs
-- @supabase/supabase-js
+- sync_legit_event_days.cjs
 - sync_to_local.cjs
-- ElectionsTab.tsx
+- test_att_payload.cjs
 - import_arts_to_supabase.cjs
 - test_rpc.cjs
 - test_sync_days.cjs
-- AgendaTab.tsx
+- test_unknown_col.cjs
 - AGENT_RULES.md
 - merge_arts_csv.cjs
 - print_jkkncet.cjs
@@ -99,17 +100,15 @@
 - restore_arts.cjs
 - rules/graphify.md
 - workflows/graphify.md
-- Volunteer
+- inspect_learners.cjs
 - test_live_event_days.cjs
 - verify_question_flow.js
-- restore_jkkncet.cjs
-- test_cols.cjs
+- LoginRecord
 - react
-- test_import_flow.cjs
 
 ## God Nodes (most connected - your core abstractions)
-1. `storageService` - 294 edges
-2. `Learner` - 90 edges
+1. `storageService` - 280 edges
+2. `Learner` - 89 edges
 3. `react` - 53 edges
 4. `Party` - 53 edges
 5. `lucide-react` - 50 edges
@@ -122,23 +121,19 @@
 ## Surprising Connections (you probably didn't know these)
 - `runTests()` --calls--> `findEventBySlug()`  [EXTRACTED]
   scratch/test_multi_event_isolation.mjs → src/utils/slug.ts
-- `EditDayActivitiesModalProps` --references--> `EventDay`  [EXTRACTED]
-  src/components/admin/EditDayActivitiesModal.tsx → src/types/index.ts
 - `EditEventModalProps` --references--> `CollegeEvent`  [EXTRACTED]
   src/components/admin/EditEventModal.tsx → src/types/index.ts
+- `EventOverviewTabProps` --references--> `CollegeEvent`  [EXTRACTED]
+  src/components/admin/EventOverviewTab.tsx → src/types/index.ts
 - `AwardsTabProps` --references--> `Learner`  [EXTRACTED]
   src/components/coordinator/AwardsTab.tsx → src/types/index.ts
-- `CsvImportModalProps` --references--> `Learner`  [EXTRACTED]
-  src/components/coordinator/CsvImportModal.tsx → src/types/index.ts
+- `SearchableChairpersonSelectProps` --references--> `Learner`  [EXTRACTED]
+  src/components/coordinator/CommitteesTab.tsx → src/types/index.ts
 
 ## Import Cycles
 - None detected.
 
-## Communities (97 total, 20 thin omitted)
-
-### Community 1 - "csvHelper.ts"
-Cohesion: 0.17
-Nodes (18): CsvImportModal(), CsvImportModalProps, ImportReportData, DownloadModal(), DownloadModalProps, ReportTab(), ReportTabProps, CSVImportStats (+10 more)
+## Communities (95 total, 23 thin omitted)
 
 ### Community 2 - "package.json"
 Cohesion: 0.05
@@ -150,31 +145,31 @@ Nodes (43): assert, authenticateCoordinator(), c1Committees, c1Learners, c1Parti
 
 ### Community 5 - "index.ts"
 Cohesion: 0.09
-Nodes (23): EditEventModal(), EditEventModalProps, ChatTab(), ChatTabProps, FeedbackTab(), FeedbackTabProps, AggregatedScore, AssemblyElection (+15 more)
+Nodes (25): EditEventModal(), EditEventModalProps, AgendaTab(), AgendaTabProps, CATEGORY_OPTIONS, DURATION_PRESETS, ChatTab(), ChatTabProps (+17 more)
 
 ### Community 6 - "test_clean_data_and_leadership_sync.cjs"
 Cohesion: 0.07
 Nodes (23): assert, CANONICAL_ROLES, cleanRes, cmOppositionRes, cmReassignRes, cmRulingRes, day1, day1Att (+15 more)
 
 ### Community 7 - "storageService.ts"
-Cohesion: 0.12
-Nodes (27): INITIAL_AGENDA, INITIAL_CHAT, INITIAL_CHECKLIST, INITIAL_COMMITTEES, INITIAL_COORDINATORS, INITIAL_ELECTIONS, INITIAL_EVENTS, INITIAL_FEEDBACK (+19 more)
+Cohesion: 0.08
+Nodes (34): INITIAL_AGENDA, INITIAL_CHAT, INITIAL_CHECKLIST, INITIAL_COMMITTEES, INITIAL_COORDINATORS, INITIAL_ELECTIONS, INITIAL_EVENTS, INITIAL_FEEDBACK (+26 more)
 
-### Community 8 - "UserRole"
+### Community 8 - "lucide-react"
 Cohesion: 0.11
-Nodes (22): papaparse, ChecklistTab(), ChecklistTabProps, CommitteesTab(), JuryTab(), JuryTabProps, ALL_NOMINATION_ROLES, NominationsTab() (+14 more)
+Nodes (25): lucide-react, papaparse, ChecklistTab(), ChecklistTabProps, CommitteesTab(), CommitteesTabProps, SearchableChairpersonSelectProps, JuryTab() (+17 more)
 
 ### Community 10 - "CollegeEvent"
-Cohesion: 0.31
-Nodes (14): EventTabRouteHandlerProps, EventOverviewTab(), EventOverviewTabProps, StandaloneProjectorDisplayProps, ControlTabProps, ProjectorTabProps, JuryDashboardProps, StudentDashboardProps (+6 more)
+Cohesion: 0.15
+Nodes (29): EventTabRouteHandlerProps, StandaloneProjectorDisplayProps, ControlTabProps, CONSTITUTIONAL_POSTS, ElectionsTab(), ElectionsTabProps, ProceedingsTab(), ProceedingsTabProps (+21 more)
 
-### Community 11 - "StudentDashboard.tsx"
-Cohesion: 0.27
-Nodes (8): ProceedingsTabProps, StudentDashboardTab, BillProceeding, EventDeadline, NominationPosition, ParliamentQuestion, ProceedingsMotion, ProceedingsQuestion
+### Community 11 - "getEventSlug"
+Cohesion: 0.29
+Nodes (8): storageMap, assert(), runTests(), EventSlugOnlyRedirector(), EventTabRouteHandler(), findEventBySlug(), getEventSlug(), slugify()
 
 ### Community 12 - "JuryDashboard.tsx"
-Cohesion: 0.14
-Nodes (12): CategoryId, ItemizedScoreRow, ScoreGridTab(), ScoreGridTabProps, SCORING_CATEGORIES, COMM_STEPS, CONDUCT_STEPS, ORIGINALITY_STEPS (+4 more)
+Cohesion: 0.12
+Nodes (13): CategoryId, ItemizedScoreRow, ScoreGridTab(), ScoreGridTabProps, SCORING_CATEGORIES, COMM_STEPS, CONDUCT_STEPS, JuryDashboard() (+5 more)
 
 ### Community 13 - "test_bug_10_supabase_writes.cjs"
 Cohesion: 0.09
@@ -193,16 +188,12 @@ Cohesion: 0.10
 Nodes (19): compilerOptions, allowArbitraryExtensions, allowImportingTsExtensions, erasableSyntaxOnly, jsx, lib, module, moduleDetection (+11 more)
 
 ### Community 18 - "Learner"
-Cohesion: 0.15
-Nodes (26): AddLearnerModal(), AddLearnerModalProps, AllocationModal(), AllocationModalProps, AllocationTabProps, AnalyticsTab(), AnalyticsTabProps, CabinetTabProps (+18 more)
+Cohesion: 0.11
+Nodes (40): AddLearnerModal(), AddLearnerModalProps, AllocationModal(), AllocationModalProps, AllocationTabProps, AnalyticsTab(), AnalyticsTabProps, CoordinatorDashboardProps (+32 more)
 
 ### Community 19 - "App.tsx"
-Cohesion: 0.05
-Nodes (56): react-router-dom, storageMap, assert(), runTests(), App(), EventSlugOnlyRedirector(), EventTabRouteHandler(), getInitialRouteInfo() (+48 more)
-
-### Community 20 - "storageService"
-Cohesion: 0.07
-Nodes (3): storageService, uid(), LoginRecord
+Cohesion: 0.09
+Nodes (30): react-router-dom, App(), getInitialRouteInfo(), getInitialSavedSession(), SavedAuthSession, EventOverviewTab(), EventOverviewTabProps, ActiveNavTab (+22 more)
 
 ### Community 21 - "test_attendance_409_fix.cjs"
 Cohesion: 0.15
@@ -217,8 +208,12 @@ Cohesion: 0.12
 Nodes (14): assert, d1, d2, dashboardContent, dashboardPath, fs, migrationContent, migrationPath (+6 more)
 
 ### Community 24 - "ParticipantsTab.tsx"
-Cohesion: 0.27
-Nodes (16): AllocationTab(), CabinetTab(), MinistryItem, SearchableDelegateSelect(), ParticipantsTab(), CANONICAL_ROLES, getResolvedCommitteeName(), getResolvedLearnerBench() (+8 more)
+Cohesion: 0.26
+Nodes (17): AllocationTab(), CabinetTab(), CabinetTabProps, MinistryItem, SearchableDelegateSelect(), SearchableDelegateSelectProps, EditLearnerModal(), ParticipantsTab() (+9 more)
+
+### Community 25 - "Volunteer"
+Cohesion: 0.29
+Nodes (5): AccessCodeAuthResult, StudentJoinView(), StudentJoinViewProps, JuryMember, Volunteer
 
 ### Community 26 - "test_bug_10c_coordinator_save.cjs"
 Cohesion: 0.17
@@ -229,8 +224,12 @@ Cohesion: 0.20
 Nodes (11): adminRedirect, coordGuardResult, coordRedirect, delegateGuardResult, delegateRedirect, getEventSlug(), guardEventsRoute(), learnerMatch (+3 more)
 
 ### Community 28 - ".getParties"
-Cohesion: 0.13
-Nodes (5): deduplicateElectionList(), getElectionCanonicalKey(), mergeTwoElections(), sortLearnersStably(), getRecordSessionStatuses()
+Cohesion: 0.14
+Nodes (4): deduplicateElectionList(), getElectionCanonicalKey(), mergeTwoElections(), sortLearnersStably()
+
+### Community 29 - "@supabase/supabase-js"
+Cohesion: 0.12
+Nodes (9): @supabase/supabase-js, { createClient }, sb, { createClient }, supabase, { createClient }, sb, { createClient } (+1 more)
 
 ### Community 30 - "parse_exact_records.cjs"
 Cohesion: 0.22
@@ -345,16 +344,16 @@ Cohesion: 0.33
 Nodes (5): AWS Guidance for the new AWS experience, Constraints:, Context, Help level, Terminology:
 
 ### Community 58 - "VolunteerDashboard.tsx"
-Cohesion: 0.12
-Nodes (11): DaysActivitiesTab(), formatConstituencyName(), matchesLearnerConstituency(), VolunteerDashboard(), VolunteerDashboardProps, YuvaAssignment, presenceService, DayAttendanceRecord (+3 more)
+Cohesion: 0.18
+Nodes (17): DaysActivitiesTab(), DaysActivitiesTabProps, EditDayActivitiesModal(), EditDayActivitiesModalProps, formatConstituencyName(), matchesLearnerConstituency(), VolunteerDashboard(), VolunteerDashboardProps (+9 more)
 
 ### Community 59 - "React + TypeScript + Vite"
 Cohesion: 0.50
 Nodes (3): Expanding the Oxlint configuration, React Compiler, React + TypeScript + Vite
 
-### Community 60 - "supabase.ts"
-Cohesion: 0.32
-Nodes (6): isSupabaseEnabled, supabase, supabaseAnonKey, supabaseUrl, PresenceListener, PresenceUser
+### Community 60 - "presenceService"
+Cohesion: 0.18
+Nodes (7): isSupabaseEnabled, supabase, supabaseAnonKey, supabaseUrl, PresenceListener, presenceService, PresenceUser
 
 ### Community 62 - "dump_keys.cjs"
 Cohesion: 0.50
@@ -372,25 +371,13 @@ Nodes (3): fs, path, profiles
 Cohesion: 0.50
 Nodes (3): fs, levelDirs, path
 
-### Community 67 - "@supabase/supabase-js"
-Cohesion: 0.12
-Nodes (9): @supabase/supabase-js, { createClient }, sb, { createClient }, supabase, { createClient }, supabase, { createClient } (+1 more)
-
 ### Community 68 - "sync_to_local.cjs"
 Cohesion: 0.67
 Nodes (3): fs, path, sync()
 
-### Community 69 - "ElectionsTab.tsx"
-Cohesion: 0.38
-Nodes (9): CONSTITUTIONAL_POSTS, ElectionsTab(), ElectionsTabProps, getProjectorSettings(), ProjectorTab(), saveProjectorSettings(), ElectionCandidate, FlashVoteAudience (+1 more)
-
 ### Community 70 - "import_arts_to_supabase.cjs"
 Cohesion: 0.29
 Nodes (5): { createClient }, crypto, fs, path, sb
-
-### Community 73 - "AgendaTab.tsx"
-Cohesion: 0.38
-Nodes (6): AgendaTabProps, CATEGORY_OPTIONS, DURATION_PRESETS, AgendaCategory, AgendaDay, AgendaStatus
 
 ### Community 75 - "merge_arts_csv.cjs"
 Cohesion: 0.29
@@ -408,37 +395,33 @@ Nodes (4): { createClient }, fs, path, sb
 Cohesion: 0.33
 Nodes (4): { createClient }, fs, path, sb
 
-### Community 90 - "Volunteer"
-Cohesion: 0.47
-Nodes (5): AccessCodeAuthResult, StudentJoinView(), StudentJoinViewProps, JuryMember, Volunteer
-
 ### Community 92 - "verify_question_flow.js"
 Cohesion: 0.25
 Nodes (7): closedDeadline, foundInAdmin, initialDeadline, openDeadline, questionsInAdmin, testQuestion, updatedQ
 
 ### Community 95 - "react"
-Cohesion: 0.16
-Nodes (10): lucide-react, react, DaysActivitiesTabProps, EditDayActivitiesModal(), EditDayActivitiesModalProps, OrganizerSignInProps, AwardsTabProps, QuestionnaireTabProps (+2 more)
+Cohesion: 0.12
+Nodes (18): react, CreateEventModal(), CreateEventModalProps, EditCoordinatorModal(), EditCoordinatorModalProps, MyEventsDashboard(), MyEventsDashboardProps, SuperAdminDashboardProps (+10 more)
 
 ## Knowledge Gaps
-- **474 isolated node(s):** `$schema`, `npm`, `name`, `baseURL`, `type` (+469 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 554 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **20 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **473 isolated node(s):** `$schema`, `npm`, `name`, `baseURL`, `type` (+468 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 553 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **23 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `@supabase/supabase-js` connect `@supabase/supabase-js` to `package.json`, `check_db.cjs`, `check_details.cjs`, `fix_party1_learners.cjs`, `restore_voting_history.cjs`, `compare_learners.cjs`, `check_ahs.cjs`, `check_all_cabinet.cjs`, `check_cabinet_custom.cjs`, `check_yuva_db.cjs`, `clean_arts_cabinet.cjs`, `clean_yuva_db.cjs`, `fix_ahs_event.cjs`, `inspect_ahs.cjs`, `test_attendance_logic.cjs`, `test_batch_attendance_logic.cjs`, `test_no_delete_operations.cjs`, `supabase.ts`, `diagnose_bugs.cjs`, `investigate_jkkncet_db.cjs`, `import_arts_to_supabase.cjs`, `test_rpc.cjs`, `test_sync_days.cjs`, `backup_and_wipe_jkkncet.cjs`, `restore_arts.cjs`, `test_live_event_days.cjs`, `restore_jkkncet.cjs`, `test_cols.cjs`, `test_import_flow.cjs`?**
-  _High betweenness centrality (0.178) - this node is a cross-community bridge._
-- **Why does `storageService` connect `storageService` to `.setItem`, `csvHelper.ts`, `.getLearners`, `storageService.ts`, `UserRole`, `.getEvents`, `CollegeEvent`, `StudentDashboard.tsx`, `JuryDashboard.tsx`, `.syncEventStateToSupabase`, `Learner`, `App.tsx`, `ParticipantsTab.tsx`, `.authenticateAccessCodeAsync`, `.getParties`, `verify_question_flow.ts`, `VolunteerDashboard.tsx`, `ElectionsTab.tsx`, `AgendaTab.tsx`, `Volunteer`, `verify_question_flow.js`, `react`?**
-  _High betweenness centrality (0.173) - this node is a cross-community bridge._
-- **Why does `react` connect `react` to `csvHelper.ts`, `package.json`, `VolunteerDashboard.tsx`, `index.ts`, `ElectionsTab.tsx`, `UserRole`, `AgendaTab.tsx`, `CollegeEvent`, `StudentDashboard.tsx`, `JuryDashboard.tsx`, `Learner`, `App.tsx`, `ParticipantsTab.tsx`, `Volunteer`?**
-  _High betweenness centrality (0.027) - this node is a cross-community bridge._
+- **Why does `@supabase/supabase-js` connect `@supabase/supabase-js` to `package.json`, `check_db.cjs`, `fix_party1_learners.cjs`, `restore_voting_history.cjs`, `compare_learners.cjs`, `check_ahs.cjs`, `check_all_cabinet.cjs`, `check_cabinet_custom.cjs`, `check_yuva_db.cjs`, `clean_arts_cabinet.cjs`, `clean_yuva_db.cjs`, `fix_ahs_event.cjs`, `inspect_ahs.cjs`, `test_attendance_logic.cjs`, `test_batch_attendance_logic.cjs`, `test_no_delete_operations.cjs`, `presenceService`, `diagnose_bugs.cjs`, `investigate_jkkncet_db.cjs`, `sync_legit_event_days.cjs`, `test_att_payload.cjs`, `import_arts_to_supabase.cjs`, `test_rpc.cjs`, `test_sync_days.cjs`, `test_unknown_col.cjs`, `backup_and_wipe_jkkncet.cjs`, `restore_arts.cjs`, `inspect_learners.cjs`, `test_live_event_days.cjs`?**
+  _High betweenness centrality (0.187) - this node is a cross-community bridge._
+- **Why does `storageService` connect `storageService` to `.notify`, `getRecordSessionStatuses`, `index.ts`, `storageService.ts`, `lucide-react`, `.getItem`, `CollegeEvent`, `getEventSlug`, `JuryDashboard.tsx`, `.getElections`, `Learner`, `App.tsx`, `.setItem`, `ParticipantsTab.tsx`, `Volunteer`, `.getParties`, `verify_question_flow.ts`, `VolunteerDashboard.tsx`, `verify_question_flow.js`, `LoginRecord`, `react`?**
+  _High betweenness centrality (0.174) - this node is a cross-community bridge._
+- **Why does `react` connect `react` to `package.json`, `index.ts`, `lucide-react`, `CollegeEvent`, `JuryDashboard.tsx`, `Learner`, `App.tsx`, `ParticipantsTab.tsx`, `Volunteer`, `VolunteerDashboard.tsx`?**
+  _High betweenness centrality (0.030) - this node is a cross-community bridge._
 - **What connects `$schema`, `npm`, `name` to the rest of the system?**
-  _474 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _473 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **Should `.notify` be split into smaller, more focused modules?**
+  _Cohesion score 0.14616755793226383 - nodes in this community are weakly interconnected._
 - **Should `package.json` be split into smaller, more focused modules?**
   _Cohesion score 0.04541062801932367 - nodes in this community are weakly interconnected._
 - **Should `test_bug_9_systemic_audit.cjs` be split into smaller, more focused modules?**
   _Cohesion score 0.05555555555555555 - nodes in this community are weakly interconnected._
-- **Should `.getLearners` be split into smaller, more focused modules?**
-  _Cohesion score 0.08979591836734693 - nodes in this community are weakly interconnected._

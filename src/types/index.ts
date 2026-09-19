@@ -294,18 +294,62 @@ export interface LiveFlashVote {
   votes: IndividualVote[];
 }
 
+export type BillVotingStatus =
+  | 'Draft'
+  | 'Ready'
+  | 'Vote Open'
+  | 'Voting'
+  | 'Vote Closed'
+  | 'Result Hidden'
+  | 'Result Revealed'
+  | 'Finalized'
+  | 'Passed'
+  | 'Rejected'
+  | 'Introduced'
+  | 'Debating';
+
+export interface BillVote {
+  learner_id: string;
+  delegate_id?: string;
+  learner_name: string;
+  role?: string;
+  bench?: BenchType;
+  party?: string;
+  vote: 'YES' | 'NO' | 'ABSTAIN';
+  timestamp: string;
+}
+
 export interface BillProceeding {
   id: string;
   event_id: string;
   bill_number: string;
   title: string;
-  introduced_by: string;
-  bench: BenchType;
+  introduced_by?: string;
+  bench?: BenchType;
   summary: string;
-  status: 'Introduced' | 'Debating' | 'Voting' | 'Passed' | 'Rejected';
+  description?: string;
+  status: BillVotingStatus;
+  proposer?: string;
+  agenda_id?: string;
   ayes: number;
   noes: number;
+  abstain?: number;
+  total_votes?: number;
+  is_result_revealed?: boolean;
+  result?: 'PASSED' | 'FAILED';
+  voted_delegate_ids?: string[];
+  votes?: BillVote[];
   created_at: string;
+  updated_at?: string;
+}
+
+export interface LiveTimerState {
+  durationSec: number;
+  secondsLeft: number;
+  isRunning: boolean;
+  startedAt?: number;
+  pausedAt?: number;
+  updatedAt: number;
 }
 
 export interface ScoringSession {
@@ -390,8 +434,11 @@ export interface SecurityAuditLog {
 }
 
 export interface ProjectorStudioSettings {
-  displayScene: 'auto' | 'welcome' | 'agenda' | 'flash_vote' | 'election' | 'election_result' | 'break';
+  displayScene: 'auto' | 'welcome' | 'agenda' | 'flash_vote' | 'election' | 'election_result' | 'bill_voting' | 'bill_result' | 'break';
   revealedElectionId?: string;
+  revealedBillId?: string;
+  activeBillId?: string;
+  timer?: LiveTimerState;
   tickerMessage: string;
   isTickerActive: boolean;
   tickerStyle: 'marquee' | 'pulse' | 'static';

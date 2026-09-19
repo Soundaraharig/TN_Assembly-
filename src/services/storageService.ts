@@ -34,6 +34,8 @@ import type {
   ProceedingsMotion,
   SecurityAuditLog,
   ProjectorStudioSettings,
+  LiveTimerState,
+  BillVote,
   EventDay,
   DayAttendanceRecord,
   EventDayStatus,
@@ -3418,6 +3420,35 @@ class StorageService {
               next.push(...recs);
               this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, next);
             }
+            this.notify();
+            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+          }
+        })
+        .on('broadcast', { event: 'timer_update' }, (msg: any) => {
+          if (msg?.payload?.eventId && msg?.payload?.timerState) {
+            const evId = msg.payload.eventId;
+            this.setItem(`tn_assembly_live_timer_${evId}`, msg.payload.timerState);
+            this.notify();
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_timer_update', { detail: msg.payload }));
+              window.dispatchEvent(new Event('storage'));
+            }
+          }
+        })
+        .on('broadcast', { event: 'bill_update' }, (msg: any) => {
+          if (msg?.payload?.eventId && Array.isArray(msg?.payload?.bills)) {
+            const evId = msg.payload.eventId;
+            const otherBills = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, []).filter(b => b.event_id !== evId);
+            this.setItem(STORAGE_KEYS.PROCEEDINGS, [...otherBills, ...msg.payload.bills]);
+            this.notify();
+            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+          }
+        })
+        .on('broadcast', { event: 'agenda_update' }, (msg: any) => {
+          if (msg?.payload?.eventId && Array.isArray(msg?.payload?.agenda)) {
+            const evId = msg.payload.eventId;
+            const otherAgenda = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, []).filter(a => a.event_id !== evId);
+            this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...msg.payload.agenda]);
             this.notify();
             if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
           }
@@ -7104,7 +7135,26 @@ class StorageService {
       return a;
     });
     this.setItem(STORAGE_KEYS.AGENDA, all);
+
+    // Also sync projector settings selectedAgendaId
+    const currentProj = this.getProjectorSettings(eventId);
+    if (currentProj.selectedAgendaId !== itemId) {
+      currentProj.selectedAgendaId = itemId;
+      this.saveProjectorSettings(eventId, currentProj);
+    }
+
+    // Broadcast agenda_update
+    if (supabase && this.realtimeChannel) {
+      const eventAgenda = all.filter(a => a.event_id === eventId);
+      this.realtimeChannel.send({
+        type: 'broadcast',
+        event: 'agenda_update',
+        payload: { eventId, agenda: eventAgenda }
+      }).catch((err: any) => console.warn('Realtime broadcast agenda_update failed:', err));
+    }
+
     this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
   }
 
   // ── JURY ──────────────────────────────────────────────────────────────────
@@ -8790,6 +8840,329 @@ class StorageService {
       return b;
     });
     this.setItem(STORAGE_KEYS.PROCEEDINGS, all);
+  }
+
+  public getBills(eventId?: string): BillProceeding[] {
+    return this.getProceedings(eventId);
+  }
+
+  public createBill(bill: Partial<BillProceeding>, eventId?: string): BillProceeding {
+    const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS);
+    const resolvedEventId = bill.event_id || eventId || '';
+    const newBill: BillProceeding = {
+      id: uid('bill'),
+      event_id: resolvedEventId,
+      bill_number: bill.bill_number?.trim() || `BILL NO. ${String(all.length + 1).padStart(2, '0')}`,
+      title: bill.title?.trim() || 'New Legislative Bill',
+      description: bill.description?.trim() || bill.summary?.trim() || '',
+      introduced_by: bill.introduced_by?.trim() || bill.proposer?.trim() || 'House Member',
+      proposer: bill.proposer?.trim() || bill.introduced_by?.trim() || 'House Member',
+      bench: bill.bench || 'Ruling',
+      summary: bill.summary?.trim() || bill.description?.trim() || '',
+      agenda_id: bill.agenda_id || '',
+      status: 'Draft',
+      ayes: 0,
+      noes: 0,
+      abstain: 0,
+      total_votes: 0,
+      is_result_revealed: false,
+      voted_delegate_ids: [],
+      votes: [],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    all.unshift(newBill);
+    this.setItem(STORAGE_KEYS.PROCEEDINGS, all);
+    if (resolvedEventId) {
+      this.broadcastBills(resolvedEventId, all.filter(b => b.event_id === resolvedEventId));
+      this.syncEventStateToSupabase(resolvedEventId).catch(() => {});
+    }
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+    return newBill;
+  }
+
+  public updateBill(bill: BillProceeding): void {
+    const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS).map(b =>
+      b.id === bill.id ? { ...bill, updated_at: new Date().toISOString() } : b
+    );
+    this.setItem(STORAGE_KEYS.PROCEEDINGS, all);
+    if (bill.event_id) {
+      this.broadcastBills(bill.event_id, all.filter(b => b.event_id === bill.event_id));
+      this.syncEventStateToSupabase(bill.event_id).catch(() => {});
+    }
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+  }
+
+  public deleteBill(billId: string, eventId?: string): void {
+    const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS).filter(b => b.id !== billId);
+    this.setItem(STORAGE_KEYS.PROCEEDINGS, all);
+    if (eventId) {
+      this.broadcastBills(eventId, all.filter(b => b.event_id === eventId));
+      this.syncEventStateToSupabase(eventId).catch(() => {});
+    }
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+  }
+
+  public openBillVote(billId: string, eventId: string): void {
+    const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS).map(b => {
+      if (b.id === billId) {
+        return {
+          ...b,
+          status: 'Vote Open' as const,
+          is_result_revealed: false,
+          updated_at: new Date().toISOString()
+        };
+      }
+      return b;
+    });
+    this.setItem(STORAGE_KEYS.PROCEEDINGS, all);
+
+    // Update projector settings to display the live bill voting scene
+    const proj = this.getProjectorSettings(eventId);
+    proj.activeBillId = billId;
+    proj.displayScene = 'bill_voting';
+    this.saveProjectorSettings(eventId, proj);
+
+    this.broadcastBills(eventId, all.filter(b => b.event_id === eventId));
+    this.syncEventStateToSupabase(eventId).catch(() => {});
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+  }
+
+  public closeBillVote(billId: string, eventId: string): void {
+    const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS).map(b => {
+      if (b.id === billId) {
+        const votes = b.votes || [];
+        const ayes = votes.filter(v => v.vote === 'YES').length;
+        const noes = votes.filter(v => v.vote === 'NO').length;
+        const abstain = votes.filter(v => v.vote === 'ABSTAIN').length;
+        const total = ayes + noes + abstain;
+        const result: 'PASSED' | 'FAILED' = ayes > noes ? 'PASSED' : 'FAILED';
+        return {
+          ...b,
+          status: 'Vote Closed' as const,
+          ayes,
+          noes,
+          abstain,
+          total_votes: total,
+          result,
+          is_result_revealed: false,
+          updated_at: new Date().toISOString()
+        };
+      }
+      return b;
+    });
+    this.setItem(STORAGE_KEYS.PROCEEDINGS, all);
+
+    // Keep projector in bill_voting scene with result hidden until admin explicitly reveals it
+    const proj = this.getProjectorSettings(eventId);
+    proj.activeBillId = billId;
+    proj.revealedBillId = undefined;
+    proj.displayScene = 'bill_voting';
+    this.saveProjectorSettings(eventId, proj);
+
+    this.broadcastBills(eventId, all.filter(b => b.event_id === eventId));
+    this.syncEventStateToSupabase(eventId).catch(() => {});
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+  }
+
+  public revealBillResult(billId: string, eventId: string): void {
+    const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS).map(b => {
+      if (b.id === billId) {
+        const votes = b.votes || [];
+        const ayes = votes.filter(v => v.vote === 'YES').length;
+        const noes = votes.filter(v => v.vote === 'NO').length;
+        const abstain = votes.filter(v => v.vote === 'ABSTAIN').length;
+        const total = ayes + noes + abstain;
+        const result: 'PASSED' | 'FAILED' = ayes > noes ? 'PASSED' : 'FAILED';
+        return {
+          ...b,
+          status: 'Result Revealed' as const,
+          ayes,
+          noes,
+          abstain,
+          total_votes: total,
+          result,
+          is_result_revealed: true,
+          updated_at: new Date().toISOString()
+        };
+      }
+      return b;
+    });
+    this.setItem(STORAGE_KEYS.PROCEEDINGS, all);
+
+    // Direct projector to bill_result scene
+    const proj = this.getProjectorSettings(eventId);
+    proj.revealedBillId = billId;
+    proj.activeBillId = billId;
+    proj.displayScene = 'bill_result';
+    this.saveProjectorSettings(eventId, proj);
+
+    this.broadcastBills(eventId, all.filter(b => b.event_id === eventId));
+    this.syncEventStateToSupabase(eventId).catch(() => {});
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+  }
+
+  public hideBillResult(billId: string, eventId: string): void {
+    const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS).map(b => {
+      if (b.id === billId) {
+        return {
+          ...b,
+          status: 'Result Hidden' as const,
+          is_result_revealed: false,
+          updated_at: new Date().toISOString()
+        };
+      }
+      return b;
+    });
+    this.setItem(STORAGE_KEYS.PROCEEDINGS, all);
+
+    // Switch projector scene back to bill_voting showing result hidden
+    const proj = this.getProjectorSettings(eventId);
+    proj.revealedBillId = undefined;
+    proj.activeBillId = billId;
+    proj.displayScene = 'bill_voting';
+    this.saveProjectorSettings(eventId, proj);
+
+    this.broadcastBills(eventId, all.filter(b => b.event_id === eventId));
+    this.syncEventStateToSupabase(eventId).catch(() => {});
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+  }
+
+  public castBillVote(
+    billId: string,
+    eventId: string,
+    learnerOrId: Learner | string,
+    vote: 'YES' | 'NO' | 'ABSTAIN'
+  ): { success: boolean; error?: string } {
+    const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS);
+    const bill = all.find(b => b.id === billId);
+    if (!bill) return { success: false, error: 'Bill not found.' };
+    if (bill.status !== 'Vote Open' && bill.status !== 'Voting') {
+      return { success: false, error: 'Voting is not open for this bill.' };
+    }
+    const learnerId = typeof learnerOrId === 'string' ? learnerOrId : learnerOrId.id;
+    const learners = this.getLearners(eventId);
+    const learner = typeof learnerOrId === 'object' ? learnerOrId : (learners.find(l => l.id === learnerId) || {
+      id: learnerId,
+      full_name: `Delegate #${learnerId.slice(-4)}`,
+      role: 'Delegate',
+      bench: 'Ruling',
+      party_name: 'Independent'
+    } as any);
+
+    const votedIds = new Set(bill.voted_delegate_ids || []);
+    if (votedIds.has(learnerId)) {
+      return { success: false, error: 'You have already voted on this bill.' };
+    }
+    votedIds.add(learnerId);
+
+    const newVote: BillVote = {
+      learner_id: learnerId,
+      delegate_id: learnerId,
+      learner_name: learner.full_name,
+      role: learner.role,
+      bench: learner.bench,
+      party: learner.party_name,
+      vote,
+      timestamp: new Date().toISOString()
+    };
+
+    const votes = [...(bill.votes || []), newVote];
+    const ayes = votes.filter(v => v.vote === 'YES').length;
+    const noes = votes.filter(v => v.vote === 'NO').length;
+    const abstain = votes.filter(v => v.vote === 'ABSTAIN').length;
+    const total = ayes + noes + abstain;
+    const result: 'PASSED' | 'FAILED' = ayes > noes ? 'PASSED' : 'FAILED';
+
+    const updatedBill: BillProceeding = {
+      ...bill,
+      ayes,
+      noes,
+      abstain,
+      total_votes: total,
+      result,
+      voted_delegate_ids: Array.from(votedIds),
+      votes,
+      updated_at: new Date().toISOString()
+    };
+
+    const updatedAll = all.map(b => b.id === billId ? updatedBill : b);
+    this.setItem(STORAGE_KEYS.PROCEEDINGS, updatedAll);
+
+    this.broadcastBills(eventId, updatedAll.filter(b => b.event_id === eventId));
+    this.syncEventStateToSupabase(eventId).catch(() => {});
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+    return { success: true };
+  }
+
+  public async broadcastBills(eventId: string, bills: BillProceeding[]): Promise<void> {
+    if (supabase && this.realtimeChannel) {
+      try {
+        await this.realtimeChannel.send({
+          type: 'broadcast',
+          event: 'bill_update',
+          payload: { eventId, bills }
+        });
+      } catch (e) {
+        console.warn('Realtime broadcast bill_update failed:', e);
+      }
+    }
+  }
+
+  public getLiveTimerState(eventId?: string): LiveTimerState {
+    const defaultTimer: LiveTimerState = {
+      durationSec: 600,
+      secondsLeft: 600,
+      isRunning: false,
+      updatedAt: Date.now()
+    };
+    if (eventId) {
+      const local = this.getItem<LiveTimerState | null>(`tn_assembly_live_timer_${eventId}`, null);
+      if (local) return local;
+      const ev = this.getEvents().find(e => e.id === eventId);
+      const sc = (ev?.social_coverage || {}) as Record<string, any>;
+      if (sc.timer) return sc.timer;
+    }
+    const fallback = this.getItem<LiveTimerState | null>('tn_assembly_live_timer_global', null);
+    return fallback || defaultTimer;
+  }
+
+  public async saveLiveTimerState(eventId: string, timerState: LiveTimerState): Promise<void> {
+    const key = eventId ? `tn_assembly_live_timer_${eventId}` : 'tn_assembly_live_timer_global';
+    this.setItem(key, timerState);
+
+    const events = this.getEvents();
+    const ev = events.find(e => e.id === eventId);
+    if (ev) {
+      const sc = (ev.social_coverage || {}) as Record<string, any>;
+      ev.social_coverage = { ...sc, timer: timerState };
+      this.setItem(STORAGE_KEYS.EVENTS, events);
+    }
+    this.notify();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_timer_update', { detail: { eventId, timerState } }));
+      window.dispatchEvent(new Event('storage'));
+    }
+
+    if (supabase && this.realtimeChannel) {
+      try {
+        await this.realtimeChannel.send({
+          type: 'broadcast',
+          event: 'timer_update',
+          payload: { eventId, timerState }
+        });
+      } catch (e) {
+        console.warn('Realtime broadcast timer_update failed:', e);
+      }
+    }
   }
 
   // ── SCORE GRID (SESSION-BASED SCORING ENGINE) ─────────────────────────────

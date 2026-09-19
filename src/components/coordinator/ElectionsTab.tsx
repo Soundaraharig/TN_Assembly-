@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import type { Election, LiveFlashVote, Learner, FlashVoteAudience, ElectionCandidate, Nomination, Party, LoginRecord, Committee } from '../../types';
+import type { Election, LiveFlashVote, Learner, FlashVoteAudience, ElectionCandidate, Nomination, Party, LoginRecord, Committee, BillProceeding } from '../../types';
 import {
   Vote,
   Plus,
@@ -33,7 +33,11 @@ import {
   CheckCircle2,
   Download,
   Archive,
-  ShieldAlert
+  ShieldAlert,
+  ScrollText,
+  Eye,
+  EyeOff,
+  FileText
 } from 'lucide-react';
 import { getProjectorSettings, saveProjectorSettings } from './ProjectorTab';
 import { storageService, getResolvedPartyName, deduplicateElectionList } from '../../services/storageService';
@@ -115,7 +119,15 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   onDeleteFlashVote,
   onShowToast
 }) => {
-  const [activeTabSection, setActiveTabSection] = useState<'ELECTIONS' | 'FLASH_VOTES' | 'HISTORY' | 'TRASH'>('ELECTIONS');
+  const [activeTabSection, setActiveTabSection] = useState<'ELECTIONS' | 'BILLS' | 'FLASH_VOTES' | 'HISTORY' | 'TRASH'>('ELECTIONS');
+  const [bills, setBills] = useState<BillProceeding[]>(() => storageService.getBills(eventId));
+  const [isNewBillModalOpen, setIsNewBillModalOpen] = useState(false);
+  const [billNumber, setBillNumber] = useState('');
+  const [billTitle, setBillTitle] = useState('');
+  const [billSummary, setBillSummary] = useState('');
+  const [billProposer, setBillProposer] = useState('');
+  const [billAgendaId, setBillAgendaId] = useState('');
+
   const [selectedHistoryElection, setSelectedHistoryElection] = useState<Election | null>(null);
   const [archivedElections, setArchivedElections] = useState<Election[]>(() => {
     return storageService.getArchivedElections(eventId);
@@ -125,8 +137,10 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
   useEffect(() => {
     setArchivedElections(storageService.getArchivedElections(eventId));
+    setBills(storageService.getBills(eventId));
     const unsub = storageService.subscribe(() => {
       setArchivedElections(storageService.getArchivedElections(eventId));
+      setBills(storageService.getBills(eventId));
     });
     return () => unsub();
   }, [eventId]);
@@ -1884,6 +1898,17 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
               Leadership Ballots ({elections.length})
             </button>
             <button
+              onClick={() => setActiveTabSection('BILLS')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                activeTabSection === 'BILLS'
+                  ? 'bg-amber-500 text-slate-950 shadow-sm font-bold'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <ScrollText className="w-3.5 h-3.5" />
+              Bill Voting ({bills.length})
+            </button>
+            <button
               onClick={() => setActiveTabSection('FLASH_VOTES')}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
                 activeTabSection === 'FLASH_VOTES'
@@ -1984,6 +2009,228 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
               <div className="space-y-2">
                 {customElections.map((elec, idx) => renderElectionRow(elec, idx))}
               </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* BILL VOTING TAB CONTENT */}
+      {activeTabSection === 'BILLS' && (
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
+                Official Assembly Bill Voting
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Create and govern legislative bills, open parliamentary voting, and reveal official division results.
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setBillNumber(`BILL NO. ${String(bills.length + 1).padStart(2, '0')}`);
+                setBillTitle('');
+                setBillSummary('');
+                setBillProposer('');
+                setBillAgendaId('');
+                setIsNewBillModalOpen(true);
+              }}
+              className="px-4 py-2 rounded-xl font-bold text-xs text-white bg-amber-500 hover:bg-amber-600 shadow-md flex items-center gap-1.5 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" /> Create Bill
+            </button>
+          </div>
+
+          {bills.length === 0 ? (
+            <div className="p-12 text-center rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 text-slate-400">
+              <ScrollText className="w-10 h-10 mx-auto mb-3 text-slate-500 opacity-60" />
+              <p className="text-sm font-semibold">No bills created for this assembly session.</p>
+              <p className="text-xs text-slate-500 mt-1">Click "+ Create Bill" above to draft a legislative bill for floor voting.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {bills.map((bill) => {
+                const isVotingOpen = bill.status === 'Vote Open' || bill.status === 'Voting';
+                const isVotingClosed = bill.status === 'Vote Closed' || bill.status === 'Result Hidden' || bill.status === 'Result Revealed';
+                const isRevealed = bill.is_result_revealed || bill.status === 'Result Revealed';
+                const totalVotes = bill.total_votes || (bill.ayes + bill.noes + (bill.abstain || 0));
+
+                return (
+                  <div
+                    key={bill.id}
+                    className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4 transition-all"
+                  >
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800/80 pb-4">
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2.5">
+                          <span className="px-2.5 py-1 rounded-md text-[11px] font-mono font-black uppercase tracking-wider bg-slate-100 dark:bg-slate-800 text-amber-500 border border-amber-500/20">
+                            {bill.bill_number}
+                          </span>
+                          <h4 className="text-base md:text-lg font-black text-slate-900 dark:text-white">
+                            {bill.title}
+                          </h4>
+                          {isVotingOpen && (
+                            <span className="px-3 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500 text-white animate-pulse">
+                              VOTING OPEN
+                            </span>
+                          )}
+                          {isVotingClosed && !isRevealed && (
+                            <span className="px-3 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-500 border border-amber-500/30">
+                              VOTING CLOSED • RESULT HIDDEN
+                            </span>
+                          )}
+                          {isRevealed && (
+                            <span className={`px-3 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                              bill.result === 'PASSED'
+                                ? 'bg-emerald-500 text-white'
+                                : 'bg-rose-500 text-white'
+                            }`}>
+                              RESULT REVEALED • {bill.result || 'PASSED'}
+                            </span>
+                          )}
+                          {!isVotingOpen && !isVotingClosed && (
+                            <span className="px-3 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+                              {bill.status}
+                            </span>
+                          )}
+                        </div>
+                        {bill.summary && (
+                          <p className="text-xs text-slate-600 dark:text-slate-400 max-w-2xl leading-relaxed">
+                            {bill.summary}
+                          </p>
+                        )}
+                        {bill.proposer && (
+                          <p className="text-[11px] text-slate-400 font-medium">
+                            Introduced by: <span className="text-slate-700 dark:text-slate-300 font-semibold">{bill.proposer}</span>
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Vote Action Buttons */}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {/* 1. Open Vote Button */}
+                        {!isVotingOpen && !isVotingClosed && (
+                          <button
+                            onClick={() => {
+                              storageService.openBillVote(bill.id, eventId);
+                              setBills(storageService.getBills(eventId));
+                              onShowToast('Bill Voting Opened', `${bill.bill_number} is now live for voting`, 'success');
+                            }}
+                            className="px-4 py-2 rounded-xl text-xs font-black bg-emerald-600 hover:bg-emerald-500 text-white shadow-md flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Play className="w-3.5 h-3.5 fill-current" /> Open Vote
+                          </button>
+                        )}
+
+                        {/* 2. Close Vote Button */}
+                        {isVotingOpen && (
+                          <button
+                            onClick={() => {
+                              storageService.closeBillVote(bill.id, eventId);
+                              setBills(storageService.getBills(eventId));
+                              onShowToast('Bill Voting Closed', `${bill.bill_number} voting has closed. Result is hidden.`, 'info');
+                            }}
+                            className="px-4 py-2 rounded-xl text-xs font-black bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-md flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Lock className="w-3.5 h-3.5" /> Close Vote
+                          </button>
+                        )}
+
+                        {/* 3. Reveal Result Button */}
+                        {isVotingClosed && !isRevealed && (
+                          <button
+                            onClick={() => {
+                              storageService.revealBillResult(bill.id, eventId);
+                              setBills(storageService.getBills(eventId));
+                              onShowToast('Result Revealed', `${bill.bill_number} result transmitted to projector screen`, 'success');
+                            }}
+                            className="px-4 py-2 rounded-xl text-xs font-black bg-purple-600 hover:bg-purple-500 text-white shadow-md flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Eye className="w-3.5 h-3.5" /> Reveal Result
+                          </button>
+                        )}
+
+                        {/* 4. Hide Result Button */}
+                        {isVotingClosed && isRevealed && (
+                          <button
+                            onClick={() => {
+                              storageService.hideBillResult(bill.id, eventId);
+                              setBills(storageService.getBills(eventId));
+                              onShowToast('Result Hidden', `${bill.bill_number} vote totals hidden from projector`, 'info');
+                            }}
+                            className="px-4 py-2 rounded-xl text-xs font-black bg-slate-700 hover:bg-slate-600 text-white shadow-md flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <EyeOff className="w-3.5 h-3.5" /> Hide Result
+                          </button>
+                        )}
+
+                        {/* Delete/Archive Button */}
+                        <button
+                          onClick={() => {
+                            if (window.confirm(`Delete ${bill.bill_number} (${bill.title})?`)) {
+                              storageService.deleteBill(bill.id, eventId);
+                              setBills(storageService.getBills(eventId));
+                              onShowToast('Bill Removed', `${bill.bill_number} removed`, 'info');
+                            }
+                          }}
+                          className="p-2 rounded-xl text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                          title="Delete Bill"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Vote Counts Breakdown */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+                      <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-500/30 text-center">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400 block">
+                          YES (AYES)
+                        </span>
+                        <span className="text-xl md:text-2xl font-mono font-black text-emerald-700 dark:text-emerald-300">
+                          {bill.ayes}
+                        </span>
+                      </div>
+                      <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/20 border border-rose-500/30 text-center">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-rose-600 dark:text-rose-400 block">
+                          NO (NOES)
+                        </span>
+                        <span className="text-xl md:text-2xl font-mono font-black text-rose-700 dark:text-rose-300">
+                          {bill.noes}
+                        </span>
+                      </div>
+                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 text-center">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
+                          ABSTAIN
+                        </span>
+                        <span className="text-xl md:text-2xl font-mono font-black text-slate-700 dark:text-slate-300">
+                          {bill.abstain || 0}
+                        </span>
+                      </div>
+                      <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-500/30 text-center">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-amber-600 dark:text-amber-400 block">
+                          TOTAL VOTES
+                        </span>
+                        <span className="text-xl md:text-2xl font-mono font-black text-amber-700 dark:text-amber-300">
+                          {totalVotes}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Result Banner (when revealed) */}
+                    {isRevealed && (
+                      <div className={`p-4 rounded-xl border text-center font-black text-lg md:text-xl flex items-center justify-center gap-3 ${
+                        bill.result === 'PASSED'
+                          ? 'bg-emerald-500/10 border-emerald-500 text-emerald-500'
+                          : 'bg-rose-500/10 border-rose-500 text-rose-500'
+                      }`}>
+                        {bill.result === 'PASSED' ? <CheckCircle2 className="w-6 h-6" /> : <XCircle className="w-6 h-6" />}
+                        <span>BILL {bill.result}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -3164,6 +3411,144 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>Confirm Archive to Trash</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CREATE BILL MODAL */}
+      {isNewBillModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900 text-white p-6 shadow-2xl space-y-4 animate-scaleIn">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Create New Legislative Bill</h3>
+                  <p className="text-xs text-slate-400">Floor Division / Legislative Proceeding</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsNewBillModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3.5 text-xs">
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">
+                  Bill Number / Ref <span className="text-rose-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. BILL NO. 04"
+                  value={billNumber}
+                  onChange={(e) => setBillNumber(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white font-mono placeholder-slate-500 focus:outline-hidden focus:border-purple-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">
+                  Bill Title <span className="text-rose-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Tamil Nadu Youth Skill Development Bill, 2026"
+                  value={billTitle}
+                  onChange={(e) => setBillTitle(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white placeholder-slate-500 focus:outline-hidden focus:border-purple-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">
+                  Description / Preamble Summary
+                </label>
+                <textarea
+                  rows={3}
+                  placeholder="A bill concerning development, apprenticeship, and technological enablement..."
+                  value={billSummary}
+                  onChange={(e) => setBillSummary(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white placeholder-slate-500 focus:outline-hidden focus:border-purple-500 resize-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">
+                    Proposer / Sponsor (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Hon. Minister for Education"
+                    value={billProposer}
+                    onChange={(e) => setBillProposer(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white placeholder-slate-500 focus:outline-hidden focus:border-purple-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">
+                    Session / Agenda Link (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Legislative Business"
+                    value={billAgendaId}
+                    onChange={(e) => setBillAgendaId(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white placeholder-slate-500 focus:outline-hidden focus:border-purple-500"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setIsNewBillModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!billTitle.trim()}
+                onClick={() => {
+                  const newBill = storageService.createBill({
+                    bill_number: billNumber.trim() || `BILL NO. ${bills.length + 1}`,
+                    title: billTitle.trim(),
+                    description: billSummary.trim(),
+                    proposer: billProposer.trim() || undefined,
+                    agenda_id: billAgendaId.trim() || undefined,
+                    event_id: eventId,
+                    status: 'Draft',
+                    ayes: 0,
+                    noes: 0,
+                    abstain: 0,
+                    total_votes: 0,
+                    is_result_revealed: false,
+                    votes: [],
+                    voted_delegate_ids: []
+                  }, eventId);
+                  setBills(storageService.getBills(eventId));
+                  setIsNewBillModalOpen(false);
+                  setBillNumber('');
+                  setBillTitle('');
+                  setBillSummary('');
+                  setBillProposer('');
+                  setBillAgendaId('');
+                  onShowToast('Bill Created', `${newBill.bill_number} drafted successfully.`, 'success');
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white shadow-md disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center gap-1.5"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>Save Draft Bill</span>
               </button>
             </div>
           </div>

@@ -38,6 +38,11 @@ export const JuryTab: React.FC<JuryTabProps> = ({
   const [isSessionsBannerOpen, setIsSessionsBannerOpen] = useState(false);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
+  // Form State
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [designation, setDesignation] = useState('Parliamentary Juror');
+  const [bench, setBench] = useState<BenchType>('Ruling');
 
   // Role Protection Guard
   if (userRole && userRole !== 'super_admin' && userRole !== 'coordinator' && userRole !== 'organiser') {
@@ -50,12 +55,6 @@ export const JuryTab: React.FC<JuryTabProps> = ({
   }
 
   const effectiveJuryUrl = juryAccessUrl || (typeof window !== 'undefined' ? `${window.location.origin}/join` : 'https://tnassembly.vercel.app/join');
-
-  // Form State
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [designation, setDesignation] = useState('Parliamentary Juror');
-  const [bench, setBench] = useState<BenchType>('Ruling');
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(effectiveJuryUrl);

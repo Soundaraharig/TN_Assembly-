@@ -94,10 +94,40 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   };
 
   // ── Speech Timer State ───────────────────────────────────────────────────
-  const [timerDurationSec, setTimerDurationSec] = useState(600); // 600 sec default (10 min)
-  const [secondsLeft, setSecondsLeft] = useState(600);
-  const [isTimerRunning, setIsTimerRunning] = useState(false);
+  const [timerDurationSec, setTimerDurationSec] = useState(() => {
+    return storageService.getLiveTimerState(currentEvent?.id)?.durationSec || 600;
+  });
+  const [secondsLeft, setSecondsLeft] = useState(() => {
+    const s = storageService.getLiveTimerState(currentEvent?.id);
+    return s.secondsLeft !== undefined ? s.secondsLeft : 600;
+  });
+  const [isTimerRunning, setIsTimerRunning] = useState(() => {
+    return !!storageService.getLiveTimerState(currentEvent?.id)?.isRunning;
+  });
   const [isSoundEnabled, setIsSoundEnabled] = useState(false);
+
+  useEffect(() => {
+    const handleTimerSync = () => {
+      const state = storageService.getLiveTimerState(currentEvent?.id);
+      if (state) {
+        setTimerDurationSec(state.durationSec);
+        if (state.isRunning && state.startedAt) {
+          const elapsed = Math.floor((Date.now() - state.startedAt) / 1000);
+          setSecondsLeft(Math.max(0, state.secondsLeft - elapsed));
+        } else {
+          setSecondsLeft(state.secondsLeft);
+        }
+        setIsTimerRunning(state.isRunning);
+      }
+    };
+    handleTimerSync();
+    const unsub = storageService.subscribe(handleTimerSync);
+    window.addEventListener('tn_assembly_timer_update', handleTimerSync);
+    return () => {
+      unsub();
+      window.removeEventListener('tn_assembly_timer_update', handleTimerSync);
+    };
+  }, [currentEvent?.id]);
 
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
@@ -106,6 +136,14 @@ export const ControlTab: React.FC<ControlTabProps> = ({
         setSecondsLeft(prev => {
           if (prev <= 1) {
             setIsTimerRunning(false);
+            if (currentEvent?.id) {
+              storageService.saveLiveTimerState(currentEvent.id, {
+                durationSec: timerDurationSec,
+                secondsLeft: 0,
+                isRunning: false,
+                updatedAt: Date.now()
+              });
+            }
             if (isSoundEnabled) {
               playTimerBeep();
             }
@@ -119,7 +157,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isTimerRunning, secondsLeft, isSoundEnabled, activeAgendaItem]);
+  }, [isTimerRunning, secondsLeft, isSoundEnabled, activeAgendaItem, currentEvent?.id, timerDurationSec]);
 
   const playTimerBeep = () => {
     try {
@@ -207,13 +245,67 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
 
 
+  const handleToggleTimer = () => {
+    const nextRunning = !isTimerRunning;
+    if (nextRunning && isSoundEnabled) playTimerBeep();
+    setIsTimerRunning(nextRunning);
+    if (currentEvent?.id) {
+      storageService.saveLiveTimerState(currentEvent.id, {
+        durationSec: timerDurationSec,
+        secondsLeft: secondsLeft,
+        isRunning: nextRunning,
+        startedAt: nextRunning ? Date.now() : undefined,
+        pausedAt: !nextRunning ? Date.now() : undefined,
+        updatedAt: Date.now()
+      });
+    }
+  };
+
+  const handleResetTimer = () => {
+    setIsTimerRunning(false);
+    setSecondsLeft(timerDurationSec);
+    if (currentEvent?.id) {
+      storageService.saveLiveTimerState(currentEvent.id, {
+        durationSec: timerDurationSec,
+        secondsLeft: timerDurationSec,
+        isRunning: false,
+        updatedAt: Date.now()
+      });
+    }
+  };
+
+  const handleDurationChange = (val: number) => {
+    const dur = Math.max(10, val);
+    setTimerDurationSec(dur);
+    if (!isTimerRunning) {
+      setSecondsLeft(dur);
+      if (currentEvent?.id) {
+        storageService.saveLiveTimerState(currentEvent.id, {
+          durationSec: dur,
+          secondsLeft: dur,
+          isRunning: false,
+          updatedAt: Date.now()
+        });
+      }
+    }
+  };
+
   const handleNextAgenda = () => {
     if (currentAgendaIndex < currentAgendaList.length - 1) {
       const nextIdx = currentAgendaIndex + 1;
       setCurrentAgendaIndex(nextIdx);
       const nextItem = currentAgendaList[nextIdx];
-      if (onSetCurrentAgendaItem && currentEvent) {
-        onSetCurrentAgendaItem(currentEvent.id, nextItem.id);
+      if (currentEvent) {
+        storageService.setCurrentAgendaItem(currentEvent.id, nextItem.id);
+        if (onSetCurrentAgendaItem) {
+          onSetCurrentAgendaItem(currentEvent.id, nextItem.id);
+        }
+        storageService.saveLiveTimerState(currentEvent.id, {
+          durationSec: timerDurationSec,
+          secondsLeft: timerDurationSec,
+          isRunning: false,
+          updatedAt: Date.now()
+        });
       }
       setSecondsLeft(timerDurationSec);
       setIsTimerRunning(false);
@@ -226,8 +318,17 @@ export const ControlTab: React.FC<ControlTabProps> = ({
       const prevIdx = currentAgendaIndex - 1;
       setCurrentAgendaIndex(prevIdx);
       const prevItem = currentAgendaList[prevIdx];
-      if (onSetCurrentAgendaItem && currentEvent) {
-        onSetCurrentAgendaItem(currentEvent.id, prevItem.id);
+      if (currentEvent) {
+        storageService.setCurrentAgendaItem(currentEvent.id, prevItem.id);
+        if (onSetCurrentAgendaItem) {
+          onSetCurrentAgendaItem(currentEvent.id, prevItem.id);
+        }
+        storageService.saveLiveTimerState(currentEvent.id, {
+          durationSec: timerDurationSec,
+          secondsLeft: timerDurationSec,
+          isRunning: false,
+          updatedAt: Date.now()
+        });
       }
       setSecondsLeft(timerDurationSec);
       setIsTimerRunning(false);
@@ -367,29 +468,22 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   type="number"
                   value={timerDurationSec}
                   onChange={(e) => {
-                    const val = Math.max(10, parseInt(e.target.value) || 600);
-                    setTimerDurationSec(val);
-                    if (!isTimerRunning) setSecondsLeft(val);
+                    const val = parseInt(e.target.value) || 600;
+                    handleDurationChange(val);
                   }}
                   className="w-20 px-2.5 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-center font-mono font-bold text-xs text-slate-900 dark:text-white focus:outline-none focus:border-amber-500"
                 />
                 <span className="text-xs text-slate-500 font-semibold">sec</span>
 
                 <button
-                  onClick={() => {
-                    if (!isTimerRunning && isSoundEnabled) playTimerBeep();
-                    setIsTimerRunning(!isTimerRunning);
-                  }}
+                  onClick={handleToggleTimer}
                   className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-black text-xs shadow-md shadow-amber-500/20 flex items-center gap-1.5 transition-all cursor-pointer"
                 >
                   {isTimerRunning ? <><Pause className="w-3.5 h-3.5" /> Pause</> : <><Play className="w-3.5 h-3.5" /> Start</>}
                 </button>
 
                 <button
-                  onClick={() => {
-                    setIsTimerRunning(false);
-                    setSecondsLeft(timerDurationSec);
-                  }}
+                  onClick={handleResetTimer}
                   className="px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1 transition-all cursor-pointer"
                 >
                   <RotateCcw className="w-3.5 h-3.5" /> Reset
@@ -746,11 +840,23 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                     key={item.id}
                     onClick={() => {
                       setCurrentAgendaIndex(idx);
-                      if (onSetCurrentAgendaItem && currentEvent) {
-                        onSetCurrentAgendaItem(currentEvent.id, item.id);
+                      const targetItem = item;
+                      if (currentEvent) {
+                        storageService.setCurrentAgendaItem(currentEvent.id, targetItem.id);
+                        if (onSetCurrentAgendaItem) {
+                          onSetCurrentAgendaItem(currentEvent.id, targetItem.id);
+                        }
+                        const dur = (targetItem.duration_minutes || 10) * 60;
+                        setTimerDurationSec(dur);
+                        setSecondsLeft(dur);
+                        setIsTimerRunning(false);
+                        storageService.saveLiveTimerState(currentEvent.id, {
+                          durationSec: dur,
+                          secondsLeft: dur,
+                          isRunning: false,
+                          updatedAt: Date.now()
+                        });
                       }
-                      setSecondsLeft((item.duration_minutes || 10) * 60);
-                      setIsTimerRunning(false);
                     }}
                     className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 cursor-pointer ${
                       isSelected

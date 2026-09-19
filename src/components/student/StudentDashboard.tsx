@@ -11,7 +11,8 @@ import type {
   Election,
   LiveFlashVote,
   EventDeadline,
-  ProceedingsQuestion
+  ProceedingsQuestion,
+  BillProceeding
 } from '../../types';
 import { storageService } from '../../services/storageService';
 import { getEventSlug } from '../../utils/slug';
@@ -37,7 +38,8 @@ import {
   AlertCircle,
   Calendar,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  FileText
 } from 'lucide-react';
 
 type StudentDashboardTab = 'desk' | 'voting' | 'agenda';
@@ -111,10 +113,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [isSubmittingQuestion, setIsSubmittingQuestion] = useState<boolean>(false);
   const [questionViewMode, setQuestionViewMode] = useState<'my_questions' | 'approved_house'>('my_questions');
 
-  // Live synced elections and flash votes (driven by storageService.subscribe for zero-latency live updates)
+  // Synced Floor & Election Data
   const [syncedElections, setSyncedElections] = useState<Election[]>(elections);
   const [syncedFlashVotes, setSyncedFlashVotes] = useState<LiveFlashVote[]>(flashVotes);
   const [syncedNominations, setSyncedNominations] = useState<Nomination[]>(nominations);
+  const [syncedBills, setSyncedBills] = useState<BillProceeding[]>(() => storageService.getBills(resolvedEventId));
 
   useEffect(() => {
     setSyncedElections(elections);
@@ -160,6 +163,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         setSyncedFlashVotes(updatedFV);
         const updatedNoms = storageService.getNominations(activeId, 'student', student.id);
         setSyncedNominations(updatedNoms);
+        const updatedBills = storageService.getBills(activeId);
+        setSyncedBills(updatedBills);
       }
     };
     refreshLiveState();
@@ -203,10 +208,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   // Derived live voting lists
   const liveElections = useMemo(() => syncedElections.filter(e => e.status === 'Live' || e.status === 'live'), [syncedElections]);
   const activeFlashVotes = useMemo(() => syncedFlashVotes.filter(f => f.status === 'ACTIVE' || (f.status as string) === 'active'), [syncedFlashVotes]);
+  const liveBills = useMemo(() => syncedBills.filter(b => b.status === 'Vote Open' || b.status === 'Voting'), [syncedBills]);
 
   const hasLiveVoting = useMemo(() => {
-    return liveElections.length > 0 || activeFlashVotes.length > 0;
-  }, [liveElections, activeFlashVotes]);
+    return liveElections.length > 0 || activeFlashVotes.length > 0 || liveBills.length > 0;
+  }, [liveElections, activeFlashVotes, liveBills]);
 
   // Client-side Tab State (Always opens on 'desk' by default)
   const [activeTab, setActiveTab] = useState<StudentDashboardTab>('desk');
@@ -588,7 +594,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </div>
 
             <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400 shrink-0">
-              {liveElections.length + activeFlashVotes.length} Active
+              {liveElections.length + activeFlashVotes.length + liveBills.length} Active
             </span>
           </div>
 
@@ -688,6 +694,145 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       {myVote && (
                         <p className="text-[10px] text-center text-slate-500 dark:text-slate-400 font-semibold pt-1">
                           🔒 Your vote is final and cannot be changed
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 1.5 Live Legislative Bills (Floor Division) */}
+          {liveBills.length > 0 && (
+            <div className="bg-white dark:bg-slate-900 border-2 border-purple-500/50 rounded-3xl p-5 md:p-6 shadow-xl space-y-4 transition-colors">
+              <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-purple-500/20 text-purple-600 dark:text-purple-400 border border-purple-500/30 flex items-center justify-center">
+                    <FileText className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                      Legislative Bill Voting (Floor Division)
+                      <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-purple-600 text-white animate-pulse">
+                        VOTING OPEN
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Official House Vote on Introduced Bills • Cast your vote: AYE / NO / ABSTAIN
+                    </p>
+                  </div>
+                </div>
+                <span className="text-xs font-mono font-bold text-purple-600 dark:text-purple-400 shrink-0">
+                  {liveBills.length} Active Bill{liveBills.length > 1 ? 's' : ''}
+                </span>
+              </div>
+
+              <div className="space-y-4">
+                {liveBills.map(bill => {
+                  const hasVoted = bill.voted_delegate_ids?.includes(student.id);
+                  const myVote = bill.votes?.find(v => v.delegate_id === student.id)?.vote;
+
+                  return (
+                    <div key={bill.id} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <span className="text-[10px] uppercase font-black text-purple-600 dark:text-purple-400 tracking-wider">
+                            {bill.bill_number}
+                          </span>
+                          <h4 className="text-base font-bold text-slate-900 dark:text-white">{bill.title}</h4>
+                          {bill.description && (
+                            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">
+                              {bill.description}
+                            </p>
+                          )}
+                          {bill.proposer && (
+                            <p className="text-[11px] text-slate-400 mt-1">
+                              Introduced by: <span className="text-slate-700 dark:text-slate-300 font-semibold">{bill.proposer}</span>
+                            </p>
+                          )}
+                        </div>
+                        {hasVoted && (
+                          <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 shrink-0 flex items-center gap-1">
+                            <Check className="w-3 h-3 stroke-[3]" /> Voted{myVote ? `: ${myVote}` : ''}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2 pt-2">
+                        <button
+                          type="button"
+                          disabled={hasVoted}
+                          onClick={() => {
+                            const res = storageService.castBillVote(bill.id, resolvedEventId, student, 'YES');
+                            if (res.success) {
+                              setSyncedBills(storageService.getBills(resolvedEventId));
+                              onShowToast('Bill Vote Cast', `Your vote on ${bill.bill_number} was recorded as YES (AYE).`, 'success');
+                            } else {
+                              onShowToast('Vote Failed', res.error || 'You may have already voted or voting has closed.', 'error');
+                            }
+                          }}
+                          className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
+                            myVote === 'YES'
+                              ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg'
+                              : hasVoted
+                                ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-50'
+                                : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20 cursor-pointer'
+                          }`}
+                        >
+                          AYE (YES) {myVote === 'YES' && '✓'}
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={hasVoted}
+                          onClick={() => {
+                            const res = storageService.castBillVote(bill.id, resolvedEventId, student, 'NO');
+                            if (res.success) {
+                              setSyncedBills(storageService.getBills(resolvedEventId));
+                              onShowToast('Bill Vote Cast', `Your vote on ${bill.bill_number} was recorded as NO.`, 'info');
+                            } else {
+                              onShowToast('Vote Failed', res.error || 'You may have already voted or voting has closed.', 'error');
+                            }
+                          }}
+                          className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
+                            myVote === 'NO'
+                              ? 'bg-rose-500 text-white border-rose-400 shadow-lg'
+                              : hasVoted
+                                ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-50'
+                                : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30 hover:bg-rose-500/20 cursor-pointer'
+                          }`}
+                        >
+                          NO {myVote === 'NO' && '✓'}
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={hasVoted}
+                          onClick={() => {
+                            const res = storageService.castBillVote(bill.id, resolvedEventId, student, 'ABSTAIN');
+                            if (res.success) {
+                              setSyncedBills(storageService.getBills(resolvedEventId));
+                              onShowToast('Bill Vote Cast', `Your vote on ${bill.bill_number} was recorded as ABSTAIN.`, 'info');
+                            } else {
+                              onShowToast('Vote Failed', res.error || 'You may have already voted or voting has closed.', 'error');
+                            }
+                          }}
+                          className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
+                            myVote === 'ABSTAIN'
+                              ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-lg'
+                              : hasVoted
+                                ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-50'
+                                : 'bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/30 hover:bg-slate-500/20 cursor-pointer'
+                          }`}
+                        >
+                          ABSTAIN {myVote === 'ABSTAIN' && '✓'}
+                        </button>
+                      </div>
+
+                      {hasVoted && (
+                        <p className="text-[10px] text-center text-slate-500 dark:text-slate-400 font-semibold pt-1">
+                          🔒 Your division vote is final and cannot be altered
                         </p>
                       )}
                     </div>
