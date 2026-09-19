@@ -737,6 +737,12 @@ class StorageService {
       }, 0);
     }
     if (typeof window !== 'undefined') {
+      window.addEventListener('beforeunload', () => this.flushPendingSyncs());
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') {
+          this.flushPendingSyncs();
+        }
+      });
       window.addEventListener('storage', (event) => {
         if (
           event.key === STORAGE_KEYS.ELECTIONS ||
@@ -3660,6 +3666,17 @@ class StorageService {
       this.syncDebounceTimers.delete(eventId);
     }
     await this.performSyncEventStateToSupabase(eventId);
+  }
+
+  public flushPendingSyncs(): void {
+    if (this.syncDebounceTimers.size === 0) return;
+    const eventIds = Array.from(this.syncDebounceTimers.keys());
+    for (const evId of eventIds) {
+      const timer = this.syncDebounceTimers.get(evId);
+      if (timer) clearTimeout(timer);
+      this.syncDebounceTimers.delete(evId);
+      this.performSyncEventStateToSupabase(evId).catch(() => {});
+    }
   }
 
   private async performSyncEventStateToSupabase(eventId: string) {
