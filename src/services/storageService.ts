@@ -3549,10 +3549,16 @@ class StorageService {
     this.realtimeCleanupPromise = (async () => {
       try {
         const topic = ch.topic || 'tn_assembly_live';
-        await supabase.removeChannel(ch);
-        if (process.env.NODE_ENV !== 'production') {
-          console.log(`[Realtime] channel removed: ${topic}`);
-          console.log(`[Realtime] Active channels: ${supabase.getChannels().length}`);
+        if (typeof ch.unsubscribe === 'function') {
+          try {
+            await supabase.removeChannel(ch);
+            if (process.env.NODE_ENV !== 'production') {
+              console.log(`[Realtime] channel removed: ${topic}`);
+              console.log(`[Realtime] Active channels: ${supabase.getChannels().length}`);
+            }
+          } catch (remErr) {
+            console.warn('[Realtime] channel remove handled safely:', remErr);
+          }
         }
       } catch (err) {
         console.warn('[Realtime] channel cleanup error:', err);
@@ -3661,10 +3667,16 @@ class StorageService {
     this.attendanceCleanupPromise = (async () => {
       try {
         const topic = ch.topic || 'attendance_sync';
-        await supabase.removeChannel(ch);
-        if (process.env.NODE_ENV !== 'production') {
-          console.log(`[Realtime] channel removed: ${topic}`);
-          console.log(`[Realtime] Active channels: ${supabase.getChannels().length}`);
+        if (typeof ch.unsubscribe === 'function') {
+          try {
+            await supabase.removeChannel(ch);
+            if (process.env.NODE_ENV !== 'production') {
+              console.log(`[Realtime] channel removed: ${topic}`);
+              console.log(`[Realtime] Active channels: ${supabase.getChannels().length}`);
+            }
+          } catch (remErr) {
+            console.warn('[Realtime] attendance channel remove handled safely:', remErr);
+          }
         }
       } catch (err) {
         console.warn('[Realtime] attendance channel cleanup error:', err);

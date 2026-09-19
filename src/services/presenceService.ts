@@ -240,12 +240,16 @@ class PresenceService {
           }
         }
 
-        if (supabase) {
+        if (supabase && channelToLeave && typeof channelToLeave.unsubscribe === 'function') {
           const topic = channelToLeave.topic || 'presence';
-          await supabase.removeChannel(channelToLeave);
-          if (process.env.NODE_ENV !== 'production') {
-            console.log(`[Realtime] channel removed: ${topic}`);
-            console.log(`[Realtime] Active channels: ${supabase.getChannels().length}`);
+          try {
+            await supabase.removeChannel(channelToLeave);
+            if (process.env.NODE_ENV !== 'production') {
+              console.log(`[Realtime] channel removed: ${topic}`);
+              console.log(`[Realtime] Active channels: ${supabase.getChannels().length}`);
+            }
+          } catch (remErr) {
+            console.warn('[PresenceService] removeChannel error handled safely:', remErr);
           }
         }
       } catch (err) {
