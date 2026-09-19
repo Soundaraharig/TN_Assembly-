@@ -19,6 +19,7 @@ class PresenceService {
   private activeKeys: Set<string> = new Set();
   private listeners: Set<PresenceListener> = new Set();
   private isTracking: boolean = false;
+  private leavePromise: Promise<void> | null = null;
 
   /**
    * Subscribe to presence updates. Immediately invokes listener with current state.
@@ -30,7 +31,10 @@ class PresenceService {
     } catch (err) {
       console.error('[PresenceService] Initial subscriber error:', err);
     }
+    let unsubscribed = false;
     return () => {
+      if (unsubscribed) return;
+      unsubscribed = true;
       this.listeners.delete(listener);
     };
   }
@@ -135,6 +139,9 @@ class PresenceService {
     }
 
     room.subscribe(async (status: string) => {
+      // Ignore if another channel was created or leave() was called in the interim
+      if (this.currentChannel !== room) return;
+
       if (status === 'SUBSCRIBED') {
         try {
           await room.track({
@@ -144,9 +151,11 @@ class PresenceService {
             accessCode: user.accessCode || null,
             onlineAt: new Date().toISOString()
           });
-          this.isTracking = true;
-          if (needsPresenceDisplay) {
-            this.parsePresenceState();
+          if (this.currentChannel === room) {
+            this.isTracking = true;
+            if (needsPresenceDisplay) {
+              this.parsePresenceState();
+            }
           }
         } catch (err) {
           console.warn('[PresenceService] Error tracking presence:', err);
@@ -199,33 +208,54 @@ class PresenceService {
 
   /**
    * Leave presence and cleanup channel on logout or unmount.
+   * Fully idempotent, atomic, and safe against concurrent calls / React StrictMode.
    */
   public async leave(): Promise<void> {
-    if (this.currentChannel) {
-      try {
-        if (this.isTracking) {
-          await this.currentChannel.untrack();
-        }
-        await this.currentChannel.unsubscribe();
-        if (supabase) {
-          const chName = `presence:event_${this.currentEventId}`;
-          supabase.removeChannel(this.currentChannel);
-          if (process.env.NODE_ENV !== 'production') {
-            console.log(`[Realtime] channel removed: ${chName}`);
-            console.log(`[Realtime] Active channels: ${supabase.getChannels().length}`);
-          }
-        }
-      } catch (err) {
-        console.warn('[PresenceService] Error leaving presence channel:', err);
-      }
-      this.currentChannel = null;
+    if (this.leavePromise) {
+      return this.leavePromise;
     }
+
+    // Atomically detach channel reference synchronously so no concurrent caller can access it
+    const channelToLeave = this.currentChannel;
+    const wasTracking = this.isTracking;
+    this.currentChannel = null;
     this.currentEventId = null;
     this.currentUser = null;
     this.isTracking = false;
     this.activeUsers.clear();
     this.activeKeys.clear();
     this.notify();
+
+    if (!channelToLeave) {
+      return;
+    }
+
+    this.leavePromise = (async () => {
+      try {
+        if (wasTracking) {
+          try {
+            await channelToLeave.untrack();
+          } catch {
+            // Untrack can fail if socket is already closed or closing
+          }
+        }
+
+        if (supabase) {
+          const topic = channelToLeave.topic || 'presence';
+          await supabase.removeChannel(channelToLeave);
+          if (process.env.NODE_ENV !== 'production') {
+            console.log(`[Realtime] channel removed: ${topic}`);
+            console.log(`[Realtime] Active channels: ${supabase.getChannels().length}`);
+          }
+        }
+      } catch (err) {
+        console.warn('[PresenceService] Error leaving presence channel safely:', err);
+      } finally {
+        this.leavePromise = null;
+      }
+    })();
+
+    return this.leavePromise;
   }
 }
 

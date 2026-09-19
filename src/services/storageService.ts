@@ -453,6 +453,8 @@ class StorageService {
   private eventsFetched = false;
   private isLoginRecordsConfigured: boolean = false;
   private lastEventsError: string | null = null;
+  private realtimeCleanupPromise: Promise<void> | null = null;
+  private attendanceCleanupPromise: Promise<void> | null = null;
 
   public getLastEventsError(): string | null {
     return this.lastEventsError;
@@ -829,7 +831,10 @@ class StorageService {
 
   public subscribe(listener: Listener): () => void {
     this.listeners.push(listener);
+    let unsubscribed = false;
     return () => {
+      if (unsubscribed) return;
+      unsubscribed = true;
       this.listeners = this.listeners.filter(l => l !== listener);
     };
   }
@@ -3219,7 +3224,7 @@ class StorageService {
 
     // Clean up previous channel before re-subscribing
     if (this.realtimeChannel) {
-      this.cleanupRealtimeSync();
+      this.cleanupRealtimeSync().catch(() => {});
     }
 
     try {
@@ -3530,21 +3535,33 @@ class StorageService {
     }
   }
 
-  public cleanupRealtimeSync() {
-    if (this.realtimeChannel && supabase) {
+  public async cleanupRealtimeSync(): Promise<void> {
+    if (this.realtimeCleanupPromise) {
+      return this.realtimeCleanupPromise;
+    }
+
+    const ch = this.realtimeChannel;
+    this.realtimeChannel = null;
+    this.currentRealtimeEventId = null;
+
+    if (!ch || !supabase) return;
+
+    this.realtimeCleanupPromise = (async () => {
       try {
-        const topic = this.realtimeChannel.topic;
-        supabase.removeChannel(this.realtimeChannel);
+        const topic = ch.topic || 'tn_assembly_live';
+        await supabase.removeChannel(ch);
         if (process.env.NODE_ENV !== 'production') {
           console.log(`[Realtime] channel removed: ${topic}`);
           console.log(`[Realtime] Active channels: ${supabase.getChannels().length}`);
         }
       } catch (err) {
         console.warn('[Realtime] channel cleanup error:', err);
+      } finally {
+        this.realtimeCleanupPromise = null;
       }
-      this.realtimeChannel = null;
-      this.currentRealtimeEventId = null;
-    }
+    })();
+
+    return this.realtimeCleanupPromise;
   }
 
   public async broadcast(event: string, payload: any): Promise<void> {
@@ -3578,7 +3595,7 @@ class StorageService {
       return;
     }
 
-    this.cleanupAttendanceRealtimeListener();
+    this.cleanupAttendanceRealtimeListener().catch(() => {});
 
     try {
       this.currentAttendanceEventId = activeEventId;
@@ -3630,19 +3647,33 @@ class StorageService {
     }
   }
 
-  public cleanupAttendanceRealtimeListener() {
-    if (this.attendanceRealtimeChannel && supabase) {
+  public async cleanupAttendanceRealtimeListener(): Promise<void> {
+    if (this.attendanceCleanupPromise) {
+      return this.attendanceCleanupPromise;
+    }
+
+    const ch = this.attendanceRealtimeChannel;
+    this.attendanceRealtimeChannel = null;
+    this.currentAttendanceEventId = null;
+
+    if (!ch || !supabase) return;
+
+    this.attendanceCleanupPromise = (async () => {
       try {
-        const topic = this.attendanceRealtimeChannel.topic;
-        supabase.removeChannel(this.attendanceRealtimeChannel);
+        const topic = ch.topic || 'attendance_sync';
+        await supabase.removeChannel(ch);
         if (process.env.NODE_ENV !== 'production') {
           console.log(`[Realtime] channel removed: ${topic}`);
           console.log(`[Realtime] Active channels: ${supabase.getChannels().length}`);
         }
-      } catch { }
-      this.attendanceRealtimeChannel = null;
-      this.currentAttendanceEventId = null;
-    }
+      } catch (err) {
+        console.warn('[Realtime] attendance channel cleanup error:', err);
+      } finally {
+        this.attendanceCleanupPromise = null;
+      }
+    })();
+
+    return this.attendanceCleanupPromise;
   }
 
   public async broadcastAttendanceMarked(payload: {

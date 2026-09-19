@@ -666,9 +666,9 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1789797212.9472156,
-    "seen": 1789797275.372776,
-    "ast_hash": "3c2e9ce5ed6274c029359b6bb52cfbd8",
+    "mtime": 1789798069.6142204,
+    "seen": 1789798155.6509132,
+    "ast_hash": "c86d80d6ee32e967b92b9a54879a505f",
     "semantic_hash": ""
   },
   "src/types/index.ts": {
@@ -834,9 +834,9 @@
     "semantic_hash": ""
   },
   "src/services/presenceService.ts": {
-    "mtime": 1789793637.2312272,
-    "seen": 1789794950.305435,
-    "ast_hash": "9e297bfff9ee5cc716ced82bae7593e2",
+    "mtime": 1789798118.043414,
+    "seen": 1789798155.6509116,
+    "ast_hash": "7d0278cd519317172458b898aa462727",
     "semantic_hash": ""
   },
   "scratch/backup_and_wipe_jkkncet.cjs": {
