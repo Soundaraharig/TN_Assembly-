@@ -127,18 +127,19 @@ const STORAGE_KEYS = {
   ELECTIONS_BACKUP_SNAPSHOTS: 'tn_assembly_elections_backup_snapshots_v1'
 };
 
-export const SUPABASE_COLUMNS = {
-  COLLEGE_EVENTS: '*',
-  COORDINATORS: '*',
-  LEARNERS: '*',
-  POLITICAL_PARTIES: '*',
-  COMMITTEES: '*',
-  SESSION_AGENDA: '*',
-  JURY_MEMBERS: '*',
-  VOLUNTEERS: '*',
-  EVENT_DAYS: '*',
-  EVENT_DAY_ATTENDANCE: '*'
-} as const;
+export const SUPABASE_COLUMNS: Record<string, string> = {
+  COLLEGE_EVENTS_LIST: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,event_date,time_slot,start_time,end_time,chief_guest',
+  COLLEGE_EVENTS: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,event_date,time_slot,start_time,end_time,chief_guest,social_coverage',
+  COORDINATORS: 'id,event_id,name,email,password_hash,raw_temp_password,created_at,updated_at',
+  LEARNERS: 'id,event_id,access_code,full_name,email,phone,department,academic_year,constituency_number,constituency_name,party_id,party_name,party_group_link,bench,role,committee_id,committee_name,committee_group_link,school_name,day1_checked_in,day2_checked_in,district,created_at,updated_at',
+  POLITICAL_PARTIES: 'id,event_id,name,bench,color,leader,manifesto,created_at,whatsapp_group_link',
+  COMMITTEES: 'id,event_id,name,topic,chairperson,max_capacity,created_at',
+  SESSION_AGENDA: 'id,event_id,day,time,title,description,speaker_role,is_current,created_at',
+  JURY_MEMBERS: 'id,event_id,name,designation,assigned_bench,access_code,email,phone,status,created_at',
+  VOLUNTEERS: 'id,event_id,name,email,phone,role,created_at',
+  EVENT_DAYS: 'id,event_id,day_number,name,date,status,activities,is_archived,order_index,created_at,updated_at',
+  EVENT_DAY_ATTENDANCE: 'id,event_id,day_id,event_day_id,student_id,participant_id,status,marked_by,marked_by_role,marked_at,created_at,updated_at'
+};
 
 type Listener = () => void;
 
@@ -433,6 +434,7 @@ export type WriteErrorHandler = (table: string, action: string, error: any) => v
 class StorageService {
   private listeners: Listener[] = [];
   private realtimeChannel: any = null;
+  private currentRealtimeEventId: string | null = null;
   private notifyTimer: ReturnType<typeof setTimeout> | null = null;
   private isHydrated: boolean = false;
   private isSyncing: boolean = false;
@@ -443,6 +445,7 @@ class StorageService {
   private failedWriteSignatures = new Map<string, number>();
   private fixedLearnerIdsSynced = new Set<string>();
   private attendanceRealtimeChannel: any = null;
+  private currentAttendanceEventId: string | null = null;
   private hydratedEventIds = new Set<string>();
   private eventsFetched = false;
   private isLoginRecordsConfigured: boolean = false;
@@ -1241,9 +1244,17 @@ class StorageService {
       if (Array.isArray(sc.proceedings)) {
         allProcs = [...allProcs, ...sc.proceedings];
       }
+      if (Array.isArray(sc.deleted_question_ids) && sc.deleted_question_ids.length > 0) {
+        const curDeleted = this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []);
+        const merged = Array.from(new Set([...curDeleted, ...sc.deleted_question_ids]));
+        this.setItem(STORAGE_KEYS.DELETED_IDS, merged);
+      }
+      const activeDeletedSet = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
+
       if (Array.isArray(sc.questions)) {
-        allQs = [...allQs, ...sc.questions];
-        const pqFromQs = sc.questions
+        const validQs = sc.questions.filter((q: any) => !activeDeletedSet.has(q.id));
+        allQs = [...allQs, ...validQs];
+        const pqFromQs = validQs
           .filter((q: any) => q.bench !== undefined || q.question_type !== undefined || q.student_name !== undefined)
           .map((q: any) => ({
             ...q,
@@ -1255,11 +1266,13 @@ class StorageService {
         }
       }
       if (Array.isArray(sc.proceedings_questions)) {
-        const pqs = sc.proceedings_questions.map((q: any) => ({
-          ...q,
-          event_id: q.event_id || ev.id,
-          event_slug: q.event_slug || getEventSlug(ev)
-        }));
+        const pqs = sc.proceedings_questions
+          .filter((q: any) => !activeDeletedSet.has(q.id))
+          .map((q: any) => ({
+            ...q,
+            event_id: q.event_id || ev.id,
+            event_slug: q.event_slug || getEventSlug(ev)
+          }));
         allProceedingsQs = [...allProceedingsQs, ...pqs];
       }
       if (Array.isArray(sc.scores)) {
@@ -1645,7 +1658,7 @@ class StorageService {
     try {
       const eventsQuery = sb
         .from('college_events')
-        .select('*')
+        .select((targetEventId ? SUPABASE_COLUMNS.COLLEGE_EVENTS : SUPABASE_COLUMNS.COLLEGE_EVENTS_LIST) as any)
         .order('created_at', { ascending: false });
 
       let coordQuery = sb.from('coordinators').select(SUPABASE_COLUMNS.COORDINATORS);
@@ -1689,7 +1702,18 @@ class StorageService {
         { data: volunteers, error: volErr },
         { data: rawEventDays, error: eventDaysErr },
         { data: rawAttendance, error: attendanceErr }
-      ] = await Promise.all([
+      ]: [
+        { data: CollegeEvent[] | null; error: any },
+        { data: Coordinator[] | null; error: any },
+        { data: Learner[] | null; error: any },
+        { data: Party[] | null; error: any },
+        { data: Committee[] | null; error: any },
+        { data: AgendaItem[] | null; error: any },
+        { data: JuryMember[] | null; error: any },
+        { data: Volunteer[] | null; error: any },
+        { data: EventDay[] | null; error: any },
+        { data: DayAttendanceRecord[] | null; error: any }
+      ] = (await Promise.all([
         eventsQuery,
         coordQuery,
         learnersQuery,
@@ -1700,7 +1724,7 @@ class StorageService {
         volQuery,
         daysQuery,
         attQuery
-      ]);
+      ])) as any;
 
       if (currentVersion !== this.syncVersion) {
         return; // Superseded by newer fetch request
@@ -2438,7 +2462,7 @@ class StorageService {
       try {
         const { data, error } = await sb
           .from('college_events')
-          .select('*')
+          .select(SUPABASE_COLUMNS.COLLEGE_EVENTS_LIST)
           .order('created_at', { ascending: false });
 
         if (!error && data && Array.isArray(data)) {
@@ -2477,7 +2501,7 @@ class StorageService {
         // Query learners for this event, including legacy delegates with null event_id
         const { data, error } = await sb
           .from('learners')
-          .select('*')
+          .select(SUPABASE_COLUMNS.LEARNERS)
           .or(`event_id.eq.${eventId},event_id.is.null`);
 
         if (!error && data && Array.isArray(data)) {
@@ -2488,7 +2512,7 @@ class StorageService {
           }
           const { data: eqData, error: eqErr } = await sb
             .from('learners')
-            .select('*')
+            .select(SUPABASE_COLUMNS.LEARNERS)
             .eq('event_id', eventId);
           if (!eqErr && eqData && Array.isArray(eqData)) {
             learnersData = eqData;
@@ -2554,28 +2578,28 @@ class StorageService {
       }
       try {
         // Fetch event metadata to unpack social_coverage
-        const eventPromise = sb.from('college_events').select('*').eq('id', eventId).maybeSingle();
+        const eventPromise = sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS).eq('id', eventId).maybeSingle();
 
         // Fetch all delegates/participants (including legacy delegates with null event_id)
         const learnersPromise = (async () => {
           try {
-            const res = await sb.from('learners').select('*').or(`event_id.eq.${eventId},event_id.is.null`);
+            const res = await sb.from('learners').select(SUPABASE_COLUMNS.LEARNERS).or(`event_id.eq.${eventId},event_id.is.null`);
             if (!res.error && res.data) return res;
           } catch {}
-          return await sb.from('learners').select('*').eq('event_id', eventId);
+          return await sb.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('event_id', eventId);
         })();
 
         // Fetch agenda schedule
-        const agendaPromise = sb.from('session_agenda').select('*').eq('event_id', eventId);
+        const agendaPromise = sb.from('session_agenda').select(SUPABASE_COLUMNS.SESSION_AGENDA).eq('event_id', eventId);
 
         // Fetch committees & political parties
-        const commPromise = sb.from('committees').select('*').eq('event_id', eventId);
-        const partiesPromise = sb.from('political_parties').select('*').eq('event_id', eventId);
+        const commPromise = sb.from('committees').select(SUPABASE_COLUMNS.COMMITTEES).eq('event_id', eventId);
+        const partiesPromise = sb.from('political_parties').select(SUPABASE_COLUMNS.POLITICAL_PARTIES).eq('event_id', eventId);
 
         // Fetch volunteers and attendance
-        const volPromise = sb.from('volunteers').select('*').eq('event_id', eventId);
-        const attPromise = sb.from('event_day_attendance').select('*').eq('event_id', eventId);
-        const eventDaysPromise = sb.from('event_days').select('*').eq('event_id', eventId);
+        const volPromise = sb.from('volunteers').select(SUPABASE_COLUMNS.VOLUNTEERS).eq('event_id', eventId);
+        const attPromise = sb.from('event_day_attendance').select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE).eq('event_id', eventId);
+        const eventDaysPromise = sb.from('event_days').select(SUPABASE_COLUMNS.EVENT_DAYS).eq('event_id', eventId);
 
         const [
           { data: eventData, error: evErr },
@@ -3014,7 +3038,7 @@ class StorageService {
 
     try {
       // 1. Setup realtime broadcast sync (projector_update, speaker_bell, election_update, flash_vote_update)
-      this.setupRealtimeSync();
+      this.setupRealtimeSync(resolvedEventId);
 
       const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
 
@@ -3155,10 +3179,30 @@ class StorageService {
     }
   }
 
-  public setupRealtimeSync() {
-    if (!supabase || this.realtimeChannel) return;
+  public setupRealtimeSync(activeEventId?: string) {
+    if (!supabase) return;
+    const resolvedEventId = activeEventId || this.currentRealtimeEventId || undefined;
+
+    // If channel already active for this exact event, avoid recreating
+    if (this.realtimeChannel && this.currentRealtimeEventId === resolvedEventId) {
+      return;
+    }
+
+    // Clean up previous channel before re-subscribing
+    if (this.realtimeChannel) {
+      this.cleanupRealtimeSync();
+    }
+
     try {
-      this.realtimeChannel = supabase.channel('tn_assembly_live_sync')
+      this.currentRealtimeEventId = resolvedEventId || null;
+      const channelName = resolvedEventId ? `tn_assembly_live_${resolvedEventId}` : 'tn_assembly_live_global';
+      
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`[Realtime] channel created: ${channelName}`);
+        console.log(`[Realtime] Active channels: ${supabase.getChannels().length + 1}`);
+      }
+
+      const channel = supabase.channel(channelName)
         .on('broadcast', { event: 'projector_update' }, (msg: any) => {
           if (msg?.payload?.eventId && msg?.payload?.settings) {
             this.setItem(`tn_assembly_projector_studio_${msg.payload.eventId}`, msg.payload.settings);
@@ -3218,7 +3262,7 @@ class StorageService {
               }
             });
             msg.payload.questions.forEach((remoteQ: ProceedingsQuestion) => {
-              if (deletedQIds.has(remoteQ.id)) return; // Exclude tombstoned deleted questions
+              if (deletedQIds.has(remoteQ.id)) return;
               const local = pqMap.get(remoteQ.id);
               if (!local) {
                 pqMap.set(remoteQ.id, remoteQ);
@@ -3252,7 +3296,6 @@ class StorageService {
             nextDeadlines.unshift(dl);
             this.setItem(STORAGE_KEYS.DEADLINES, nextDeadlines);
 
-            // Synchronously update in-memory event's social_coverage so getEventDeadline resolves instantaneously
             const allEvs = this.getEvents();
             const targetEv = allEvs.find(e => 
               e.id === dl.event_id || 
@@ -3287,7 +3330,6 @@ class StorageService {
             const localPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
             this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, localPQs.filter(q => q.id !== qId));
 
-            // Also prune question from in-memory event state
             const allEvs = this.getEvents();
             let eventsChanged = false;
             allEvs.forEach(ev => {
@@ -3346,55 +3388,102 @@ class StorageService {
             if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
           }
         })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'college_events' }, (payload: any) => {
-          this.invalidateCache('events');
-          this.invalidateCache('portal_');
-          this.invalidateCache('sync_');
-          this.invalidateCache('meta_');
-          if (payload?.new && payload.new.id) {
-            const ev = payload.new as CollegeEvent;
-            const curEvs = this.getEvents();
-            this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), ev]);
-            this.restoreJkkncetEvent();
-            this.unpackAndApplyEventState([ev], ev.id);
+        .on('broadcast', { event: 'attendance_marked' }, (msg: any) => {
+          const p = msg?.payload;
+          if (p && (!resolvedEventId || p.eventId === resolvedEventId || !p.eventId)) {
+            if (p.record) {
+              const rawRec = p.record as DayAttendanceRecord;
+              const { fn, an, overall } = getRecordSessionStatuses(rawRec);
+              const rec: DayAttendanceRecord = {
+                ...rawRec,
+                fn_status: rawRec.fn_status || fn,
+                an_status: rawRec.an_status || an,
+                status: overall
+              };
+              const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+              const next = curAtt.filter(
+                a => a.id !== rec.id && !(a.event_id === rec.event_id && a.day_id === rec.day_id && a.student_id === rec.student_id)
+              );
+              next.push(rec);
+              this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, next);
+            } else if (Array.isArray(p.records)) {
+              const rawRecs = p.records as DayAttendanceRecord[];
+              const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+              const recs = rawRecs.map(r => {
+                const { fn, an, overall } = getRecordSessionStatuses(r);
+                return { ...r, fn_status: r.fn_status || fn, an_status: r.an_status || an, status: overall };
+              });
+              const keys = new Set(recs.map(r => `${r.event_id}:::${r.day_id}:::${r.student_id}`));
+              const next = curAtt.filter(a => !keys.has(`${a.event_id}:::${a.day_id}:::${a.student_id}`));
+              next.push(...recs);
+              this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, next);
+            }
             this.notify();
             if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
           }
-        })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'learners' }, (payload: any) => {
-          this.invalidateCache('learners');
-          this.invalidateCache('portal_');
-          this.invalidateCache('sync_');
-          if (payload?.new && payload.new.id) {
-            const st = payload.new as Learner;
-            const curLearners = this.getLearners();
-            this.setItem(STORAGE_KEYS.LEARNERS, [...curLearners.filter(l => l.id !== st.id), st]);
-            this.notify();
-            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
-          }
-        })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'event_day_attendance' }, (payload: any) => {
+        });
+
+      // Targeted filtered postgres_changes for event_day_attendance
+      if (resolvedEventId) {
+        channel.on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'event_day_attendance',
+          filter: `event_id=eq.${resolvedEventId}`
+        }, (payload: any) => {
           this.invalidateCache('attendance');
           this.invalidateCache('portal_');
           this.invalidateCache('sync_');
           if (payload?.new && payload.new.id) {
-            const rec = payload.new as DayAttendanceRecord;
+            const rawRec = payload.new as DayAttendanceRecord;
+            const { fn, an, overall } = getRecordSessionStatuses(rawRec);
+            const rec: DayAttendanceRecord = {
+              ...rawRec,
+              fn_status: rawRec.fn_status || fn,
+              an_status: rawRec.an_status || an,
+              status: overall
+            };
             const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
-            this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...curAtt.filter(a => a.id !== rec.id), rec]);
+            const next = curAtt.filter(
+              a => a.id !== rec.id && !(a.event_id === rec.event_id && a.day_id === rec.day_id && a.student_id === rec.student_id)
+            );
+            next.push(rec);
+            this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, next);
             this.notify();
             if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
           }
-        })
-        .subscribe();
+        });
+      }
+
+      channel.subscribe();
+      this.realtimeChannel = channel;
     } catch (e) {
       console.warn('[Supabase] realtime setup error:', e);
+    }
+  }
+
+  public cleanupRealtimeSync() {
+    if (this.realtimeChannel && supabase) {
+      try {
+        const topic = this.realtimeChannel.topic;
+        supabase.removeChannel(this.realtimeChannel);
+        if (process.env.NODE_ENV !== 'production') {
+          console.log(`[Realtime] channel removed: ${topic}`);
+          console.log(`[Realtime] Active channels: ${supabase.getChannels().length}`);
+        }
+      } catch (err) {
+        console.warn('[Realtime] channel cleanup error:', err);
+      }
+      this.realtimeChannel = null;
+      this.currentRealtimeEventId = null;
     }
   }
 
   public async broadcast(event: string, payload: any): Promise<void> {
     if (!supabase) return;
     if (!this.realtimeChannel) {
-      this.setupRealtimeSync();
+      const eventId = payload?.eventId || this.currentRealtimeEventId || undefined;
+      this.setupRealtimeSync(eventId);
     }
     if (this.realtimeChannel) {
       try {
@@ -3412,16 +3501,27 @@ class StorageService {
   public setupAttendanceRealtimeListener(activeEventId: string) {
     if (!supabase || !activeEventId) return;
 
-    if (this.attendanceRealtimeChannel) {
-      try {
-        supabase.removeChannel(this.attendanceRealtimeChannel);
-      } catch { }
-      this.attendanceRealtimeChannel = null;
+    // If main realtime channel is already subscribed to this event, it already handles attendance
+    if (this.realtimeChannel && this.currentRealtimeEventId === activeEventId) {
+      return;
     }
 
+    if (this.attendanceRealtimeChannel && this.currentAttendanceEventId === activeEventId) {
+      return;
+    }
+
+    this.cleanupAttendanceRealtimeListener();
+
     try {
+      this.currentAttendanceEventId = activeEventId;
+      const channelName = `attendance_sync_${activeEventId}`;
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`[Realtime] channel created: ${channelName}`);
+        console.log(`[Realtime] Active channels: ${supabase.getChannels().length + 1}`);
+      }
+
       this.attendanceRealtimeChannel = supabase
-        .channel('admin_attendance_sync')
+        .channel(channelName)
         .on('postgres_changes', {
           event: '*',
           schema: 'public',
@@ -3441,34 +3541,11 @@ class StorageService {
               status: overall
             };
             const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
-            // Optimistically merge payload.new into the local attendance cache/state
             const next = curAtt.filter(
               a => a.id !== rec.id && !(a.event_id === rec.event_id && a.day_id === rec.day_id && a.student_id === rec.student_id)
             );
             next.push(rec);
             this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, next);
-
-            // Sync with learner check-in status if mapped to main day 1 or 2
-            const days = this.getEventDays(activeEventId);
-            const curDay = days.find(d => d.id === rec.day_id);
-            if (curDay && (curDay.main_day === 1 || curDay.main_day === 2)) {
-              const isDay1 = curDay.main_day === 1;
-              const isPres = rec.status === 'Present';
-              const curLearners = this.getLearners(activeEventId);
-              const updatedL = curLearners.map(l => {
-                if (l.id === rec.student_id) {
-                  return {
-                    ...l,
-                    day1_checked_in: isDay1 ? isPres : l.day1_checked_in,
-                    day2_checked_in: !isDay1 ? isPres : l.day2_checked_in
-                  };
-                }
-                return l;
-              });
-              this.setItem(STORAGE_KEYS.LEARNERS, updatedL);
-            }
-
-            // Trigger storageService.notify() so the Admin UI updates immediately
             this.notify();
             if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
           }
@@ -3513,6 +3590,21 @@ class StorageService {
     }
   }
 
+  public cleanupAttendanceRealtimeListener() {
+    if (this.attendanceRealtimeChannel && supabase) {
+      try {
+        const topic = this.attendanceRealtimeChannel.topic;
+        supabase.removeChannel(this.attendanceRealtimeChannel);
+        if (process.env.NODE_ENV !== 'production') {
+          console.log(`[Realtime] channel removed: ${topic}`);
+          console.log(`[Realtime] Active channels: ${supabase.getChannels().length}`);
+        }
+      } catch { }
+      this.attendanceRealtimeChannel = null;
+      this.currentAttendanceEventId = null;
+    }
+  }
+
   public async broadcastAttendanceMarked(payload: {
     eventId: string;
     dayId: string;
@@ -3525,17 +3617,7 @@ class StorageService {
     timestamp?: string;
   }): Promise<void> {
     if (!supabase) return;
-    try {
-      const channel = supabase.channel('admin_attendance_sync');
-      await channel.send({
-        type: 'broadcast',
-        event: 'attendance_marked',
-        payload
-      });
-    } catch (e) {
-      console.warn('[StorageService] broadcastAttendanceMarked failed on admin_attendance_sync:', e);
-    }
-    this.broadcast('attendance_marked', payload).catch(() => {});
+    await this.broadcast('attendance_marked', payload);
   }
 
   public async syncEventStateToSupabase(eventId: string) {
@@ -3547,7 +3629,6 @@ class StorageService {
       const elecs = this.getElections(eventId);
       const fvotes = this.getFlashVotes(eventId);
       const procs = this.getProceedings(eventId);
-      const qs = this.getQuestions(eventId);
       const scs = this.getScores(eventId);
       const yuvaAssignments = this.getYuvaAssignments(eventId);
 
@@ -3695,7 +3776,7 @@ class StorageService {
         elections: finalElecs,
         flash_votes: fvotes,
         proceedings: procs,
-        questions: finalMergedPQs.length > 0 ? finalMergedPQs : qs,
+        questions: finalMergedPQs,
         proceedings_questions: finalMergedPQs,
         deleted_question_ids: Array.from(deletedQIds),
         scores: finalMergedScores,
@@ -6052,7 +6133,7 @@ class StorageService {
     const remoteExistingMap = new Map<string, any>();
     if (supabase) {
       try {
-        const { data: remoteRows, error: remoteErr } = await supabase
+        const { data: remoteRows, error: remoteErr }: any = await supabase
           .from('event_day_attendance')
           .select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE)
           .eq('event_id', eventId)
@@ -6140,7 +6221,7 @@ class StorageService {
 
       // Post-batch sync to capture all server IDs
       try {
-        const { data: freshRows } = await supabase
+        const { data: freshRows }: any = await supabase
           .from('event_day_attendance')
           .select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE)
           .eq('event_id', eventId)
@@ -10627,6 +10708,25 @@ class StorageService {
     const syncId = matched?.id || targetEventId;
     const resolvedSlug = matched ? getEventSlug(matched) : targetEventId;
 
+    // Synchronously prune from in-memory event social_coverage
+    if (matched) {
+      const currentSc = (matched.social_coverage || {}) as Record<string, any>;
+      const curPQs = Array.isArray(currentSc.proceedings_questions) ? currentSc.proceedings_questions : [];
+      const curQs = Array.isArray(currentSc.questions) ? currentSc.questions : [];
+      const curDeletedIds = Array.isArray(currentSc.deleted_question_ids) ? currentSc.deleted_question_ids : [];
+      if (!curDeletedIds.includes(questionId)) {
+        curDeletedIds.push(questionId);
+      }
+      matched.social_coverage = {
+        ...currentSc,
+        proceedings_questions: curPQs.filter((q: any) => q.id !== questionId),
+        questions: curQs.filter((q: any) => q.id !== questionId),
+        deleted_question_ids: curDeletedIds,
+        updated_at: new Date().toISOString()
+      };
+      this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
+    }
+
     // IMMEDIATE ZERO-LATENCY REALTIME BROADCAST to all connected students and coordinators
     this.broadcast('question_deleted', {
       eventId: syncId,
@@ -10636,35 +10736,7 @@ class StorageService {
       console.warn('[Supabase] broadcast question_deleted error:', err);
     });
 
-    // Targeted fast Supabase patch: strip question from social_coverage and record tombstone immediately
-    const sb = supabase;
-    if (sb && syncId && isValidUuid(syncId)) {
-      sb.from('college_events').select('social_coverage').eq('id', syncId).single().then(
-        ({ data }) => {
-          const currentSc = (data?.social_coverage || {}) as Record<string, any>;
-          const curPQs = Array.isArray(currentSc.proceedings_questions) ? currentSc.proceedings_questions : [];
-          const curQs = Array.isArray(currentSc.questions) ? currentSc.questions : [];
-          const curDeletedIds = Array.isArray(currentSc.deleted_question_ids) ? currentSc.deleted_question_ids : [];
-          if (!curDeletedIds.includes(questionId)) {
-            curDeletedIds.push(questionId);
-          }
-          const patchedSc = {
-            ...currentSc,
-            proceedings_questions: curPQs.filter((q: any) => q.id !== questionId),
-            questions: curQs.filter((q: any) => q.id !== questionId),
-            deleted_question_ids: curDeletedIds,
-            updated_at: new Date().toISOString()
-          };
-          sb.from('college_events').update({ social_coverage: patchedSc }).eq('id', syncId).then(
-            () => {},
-            (err: any) => console.warn('[Supabase] fast delete patch error:', err)
-          );
-        },
-        () => {}
-      );
-    }
-
-    // Push deletion to Supabase via full state sync in background
+    // Authoritative persistence to Supabase college_events
     if (syncId) {
       this.syncEventStateToSupabase(syncId).catch(err => {
         console.warn('[Supabase] deleteProceedingsQuestion sync error:', err);

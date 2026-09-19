@@ -104,6 +104,11 @@ class PresenceService {
     this.currentUser = user;
 
     const channelName = `presence:event_${eventId}`;
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[Realtime] channel created: ${channelName}`);
+      console.log(`[Realtime] Active channels: ${supabase.getChannels().length}`);
+    }
+
     const room = supabase.channel(channelName, {
       config: {
         presence: {
@@ -114,18 +119,22 @@ class PresenceService {
 
     this.currentChannel = room;
 
-    room
-      .on('presence', { event: 'sync' }, () => {
-        this.parsePresenceState();
-      })
-      .on('presence', { event: 'join' }, () => {
-        this.parsePresenceState();
-      })
-      .on('presence', { event: 'leave' }, () => {
-        this.parsePresenceState();
-      });
+    // Only coordinator/volunteer/admin roles need to listen to full presence state syncs
+    const needsPresenceDisplay = user.role === 'coordinator' || user.role === 'volunteer' || user.role === 'organiser' || user.role === 'super_admin' || user.role === 'admin';
+    if (needsPresenceDisplay) {
+      room
+        .on('presence', { event: 'sync' }, () => {
+          this.parsePresenceState();
+        })
+        .on('presence', { event: 'join' }, () => {
+          this.parsePresenceState();
+        })
+        .on('presence', { event: 'leave' }, () => {
+          this.parsePresenceState();
+        });
+    }
 
-    room.subscribe(async (status) => {
+    room.subscribe(async (status: string) => {
       if (status === 'SUBSCRIBED') {
         try {
           await room.track({
@@ -136,7 +145,9 @@ class PresenceService {
             onlineAt: new Date().toISOString()
           });
           this.isTracking = true;
-          this.parsePresenceState();
+          if (needsPresenceDisplay) {
+            this.parsePresenceState();
+          }
         } catch (err) {
           console.warn('[PresenceService] Error tracking presence:', err);
         }
@@ -197,7 +208,12 @@ class PresenceService {
         }
         await this.currentChannel.unsubscribe();
         if (supabase) {
+          const chName = `presence:event_${this.currentEventId}`;
           supabase.removeChannel(this.currentChannel);
+          if (process.env.NODE_ENV !== 'production') {
+            console.log(`[Realtime] channel removed: ${chName}`);
+            console.log(`[Realtime] Active channels: ${supabase.getChannels().length}`);
+          }
         }
       } catch (err) {
         console.warn('[PresenceService] Error leaving presence channel:', err);

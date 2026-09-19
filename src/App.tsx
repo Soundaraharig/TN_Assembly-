@@ -1529,6 +1529,7 @@ export function App() {
 
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
+      presenceService.leave().catch(() => {});
     };
   }, [isAuthenticated, role, currentEvent?.id, currentStudent?.id, currentVolunteer?.id, currentJury?.id, currentCoordinator?.id]);
 
@@ -1537,6 +1538,7 @@ export function App() {
     setCurrentEvent(ev);
     currentEventRef.current = ev;
     if (isSupabaseEnabled) {
+      storageService.setupRealtimeSync(ev.id);
       storageService.hydrateFullEventData(ev.id).then(() => {
         setLearners(storageService.getLearners(ev.id));
         setParties(storageService.getParties(ev.id));

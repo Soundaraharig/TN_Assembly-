@@ -101,7 +101,7 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
     syncState();
     window.addEventListener('storage', syncState);
     const unsubscribe = storageService.subscribe(syncState);
-    const interval = setInterval(syncState, 1000);
+    const interval = setInterval(syncState, 5000);
 
     return () => {
       window.removeEventListener('storage', syncState);

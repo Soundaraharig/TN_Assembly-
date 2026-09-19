@@ -127,8 +127,14 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
     if (!supabase || !event?.id) return;
     const activeEventId = event.id;
 
+    const channelName = `admin_login_records_stream_${activeEventId}`;
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[Realtime] channel created: ${channelName}`);
+      console.log(`[Realtime] Active channels: ${supabase.getChannels().length + 1}`);
+    }
+
     const channel = supabase
-      .channel(`admin_login_records_stream_${activeEventId}`)
+      .channel(channelName)
       .on('postgres_changes', {
         event: 'INSERT',
         schema: 'public',
@@ -169,6 +175,10 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
       try {
         if (supabase) {
           supabase.removeChannel(channel);
+          if (process.env.NODE_ENV !== 'production') {
+            console.log(`[Realtime] channel removed: ${channelName}`);
+            console.log(`[Realtime] Active channels: ${supabase.getChannels().length}`);
+          }
         }
       } catch { }
     };
@@ -199,74 +209,8 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
     // Activate Realtime listener in storageService
     storageService.setupAttendanceRealtimeListener(activeEventId);
 
-    // Direct listener on admin_attendance_sync for instant UI counter updates without requiring a manual page refresh
-    const channel = supabase
-      .channel(`admin_attendance_sync_${activeEventId}`)
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'event_day_attendance',
-        filter: `event_id=eq.${activeEventId}`
-      }, (payload: any) => {
-        if (payload?.new && payload.new.id) {
-          const rawRec = payload.new as DayAttendanceRecord;
-          const { fn, an, overall } = getRecordSessionStatuses(rawRec);
-          const rec: DayAttendanceRecord = {
-            ...rawRec,
-            fn_status: rawRec.fn_status || fn,
-            an_status: rawRec.an_status || an,
-            status: overall
-          };
-          setSyncedAttendance(prev => {
-            const filtered = prev.filter(
-              a => a.id !== rec.id && !(a.event_id === rec.event_id && a.day_id === rec.day_id && a.student_id === rec.student_id)
-            );
-            return [...filtered, rec];
-          });
-        }
-      })
-      .on('broadcast', { event: 'attendance_marked' }, (msg: any) => {
-        const p = msg?.payload;
-        if (p && (p.eventId === activeEventId || !p.eventId)) {
-          if (p.record) {
-            const rawRec = p.record as DayAttendanceRecord;
-            const { fn, an, overall } = getRecordSessionStatuses(rawRec);
-            const rec: DayAttendanceRecord = {
-              ...rawRec,
-              fn_status: rawRec.fn_status || fn,
-              an_status: rawRec.an_status || an,
-              status: overall
-            };
-            setSyncedAttendance(prev => {
-              const filtered = prev.filter(
-                a => a.id !== rec.id && !(a.event_id === rec.event_id && a.day_id === rec.day_id && a.student_id === rec.student_id)
-              );
-              return [...filtered, rec];
-            });
-          } else if (Array.isArray(p.records)) {
-            const rawRecs = p.records as DayAttendanceRecord[];
-            const recs = rawRecs.map(r => {
-              const { fn, an, overall } = getRecordSessionStatuses(r);
-              return { ...r, fn_status: r.fn_status || fn, an_status: r.an_status || an, status: overall };
-            });
-            const keys = new Set(recs.map(r => `${r.event_id}:::${r.day_id}:::${r.student_id}`));
-            setSyncedAttendance(prev => {
-              const filtered = prev.filter(a => !keys.has(`${a.event_id}:::${a.day_id}:::${a.student_id}`));
-              return [...filtered, ...recs];
-            });
-          } else {
-            setSyncedAttendance(storageService.getDayAttendance(activeEventId));
-          }
-        }
-      })
-      .subscribe();
-
     return () => {
-      try {
-        if (supabase) {
-          supabase.removeChannel(channel);
-        }
-      } catch { }
+      storageService.cleanupAttendanceRealtimeListener();
     };
   }, [event?.id]);
 

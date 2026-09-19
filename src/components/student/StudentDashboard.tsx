@@ -129,10 +129,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   }, [nominations]);
 
   useEffect(() => {
-    // Ensure realtime broadcast channel is active on student client
-    storageService.setupRealtimeSync();
-
     const currentResolvedId = event?.id || storageService.getEvents().find(e => getEventSlug(e) === eventSlug)?.id || targetEventId;
+    // Ensure realtime broadcast channel is active on student client scoped to event
+    storageService.setupRealtimeSync(currentResolvedId);
     console.log("Question Hour event ID:", currentResolvedId);
 
     const refreshLiveState = () => {
