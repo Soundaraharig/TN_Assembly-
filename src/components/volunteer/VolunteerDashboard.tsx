@@ -301,7 +301,14 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   }, [learners, activeParties, attendanceSearch, attendanceStatusFilter, activeDayAttMap]);
 
   const handleMarkStudentAttendance = async (studentId: string, status: DayAttendanceStatus, session?: 'FN' | 'AN') => {
-    if (!activeDay) return;
+    if (!activeDay) {
+      onShowToast?.(
+        'No Active Event Day',
+        'Attendance cannot be recorded because no event day is configured or set active for this assembly. Please contact the Event Coordinator.',
+        'error'
+      );
+      return;
+    }
     const lockKey = `${studentId}_${session || 'ALL'}`;
     if (processingAttendanceIds.has(lockKey)) return;
 
@@ -348,7 +355,15 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   };
 
   const handleBatchMarkAttendance = async (status: DayAttendanceStatus, session?: 'FN' | 'AN') => {
-    if (!activeDay || isBatchAttendanceLoading) return;
+    if (!activeDay) {
+      onShowToast?.(
+        'No Active Event Day',
+        'Batch attendance cannot be recorded because no event day is configured or set active for this assembly.',
+        'error'
+      );
+      return;
+    }
+    if (isBatchAttendanceLoading) return;
     setIsBatchAttendanceLoading(true);
     const volunteerName = volunteer?.name ? `${volunteer.name} (Volunteer)` : 'Floor Volunteer';
     const studentIds = learners.map(l => l.id);

@@ -15872,7 +15872,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/components/volunteer/VolunteerDashboard.tsx",
-      "source_location": "L1403",
+      "source_location": "L1388",
       "weight": 1.0
     },
     {
@@ -15896,7 +15896,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/components/volunteer/VolunteerDashboard.tsx",
-      "source_location": "L1534",
+      "source_location": "L1519",
       "weight": 1.0
     },
     {
@@ -15944,7 +15944,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/components/volunteer/VolunteerDashboard.tsx",
-      "source_location": "L419",
+      "source_location": "L404",
       "weight": 1.0
     },
     {
@@ -15956,7 +15956,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/components/volunteer/VolunteerDashboard.tsx",
-      "source_location": "L614",
+      "source_location": "L599",
       "weight": 1.0
     },
     {
@@ -15968,7 +15968,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/components/volunteer/VolunteerDashboard.tsx",
-      "source_location": "L758",
+      "source_location": "L743",
       "weight": 1.0
     },
     {
@@ -55115,5 +55115,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "488e0f3c7d7ccef935aa4933a825be3d93b6c06d"
+  "built_at_commit": "1c0fa821e15d3f36414163dc40c2f24040c9d7f4"
 }

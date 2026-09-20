@@ -138,7 +138,7 @@ export const SUPABASE_COLUMNS: Record<string, string> = {
   COMMITTEES: 'id,event_id,name,topic,chairperson,max_capacity,created_at',
   SESSION_AGENDA: 'id,event_id,day,time,title,description,speaker_role,is_current,created_at',
   JURY_MEMBERS: 'id,event_id,name,designation,assigned_bench,access_code,email,phone,status,created_at',
-  VOLUNTEERS: 'id,event_id,name,email,phone,role,created_at',
+  VOLUNTEERS: 'id,event_id,name,email,phone,role,access_code,has_arrived,is_yuva,station,shift,created_at',
   EVENT_DAYS: 'id,event_id,day_number,name,date,status,activities,is_archived,order_index,created_at,updated_at',
   EVENT_DAY_ATTENDANCE: 'id,event_id,day_id,event_day_id,student_id,participant_id,status,marked_by,marked_by_role,marked_at,created_at,updated_at'
 };
