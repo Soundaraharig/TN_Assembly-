@@ -447,10 +447,13 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           event={activeEvent}
           participantCount={currentLearners.length || storageService.getLearners(activeEvent.id || '').length || activeEvent.participant_count || 0}
           electionsCount={props.elections.filter(e => e.event_id === activeEvent.id || !e.event_id).length || activeEvent.elections_count || 3}
-          onUpdateEvent={(upd) => {
-            storageService.updateEvent(upd);
-            props.setCurrentEvent(upd);
-            props.setEvents?.(storageService.getEvents());
+          onUpdateEvent={async (upd) => {
+            const res = await storageService.updateEvent(upd);
+            if (res && res.success) {
+              props.setCurrentEvent(upd);
+              props.setEvents?.(storageService.getEvents());
+            }
+            return res;
           }}
           onNavigateTab={(tab) => {
             const slug = getEventSlug(activeEvent);
@@ -2686,7 +2689,13 @@ export function App() {
                     role={role}
                     userEmail={userSession?.email}
                     onCreateEvent={handleCreateEvent}
-                    onUpdateEvent={(upd) => storageService.updateEvent(upd)}
+                    onUpdateEvent={async (upd) => {
+                      const res = await storageService.updateEvent(upd);
+                      if (res && res.success) {
+                        setEvents(storageService.getEvents());
+                      }
+                      return res;
+                    }}
                     onDeleteEvent={(evId) => storageService.deleteEvent(evId)}
                     onUpdateCoordinator={handleUpdateCoordinator}
                     onSelectEvent={(ev) => {

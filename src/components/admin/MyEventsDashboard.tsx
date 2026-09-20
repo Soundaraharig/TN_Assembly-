@@ -14,7 +14,7 @@ interface MyEventsDashboardProps {
   role?: UserRole;
   userEmail?: string;
   onCreateEvent: (collegeName: string, coordName: string, coordEmail: string, password: string) => void;
-  onUpdateEvent?: (updatedEvent: CollegeEvent) => void;
+  onUpdateEvent?: (updatedEvent: CollegeEvent) => Promise<{ success: boolean; error?: any; data?: any }> | void;
   onDeleteEvent?: (eventId: string) => void;
   onUpdateCoordinator?: (coordinator: Coordinator) => Promise<{ success: boolean; error?: any; data?: any }> | void;
   onSelectEvent: (event: CollegeEvent) => void;
@@ -298,11 +298,11 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
                 <div className="space-y-1.5 text-xs pt-3 border-t" style={{ borderColor: 'var(--border-soft)', color: 'var(--text-secondary)' }}>
                   <p className="flex items-center gap-2">
                     <Calendar className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--text-muted)' }} />
-                    <span>{event.dates}</span>
+                    <span>{event.dates || 'Not set'}</span>
                   </p>
                   <p className="flex items-center gap-2">
                     <MapPin className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--text-muted)' }} />
-                    <span className="truncate">{event.location}</span>
+                    <span className="truncate">{event.location || 'Not set'}</span>
                   </p>
                   <p className="flex items-center gap-2">
                     <Users className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--text-muted)' }} />
@@ -342,9 +342,13 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
         isOpen={!!editingEvent}
         event={editingEvent}
         onClose={() => setEditingEvent(null)}
-        onSave={(updated) => {
+        onSave={async (updated) => {
           if (onUpdateEvent) {
-            onUpdateEvent(updated);
+            const res = await onUpdateEvent(updated);
+            if (res && typeof res === 'object' && res.success === false) {
+              onShowToast('Update Failed', res.error?.message || 'Failed to update event', 'error');
+              return;
+            }
             onShowToast('Event Updated', `Updated details for ${updated.college_name}`, 'success');
           }
         }}

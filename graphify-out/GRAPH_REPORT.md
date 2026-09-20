@@ -1,16 +1,16 @@
 # Graph Report - TN_Assembly-  (2026-09-20)
 
 ## Corpus Check
-- 150 files · ~229,678 words
+- 150 files · ~229,866 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1252 nodes · 3466 edges · 107 communities (79 shown, 23 thin omitted)
+- 1252 nodes · 3466 edges · 106 communities (78 shown, 23 thin omitted)
 - Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `488e0f3c`
+- Built from commit: `606f1bc4`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -30,11 +30,10 @@
 - test_bug_10_supabase_writes.cjs
 - check_db.cjs
 - aws
-- .getItem
+- storageService
 - compilerOptions
 - Learner
 - getEventSlug
-- storageService
 - test_attendance_409_fix.cjs
 - compilerOptions
 - test_event_data_integrity.cjs
@@ -145,7 +144,7 @@
 ## Import Cycles
 - None detected.
 
-## Communities (107 total, 23 thin omitted)
+## Communities (106 total, 23 thin omitted)
 
 ### Community 0 - "Volunteer"
 Cohesion: 0.27
@@ -211,10 +210,6 @@ Nodes (17): DaysActivitiesTabProps, AllocationModalProps, AnalyticsTabProps, Awa
 Cohesion: 0.22
 Nodes (14): assert(), runTests(), EventSlugOnlyRedirector(), EventTabRouteHandler(), MyEventsDashboard(), StandaloneProjectorDisplay(), extractEventFromUrl(), extractEventSlugCandidateFromUrl() (+6 more)
 
-### Community 20 - "storageService"
-Cohesion: 0.07
-Nodes (3): detectDeviceType(), getDeviceInfo(), storageService
-
 ### Community 21 - "test_attendance_409_fix.cjs"
 Cohesion: 0.15
 Nodes (10): assert, db, fs, MockDatabase, path, storageContent, storageServicePath, t1() (+2 more)
@@ -244,8 +239,8 @@ Cohesion: 0.20
 Nodes (11): adminRedirect, coordGuardResult, coordRedirect, delegateGuardResult, delegateRedirect, getEventSlug(), guardEventsRoute(), learnerMatch (+3 more)
 
 ### Community 28 - ".getParties"
-Cohesion: 0.15
-Nodes (4): deduplicateElectionList(), getElectionCanonicalKey(), mergeTwoElections(), sortLearnersStably()
+Cohesion: 0.10
+Nodes (6): deduplicateElectionList(), detectDeviceType(), getDeviceInfo(), getElectionCanonicalKey(), mergeTwoElections(), sortLearnersStably()
 
 ### Community 29 - "@supabase/supabase-js"
 Cohesion: 0.12
@@ -473,7 +468,7 @@ _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `@supabase/supabase-js` connect `@supabase/supabase-js` to `package.json`, `check_db.cjs`, `fix_party1_learners.cjs`, `restore_voting_history.cjs`, `compare_learners.cjs`, `check_ahs.cjs`, `check_all_cabinet.cjs`, `check_cabinet_custom.cjs`, `check_yuva_db.cjs`, `clean_arts_cabinet.cjs`, `clean_yuva_db.cjs`, `fix_ahs_event.cjs`, `inspect_ahs.cjs`, `test_attendance_logic.cjs`, `test_batch_attendance_logic.cjs`, `test_no_delete_operations.cjs`, `diagnose_bugs.cjs`, `investigate_jkkncet_db.cjs`, `inspect_learners.cjs`, `import_arts_to_supabase.cjs`, `test_rpc.cjs`, `test_sync_days.cjs`, `backup_and_wipe_jkkncet.cjs`, `restore_arts.cjs`, `test_live_event_days.cjs`, `sync_legit_event_days.cjs`, `test_att_payload.cjs`, `test_unknown_col.cjs`, `presenceService.ts`?**
   _High betweenness centrality (0.178) - this node is a cross-community bridge._
-- **Why does `storageService` connect `storageService` to `Volunteer`, `csvHelper.ts`, `.getLearners`, `index.ts`, `storageService.ts`, `UserRole`, `.getEvents`, `CollegeEvent`, `.setItem`, `ScoreGridTab.tsx`, `.getItem`, `Learner`, `getEventSlug`, `ParticipantsTab.tsx`, `react`, `.getParties`, `verify_question_flow.ts`, `VolunteerDashboard.tsx`, `StudentDashboard.tsx`, `AddLearnerModal.tsx`, `App.tsx`, `verify_question_flow.js`, `JuryDashboard.tsx`, `ProjectorTab.tsx`, `ChatMessage`, `ParliamentQuestion`, `LoginRecord`?**
+- **Why does `storageService` connect `storageService` to `Volunteer`, `csvHelper.ts`, `.getLearners`, `index.ts`, `storageService.ts`, `UserRole`, `.getEvents`, `CollegeEvent`, `.setItem`, `ScoreGridTab.tsx`, `Learner`, `getEventSlug`, `ParticipantsTab.tsx`, `react`, `.getParties`, `verify_question_flow.ts`, `VolunteerDashboard.tsx`, `StudentDashboard.tsx`, `AddLearnerModal.tsx`, `App.tsx`, `verify_question_flow.js`, `JuryDashboard.tsx`, `ProjectorTab.tsx`, `ChatMessage`, `ParliamentQuestion`, `LoginRecord`?**
   _High betweenness centrality (0.172) - this node is a cross-community bridge._
 - **Why does `react` connect `react` to `Volunteer`, `csvHelper.ts`, `package.json`, `index.ts`, `UserRole`, `CollegeEvent`, `ScoreGridTab.tsx`, `Learner`, `getEventSlug`, `ParticipantsTab.tsx`, `VolunteerDashboard.tsx`, `StudentDashboard.tsx`, `AddLearnerModal.tsx`, `App.tsx`, `JuryDashboard.tsx`, `Coordinator`, `Header.tsx`, `ProjectorTab.tsx`, `ChatMessage`, `MediaTab.tsx`, `ParliamentQuestion`, `TeamMember`?**
   _High betweenness centrality (0.027) - this node is a cross-community bridge._
@@ -484,4 +479,4 @@ _Questions this graph is uniquely positioned to answer:_
 - **Should `test_bug_9_systemic_audit.cjs` be split into smaller, more focused modules?**
   _Cohesion score 0.05555555555555555 - nodes in this community are weakly interconnected._
 - **Should `.getLearners` be split into smaller, more focused modules?**
-  _Cohesion score 0.07019230769230769 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.07219662058371736 - nodes in this community are weakly interconnected._

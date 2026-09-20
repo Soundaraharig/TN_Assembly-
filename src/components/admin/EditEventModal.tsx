@@ -26,8 +26,8 @@ export const EditEventModal: React.FC<EditEventModalProps> = ({
   useEffect(() => {
     if (event) {
       setCollegeName(event.college_name || '');
-      setLocation(event.location || 'Main Auditorium');
-      setDates(event.dates || 'Day 1 & Day 2');
+      setLocation(event.location || '');
+      setDates(event.dates || '');
       setEventStage(event.event_stage || 'College Round');
       setStatus(event.status || 'Pre-Event');
       setCoordName(event.assigned_coordinator_name || '');

@@ -130,7 +130,7 @@ const STORAGE_KEYS = {
 };
 
 export const SUPABASE_COLUMNS: Record<string, string> = {
-  COLLEGE_EVENTS_LIST: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at',
+  COLLEGE_EVENTS_LIST: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,elections_count,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at',
   COLLEGE_EVENTS: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at,social_coverage',
   COORDINATORS: 'id,event_id,name,email,password_hash,raw_temp_password,created_at,updated_at',
   LEARNERS: 'id,event_id,access_code,full_name,email,phone,department,academic_year,constituency_number,constituency_name,party_id,party_name,party_group_link,bench,role,committee_id,committee_name,committee_group_link,school_name,day1_checked_in,day2_checked_in,district,created_at,updated_at',
@@ -1151,34 +1151,18 @@ class StorageService {
       let changed = false;
       const targetId = '200fdd74-4d21-44d5-9f63-9a07bf267824';
       const updatedEvents = allEvents.map(ev => {
-        // STRICTLY match only the exact demo event ID
-        const isTarget = ev.id === targetId;
-
-        if (isTarget) {
-          const needsNameFix = ev.college_name !== 'JKKNCET TN ASSEMBLY 2026';
-          const needsEmailFix = ev.assigned_coordinator_email !== 'soundaraharigece2025@jkkn.ac.in';
-          if (needsNameFix || needsEmailFix) {
-            changed = true;
-            return {
-              ...ev,
-              college_name: 'JKKNCET TN ASSEMBLY 2026',
-              assigned_coordinator_email: 'soundaraharigece2025@jkkn.ac.in',
-              assigned_coordinator_name: ev.assigned_coordinator_name || 'Soundarahari',
-              slug: 'jkkncet-tn-assembly-2026-tamil-nadu-2026'
-            };
-          }
+        if (ev.id === targetId && !ev.slug) {
+          changed = true;
+          return {
+            ...ev,
+            slug: 'jkkncet-tn-assembly-2026-tamil-nadu-2026'
+          };
         }
         return ev;
       });
 
       if (changed) {
         this.setItem(STORAGE_KEYS.EVENTS, updatedEvents);
-        const restoredEv = updatedEvents.find(e => e.id === targetId);
-        if (restoredEv && supabase) {
-          this.sbUpsert('college_events', restoredEv as unknown as Record<string, unknown>).catch(e => {
-            console.warn('[StorageService] restoreJkkncetEvent cloud sync warning:', e);
-          });
-        }
       }
     } catch (e) {
       console.warn('[StorageService] Error during restoreJkkncetEvent:', e);
@@ -4025,7 +4009,7 @@ class StorageService {
     if (table === 'college_events') {
       const { cabinet_ministries: _cm, ...clean } = raw;
       const existingEv = validId ? this.getEvents().find(e => e.id === validId) : undefined;
-      const defaultName = (validId === '200fdd74-4d21-44d5-9f63-9a07bf267824') ? 'JKKNCET TN ASSEMBLY 2026' : (clean.college_name || existingEv?.college_name || 'New Assembly');
+      const defaultName = clean.college_name || existingEv?.college_name || 'New Assembly';
       const sanitized: Record<string, unknown> = {
         college_name: clean.college_name && clean.college_name !== 'New Assembly' ? clean.college_name : (existingEv?.college_name && existingEv.college_name !== 'New Assembly' ? existingEv.college_name : defaultName),
         event_stage: clean.event_stage || existingEv?.event_stage || 'College Round',
@@ -4034,19 +4018,23 @@ class StorageService {
         level: clean.level || existingEv?.level || 'College Round',
         location: clean.location !== undefined ? clean.location : (existingEv?.location || null),
         dates: clean.dates !== undefined ? clean.dates : (existingEv?.dates || null),
-        assigned_coordinator_email: clean.assigned_coordinator_email !== undefined ? clean.assigned_coordinator_email : (existingEv?.assigned_coordinator_email || (validId === '200fdd74-4d21-44d5-9f63-9a07bf267824' ? 'soundaraharigece2025@jkkn.ac.in' : null)),
-        assigned_coordinator_name: clean.assigned_coordinator_name !== undefined ? clean.assigned_coordinator_name : (existingEv?.assigned_coordinator_name || (validId === '200fdd74-4d21-44d5-9f63-9a07bf267824' ? 'Soundarahari' : null)),
+        assigned_coordinator_email: clean.assigned_coordinator_email !== undefined ? clean.assigned_coordinator_email : (existingEv?.assigned_coordinator_email || null),
+        assigned_coordinator_name: clean.assigned_coordinator_name !== undefined ? clean.assigned_coordinator_name : (existingEv?.assigned_coordinator_name || null),
         elections_count: clean.elections_count !== undefined ? clean.elections_count : (existingEv?.elections_count || 3),
         is_locked: clean.is_locked !== undefined ? !!clean.is_locked : !!existingEv?.is_locked,
         participant_count: clean.participant_count !== undefined ? clean.participant_count : (existingEv?.participant_count || 0),
         chief_guests: clean.chief_guests !== undefined ? clean.chief_guests : (existingEv?.chief_guests || []),
-        social_coverage: clean.social_coverage !== undefined ? clean.social_coverage : (existingEv?.social_coverage || {}),
-        slug: clean.slug || existingEv?.slug || (validId === '200fdd74-4d21-44d5-9f63-9a07bf267824' ? 'jkkncet-tn-assembly-2026-tamil-nadu-2026' : null),
+        slug: clean.slug || existingEv?.slug || null,
         treasury_whatsapp_link: clean.treasury_whatsapp_link !== undefined ? clean.treasury_whatsapp_link : (existingEv?.treasury_whatsapp_link || null),
         opposition_whatsapp_link: clean.opposition_whatsapp_link !== undefined ? clean.opposition_whatsapp_link : (existingEv?.opposition_whatsapp_link || null),
         created_at: clean.created_at || existingEv?.created_at || new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
+      if (clean.social_coverage !== undefined) {
+        sanitized.social_coverage = clean.social_coverage;
+      } else if (existingEv?.social_coverage !== undefined) {
+        sanitized.social_coverage = existingEv.social_coverage;
+      }
       if (validId) sanitized.id = validId;
       return sanitized;
     }
@@ -4235,7 +4223,15 @@ class StorageService {
       return { success: false, error: new Error('Supabase not configured') };
     }
     const sanitized = this.sanitizeRecordForTable(table, patch);
-    const { id: _ignoredId, ...fieldsToUpdate } = sanitized;
+    const fieldsToUpdate: Record<string, unknown> = {};
+    for (const key of Object.keys(patch)) {
+      if (key !== 'id') {
+        fieldsToUpdate[key] = sanitized[key] !== undefined ? sanitized[key] : patch[key];
+      }
+    }
+    if (!fieldsToUpdate.updated_at) {
+      fieldsToUpdate.updated_at = new Date().toISOString();
+    }
     try {
       const { data, error, status } = await sb.from(table).update(fieldsToUpdate).eq('id', id).select();
       if (error || (status && status >= 400)) {
@@ -5004,7 +5000,7 @@ class StorageService {
     return newEvent;
   }
 
-  public updateEvent(event: CollegeEvent) {
+  public async updateEvent(event: CollegeEvent): Promise<{ success: boolean; error?: any; data?: any }> {
     if (event.is_locked !== undefined) {
       const sc = { ...((event.social_coverage as Record<string, any>) || {}) };
       sc.allocation_lock = event.is_locked;
@@ -5013,8 +5009,40 @@ class StorageService {
     }
     const all = this.getEvents().map(e => (e.id === event.id ? event : e));
     this.setItem(STORAGE_KEYS.EVENTS, all);
-    this.sbUpsert('college_events', event as unknown as Record<string, unknown>);
+
+    // Build targeted patch containing ONLY modified metadata fields — NEVER overwrite social_coverage
+    const patch: Record<string, unknown> = {};
+    if (event.college_name !== undefined) patch.college_name = event.college_name;
+    if (event.location !== undefined) patch.location = event.location;
+    if (event.dates !== undefined) patch.dates = event.dates;
+    if (event.event_stage !== undefined) patch.event_stage = event.event_stage;
+    if (event.status !== undefined) patch.status = event.status;
+    if (event.chapter !== undefined) patch.chapter = event.chapter;
+    if (event.level !== undefined) patch.level = event.level;
+    if (event.assigned_coordinator_name !== undefined) patch.assigned_coordinator_name = event.assigned_coordinator_name;
+    if (event.assigned_coordinator_email !== undefined) patch.assigned_coordinator_email = event.assigned_coordinator_email;
+    if (event.elections_count !== undefined) patch.elections_count = event.elections_count;
+    if (event.is_locked !== undefined) patch.is_locked = event.is_locked;
+    if (event.participant_count !== undefined) patch.participant_count = event.participant_count;
+    if (event.chief_guests !== undefined) patch.chief_guests = event.chief_guests;
+    if (event.treasury_whatsapp_link !== undefined) patch.treasury_whatsapp_link = event.treasury_whatsapp_link;
+    if (event.opposition_whatsapp_link !== undefined) patch.opposition_whatsapp_link = event.opposition_whatsapp_link;
+    if (event.slug !== undefined) patch.slug = event.slug;
+    if (event.social_coverage !== undefined && typeof event.social_coverage === 'object' && Object.keys(event.social_coverage).length > 0) {
+      patch.social_coverage = event.social_coverage;
+    }
+    patch.updated_at = new Date().toISOString();
+
+    const res = await this.sbUpdate('college_events', event.id, patch);
+
+    // Invalidate cached event queries so future fetches pull fresh database state
+    this.eventsFetched = false;
+    this.invalidateCache('fetch_all_events');
+    this.invalidateCache('events');
+    if (event.id) this.invalidateCache(event.id);
+
     this.notify();
+    return res;
   }
 
   public deleteEvent(eventId: string) {
