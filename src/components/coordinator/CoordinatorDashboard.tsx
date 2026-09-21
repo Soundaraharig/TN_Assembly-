@@ -268,6 +268,9 @@ export const CoordinatorDashboard: React.FC<CoordinatorDashboardProps> = ({
         onClose={() => setIsImportCsvOpen(false)}
         eventId={currentEvent.id}
         existingCodes={existingCodes}
+        learners={learners}
+        parties={parties}
+        committees={committees}
         onImportSuccess={onBulkImportLearners}
         onShowToast={onShowToast}
       />

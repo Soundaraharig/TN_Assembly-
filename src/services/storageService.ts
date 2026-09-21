@@ -5691,6 +5691,186 @@ class StorageService {
     }
   }
 
+  public async updateExistingParticipants(
+    eventId: string,
+    updates: Array<{
+      id: string;
+      patch: {
+        party_name?: string;
+        party_id?: string;
+        committee_name?: string;
+        committee_id?: string;
+        constituency_name?: string;
+        constituency_number?: number;
+      };
+    }>
+  ): Promise<{
+    success: boolean;
+    countBefore: number;
+    countAfter: number;
+    updatedCount: number;
+    failedCount: number;
+    unchangedCount: number;
+    results: Array<{ id: string; success: boolean; error?: string }>;
+    error?: any;
+  }> {
+    const allLearners = this.getLearners();
+    const currentEventLearners = allLearners.filter(l => l.event_id === eventId);
+    const totalBefore = currentEventLearners.length;
+    const learnerMap = new Map<string, Learner>(currentEventLearners.map(l => [l.id, l]));
+    const codesBefore = new Map<string, string>(currentEventLearners.map(l => [l.id, l.access_code]));
+
+    const ALLOWED_UPDATE_KEYS = new Set([
+      'party_name',
+      'party_id',
+      'committee_name',
+      'committee_id',
+      'constituency_name',
+      'constituency_number'
+    ]);
+
+    const results: Array<{ id: string; success: boolean; error?: string }> = [];
+    let updatedCount = 0;
+    let failedCount = 0;
+    let unchangedCount = 0;
+
+    const validatedUpdates: Array<{ id: string; cleanPatch: Record<string, unknown> }> = [];
+
+    for (const update of updates) {
+      const existing = learnerMap.get(update.id);
+      if (!existing) {
+        results.push({ id: update.id, success: false, error: 'Participant not found in current event.' });
+        failedCount++;
+        continue;
+      }
+
+      const cleanPatch: Record<string, unknown> = {};
+      for (const [key, val] of Object.entries(update.patch)) {
+        if (ALLOWED_UPDATE_KEYS.has(key) && val !== undefined) {
+          cleanPatch[key] = val;
+        }
+      }
+
+      if (Object.keys(cleanPatch).length === 0) {
+        unchangedCount++;
+        results.push({ id: update.id, success: true });
+        continue;
+      }
+
+      // Explicitly protect invariant columns
+      if ('access_code' in cleanPatch || 'id' in cleanPatch || 'event_id' in cleanPatch || 'bench' in cleanPatch || 'role' in cleanPatch || 'full_name' in cleanPatch) {
+        results.push({ id: update.id, success: false, error: 'Unauthorized field in patch.' });
+        failedCount++;
+        continue;
+      }
+
+      validatedUpdates.push({ id: update.id, cleanPatch });
+    }
+
+    // Execute targeted database PATCH updates row-by-row
+    const sb = supabase;
+    for (const item of validatedUpdates) {
+      const patchWithTime = {
+        ...item.cleanPatch,
+        updated_at: new Date().toISOString()
+      };
+
+      if (sb) {
+        try {
+          const { error, status } = await sb.from('learners').update(patchWithTime).eq('id', item.id);
+          if (error || (status && status >= 400)) {
+            console.error(`❌ [Supabase Targeted Update Error] Learner ${item.id}:`, error);
+            results.push({ id: item.id, success: false, error: error?.message || `HTTP ${status}` });
+            failedCount++;
+            continue;
+          }
+        } catch (err: any) {
+          console.error(`❌ [Supabase Targeted Update Exception] Learner ${item.id}:`, err);
+          results.push({ id: item.id, success: false, error: err?.message || 'Database update exception' });
+          failedCount++;
+          continue;
+        }
+      }
+
+      results.push({ id: item.id, success: true });
+      updatedCount++;
+    }
+
+    // Apply cleanPatch to local cache
+    const patchMap = new Map(
+      validatedUpdates
+        .filter(v => results.find(r => r.id === v.id)?.success)
+        .map(v => [v.id, v.cleanPatch])
+    );
+
+    const updatedEventLearners = currentEventLearners.map(l => {
+      const patch = patchMap.get(l.id);
+      if (!patch) return l;
+      return {
+        ...l,
+        ...patch,
+        access_code: codesBefore.get(l.id)!, // Guarantee access_code cannot be changed
+        updated_at: new Date().toISOString()
+      };
+    });
+
+    const totalAfter = updatedEventLearners.length;
+    if (totalAfter !== totalBefore) {
+      console.error(`❌ [Data Invariant Violation] Count changed from ${totalBefore} to ${totalAfter}`);
+      return {
+        success: false,
+        countBefore: totalBefore,
+        countAfter: totalAfter,
+        updatedCount,
+        failedCount,
+        unchangedCount,
+        results,
+        error: new Error(`Data safety violation: participant count changed from ${totalBefore} to ${totalAfter}!`)
+      };
+    }
+
+    // Invariant: Verify all access codes remained identical
+    for (const l of updatedEventLearners) {
+      if (l.access_code !== codesBefore.get(l.id)) {
+        console.error(`❌ [Data Invariant Violation] Access code altered for ${l.id}`);
+        return {
+          success: false,
+          countBefore: totalBefore,
+          countAfter: totalAfter,
+          updatedCount,
+          failedCount,
+          unchangedCount,
+          results,
+          error: new Error(`Data safety violation: access_code altered for student ${l.full_name}`)
+        };
+      }
+    }
+
+    const otherEventLearners = allLearners.filter(l => l.event_id !== eventId);
+    this.setItem(STORAGE_KEYS.LEARNERS, [...updatedEventLearners, ...otherEventLearners]);
+
+    // Force reload fresh data from Supabase to guarantee state matches the remote database
+    if (sb) {
+      try {
+        await this.syncFromSupabase(eventId, true);
+      } catch (syncErr) {
+        console.warn('⚠️ [StorageService] Background refresh from Supabase warning:', syncErr);
+      }
+    }
+
+    this.notify();
+
+    return {
+      success: failedCount === 0,
+      countBefore: totalBefore,
+      countAfter: totalAfter,
+      updatedCount,
+      failedCount,
+      unchangedCount,
+      results
+    };
+  }
+
   public async deleteLearner(learnerId: string): Promise<void> {
     if (!learnerId || typeof learnerId !== 'string' || !learnerId.trim()) return;
     const allCurrent = this.getLearners();

@@ -336,9 +336,9 @@
     "semantic_hash": "5b4bc0f8532cd2bd90daced81d45749a"
   },
   "src/App.tsx": {
-    "mtime": 1789965536.2855668,
-    "seen": 1789965596.391898,
-    "ast_hash": "b609449a98815b0bbd8a0eee97eaff98",
+    "mtime": 1789987574.7999942,
+    "seen": 1789987683.0505037,
+    "ast_hash": "73cb6c09c01c8edf45218bfdb0506e4a",
     "semantic_hash": ""
   },
   "src/components/admin/CreateEventModal.tsx": {
@@ -498,16 +498,16 @@
     "semantic_hash": ""
   },
   "src/components/coordinator/CoordinatorDashboard.tsx": {
-    "mtime": 1789099765.185567,
-    "seen": 1789196099.9922464,
-    "ast_hash": "c7bbf3118f069602fe9e4dea569360a4",
-    "semantic_hash": "c7bbf3118f069602fe9e4dea569360a4"
+    "mtime": 1789987581.1605904,
+    "seen": 1789987683.0536046,
+    "ast_hash": "2ca4091241dbc41719ad89e786399c0c",
+    "semantic_hash": ""
   },
   "src/components/coordinator/CsvImportModal.tsx": {
-    "mtime": 1788930505.7463958,
-    "seen": 1789196099.9922469,
-    "ast_hash": "ebe85625e7fd5df65a8b536a87482d07",
-    "semantic_hash": "ebe85625e7fd5df65a8b536a87482d07"
+    "mtime": 1789987559.9689684,
+    "seen": 1789987683.0536065,
+    "ast_hash": "bb1d07fbbf9d96e495ee68e21c0cb581",
+    "semantic_hash": ""
   },
   "src/components/coordinator/DownloadModal.tsx": {
     "mtime": 1788930505.7463958,
@@ -666,9 +666,9 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1789968996.4130602,
-    "seen": 1789969075.402078,
-    "ast_hash": "6a393a75dea03f64c10b24a04c6e4803",
+    "mtime": 1789987510.7776804,
+    "seen": 1789987683.056193,
+    "ast_hash": "119178309368f93bd03e9a43f2cba81c",
     "semantic_hash": ""
   },
   "src/types/index.ts": {
@@ -933,6 +933,18 @@
     "mtime": 1789965707.7375996,
     "seen": 1789967661.9012191,
     "ast_hash": "86463825009c4d6d4c5602b4e725d5ba",
+    "semantic_hash": ""
+  },
+  "src/utils/csvUpdateHelper.ts": {
+    "mtime": 1789987490.27105,
+    "seen": 1789987683.0565677,
+    "ast_hash": "840f1418ef602b761943e60cacd9ce64",
+    "semantic_hash": ""
+  },
+  "test_update_scenarios.ts": {
+    "mtime": 1789987640.0027316,
+    "seen": 1789987683.0570235,
+    "ast_hash": "ce42cee77499f27fed4c9b19f5d7b3df",
     "semantic_hash": ""
   }
 }

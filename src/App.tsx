@@ -2945,6 +2945,9 @@ export function App() {
               onClose={() => setIsImportCsvOpen(false)}
               eventId={activeEvModal.id}
               existingCodes={existingCodesSet}
+              learners={learners}
+              parties={parties}
+              committees={committees}
               onImportSuccess={async (imported: Partial<Learner>[]) => {
                 const res = await storageService.importLearners(imported, activeEvModal.id);
                 if (!res.success) {
@@ -2954,6 +2957,11 @@ export function App() {
                 setParties(storageService.getParties(activeEvModal.id));
                 setCommittees(storageService.getCommittees(activeEvModal.id));
                 addToast('Import Successful', `Processed ${imported.length} delegate participants (saved to Supabase)`, 'success');
+              }}
+              onParticipantsUpdated={() => {
+                setLearners(storageService.getLearners(activeEvModal.id));
+                setParties(storageService.getParties(activeEvModal.id));
+                setCommittees(storageService.getCommittees(activeEvModal.id));
               }}
               onShowToast={addToast}
             />
