@@ -1,7 +1,7 @@
 # Graph Report - TN_Assembly-  (2026-09-21)
 
 ## Corpus Check
-- 153 files · ~233,190 words
+- 153 files · ~233,555 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
@@ -10,7 +10,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `32c1a97d`
+- Built from commit: `036ea132`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 

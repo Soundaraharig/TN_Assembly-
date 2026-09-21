@@ -2888,7 +2888,7 @@ class StorageService {
           await sb.from('college_events').select('id, college_name, event_stage, status, chapter, social_coverage').eq('id', eventId).limit(1)
         ),
         this.dedupeInFlight<{ data: any }>(`query_learners_${eventId}`, async () =>
-          await sb.from('learners').select('id, event_id, full_name, roll_no:constituency_number, department, year:academic_year, academic_year, party:party_name, party_name, constituency_name, bench').eq('event_id', eventId)
+          await sb.from('learners').select('id, event_id, full_name, constituency_number, roll_no:constituency_number, department, year:academic_year, academic_year, party:party_name, party_name, constituency_name, bench').eq('event_id', eventId)
         )
       ]);
 
@@ -2930,7 +2930,13 @@ class StorageService {
 
       if (learnersData) {
         const otherLearners = this.getLearners().filter(l => l.event_id && l.event_id !== eventId);
-        this.setItem(STORAGE_KEYS.LEARNERS, [...otherLearners, ...(learnersData as unknown as Learner[])]);
+        const normalizedJuryLearners = (learnersData as any[]).map(l => ({
+          ...l,
+          constituency_number: l.constituency_number !== undefined && l.constituency_number !== null
+            ? Number(l.constituency_number)
+            : (l.roll_no !== undefined && l.roll_no !== null && !isNaN(Number(l.roll_no)) ? Number(l.roll_no) : undefined)
+        }));
+        this.setItem(STORAGE_KEYS.LEARNERS, [...otherLearners, ...(normalizedJuryLearners as unknown as Learner[])]);
       }
 
       this.setCacheEntry(cacheKey, {
@@ -5305,15 +5311,26 @@ class StorageService {
         (l.party_name && p.name.trim().toLowerCase() === l.party_name.trim().toLowerCase() && (!l.event_id || !p.event_id || p.event_id === l.event_id))
       );
 
+      // Ensure constituency_number is present if roll_no was cached
+      const constNum = l.constituency_number !== undefined && l.constituency_number !== null
+        ? Number(l.constituency_number)
+        : ((l as any).roll_no !== undefined && (l as any).roll_no !== null && !isNaN(Number((l as any).roll_no))
+            ? Number((l as any).roll_no)
+            : undefined);
+
+      const baseLearner: Learner = constNum !== undefined && l.constituency_number === undefined
+        ? { ...l, constituency_number: constNum }
+        : l;
+
       if (party?.bench && party.bench !== l.bench) {
-        unique.push({ ...l, bench: party.bench });
+        unique.push({ ...baseLearner, bench: party.bench });
         benchFixedCount++;
         if (!this.fixedLearnerIdsSynced.has(l.id)) {
           this.fixedLearnerIdsSynced.add(l.id);
           learnersToSync.push({ id: l.id, bench: party.bench });
         }
       } else {
-        unique.push(l);
+        unique.push(baseLearner);
       }
     }
 

@@ -258,14 +258,18 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
   // Jump To Participant Keypad Actions
   const handleJumpInputChange = (query: string) => {
     setJumpInput(query);
-    if (!query.trim()) return;
+    const cleaned = query.trim().replace(/^#/, '');
+    if (!cleaned) return;
 
-    const num = parseInt(query.trim(), 10);
-    const matched = learners.find(l =>
-      (num > 0 && l.constituency_number === num) ||
-      (l.constituency_number !== undefined && l.constituency_number.toString() === query.trim()) ||
-      l.access_code.toUpperCase() === query.trim().toUpperCase()
-    );
+    const num = parseInt(cleaned, 10);
+    const matched = learners.find(l => {
+      const constNum = l.constituency_number ?? (l as any).roll_no;
+      return (
+        (!isNaN(num) && num > 0 && constNum === num) ||
+        (constNum !== undefined && String(constNum).trim() === cleaned) ||
+        (l.access_code && l.access_code.toUpperCase() === cleaned.toUpperCase())
+      );
+    });
     if (matched) {
       setSelectedLearnerId(matched.id);
     }
@@ -307,15 +311,33 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
   };
 
   const filteredLearners = useMemo(() => {
-    return learners.filter(l => {
-      const matchesSearch =
-        l.full_name.toLowerCase().includes(search.toLowerCase()) ||
-        (l.party_name && l.party_name.toLowerCase().includes(search.toLowerCase())) ||
-        (l.constituency_name && l.constituency_name.toLowerCase().includes(search.toLowerCase())) ||
-        (l.constituency_number !== undefined && l.constituency_number.toString().includes(search));
+    const rawSearch = search.trim();
+    const q = rawSearch.toLowerCase();
+    const qNoHash = q.startsWith('#') ? q.slice(1).trim() : q;
 
+    return learners.filter(l => {
       const matchesBench = filterBench === 'ALL' || l.bench === filterBench;
-      return matchesSearch && matchesBench;
+      if (!matchesBench) return false;
+
+      if (!rawSearch) return true;
+
+      const constNum = l.constituency_number ?? (l as any).roll_no;
+      const constNumStr = constNum !== undefined && constNum !== null ? String(constNum).trim() : '';
+
+      const nameMatch = Boolean(l.full_name && l.full_name.toLowerCase().includes(q));
+      const partyMatch = Boolean(l.party_name && l.party_name.toLowerCase().includes(q));
+      const constNameMatch = Boolean(l.constituency_name && l.constituency_name.toLowerCase().includes(q));
+      const codeMatch = Boolean(l.access_code && l.access_code.toLowerCase().includes(q));
+
+      const constNumMatch = Boolean(
+        constNumStr && (
+          constNumStr === q ||
+          constNumStr === qNoHash ||
+          constNumStr.includes(qNoHash)
+        )
+      );
+
+      return nameMatch || partyMatch || constNameMatch || codeMatch || constNumMatch;
     });
   }, [learners, search, filterBench]);
 
@@ -535,7 +557,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                 <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
                 <input
                   type="text"
-                  placeholder="Type name, seat number (#12), or party..."
+                  placeholder="Search name, constituency number or constituency..."
                   value={search}
                   onChange={e => {
                     setSearch(e.target.value);
@@ -632,6 +654,8 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                         (s.session_id === selectedSession.id || s.session_name === selectedSession.name) &&
                         ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))
                       );
+                      const constNum = learner.constituency_number ?? (learner as any).roll_no;
+                      const constName = learner.constituency_name || learner.role || 'Assembly Seat';
 
                       return (
                         <button
@@ -648,7 +672,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                               : 'bg-slate-50 dark:bg-slate-800/60 border-transparent hover:border-slate-300 dark:hover:border-slate-700'
                           }`}
                         >
-                          <div className="min-w-0 pr-2">
+                          <div className="min-w-0 pr-2 flex-1">
                             <div className="flex items-center gap-1.5">
                               <span className="font-extrabold text-xs text-slate-900 dark:text-white truncate">
                                 {learner.full_name}
@@ -657,14 +681,19 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                                 <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
                               )}
                             </div>
-                            <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
-                              {learner.party_name || 'Independent'} • {learner.constituency_name || learner.role || 'MLA'}
+                            <p className="text-[11px] font-bold text-blue-600 dark:text-blue-400 truncate mt-0.5">
+                              {constNum !== undefined && constNum !== null ? `#${constNum} • ` : ''}{constName}
+                            </p>
+                            <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                              {learner.party_name || 'Independent'} • {learner.bench || 'Ruling'}
                             </p>
                           </div>
-                          <div className="text-right shrink-0 flex items-center gap-2">
-                            <span className="text-[10px] font-mono font-extrabold px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
-                              #{learner.constituency_number ?? '?'}
-                            </span>
+                          <div className="text-right shrink-0 flex flex-col items-end justify-center gap-1">
+                            {constNum !== undefined && constNum !== null && (
+                              <span className="text-[10px] font-mono font-extrabold px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
+                                #{constNum}
+                              </span>
+                            )}
                             {existingScore ? (
                               <span className="text-[10px] font-black text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-800">
                                 {existingScore.total}/100
@@ -721,14 +750,14 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       <span className="text-xs font-black text-slate-900 dark:text-white truncate">
                         {selectedLearner.full_name}
                       </span>
-                      {selectedLearner.constituency_number !== undefined && (
+                      {(selectedLearner.constituency_number ?? (selectedLearner as any).roll_no) !== undefined && (
                         <span className="px-1.5 py-0.2 rounded text-[10px] font-mono font-black bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
-                          #{selectedLearner.constituency_number}
+                          #{selectedLearner.constituency_number ?? (selectedLearner as any).roll_no}
                         </span>
                       )}
                     </div>
                     <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
-                      {selectedLearner.party_name || 'Independent'} • {selectedLearner.bench || 'Ruling'} Bench
+                      {(selectedLearner.constituency_number ?? (selectedLearner as any).roll_no) !== undefined ? `#${selectedLearner.constituency_number ?? (selectedLearner as any).roll_no} • ` : ''}{selectedLearner.constituency_name || 'Assembly Seat'} • {selectedLearner.party_name || 'Independent'} ({selectedLearner.bench || 'Ruling'})
                     </p>
                   </div>
 
@@ -758,9 +787,9 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                         <h2 className="text-xl font-black" style={{ color: 'var(--text-primary)' }}>
                           {selectedLearner.full_name}
                         </h2>
-                        {selectedLearner.constituency_number !== undefined && (
+                        {(selectedLearner.constituency_number ?? (selectedLearner as any).roll_no) !== undefined && (
                           <span className="px-2 py-0.5 rounded-md text-xs font-mono font-extrabold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
-                            #{selectedLearner.constituency_number}
+                            #{selectedLearner.constituency_number ?? (selectedLearner as any).roll_no}
                           </span>
                         )}
                         <span
@@ -775,8 +804,12 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                         </span>
                       </div>
                       <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-                        Party: <strong style={{ color: 'var(--text-secondary)' }}>{selectedLearner.party_name || 'Independent'}</strong> • Constituency:{' '}
-                        <strong style={{ color: 'var(--text-secondary)' }}>{selectedLearner.constituency_name || selectedLearner.role || 'Floor Delegate'}</strong>
+                        Constituency:{' '}
+                        <strong style={{ color: 'var(--text-secondary)' }}>
+                          {(selectedLearner.constituency_number ?? (selectedLearner as any).roll_no) !== undefined ? `#${selectedLearner.constituency_number ?? (selectedLearner as any).roll_no} • ` : ''}
+                          {selectedLearner.constituency_name || selectedLearner.role || 'Floor Delegate'}
+                        </strong> • Party:{' '}
+                        <strong style={{ color: 'var(--text-secondary)' }}>{selectedLearner.party_name || 'Independent'}</strong>
                       </p>
                     </div>
 
@@ -1215,7 +1248,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     <Search className="w-3.5 h-3.5 absolute left-3 top-2.5" style={{ color: 'var(--text-muted)' }} />
                     <input
                       type="text"
-                      placeholder="Search name, constituency..."
+                      placeholder="Search name, constituency number or constituency..."
                       value={search}
                       onChange={e => setSearch(e.target.value)}
                       className="input-theme pl-8 py-1.5 text-xs w-full"
@@ -1257,6 +1290,8 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                         (s.session_id === selectedSession.id || s.session_name === selectedSession.name) &&
                         ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))
                       );
+                      const constNum = learner.constituency_number ?? (learner as any).roll_no;
+                      const constName = learner.constituency_name || learner.role || 'Assembly Seat';
 
                       return (
                         <button
@@ -1270,7 +1305,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             borderColor: isSelected ? 'var(--accent)' : 'var(--border)'
                           }}
                         >
-                          <div className="min-w-0 pr-2">
+                          <div className="min-w-0 pr-2 flex-1">
                             <div className="flex items-center gap-1.5">
                               <p className="font-extrabold text-xs truncate" style={{ color: 'var(--text-primary)' }}>
                                 {learner.full_name}
@@ -1279,21 +1314,30 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                                 <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--emerald)' }} />
                               )}
                             </div>
+                            <p className="text-[11px] font-bold truncate mt-0.5" style={{ color: 'var(--accent)' }}>
+                              {constNum !== undefined && constNum !== null ? `#${constNum} • ` : ''}{constName}
+                            </p>
                             <p className="text-[10px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                              {learner.party_name || 'Independent'} • {learner.constituency_name || learner.role || 'MLA'}
+                              {learner.party_name || 'Independent'} • {learner.bench || 'Ruling'}
                             </p>
                           </div>
-                          <div className="text-right flex-shrink-0">
-                            <span
-                              className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border"
-                              style={{ background: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--accent)' }}
-                            >
-                              {learner.constituency_number !== undefined ? `#${learner.constituency_number}` : learner.bench || 'MLA'}
-                            </span>
-                            {existingScore && (
-                              <p className="text-[10px] font-black mt-1" style={{ color: 'var(--amber)' }}>
+                          <div className="text-right flex-shrink-0 flex flex-col items-end justify-center gap-1">
+                            {constNum !== undefined && constNum !== null && (
+                              <span
+                                className="text-[10px] font-mono font-extrabold px-1.5 py-0.5 rounded border"
+                                style={{ background: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--accent)' }}
+                              >
+                                #{constNum}
+                              </span>
+                            )}
+                            {existingScore ? (
+                              <span className="text-[10px] font-black text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-800">
                                 {existingScore.total}/100
-                              </p>
+                              </span>
+                            ) : (
+                              <span className="text-[9px] font-semibold text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
+                                Score Now
+                              </span>
                             )}
                           </div>
                         </button>

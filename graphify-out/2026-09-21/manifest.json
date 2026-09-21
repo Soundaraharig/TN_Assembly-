@@ -588,9 +588,9 @@
     "semantic_hash": "fa5314fe5afc9779f21497b6295a37d9"
   },
   "src/components/coordinator/ScoreGridTab.tsx": {
-    "mtime": 1789965522.319027,
-    "seen": 1789965596.39548,
-    "ast_hash": "c622eb0df59ad242366e75e358d60183",
+    "mtime": 1789967577.5420413,
+    "seen": 1789967661.9191651,
+    "ast_hash": "7d2961ff0ad7cd77f8c066150edf2db9",
     "semantic_hash": ""
   },
   "src/components/coordinator/TeamTab.tsx": {
@@ -927,6 +927,12 @@
     "mtime": 1789965201.22882,
     "seen": 1789965596.3880682,
     "ast_hash": "90990b781f6f36c3dcb727213e28b4cc",
+    "semantic_hash": ""
+  },
+  "scratch/test_score_grid_logic.mjs": {
+    "mtime": 1789965707.7375996,
+    "seen": 1789967661.9012191,
+    "ast_hash": "86463825009c4d6d4c5602b4e725d5ba",
     "semantic_hash": ""
   }
 }
