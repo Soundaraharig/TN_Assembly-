@@ -330,18 +330,27 @@ export function processRows(rows: any[], eventId: string, existingCodes: Set<str
     let finalConstName: string | undefined = rawConstName;
     let finalDistrict: string | undefined = district;
 
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const normPhonetic = (s: string) => norm(s).replace(/pp/g, 'p').replace(/tt/g, 't');
+
     if (parsedConstNo !== undefined && rawConstName) {
       const matchByNo = TN_CONSTITUENCIES.find(c => c.number === parsedConstNo);
-      const normRowName = rawConstName.toLowerCase().replace(/[^a-z0-9]/g, '');
-      const matchByName = TN_CONSTITUENCIES.find(c => {
-        const normDb = c.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-        return normDb === normRowName || normDb.includes(normRowName) || normRowName.includes(normDb);
-      });
+      const normRowName = norm(rawConstName);
+      const isExactMatch = matchByNo && (norm(matchByNo.name) === normRowName || normPhonetic(matchByNo.name) === normPhonetic(rawConstName));
 
-      // Respect the user's specified constituency number and name from the file
-      finalConstNo = parsedConstNo;
-      finalConstName = rawConstName;
-      finalDistrict = district || matchByName?.district || matchByNo?.district;
+      if (isExactMatch && matchByNo) {
+        finalConstNo = matchByNo.number;
+        finalConstName = matchByNo.name;
+        finalDistrict = district || matchByNo.district;
+      } else {
+        const matchByName = TN_CONSTITUENCIES.find(c => {
+          const n = norm(c.name);
+          return n === normRowName || normPhonetic(c.name) === normPhonetic(rawConstName);
+        });
+        finalConstNo = parsedConstNo;
+        finalConstName = matchByNo?.name || rawConstName;
+        finalDistrict = district || matchByNo?.district || matchByName?.district;
+      }
     } else if (parsedConstNo !== undefined && !rawConstName) {
       const matchByNo = TN_CONSTITUENCIES.find(c => c.number === parsedConstNo);
       if (matchByNo) {
@@ -349,10 +358,10 @@ export function processRows(rows: any[], eventId: string, existingCodes: Set<str
         finalDistrict = finalDistrict || matchByNo.district;
       }
     } else if (parsedConstNo === undefined && rawConstName) {
-      const normRowName = rawConstName.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const normRowName = norm(rawConstName);
       const matchByName = TN_CONSTITUENCIES.find(c => {
-        const normDb = c.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-        return normDb === normRowName || normDb.includes(normRowName) || normRowName.includes(normDb);
+        const n = norm(c.name);
+        return n === normRowName || normPhonetic(c.name) === normPhonetic(rawConstName);
       });
       if (matchByName) {
         finalConstNo = matchByName.number;

@@ -365,7 +365,7 @@
       "file_type": "code",
       "norm_label": "customexportoptions",
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L629"
+      "source_location": "L638"
     },
     {
       "id": "src_utils_csvhelper_exportcolumndef",
@@ -378,7 +378,7 @@
       "file_type": "code",
       "norm_label": "exportcolumndef",
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L504"
+      "source_location": "L513"
     },
     {
       "id": "src_components_coordinator_csvimportmodal_importreportdata",
@@ -2749,7 +2749,7 @@
       "file_type": "code",
       "norm_label": "deduplicatelearners()",
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L610"
+      "source_location": "L619"
     },
     {
       "id": "src_utils_csvhelper_exportallocationtemplatecsv",
@@ -2761,7 +2761,7 @@
       "file_type": "code",
       "norm_label": "exportallocationtemplatecsv()",
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L729"
+      "source_location": "L738"
     },
     {
       "id": "src_utils_csvhelper_exportcustomparticipantdata",
@@ -2773,7 +2773,7 @@
       "file_type": "code",
       "norm_label": "exportcustomparticipantdata()",
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L639"
+      "source_location": "L648"
     },
     {
       "id": "src_utils_csvhelper_exportfullparticipantdatatocsv",
@@ -2785,7 +2785,7 @@
       "file_type": "code",
       "norm_label": "exportfullparticipantdatatocsv()",
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L709"
+      "source_location": "L718"
     },
     {
       "id": "src_utils_csvhelper_exportfullparticipantdatatoexcel",
@@ -2797,7 +2797,7 @@
       "file_type": "code",
       "norm_label": "exportfullparticipantdatatoexcel()",
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L689"
+      "source_location": "L698"
     },
     {
       "id": "src_utils_csvhelper_normalizebench",
@@ -2833,7 +2833,7 @@
       "file_type": "code",
       "norm_label": "parsecsvfile()",
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L430"
+      "source_location": "L439"
     },
     {
       "id": "src_utils_csvhelper_processrows",
@@ -2857,7 +2857,7 @@
       "file_type": "code",
       "norm_label": "exportexistingparticipantsupdatetemplate()",
       "source_file": "src/utils/csvUpdateHelper.ts",
-      "source_location": "L514"
+      "source_location": "L567"
     },
     {
       "id": "src_utils_csvupdatehelper_normalizeheader",
@@ -2881,7 +2881,7 @@
       "file_type": "code",
       "norm_label": "parseupdatecsvfile()",
       "source_file": "src/utils/csvUpdateHelper.ts",
-      "source_location": "L475"
+      "source_location": "L528"
     },
     {
       "id": "src_utils_csvupdatehelper_processupdaterows",
@@ -7915,7 +7915,7 @@
       "file_type": "code",
       "norm_label": "export_columns_registry",
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L511"
+      "source_location": "L520"
     },
     {
       "id": "src_utils_csvupdatehelper",
@@ -29406,7 +29406,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L650",
+      "source_location": "L659",
       "weight": 1.0
     },
     {
@@ -29418,7 +29418,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L716",
+      "source_location": "L725",
       "weight": 1.0
     },
     {
@@ -29430,7 +29430,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L718",
+      "source_location": "L727",
       "weight": 1.0
     },
     {
@@ -29442,7 +29442,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L696",
+      "source_location": "L705",
       "weight": 1.0
     },
     {
@@ -29454,7 +29454,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L698",
+      "source_location": "L707",
       "weight": 1.0
     },
     {
@@ -29466,7 +29466,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L455",
+      "source_location": "L464",
       "weight": 1.0
     },
     {
@@ -29502,7 +29502,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L374",
+      "source_location": "L383",
       "weight": 1.0
     },
     {
@@ -29514,7 +29514,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/utils/csvUpdateHelper.ts",
-      "source_location": "L489",
+      "source_location": "L542",
       "weight": 1.0
     },
     {
@@ -31435,7 +31435,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L630",
+      "source_location": "L639",
       "weight": 1.0
     },
     {
@@ -31447,7 +31447,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L635",
+      "source_location": "L644",
       "weight": 1.0
     },
     {
@@ -31459,7 +31459,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L636",
+      "source_location": "L645",
       "weight": 1.0
     },
     {
@@ -31471,7 +31471,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L508",
+      "source_location": "L517",
       "weight": 1.0
     },
     {
@@ -31483,7 +31483,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L508",
+      "source_location": "L517",
       "weight": 1.0
     },
     {
@@ -31495,7 +31495,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L508",
+      "source_location": "L517",
       "weight": 1.0
     },
     {
@@ -52061,7 +52061,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L430",
+      "source_location": "L439",
       "weight": 1.0
     },
     {
@@ -52072,7 +52072,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L504",
+      "source_location": "L513",
       "weight": 1.0
     },
     {
@@ -52083,7 +52083,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L511",
+      "source_location": "L520",
       "weight": 1.0
     },
     {
@@ -52094,7 +52094,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L610",
+      "source_location": "L619",
       "weight": 1.0
     },
     {
@@ -52105,7 +52105,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L629",
+      "source_location": "L638",
       "weight": 1.0
     },
     {
@@ -52116,7 +52116,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L639",
+      "source_location": "L648",
       "weight": 1.0
     },
     {
@@ -52127,7 +52127,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L689",
+      "source_location": "L698",
       "weight": 1.0
     },
     {
@@ -52138,7 +52138,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L709",
+      "source_location": "L718",
       "weight": 1.0
     },
     {
@@ -52149,7 +52149,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/utils/csvHelper.ts",
-      "source_location": "L729",
+      "source_location": "L738",
       "weight": 1.0
     },
     {
@@ -52237,18 +52237,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/utils/csvUpdateHelper.ts",
-      "source_location": "L475",
-      "weight": 1.0
-    },
-    {
-      "source": "src_utils_csvupdatehelper",
-      "target": "src_utils_csvupdatehelper_exportexistingparticipantsupdatetemplate",
-      "relation": "contains",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "source_file": "src/utils/csvUpdateHelper.ts",
-      "source_location": "L514",
+      "source_location": "L528",
       "weight": 1.0
     },
     {
@@ -52260,6 +52249,17 @@
       "confidence_score": 1.0,
       "source_file": "src/utils/csvUpdateHelper.ts",
       "source_location": "L53",
+      "weight": 1.0
+    },
+    {
+      "source": "src_utils_csvupdatehelper",
+      "target": "src_utils_csvupdatehelper_exportexistingparticipantsupdatetemplate",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/utils/csvUpdateHelper.ts",
+      "source_location": "L567",
       "weight": 1.0
     },
     {
@@ -56158,5 +56158,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "64bc053e0af24a8274c9220a62dc8d26774dc4df"
+  "built_at_commit": "647f4dd313d61b8140aa52ec13a38341e39c73d7"
 }

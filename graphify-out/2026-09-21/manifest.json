@@ -940,11 +940,5 @@
     "seen": 1789987683.0565677,
     "ast_hash": "840f1418ef602b761943e60cacd9ce64",
     "semantic_hash": ""
-  },
-  "test_update_scenarios.ts": {
-    "mtime": 1789987640.0027316,
-    "seen": 1789987683.0570235,
-    "ast_hash": "ce42cee77499f27fed4c9b19f5d7b3df",
-    "semantic_hash": ""
   }
 }

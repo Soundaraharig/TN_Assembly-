@@ -382,66 +382,119 @@ export function processUpdateRows(
     }
 
     // Validate constituency against TN master data
+    let finalConstNum: number | undefined = undefined;
+    let finalConstName: string | undefined = undefined;
+
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const normPhonetic = (s: string) => norm(s).replace(/pp/g, 'p').replace(/tt/g, 't');
+
     if (parsedConstNum !== undefined && parsedConstName) {
       const matchByNo = TN_CONSTITUENCIES.find(c => c.number === parsedConstNum);
-      const normInput = parsedConstName.toLowerCase().replace(/[^a-z0-9]/g, '');
-      const matchByName = TN_CONSTITUENCIES.find(c => {
-        const normDb = c.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-        return normDb === normInput || normDb.includes(normInput) || normInput.includes(normDb);
-      });
-
-      if (matchByNo && matchByName && matchByNo.number !== matchByName.number) {
-        // Warning / validation flag if number and name conflict completely
+      if (!matchByNo) {
         validationErrors.push({
           rowNumber,
           identifier,
           studentName: matchedLearner.full_name,
-          field: 'Constituency',
-          value: `#${parsedConstNum} ${parsedConstName}`,
-          message: `Constituency number ${parsedConstNum} is "${matchByNo.name}", but name provided is "${parsedConstName}" (#${matchByName.number}).`
+          field: 'Constituency Number',
+          value: String(parsedConstNum),
+          message: `Constituency number ${parsedConstNum} is invalid (must be between 1 and 234).`
         });
+      } else {
+        const normDb = norm(matchByNo.name);
+        const normInput = norm(parsedConstName);
+        const isExactMatch = normDb === normInput || normPhonetic(matchByNo.name) === normPhonetic(parsedConstName);
+
+        if (isExactMatch) {
+          finalConstNum = matchByNo.number;
+          finalConstName = matchByNo.name;
+        } else {
+          // Check if the provided name corresponds to a different constituency number
+          const matchByName = TN_CONSTITUENCIES.find(c => {
+            const n = norm(c.name);
+            return n === normInput || normPhonetic(c.name) === normPhonetic(parsedConstName);
+          });
+
+          if (matchByName) {
+            validationErrors.push({
+              rowNumber,
+              identifier,
+              studentName: matchedLearner.full_name,
+              field: 'Constituency',
+              value: `#${parsedConstNum} ${parsedConstName}`,
+              message: `Constituency mismatch: Number ${parsedConstNum} is "${matchByNo.name}", but sheet provided "${parsedConstName}" (Expected number for "${matchByName.name}" is #${matchByName.number}).`
+            });
+          } else {
+            validationErrors.push({
+              rowNumber,
+              identifier,
+              studentName: matchedLearner.full_name,
+              field: 'Constituency',
+              value: `#${parsedConstNum} ${parsedConstName}`,
+              message: `Constituency mismatch: Number ${parsedConstNum} is "${matchByNo.name}", but sheet provided "${parsedConstName}" (which is not a recognized Tamil Nadu Assembly constituency).`
+            });
+          }
+        }
       }
     } else if (parsedConstNum !== undefined && !parsedConstName) {
       const matchByNo = TN_CONSTITUENCIES.find(c => c.number === parsedConstNum);
       if (matchByNo) {
-        parsedConstName = matchByNo.name;
+        finalConstNum = matchByNo.number;
+        finalConstName = matchByNo.name;
+      } else {
+        validationErrors.push({
+          rowNumber,
+          identifier,
+          studentName: matchedLearner.full_name,
+          field: 'Constituency Number',
+          value: String(parsedConstNum),
+          message: `Constituency number ${parsedConstNum} is invalid (must be between 1 and 234).`
+        });
       }
     } else if (parsedConstNum === undefined && parsedConstName) {
-      const normInput = parsedConstName.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const normInput = norm(parsedConstName);
       const matchByName = TN_CONSTITUENCIES.find(c => {
-        const normDb = c.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-        return normDb === normInput || normDb.includes(normInput) || normInput.includes(normDb);
+        const n = norm(c.name);
+        return n === normInput || normPhonetic(c.name) === normPhonetic(parsedConstName);
       });
       if (matchByName) {
-        parsedConstNum = matchByName.number;
-        parsedConstName = matchByName.name;
+        finalConstNum = matchByName.number;
+        finalConstName = matchByName.name;
+      } else {
+        validationErrors.push({
+          rowNumber,
+          identifier,
+          studentName: matchedLearner.full_name,
+          field: 'Constituency Name',
+          value: parsedConstName,
+          message: `Constituency name "${parsedConstName}" does not match any recognized Tamil Nadu Assembly constituency.`
+        });
       }
     }
 
     // Check constituency changes
-    if (isConstNumColPresent && parsedConstNum !== undefined) {
+    if (isConstNumColPresent && finalConstNum !== undefined) {
       const currentNum = matchedLearner.constituency_number;
-      if (currentNum !== parsedConstNum) {
+      if (currentNum !== finalConstNum) {
         changes.push({
           field: 'constituency_number',
           fieldLabel: 'Constituency Number',
           oldValue: currentNum !== undefined ? String(currentNum) : '(Unassigned)',
-          newValue: String(parsedConstNum)
+          newValue: String(finalConstNum)
         });
-        patch.constituency_number = parsedConstNum;
+        patch.constituency_number = finalConstNum;
       }
     }
 
-    if (isConstNameColPresent && parsedConstName !== undefined) {
+    if (isConstNameColPresent && finalConstName !== undefined) {
       const currentName = matchedLearner.constituency_name || '';
-      if (currentName.trim().toLowerCase() !== parsedConstName.trim().toLowerCase()) {
+      if (currentName.trim().toLowerCase() !== finalConstName.trim().toLowerCase()) {
         changes.push({
           field: 'constituency_name',
           fieldLabel: 'Constituency Name',
           oldValue: currentName || '(Unassigned)',
-          newValue: parsedConstName
+          newValue: finalConstName
         });
-        patch.constituency_name = parsedConstName;
+        patch.constituency_name = finalConstName;
       }
     }
 
