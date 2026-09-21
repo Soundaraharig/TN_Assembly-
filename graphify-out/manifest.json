@@ -666,9 +666,9 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1789968996.4130602,
-    "seen": 1789969075.402078,
-    "ast_hash": "6a393a75dea03f64c10b24a04c6e4803",
+    "mtime": 1789974746.8270843,
+    "seen": 1789974820.4826393,
+    "ast_hash": "dbd24bc6589f4fe8546ce83e6bb00dd0",
     "semantic_hash": ""
   },
   "src/types/index.ts": {
@@ -933,6 +933,12 @@
     "mtime": 1789965707.7375996,
     "seen": 1789967661.9012191,
     "ast_hash": "86463825009c4d6d4c5602b4e725d5ba",
+    "semantic_hash": ""
+  },
+  "scratch/test_jury_error_trace.cjs": {
+    "mtime": 1789974607.6860902,
+    "seen": 1789974820.4757824,
+    "ast_hash": "45e64c0e59f0a3357db66ae0a0bbe1de",
     "semantic_hash": ""
   }
 }

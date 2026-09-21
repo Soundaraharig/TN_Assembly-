@@ -2888,7 +2888,7 @@ class StorageService {
           await sb.from('college_events').select('id, college_name, event_stage, status, chapter, social_coverage').eq('id', eventId).limit(1)
         ),
         this.dedupeInFlight<{ data: any }>(`query_learners_${eventId}`, async () =>
-          await sb.from('learners').select('id, event_id, full_name, constituency_number, roll_no:constituency_number, department, year:academic_year, academic_year, party:party_name, party_name, constituency_name, bench').eq('event_id', eventId)
+          await sb.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('event_id', eventId)
         )
       ]);
 
@@ -2930,13 +2930,25 @@ class StorageService {
 
       if (learnersData) {
         const otherLearners = this.getLearners().filter(l => l.event_id && l.event_id !== eventId);
-        const normalizedJuryLearners = (learnersData as any[]).map(l => ({
-          ...l,
-          constituency_number: l.constituency_number !== undefined && l.constituency_number !== null
+        const existingLearnersMap = new Map<string, Learner>();
+        this.getLearners(eventId).forEach(l => existingLearnersMap.set(l.id, l));
+
+        const normalizedJuryLearners = (learnersData as any[]).map(l => {
+          const existing = existingLearnersMap.get(l.id);
+          const constNum = l.constituency_number !== undefined && l.constituency_number !== null
             ? Number(l.constituency_number)
-            : (l.roll_no !== undefined && l.roll_no !== null && !isNaN(Number(l.roll_no)) ? Number(l.roll_no) : undefined)
-        }));
-        this.setItem(STORAGE_KEYS.LEARNERS, [...otherLearners, ...(normalizedJuryLearners as unknown as Learner[])]);
+            : (l.roll_no !== undefined && l.roll_no !== null && !isNaN(Number(l.roll_no))
+                ? Number(l.roll_no)
+                : existing?.constituency_number);
+
+          return {
+            ...existing,
+            ...l,
+            access_code: l.access_code || existing?.access_code || '',
+            constituency_number: constNum
+          } as Learner;
+        });
+        this.setItem(STORAGE_KEYS.LEARNERS, [...otherLearners, ...normalizedJuryLearners]);
       }
 
       this.setCacheEntry(cacheKey, {
@@ -3984,29 +3996,34 @@ class StorageService {
       return sanitized;
     }
     if (table === 'learners') {
+      const existing = validId ? this.getLearners().find(l => l.id === validId) : undefined;
+      const effectiveAccessCode = (raw.access_code !== undefined && raw.access_code !== null && String(raw.access_code).trim() !== '')
+        ? raw.access_code
+        : (existing?.access_code || null);
+
       const sanitized: Record<string, unknown> = {
-        event_id: sanitizeEventId(raw.event_id),
-        access_code: raw.access_code,
-        full_name: raw.full_name,
-        email: raw.email || null,
-        phone: raw.phone || null,
-        department: raw.department || 'General',
-        academic_year: raw.academic_year || '1st Year',
-        constituency_number: raw.constituency_number || null,
-        constituency_name: raw.constituency_name || null,
-        district: raw.district || null,
-        party_id: raw.party_id && isValidUuid(raw.party_id as string) ? raw.party_id : null,
-        party_name: raw.party_name || null,
-        bench: raw.bench || null,
-        role: raw.role || 'Member of Legislative Assembly (MLA)',
-        committee_id: raw.committee_id && isValidUuid(raw.committee_id as string) ? raw.committee_id : null,
-        committee_name: raw.committee_name || null,
-        school_name: raw.school_name || null,
-        party_group_link: raw.party_group_link || null,
-        committee_group_link: raw.committee_group_link || null,
-        day1_checked_in: !!raw.day1_checked_in,
-        day2_checked_in: !!raw.day2_checked_in,
-        created_at: raw.created_at || new Date().toISOString(),
+        event_id: sanitizeEventId(raw.event_id || existing?.event_id),
+        access_code: effectiveAccessCode,
+        full_name: raw.full_name || existing?.full_name,
+        email: raw.email !== undefined ? (raw.email || null) : (existing?.email || null),
+        phone: raw.phone !== undefined ? (raw.phone || null) : (existing?.phone || null),
+        department: raw.department || existing?.department || 'General',
+        academic_year: raw.academic_year || existing?.academic_year || '1st Year',
+        constituency_number: raw.constituency_number !== undefined ? raw.constituency_number : (existing?.constituency_number || null),
+        constituency_name: raw.constituency_name !== undefined ? raw.constituency_name : (existing?.constituency_name || null),
+        district: raw.district !== undefined ? (raw.district || null) : (existing?.district || null),
+        party_id: raw.party_id && isValidUuid(raw.party_id as string) ? raw.party_id : (existing?.party_id && isValidUuid(existing.party_id) ? existing.party_id : null),
+        party_name: raw.party_name !== undefined ? (raw.party_name || null) : (existing?.party_name || null),
+        bench: raw.bench || existing?.bench || null,
+        role: raw.role || existing?.role || 'Member of Legislative Assembly (MLA)',
+        committee_id: raw.committee_id && isValidUuid(raw.committee_id as string) ? raw.committee_id : (existing?.committee_id && isValidUuid(existing.committee_id) ? existing.committee_id : null),
+        committee_name: raw.committee_name !== undefined ? (raw.committee_name || null) : (existing?.committee_name || null),
+        school_name: raw.school_name !== undefined ? (raw.school_name || null) : (existing?.school_name || null),
+        party_group_link: raw.party_group_link !== undefined ? (raw.party_group_link || null) : (existing?.party_group_link || null),
+        committee_group_link: raw.committee_group_link !== undefined ? (raw.committee_group_link || null) : (existing?.committee_group_link || null),
+        day1_checked_in: raw.day1_checked_in !== undefined ? !!raw.day1_checked_in : !!existing?.day1_checked_in,
+        day2_checked_in: raw.day2_checked_in !== undefined ? !!raw.day2_checked_in : !!existing?.day2_checked_in,
+        created_at: raw.created_at || existing?.created_at || new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
       if (validId) sanitized.id = validId;
@@ -5659,8 +5676,11 @@ class StorageService {
   }
 
   public async updateLearner(learner: Learner): Promise<void> {
+    const existing = this.getLearners().find(l => l.id === learner.id);
     const withUpdated: Learner = {
+      ...existing,
       ...learner,
+      access_code: learner.access_code || existing?.access_code || '',
       updated_at: new Date().toISOString()
     };
     const all = this.getLearners().map(l => (l.id === learner.id ? withUpdated : l));
@@ -5768,6 +5788,11 @@ class StorageService {
     const mainDay1 = days.find(d => d.main_day === 1);
     const mainDay2 = days.find(d => d.main_day === 2);
 
+    // If event days are not loaded or neither main day is configured, do not resync attendance
+    if (!mainDay1 && !mainDay2) {
+      return;
+    }
+
     const allAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
     const eventAtt = allAtt.filter(a => a.event_id === eventId);
 
@@ -5830,7 +5855,13 @@ class StorageService {
       }
       if (supabase) {
         try {
-          await this.sbUpsertBatch('learners', changedLearners as unknown as Record<string, unknown>[]);
+          // Use targeted field updates instead of full-row batch upsert to protect access_code & delegate metadata
+          changedLearners.forEach(cl => {
+            this.sbUpdate('learners', cl.id, {
+              day1_checked_in: cl.day1_checked_in,
+              day2_checked_in: cl.day2_checked_in
+            });
+          });
         } catch (err) {
           console.warn('[StorageService] Error batch syncing learners after main day resync:', err);
         }
@@ -6223,7 +6254,10 @@ class StorageService {
       });
       if (updatedLearner) {
         this.setItem(STORAGE_KEYS.LEARNERS, nextLearners);
-        this.sbUpsert('learners', updatedLearner as unknown as Record<string, unknown>);
+        this.sbUpdate('learners', studentId, {
+          day1_checked_in: (updatedLearner as Learner).day1_checked_in,
+          day2_checked_in: (updatedLearner as Learner).day2_checked_in
+        });
       }
     }
 
@@ -6410,7 +6444,12 @@ class StorageService {
       });
       this.setItem(STORAGE_KEYS.LEARNERS, nextLearners);
       if (changedLearners.length > 0) {
-        this.sbUpsertBatch('learners', changedLearners as unknown as Record<string, unknown>[]);
+        changedLearners.forEach(cl => {
+          this.sbUpdate('learners', cl.id, {
+            day1_checked_in: cl.day1_checked_in,
+            day2_checked_in: cl.day2_checked_in
+          });
+        });
       }
     }
 
