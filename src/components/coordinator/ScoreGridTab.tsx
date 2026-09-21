@@ -592,7 +592,11 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
 
     const sessionObj = availableSessions.find(s => s.id === modalSessionId) || {
       id: modalSessionId,
-      name: modalSessionId === 'zero_hour' ? 'Zero Hour' : modalSessionId === 'question_hour' ? 'Question Hour' : 'Bill Presenting'
+      name: modalSessionId === 'zero_hour' ? 'Zero Hour'
+        : modalSessionId === 'question_hour' ? 'Question Hour'
+        : modalSessionId === 'bill_presenting' ? 'Bill Presenting'
+        : modalSessionId === '90_sec_speech' ? '90 Sec Speech'
+        : modalSessionId
     };
 
     const matchedJury = availableJuries.find(j => j.name === modalJuryName);

@@ -9312,6 +9312,7 @@ class StorageService {
       if (sNameLower.includes('zero')) sessKey = 'zero_hour';
       else if (sNameLower.includes('question')) sessKey = 'question_hour';
       else if (sNameLower.includes('bill')) sessKey = 'bill_presenting';
+      else if (sNameLower.includes('90') || sNameLower.includes('speech')) sessKey = '90_sec_speech';
       else sessKey = score.session_name.trim().toLowerCase().replace(/\s+/g, '_');
     }
     if (!sessKey) sessKey = 'default_session';
@@ -9330,7 +9331,7 @@ class StorageService {
   /**
    * Returns all available scoring sessions for an event.
    * Dynamically inspects session_agenda from Supabase while guaranteeing
-   * the canonical parliamentary sessions (Zero Hour, Question Hour, Bill Presenting)
+   * the canonical parliamentary sessions (Zero Hour, Question Hour, Bill Presenting, 90 Sec Speech)
    * are ALWAYS present.
    */
   public getScoringSessions(eventId: string): ScoringSession[] {
@@ -9341,7 +9342,8 @@ class StorageService {
     const canonicalConfigs: Array<{ pattern: RegExp; id: string; name: string; order: number }> = [
       { pattern: /zero\s*hour/i, id: 'zero_hour', name: 'Zero Hour', order: 1 },
       { pattern: /question\s*hour/i, id: 'question_hour', name: 'Question Hour', order: 2 },
-      { pattern: /bill\s*(present|intro|vot|read)/i, id: 'bill_presenting', name: 'Bill Presenting', order: 3 }
+      { pattern: /bill\s*(present|intro|vot|read)/i, id: 'bill_presenting', name: 'Bill Presenting', order: 3 },
+      { pattern: /90\s*(sec|second)?\s*speech/i, id: '90_sec_speech', name: '90 Sec Speech', order: 4 }
     ];
 
     canonicalConfigs.forEach(canon => {
@@ -9461,6 +9463,7 @@ class StorageService {
       if (sNameLower.includes('zero')) { sessId = 'zero_hour'; sessName = 'Zero Hour'; }
       else if (sNameLower.includes('question')) { sessId = 'question_hour'; sessName = 'Question Hour'; }
       else if (sNameLower.includes('bill')) { sessId = 'bill_presenting'; sessName = 'Bill Presenting'; }
+      else if (sNameLower.includes('90') || sNameLower.includes('speech')) { sessId = '90_sec_speech'; sessName = '90 Sec Speech'; }
       else { sessId = score.session_name.trim().toLowerCase().replace(/\s+/g, '_'); }
     }
     if (!sessId) sessId = 'default_session';
