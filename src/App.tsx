@@ -828,7 +828,6 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
             props.setScores(storageService.getScores(activeEvent.id));
           }}
           onResetScores={() => {
-            storageService.resetScores(activeEvent.id);
             props.setScores(storageService.getScores(activeEvent.id));
           }}
           onShowToast={props.addToast}

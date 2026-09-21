@@ -9471,6 +9471,7 @@ class StorageService {
       originality_preparation: originality,
       time_management: timeMgmt,
       total: finalTotal,
+      is_test: Boolean(score.is_test),
       created_at: score.created_at || now,
       updated_at: now
     };
@@ -9690,6 +9691,83 @@ class StorageService {
     } else {
       this.setItem(STORAGE_KEYS.SCORES, []);
     }
+  }
+
+  /**
+   * Evaluates whether a score record is a test entry based on explicit test flags and markers.
+   * NEVER marks production delegate scores as test entries.
+   */
+  public isTestScore(score: Partial<ScoreRecord>): boolean {
+    if (score.is_test === true) return true;
+    if (typeof score.id === 'string' && (score.id.toLowerCase().startsWith('test_') || score.id.toLowerCase().includes('_test_'))) return true;
+    if (typeof score.session_id === 'string' && score.session_id.toLowerCase().startsWith('test')) return true;
+    if (typeof score.session_name === 'string' && score.session_name.toLowerCase().startsWith('test')) return true;
+    if (typeof score.juror_name === 'string' && score.juror_name.toLowerCase().startsWith('test')) return true;
+    if (typeof score.jury_id === 'string' && score.jury_id.toLowerCase().startsWith('test')) return true;
+    if (typeof score.feedback === 'string' && (score.feedback.toLowerCase().startsWith('[test]') || score.feedback.toLowerCase().includes('test score'))) return true;
+    if (typeof score.learner_name === 'string' && (score.learner_name.toLowerCase().startsWith('test delegate') || score.learner_name.toLowerCase().startsWith('test participant'))) return true;
+    return false;
+  }
+
+  /**
+   * Safely deletes ONLY verified test score entries for an event.
+   * Strictly asserts that real participant scores are preserved and never deleted.
+   */
+  public async deleteTestScores(eventId: string): Promise<{ deletedCount: number; remainingRealCount: number }> {
+    if (!eventId) return { deletedCount: 0, remainingRealCount: 0 };
+
+    const all = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, INITIAL_SCORES);
+    const eventScores = all.filter(s => s.event_id === eventId);
+    
+    const testScores = eventScores.filter(s => this.isTestScore(s));
+    const realScores = eventScores.filter(s => !this.isTestScore(s));
+
+    if (testScores.length === 0) {
+      return { deletedCount: 0, remainingRealCount: realScores.length };
+    }
+
+    // Retain all scores for other events + real scores for this event
+    const otherEventScores = all.filter(s => s.event_id !== eventId);
+    const newAllScores = [...otherEventScores, ...realScores];
+    this.setItem(STORAGE_KEYS.SCORES, newAllScores);
+
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem(`tn_assembly_scores_${eventId}`, JSON.stringify(realScores));
+      } catch {}
+    }
+
+    if (supabase) {
+      try {
+        const { data: evData } = await supabase
+          .from('college_events')
+          .select('social_coverage')
+          .eq('id', eventId)
+          .single();
+
+        const remoteSC = (evData?.social_coverage || {}) as Record<string, any>;
+        const remoteScores = Array.isArray(remoteSC.scores) ? (remoteSC.scores as ScoreRecord[]) : [];
+        const remoteRealScores = remoteScores.filter(s => !this.isTestScore(s));
+
+        await supabase
+          .from('college_events')
+          .update({
+            social_coverage: {
+              ...remoteSC,
+              scores: remoteRealScores,
+              updated_at: new Date().toISOString()
+            }
+          })
+          .eq('id', eventId);
+
+        this.invalidateCache(eventId);
+      } catch (err) {
+        console.warn('[StorageService] Error removing test scores from Supabase:', err);
+      }
+    }
+
+    this.notify();
+    return { deletedCount: testScores.length, remainingRealCount: realScores.length };
   }
 
   // ── PROJECTOR DISPLAY STUDIO ──────────────────────────────────────────────

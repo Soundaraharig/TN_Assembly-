@@ -73,6 +73,8 @@ export interface Learner {
   committee_group_link?: string;
   day1_checked_in: boolean;
   day2_checked_in: boolean;
+  is_active?: boolean;
+  status?: 'Active' | 'Inactive' | string;
   created_at: string;
   updated_at?: string;
 }
@@ -387,6 +389,7 @@ export interface ScoreRecord {
   feedback?: string;
   juror_name?: string;
   is_locked?: boolean;
+  is_test?: boolean;
   created_at?: string;
   updated_at: string;
 }
