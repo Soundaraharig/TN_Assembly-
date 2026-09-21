@@ -27,11 +27,51 @@ CREATE INDEX IF NOT EXISTS idx_alloc_conf_event_id ON public.learner_allocation_
 CREATE INDEX IF NOT EXISTS idx_alloc_conf_learner_id ON public.learner_allocation_confirmations(learner_id);
 CREATE INDEX IF NOT EXISTS idx_alloc_conf_checked_at ON public.learner_allocation_confirmations(checked_at DESC);
 
--- 3. Row Level Security
+-- 3. Row Level Security & Access Policies
 ALTER TABLE public.learner_allocation_confirmations ENABLE ROW LEVEL SECURITY;
 
+-- Clean up any existing policies
 DROP POLICY IF EXISTS "Allow operational access on learner_allocation_confirmations" ON public.learner_allocation_confirmations;
-CREATE POLICY "Allow operational access on learner_allocation_confirmations" 
+DROP POLICY IF EXISTS "Allow select learner_allocation_confirmations" ON public.learner_allocation_confirmations;
+DROP POLICY IF EXISTS "Allow insert learner_allocation_confirmations" ON public.learner_allocation_confirmations;
+DROP POLICY IF EXISTS "Allow update learner_allocation_confirmations" ON public.learner_allocation_confirmations;
+
+-- SELECT policy: Permit reading confirmations for delegates and staff
+CREATE POLICY "Allow select learner_allocation_confirmations" 
     ON public.learner_allocation_confirmations 
-    FOR ALL TO anon, authenticated 
-    USING (true) WITH CHECK (true);
+    FOR SELECT TO anon, authenticated 
+    USING (true);
+
+-- INSERT policy: Restrict inserts to valid learner records for the designated event
+CREATE POLICY "Allow insert learner_allocation_confirmations" 
+    ON public.learner_allocation_confirmations 
+    FOR INSERT TO anon, authenticated 
+    WITH CHECK (
+        EXISTS (
+            SELECT 1 FROM public.learners l
+            WHERE l.id = learner_id AND l.event_id = event_id
+        )
+    );
+
+-- UPDATE policy: Restrict updates to valid learner records for the designated event
+CREATE POLICY "Allow update learner_allocation_confirmations" 
+    ON public.learner_allocation_confirmations 
+    FOR UPDATE TO anon, authenticated 
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.learners l
+            WHERE l.id = learner_id AND l.event_id = event_id
+        )
+    )
+    WITH CHECK (
+        EXISTS (
+            SELECT 1 FROM public.learners l
+            WHERE l.id = learner_id AND l.event_id = event_id
+        )
+    );
+
+-- 4. Operational Grants for PostgREST Exposure
+GRANT ALL ON public.learner_allocation_confirmations TO anon, authenticated, postgres, service_role;
+
+-- 5. Force PostgREST schema cache reload
+NOTIFY pgrst, 'reload schema';
