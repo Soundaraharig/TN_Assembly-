@@ -1,16 +1,16 @@
 # Graph Report - TN_Assembly-  (2026-09-21)
 
 ## Corpus Check
-- 90 files · ~206,030 words
+- 90 files · ~206,726 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 812 nodes · 3116 edges · 33 communities (21 shown, 8 thin omitted)
+- 812 nodes · 3115 edges · 33 communities (21 shown, 8 thin omitted)
 - Extraction: 100% EXTRACTED · 0% INFERRED · 0% AMBIGUOUS
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `f0ed254d`
+- Built from commit: `760ba255`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 

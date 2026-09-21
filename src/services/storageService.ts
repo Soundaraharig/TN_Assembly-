@@ -5092,7 +5092,6 @@ class StorageService {
           const otherEvents = all.filter(c => c.event_id !== eventId);
           const merged = [...otherEvents, ...records];
           this.setItem(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, merged);
-          this.notify();
           return records;
         }
       } catch (err) {
