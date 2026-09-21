@@ -12019,4 +12019,56 @@ export function isAssemblyRoleMatching(currentRole: string | undefined, targetRo
   return normalizeMinister(currentRole) === normalizeMinister(targetRole);
 }
 
+export function normalizeMinistryKey(name?: string): string {
+  if (!name) return '';
+  return name
+    .toLowerCase()
+    .replace(/^shadow\s+/i, '')
+    .replace(/^(minister\s+(for|of)|union\s+minister\s+(for|of))\s+/i, '')
+    .replace(/\s+minister$/i, '')
+    .replace(/^ministry\s+(of|for)\s+/i, '')
+    .replace(/\band\b/g, '&')
+    .replace(/infrastracture/g, 'infrastructure')
+    .replace(/ai\s*&\s*it/g, 'it&ai')
+    .replace(/[^a-z0-9&]/g, '')
+    .trim();
+}
+
+export function getMinisterAssignedMinistry(role?: string): { ministryShort: string; isShadow: boolean; isChiefMinister: boolean } | null {
+  if (!role) return null;
+  const r = role.trim();
+  const rLower = r.toLowerCase();
+  if (isChiefMinisterRole(r) || rLower.includes('chief minister') || rLower === 'cm') {
+    return { ministryShort: 'All', isShadow: false, isChiefMinister: true };
+  }
+  const isMinister = rLower.includes('minister');
+  if (!isMinister) return null;
+  const isShadow = rLower.includes('shadow');
+  const cleaned = r
+    .replace(/^shadow\s+/i, '')
+    .replace(/^(minister\s+(for|of)|union\s+minister\s+(for|of))\s+/i, '')
+    .replace(/\s+minister$/i, '')
+    .trim();
+  return { ministryShort: cleaned, isShadow, isChiefMinister: false };
+}
+
+export function isQuestionForMinister(
+  q: { ministry?: string; target_ministry_name?: string; target_ministry_id?: string },
+  ministerRole?: string
+): boolean {
+  if (!ministerRole) return false;
+  const ministerInfo = getMinisterAssignedMinistry(ministerRole);
+  if (!ministerInfo) return false;
+  if (ministerInfo.isChiefMinister) return true;
+  const ministerKey = normalizeMinistryKey(ministerInfo.ministryShort);
+  const qKey1 = normalizeMinistryKey(q.ministry);
+  const qKey2 = normalizeMinistryKey(q.target_ministry_name);
+  const qKey3 = normalizeMinistryKey(q.target_ministry_id);
+  return (
+    (Boolean(qKey1) && ministerKey === qKey1) ||
+    (Boolean(qKey2) && ministerKey === qKey2) ||
+    (Boolean(qKey3) && ministerKey === qKey3)
+  );
+}
+
 

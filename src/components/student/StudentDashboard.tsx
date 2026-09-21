@@ -14,7 +14,11 @@ import type {
   ProceedingsQuestion,
   BillProceeding
 } from '../../types';
-import { storageService } from '../../services/storageService';
+import {
+  storageService,
+  isQuestionForMinister,
+  getMinisterAssignedMinistry
+} from '../../services/storageService';
 import { getEventSlug } from '../../utils/slug';
 import {
   Landmark,
@@ -39,7 +43,9 @@ import {
   Calendar,
   ChevronDown,
   ChevronUp,
-  FileText
+  FileText,
+  Eye,
+  X
 } from 'lucide-react';
 import { StudentAllocationCard } from './StudentAllocationCard';
 
@@ -92,8 +98,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [deadline, setDeadline] = useState<EventDeadline>(() => {
     return storageService.getEventDeadline(eventSlug) || storageService.getEventDeadline(resolvedEventId);
   });
+  const ministerInfo = useMemo(() => getMinisterAssignedMinistry(student.role), [student.role]);
+  const isMinister = Boolean(ministerInfo);
   const [studentQuestions, setStudentQuestions] = useState<ProceedingsQuestion[]>([]);
   const [approvedHouseQuestions, setApprovedHouseQuestions] = useState<ProceedingsQuestion[]>([]);
+  const [ministerQuestions, setMinisterQuestions] = useState<ProceedingsQuestion[]>([]);
   const [eventMinistries, setEventMinistries] = useState<string[]>(() => {
     const fromId = storageService.getCabinetMinistries(resolvedEventId);
     if (fromId.length > 0) return fromId;
@@ -112,7 +121,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [questionType, setQuestionType] = useState<ProceedingsQuestion['question_type']>('Standard');
   const [questionText, setQuestionText] = useState<string>('');
   const [isSubmittingQuestion, setIsSubmittingQuestion] = useState<boolean>(false);
-  const [questionViewMode, setQuestionViewMode] = useState<'my_questions' | 'approved_house'>('my_questions');
+  const [questionViewMode, setQuestionViewMode] = useState<'portfolio' | 'my_questions' | 'approved_house'>(() => {
+    const min = getMinisterAssignedMinistry(student.role);
+    return min ? 'portfolio' : 'my_questions';
+  });
+  const [viewingQuestion, setViewingQuestion] = useState<ProceedingsQuestion | null>(null);
 
   // Synced Floor & Election Data
   const [syncedElections, setSyncedElections] = useState<Election[]>(elections);
@@ -146,7 +159,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         const allQ = [...storageService.getProceedingsQuestions(eventSlug), ...storageService.getProceedingsQuestions(activeId)];
         const uniqueQ = Array.from(new Map(allQ.map(q => [q.id, q])).values());
         setStudentQuestions(uniqueQ.filter(q => q.student_id === student.id || q.student_name === student.full_name));
-        setApprovedHouseQuestions(uniqueQ.filter(q => q.status === 'Approved' || q.status === 'Starred'));
+        const approvedAndStarred = uniqueQ.filter(q => q.status === 'Approved' || q.status === 'Starred');
+        setApprovedHouseQuestions(approvedAndStarred);
+        if (ministerInfo) {
+          setMinisterQuestions(approvedAndStarred.filter(q => isQuestionForMinister(q, student.role)));
+        } else {
+          setMinisterQuestions([]);
+        }
 
         // Refresh configured ministries from Cabinet & Shadow Ministry system
         const fromId = storageService.getCabinetMinistries(activeId);
@@ -204,7 +223,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       unsub();
       window.removeEventListener('storage', handleStorageEvent);
     };
-  }, [eventSlug, targetEventId, event?.id, student.id, student.full_name]);
+  }, [eventSlug, targetEventId, event?.id, student.id, student.full_name, student.role, ministerInfo]);
 
   // Derived live voting lists
   const liveElections = useMemo(() => syncedElections.filter(e => e.status === 'Live' || e.status === 'live'), [syncedElections]);
@@ -1518,11 +1537,25 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
             {/* Questions Tracker & Approved Questions View */}
             <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-3">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                {isMinister && (
+                  <button
+                    type="button"
+                    onClick={() => setQuestionViewMode('portfolio')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                      questionViewMode === 'portfolio'
+                        ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                        : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 border border-amber-500/30'
+                    }`}
+                  >
+                    <Landmark className="w-3.5 h-3.5" />
+                    <span>Questions for Your Ministry ({ministerQuestions.length})</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setQuestionViewMode('my_questions')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                     questionViewMode === 'my_questions'
                       ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30'
                       : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
@@ -1533,7 +1566,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <button
                   type="button"
                   onClick={() => setQuestionViewMode('approved_house')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                     questionViewMode === 'approved_house'
                       ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
                       : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
@@ -1543,7 +1576,96 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 </button>
               </div>
 
-              {questionViewMode === 'my_questions' ? (
+              {questionViewMode === 'portfolio' ? (
+                <div className="space-y-3">
+                  <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400">
+                        <Landmark className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+                          {student.role} Portfolio Question Box
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-slate-950 font-mono">
+                            {ministerQuestions.length} Approved
+                          </span>
+                        </h4>
+                        <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                          Approved parliamentary questions tabled for your ministerial oral / written answer during Question Hour
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {ministerQuestions.length === 0 ? (
+                    <div className="p-6 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-center space-y-2">
+                      <HelpCircle className="w-8 h-8 text-slate-400 mx-auto" />
+                      <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                        No questions currently approved for {ministerInfo?.ministryShort || 'your ministry'}
+                      </p>
+                      <p className="text-[11px] text-slate-500 max-w-md mx-auto">
+                        Questions submitted by delegates and approved by the Speaker for your portfolio will appear here immediately.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {ministerQuestions.map((q, idx) => (
+                        <div
+                          key={q.id}
+                          className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-3 shadow-xs"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800/80 pb-2.5">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                                #{q.queue_order || idx + 1}
+                              </span>
+                              <span className="font-bold text-xs text-slate-900 dark:text-white">
+                                {q.student_name}
+                              </span>
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                q.bench === 'Ruling' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'
+                              }`}>
+                                {q.bench} Bench
+                              </span>
+                              <span className="text-[11px] font-mono text-slate-500">
+                                {q.constituency}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                                {q.question_type}
+                              </span>
+                              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/10 text-emerald-600 border border-emerald-500/30">
+                                {q.status}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setViewingQuestion(q)}
+                                title="Expand / View Full Question"
+                                className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-blue-500/10 hover:bg-blue-500 hover:text-white text-blue-600 transition-colors flex items-center gap-1 cursor-pointer"
+                              >
+                                <Eye className="w-3 h-3" /> Full View
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/80 text-xs font-sans whitespace-pre-wrap break-words leading-relaxed text-slate-800 dark:text-slate-200 select-text">
+                            {q.question_text}
+                          </div>
+
+                          <div className="flex items-center justify-between text-[11px] text-slate-400 pt-0.5">
+                            <span>Target Ministry: <strong className="text-amber-600 dark:text-amber-400 font-bold">{q.ministry}</strong></span>
+                            {q.created_at && (
+                              <span className="font-mono">{new Date(q.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : questionViewMode === 'my_questions' ? (
                 studentQuestions.length === 0 ? (
                   <p className="text-xs text-slate-500 italic py-2">You haven't submitted any questions for Question Hour yet.</p>
                 ) : (
@@ -1551,7 +1673,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     {studentQuestions.map(q => (
                       <div
                         key={q.id}
-                        className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs space-y-1"
+                        className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs space-y-2"
                       >
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-amber-600 dark:text-amber-400">{q.ministry} • {q.question_type}</span>
@@ -1572,9 +1694,17 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                             }`}>
                               {q.status === 'Submitted' ? 'Pending Approval' : q.status}
                             </span>
+                            <button
+                              type="button"
+                              onClick={() => setViewingQuestion(q)}
+                              title="Expand / View Full Question"
+                              className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         </div>
-                        <p className="text-slate-800 dark:text-slate-200">{q.question_text}</p>
+                        <p className="text-slate-800 dark:text-slate-200 whitespace-pre-wrap">{q.question_text}</p>
                       </div>
                     ))}
                   </div>
@@ -1583,17 +1713,27 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 approvedHouseQuestions.length === 0 ? (
                   <p className="text-xs text-slate-500 italic py-2">No approved questions for Question Hour yet.</p>
                 ) : (
-                  <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                  <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
                     {approvedHouseQuestions.map(q => (
                       <div
                         key={q.id}
-                        className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs space-y-1"
+                        className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs space-y-2"
                       >
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-emerald-600 dark:text-emerald-400">{q.ministry} • {q.question_type}</span>
-                          <span className="text-[10px] text-slate-500">By: {q.student_name} ({q.constituency})</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-slate-500">By: {q.student_name} ({q.constituency})</span>
+                            <button
+                              type="button"
+                              onClick={() => setViewingQuestion(q)}
+                              title="Expand / View Full Question"
+                              className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
-                        <p className="text-slate-800 dark:text-slate-200">{q.question_text}</p>
+                        <p className="text-slate-800 dark:text-slate-200 whitespace-pre-wrap">{q.question_text}</p>
                       </div>
                     ))}
                   </div>
@@ -1809,6 +1949,83 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             )}
           </div>
 
+        </div>
+      )}
+
+      {/* Complete Question Modal */}
+      {viewingQuestion && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-fade-in"
+          onClick={() => setViewingQuestion(null)}
+        >
+          <div
+            className="w-full max-w-xl rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden p-6 space-y-4 animate-scale-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <HelpCircle className="w-5 h-5 text-amber-500" />
+                <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
+                  Parliamentary Question
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingQuestion(null)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Delegate</span>
+                <p className="font-bold text-slate-900 dark:text-white">{viewingQuestion.student_name}</p>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Bench</span>
+                <span className={viewingQuestion.bench === 'Ruling' ? 'text-emerald-600 font-bold' : 'text-rose-600 font-bold'}>
+                  {viewingQuestion.bench}
+                </span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Constituency</span>
+                <p className="font-mono text-slate-800 dark:text-slate-200">{viewingQuestion.constituency}</p>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Target Ministry</span>
+                <p className="font-bold text-amber-600 dark:text-amber-400">{viewingQuestion.ministry}</p>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Type</span>
+                <p className="font-semibold text-slate-700 dark:text-slate-300">{viewingQuestion.question_type}</p>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Status</span>
+                <p className="font-bold text-emerald-600">{viewingQuestion.status}</p>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                Full Question Text
+              </span>
+              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-sm font-sans whitespace-pre-wrap break-words leading-relaxed text-slate-900 dark:text-slate-100 select-text max-h-[45vh] overflow-y-auto">
+                {viewingQuestion.question_text}
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setViewingQuestion(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

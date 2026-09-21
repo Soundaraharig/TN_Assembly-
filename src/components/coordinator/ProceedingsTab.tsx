@@ -19,7 +19,8 @@ import {
   Building2,
   RefreshCw,
   Lock,
-  Unlock
+  Unlock,
+  Eye
 } from 'lucide-react';
 
 interface ProceedingsTabProps {
@@ -51,6 +52,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   const [questions, setQuestions] = useState<ProceedingsQuestion[]>(() => storageService.getProceedingsQuestions(targetSlug));
   const [motions, setMotions] = useState<ProceedingsMotion[]>(() => storageService.getProceedingsMotions(targetSlug));
   const [isTogglingDeadline, setIsTogglingDeadline] = useState(false);
+  const [selectedQuestion, setSelectedQuestion] = useState<ProceedingsQuestion | null>(null);
 
   // Filters
   const [statusFilter, setStatusFilter] = useState<'All' | 'Submitted' | 'Approved' | 'Starred' | 'Rejected'>('All');
@@ -145,6 +147,18 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
     const nextStatus = currentStatus === actionStatus ? 'Submitted' : actionStatus;
 
     storageService.updateProceedingsQuestionStatus(id, nextStatus, 'Speaker / Admin', eventId || targetSlug);
+
+    // Keep modal state in sync if open
+    setSelectedQuestion(prev => {
+      if (!prev || prev.id !== id) return prev;
+      return {
+        ...prev,
+        status: nextStatus,
+        approved_by: nextStatus === 'Approved' ? 'Speaker / Admin' : prev.approved_by,
+        approved_at: nextStatus === 'Approved' ? new Date().toISOString() : prev.approved_at
+      };
+    });
+
     refreshData();
     onShowToast(
       'Status Updated',
@@ -158,6 +172,9 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   const handleDeleteQuestion = (id: string) => {
     // Immediate optimistic UI update
     setQuestions(prev => prev.filter(q => q.id !== id));
+    if (selectedQuestion?.id === id) {
+      setSelectedQuestion(null);
+    }
     storageService.deleteProceedingsQuestion(id, eventId || targetSlug);
     refreshData();
     onShowToast('Question Deleted', 'Removed question from floor queue', 'info');
@@ -185,29 +202,58 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
     onShowToast('Motion Tabled', 'Submitted new legislative motion', 'success');
   };
 
-  // Export & Action Bar Helpers
+  // Export & Action Bar Helpers — Full un-truncated database field with BOM
   const handleExportCSV = () => {
-    const headers = ['#', 'Student Name', 'Bench', 'Constituency', 'Ministry', 'Question Type', 'Status', 'Question Text', 'Created At'];
-    const rows = questions.map((q, idx) => [
-      idx + 1,
-      `"${q.student_name}"`,
-      `"${q.bench}"`,
-      `"${q.constituency || ''}"`,
-      `"${q.ministry}"`,
-      `"${q.question_type}"`,
-      `"${q.status}"`,
-      `"${q.question_text.replace(/"/g, '""')}"`,
-      `"${q.created_at}"`
-    ]);
+    const headers = [
+      '#',
+      'Student Name',
+      'Party',
+      'Committee',
+      'Bench',
+      'Constituency',
+      'Constituency Number',
+      'Target Ministry',
+      'Question Type',
+      'Status',
+      'Queue',
+      'Question Text',
+      'Submitted At',
+      'Approved At',
+      'Approved By'
+    ];
+    const rows = questions.map((q, idx) => {
+      const submitter = learners.find(
+        l => l.id === q.student_id || l.full_name?.toLowerCase() === q.student_name?.toLowerCase()
+      );
+      return [
+        idx + 1,
+        `"${(q.student_name || '').replace(/"/g, '""')}"`,
+        `"${(submitter?.party_name || '').replace(/"/g, '""')}"`,
+        `"${(submitter?.committee_name || '').replace(/"/g, '""')}"`,
+        `"${(q.bench || '').replace(/"/g, '""')}"`,
+        `"${(submitter?.constituency_name || q.constituency || '').replace(/"/g, '""')}"`,
+        `"${submitter?.constituency_number !== undefined ? submitter.constituency_number : ''}"`,
+        `"${(q.ministry || '').replace(/"/g, '""')}"`,
+        `"${(q.question_type || '').replace(/"/g, '""')}"`,
+        `"${(q.status || '').replace(/"/g, '""')}"`,
+        `"${q.queue_order || idx + 1}"`,
+        `"${(q.question_text || '').replace(/"/g, '""')}"`,
+        `"${q.created_at || ''}"`,
+        `"${q.approved_at || ''}"`,
+        `"${(q.approved_by || '').replace(/"/g, '""')}"`
+      ];
+    });
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(e => e.join(','))].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
+    link.setAttribute('href', url);
     link.setAttribute('download', `proceedings_questions_${targetSlug}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
     onShowToast('CSV Exported', `Exported ${questions.length} questions to CSV`, 'success');
   };
 
@@ -618,8 +664,19 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                         </td>
                         <td className="p-3.5 text-slate-600 dark:text-slate-400 font-mono">{q.constituency || 'Assembly Delegate'}</td>
                         <td className="p-3.5 text-amber-600 dark:text-amber-400 font-bold">{q.ministry}</td>
-                        <td className="p-3.5 max-w-xs truncate text-slate-800 dark:text-slate-200" title={q.question_text}>
-                          {q.question_text}
+                        <td
+                          className="p-3.5 max-w-xs cursor-pointer group hover:bg-amber-500/5 transition-colors"
+                          onClick={() => setSelectedQuestion(q)}
+                          title="Click to view full question details"
+                        >
+                          <div className="flex items-center justify-between gap-1.5">
+                            <span className="truncate text-slate-800 dark:text-slate-200 group-hover:text-amber-600 dark:group-hover:text-amber-400 font-medium">
+                              {q.question_text}
+                            </span>
+                            <span className="p-1 rounded bg-slate-200/50 dark:bg-slate-800/50 text-slate-400 group-hover:text-amber-500 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 text-[10px] font-bold">
+                              <Eye className="w-3 h-3" /> View
+                            </span>
+                          </div>
                         </td>
                         <td className="p-3.5 font-semibold text-slate-500">{q.question_type}</td>
                         <td className="p-3.5">
@@ -645,6 +702,15 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
 
                             return (
                               <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedQuestion(q)}
+                                  title="View Full Question Details"
+                                  className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500 hover:text-white text-blue-600 dark:text-blue-400 transition-all duration-200 cursor-pointer flex items-center justify-center"
+                                >
+                                  <Eye className="w-3.5 h-3.5 stroke-2" />
+                                </button>
+
                                 <button
                                   type="button"
                                   onClick={() => handleUpdateQuestionStatus(q.id, 'Approved')}
@@ -704,6 +770,234 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
             </div>
           </div>
 
+          {/* Question Details Modal */}
+          {selectedQuestion && (() => {
+            const submitter = learners.find(
+              l => l.id === selectedQuestion.student_id || l.full_name?.toLowerCase() === selectedQuestion.student_name?.toLowerCase()
+            );
+            const currentCanonical = normalizeStatus(selectedQuestion.status);
+            const isApproved = currentCanonical === 'Approved';
+            const isStarred = currentCanonical === 'Starred';
+            const isRejected = currentCanonical === 'Rejected';
+
+            return (
+              <div
+                className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-fade-in"
+                onClick={() => setSelectedQuestion(null)}
+              >
+                <div
+                  className="w-full max-w-2xl rounded-3xl border shadow-2xl overflow-hidden animate-scale-in"
+                  style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {/* Modal Header */}
+                  <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-800">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                        <HelpCircle className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
+                            Question Details
+                          </h3>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                            Queue #{selectedQuestion.queue_order || '—'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          Parliamentary Question Hour Submission
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setSelectedQuestion(null)}
+                      className="p-2 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  {/* Modal Body */}
+                  <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
+                    {/* Metadata Grid */}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
+                          Student Member
+                        </span>
+                        <p className="font-bold text-slate-900 dark:text-white">
+                          {selectedQuestion.student_name}
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
+                          Bench Position
+                        </span>
+                        <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${
+                          selectedQuestion.bench === 'Ruling'
+                            ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/30'
+                            : 'bg-rose-500/10 text-rose-600 border border-rose-500/30'
+                        }`}>
+                          {selectedQuestion.bench}
+                        </span>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
+                          Constituency
+                        </span>
+                        <p className="font-bold text-slate-800 dark:text-slate-200 font-mono">
+                          {submitter?.constituency_number !== undefined ? `#${submitter.constituency_number} ` : ''}
+                          {submitter?.constituency_name || selectedQuestion.constituency || 'Assembly Delegate'}
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
+                          Party
+                        </span>
+                        <p className="font-semibold text-slate-800 dark:text-slate-200">
+                          {submitter?.party_name || 'Assembly Delegate'}
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
+                          Committee
+                        </span>
+                        <p className="font-semibold text-slate-800 dark:text-slate-200 truncate">
+                          {submitter?.committee_name || 'Standing Committee'}
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
+                          Target Ministry
+                        </span>
+                        <p className="font-bold text-amber-600 dark:text-amber-400">
+                          {selectedQuestion.ministry}
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
+                          Question Type
+                        </span>
+                        <p className="font-semibold text-slate-700 dark:text-slate-300">
+                          {selectedQuestion.question_type}
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
+                          Status
+                        </span>
+                        <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold border ${
+                          isApproved
+                            ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
+                            : isStarred
+                            ? 'bg-amber-500/10 text-amber-500 border-amber-500/30'
+                            : isRejected
+                            ? 'bg-rose-500/10 text-rose-600 border-rose-500/30'
+                            : 'bg-amber-500/10 text-amber-600 border-amber-500/30'
+                        }`}>
+                          {selectedQuestion.status === 'Submitted' ? 'Pending Approval' : selectedQuestion.status}
+                        </span>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
+                          Submitted At
+                        </span>
+                        <p className="font-mono text-slate-600 dark:text-slate-400 text-[11px]">
+                          {selectedQuestion.created_at ? new Date(selectedQuestion.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : '—'}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Full Question Text */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                          Full Question
+                        </span>
+                        <span className="text-[11px] text-slate-400 font-medium">
+                          {selectedQuestion.question_text.length} characters
+                        </span>
+                      </div>
+                      <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 font-sans text-sm leading-relaxed text-slate-900 dark:text-slate-100 whitespace-pre-wrap break-words select-text">
+                        {selectedQuestion.question_text}
+                      </div>
+                    </div>
+
+                    {/* Approval Details if Approved */}
+                    {selectedQuestion.approved_at && (
+                      <div className="p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/20 text-xs text-emerald-700 dark:text-emerald-300 flex items-center justify-between">
+                        <span>Approved by <strong>{selectedQuestion.approved_by || 'Speaker / Admin'}</strong></span>
+                        <span className="font-mono text-[11px]">{new Date(selectedQuestion.approved_at).toLocaleString()}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Modal Footer Actions */}
+                  <div className="flex items-center justify-between p-5 border-t border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/50">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedQuestion(null)}
+                      className="px-4 py-2 rounded-xl text-xs font-bold border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-colors cursor-pointer"
+                    >
+                      Close
+                    </button>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateQuestionStatus(selectedQuestion.id, 'Approved')}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                          isApproved
+                            ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 ring-2 ring-emerald-400'
+                            : 'bg-emerald-500/10 hover:bg-emerald-500 hover:text-white text-emerald-600'
+                        }`}
+                      >
+                        <Check className="w-4 h-4 stroke-2" />
+                        <span>{isApproved ? 'Approved ✓' : 'Approve'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateQuestionStatus(selectedQuestion.id, 'Starred')}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                          isStarred
+                            ? 'bg-amber-500 text-white shadow-md shadow-amber-500/30 ring-2 ring-amber-400'
+                            : 'bg-amber-500/10 hover:bg-amber-500 hover:text-white text-amber-600'
+                        }`}
+                      >
+                        <Star className="w-4 h-4 stroke-2" />
+                        <span>{isStarred ? 'Starred ★' : 'Star'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateQuestionStatus(selectedQuestion.id, 'Rejected')}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                          isRejected
+                            ? 'bg-rose-600 text-white shadow-md shadow-rose-600/30 ring-2 ring-rose-400'
+                            : 'bg-rose-500/10 hover:bg-rose-500 hover:text-white text-rose-600'
+                        }`}
+                      >
+                        <X className="w-4 h-4 stroke-2" />
+                        <span>{isRejected ? 'Rejected ✗' : 'Reject'}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
