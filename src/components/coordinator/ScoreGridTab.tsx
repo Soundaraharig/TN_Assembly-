@@ -76,28 +76,6 @@ export const getCategoryScoreFromRecord = (rec: ScoreRecord, catId: string): num
   }
 };
 
-export interface SummaryScoreRow {
-  key: string;
-  learnerId: string;
-  studentName: string;
-  constituencyNumber?: number;
-  constituencyName?: string;
-  partyName: string;
-  bench: string;
-  accessCode?: string;
-  isParticipantActive: boolean;
-  juryName: string;
-  sessionName: string;
-  categoryId: string;
-  categoryName: string;
-  score: number;
-  maxScore: number;
-  totalScore: number;
-  percentage: number;
-  updatedAt: string;
-  remarks?: string;
-}
-
 interface ItemizedScoreRow {
   key: string;
   recordId: string;
@@ -131,8 +109,8 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   onResetScores,
   onShowToast
 }) => {
-  // Navigation & View Mode: Default to 'summary' for a clean, understandable presentation
-  const [viewMode, setViewMode] = useState<'summary' | 'itemized' | 'matrix'>('summary');
+  // Navigation & View Mode: ONLY TWO view modes: 'matrix' (default) and 'itemized'
+  const [viewMode, setViewMode] = useState<'matrix' | 'itemized'>('matrix');
   const [isGradeModalOpen, setIsGradeModalOpen] = useState(false);
   const [isResetTestModalOpen, setIsResetTestModalOpen] = useState(false);
   const [isDeletingTestScores, setIsDeletingTestScores] = useState(false);
@@ -173,178 +151,78 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   }, [eventScores]);
 
   // ──────────────────────────────────────────────────────────────────────────
-  // VIEW 1 DATA: Summary / Category-Focused Result Rows (1 Row Per Participant)
+  // VIEW 1 DATA: Delegate Matrix Table (Primary Admin Result View)
   // ──────────────────────────────────────────────────────────────────────────
-  const summaryRows = useMemo<SummaryScoreRow[]>(() => {
-    const byLearner = new Map<string, ScoreRecord[]>();
+  const filteredScoreRecords = useMemo(() => {
+    return eventScores
+      .filter(s => {
+        // Participant status filter
+        if (selectedParticipantStatus !== 'ALL') {
+          const learner = learnerMap.get(s.learner_id);
+          const active = isParticipantActive(learner);
+          if (selectedParticipantStatus === 'ACTIVE' && !active) return false;
+          if (selectedParticipantStatus === 'INACTIVE' && active) return false;
+        }
 
-    eventScores.forEach(s => {
-      // 1. Session filter (strictly scoped)
-      if (selectedSessionFilter !== 'ALL') {
-        if (s.session_id !== selectedSessionFilter && s.session_name !== selectedSessionFilter) return;
-      }
+        // Session filter
+        if (selectedSessionFilter !== 'ALL') {
+          if (s.session_id !== selectedSessionFilter && s.session_name !== selectedSessionFilter) return false;
+        }
 
-      // 2. Jury filter (strictly scoped)
-      if (selectedJuryFilter !== 'ALL') {
-        if (s.jury_id !== selectedJuryFilter && s.juror_name !== selectedJuryFilter) return;
-      }
+        // Jury filter
+        if (selectedJuryFilter !== 'ALL') {
+          if (s.jury_id !== selectedJuryFilter && s.juror_name !== selectedJuryFilter) return false;
+        }
 
-      // 3. Participant Status filter (actual status)
-      const learner = learnerMap.get(s.learner_id);
-      const active = isParticipantActive(learner);
-      if (selectedParticipantStatus === 'ACTIVE' && !active) return;
-      if (selectedParticipantStatus === 'INACTIVE' && active) return;
+        // Bench filter
+        if (selectedBenchFilter !== 'ALL') {
+          if (s.bench !== selectedBenchFilter) return false;
+        }
 
-      // 4. Bench filter
-      const bench = s.bench || learner?.bench || 'Ruling';
-      if (selectedBenchFilter !== 'ALL' && bench !== selectedBenchFilter) return;
-
-      const list = byLearner.get(s.learner_id) || [];
-      list.push(s);
-      byLearner.set(s.learner_id, list);
-    });
-
-    const rows: SummaryScoreRow[] = [];
-
-    byLearner.forEach((records, learnerId) => {
-      if (records.length === 0) return;
-      const learner = learnerMap.get(learnerId);
-      const studentName = records[0].learner_name || learner?.full_name || 'Delegate';
-      const constNum = records[0].constituency_number ?? learner?.constituency_number;
-      const constName = records[0].constituency_name || learner?.constituency_name || learner?.role || 'Assembly Seat';
-      const party = records[0].party_name || learner?.party_name || 'Independent';
-      const bench = records[0].bench || learner?.bench || 'Ruling';
-      const accessCode = learner?.access_code || '';
-      const active = isParticipantActive(learner);
-
-      if (selectedCategoryFilter === 'ALL') {
-        // SUMMARY VIEW (All Categories):
-        // Display one consolidated row with total score
-        const bestRecord = records.reduce(
-          (prev, curr) => (Number(curr.total ?? 0) >= Number(prev.total ?? 0) ? curr : prev),
-          records[0]
-        );
-        const totalScore = Number(bestRecord.total ?? 0);
-        const maxScore = 100;
-        const percentage = Math.round((totalScore / maxScore) * 100 * 10) / 10;
-        const distinctJuries = Array.from(new Set(records.map(r => r.juror_name || r.jury_id || 'Jury')));
-        const distinctSessions = Array.from(new Set(records.map(r => r.session_name || r.session_id || 'Session')));
-
-        rows.push({
-          key: `summary_${learnerId}`,
-          learnerId,
-          studentName,
-          constituencyNumber: constNum,
-          constituencyName: constName,
-          partyName: party,
-          bench,
-          accessCode,
-          isParticipantActive: active,
-          juryName:
-            distinctJuries.length > 1
-              ? `${distinctJuries.length} Juries (${distinctJuries.join(', ')})`
-              : bestRecord.juror_name || bestRecord.jury_id || 'Jury',
-          sessionName:
-            distinctSessions.length > 1
-              ? `${distinctSessions.length} Sessions (${distinctSessions.join(', ')})`
-              : bestRecord.session_name || 'Session',
-          categoryId: 'total',
-          categoryName: 'Total Score',
-          score: totalScore,
-          maxScore,
-          totalScore,
-          percentage,
-          updatedAt: bestRecord.updated_at || bestRecord.created_at || new Date().toISOString(),
-          remarks: bestRecord.feedback || ''
-        });
-      } else {
-        // CATEGORY FILTER VIEW:
-        // Display ONLY the selected category with HIGHEST VALID RECORDED SCORE within filter context
-        const catDef = SCORING_CATEGORIES.find(c => c.id === selectedCategoryFilter) || {
-          id: selectedCategoryFilter,
-          name: selectedCategoryFilter,
-          max: 100
-        };
-        let highestCatScore = -1;
-        let bestRecord = records[0];
-
-        records.forEach(r => {
-          const scoreVal = getCategoryScoreFromRecord(r, selectedCategoryFilter);
-          if (scoreVal > highestCatScore) {
-            highestCatScore = scoreVal;
-            bestRecord = r;
+        // Search
+        if (searchQuery.trim()) {
+          const q = searchQuery.toLowerCase().trim();
+          const learner = learnerMap.get(s.learner_id);
+          const sName = (s.learner_name || learner?.full_name || '').toLowerCase();
+          const jName = (s.juror_name || s.jury_id || '').toLowerCase();
+          const sess = (s.session_name || '').toLowerCase();
+          const constNum = (s.constituency_number ?? learner?.constituency_number ?? '').toString();
+          const constName = (s.constituency_name || learner?.constituency_name || '').toLowerCase();
+          if (
+            !sName.includes(q) &&
+            !jName.includes(q) &&
+            !sess.includes(q) &&
+            !constNum.includes(q) &&
+            !constName.includes(q)
+          ) {
+            return false;
           }
-        });
-
-        if (highestCatScore < 0) highestCatScore = 0;
-        const maxScore = catDef.max;
-        const percentage = maxScore > 0 ? Math.round((highestCatScore / maxScore) * 100 * 10) / 10 : 0;
-
-        rows.push({
-          key: `cat_${selectedCategoryFilter}_${learnerId}`,
-          learnerId,
-          studentName,
-          constituencyNumber: constNum,
-          constituencyName: constName,
-          partyName: party,
-          bench,
-          accessCode,
-          isParticipantActive: active,
-          juryName: bestRecord.juror_name || bestRecord.jury_id || 'Jury',
-          sessionName: bestRecord.session_name || 'Session',
-          categoryId: catDef.id,
-          categoryName: catDef.name,
-          score: highestCatScore,
-          maxScore,
-          totalScore: Number(bestRecord.total ?? 0),
-          percentage,
-          updatedAt: bestRecord.updated_at || bestRecord.created_at || new Date().toISOString(),
-          remarks: bestRecord.feedback || ''
-        });
-      }
-    });
-
-    // Search query filtering
-    let filtered = rows;
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim();
-      filtered = rows.filter(r => {
-        const matchesName = r.studentName.toLowerCase().includes(q);
-        const matchesAccess = r.accessCode?.toLowerCase().includes(q) ?? false;
-        const matchesConstNum = r.constituencyNumber?.toString().includes(q) ?? false;
-        const matchesConstName = r.constituencyName?.toLowerCase().includes(q) ?? false;
-        const matchesJury = r.juryName.toLowerCase().includes(q);
-        const matchesSession = r.sessionName.toLowerCase().includes(q);
-        const matchesCategory = r.categoryName.toLowerCase().includes(q);
-        const matchesParty = r.partyName.toLowerCase().includes(q);
-        return (
-          matchesName ||
-          matchesAccess ||
-          matchesConstNum ||
-          matchesConstName ||
-          matchesJury ||
-          matchesSession ||
-          matchesCategory ||
-          matchesParty
-        );
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        if (sortOption === 'score_desc') {
+          if (selectedCategoryFilter !== 'ALL') {
+            return getCategoryScoreFromRecord(b, selectedCategoryFilter) - getCategoryScoreFromRecord(a, selectedCategoryFilter);
+          }
+          return (b.total ?? 0) - (a.total ?? 0);
+        }
+        if (sortOption === 'score_asc') {
+          if (selectedCategoryFilter !== 'ALL') {
+            return getCategoryScoreFromRecord(a, selectedCategoryFilter) - getCategoryScoreFromRecord(b, selectedCategoryFilter);
+          }
+          return (a.total ?? 0) - (b.total ?? 0);
+        }
+        if (sortOption === 'updated_desc') return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+        return (a.learner_name || '').localeCompare(b.learner_name || '');
       });
-    }
-
-    // Sort order: In Category view, sorts by highest category score; in Summary view, sorts by total score
-    return filtered.sort((a, b) => {
-      if (sortOption === 'score_desc') return b.score - a.score;
-      if (sortOption === 'score_asc') return a.score - b.score;
-      if (sortOption === 'updated_desc') return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-      if (sortOption === 'name_asc') return a.studentName.localeCompare(b.studentName);
-      return 0;
-    });
   }, [
     eventScores,
+    selectedParticipantStatus,
     selectedSessionFilter,
     selectedJuryFilter,
     selectedCategoryFilter,
     selectedBenchFilter,
-    selectedParticipantStatus,
     searchQuery,
     sortOption,
     learnerMap
@@ -522,73 +400,6 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
     sortOption
   ]);
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // VIEW 3 DATA: Delegate Matrix Table (All 6 categories in columns)
-  // ──────────────────────────────────────────────────────────────────────────
-  const filteredScoreRecords = useMemo(() => {
-    return eventScores
-      .filter(s => {
-        // Participant status filter
-        if (selectedParticipantStatus !== 'ALL') {
-          const learner = learnerMap.get(s.learner_id);
-          const active = isParticipantActive(learner);
-          if (selectedParticipantStatus === 'ACTIVE' && !active) return false;
-          if (selectedParticipantStatus === 'INACTIVE' && active) return false;
-        }
-
-        // Session filter
-        if (selectedSessionFilter !== 'ALL') {
-          if (s.session_id !== selectedSessionFilter && s.session_name !== selectedSessionFilter) return false;
-        }
-
-        // Jury filter
-        if (selectedJuryFilter !== 'ALL') {
-          if (s.jury_id !== selectedJuryFilter && s.juror_name !== selectedJuryFilter) return false;
-        }
-
-        // Bench filter
-        if (selectedBenchFilter !== 'ALL') {
-          if (s.bench !== selectedBenchFilter) return false;
-        }
-
-        // Search
-        if (searchQuery.trim()) {
-          const q = searchQuery.toLowerCase().trim();
-          const learner = learnerMap.get(s.learner_id);
-          const sName = (s.learner_name || learner?.full_name || '').toLowerCase();
-          const jName = (s.juror_name || s.jury_id || '').toLowerCase();
-          const sess = (s.session_name || '').toLowerCase();
-          const constNum = (s.constituency_number ?? learner?.constituency_number ?? '').toString();
-          const constName = (s.constituency_name || learner?.constituency_name || '').toLowerCase();
-          if (
-            !sName.includes(q) &&
-            !jName.includes(q) &&
-            !sess.includes(q) &&
-            !constNum.includes(q) &&
-            !constName.includes(q)
-          ) {
-            return false;
-          }
-        }
-        return true;
-      })
-      .sort((a, b) => {
-        if (sortOption === 'score_desc') return (b.total ?? 0) - (a.total ?? 0);
-        if (sortOption === 'score_asc') return (a.total ?? 0) - (b.total ?? 0);
-        if (sortOption === 'updated_desc') return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-        return (a.learner_name || '').localeCompare(b.learner_name || '');
-      });
-  }, [
-    eventScores,
-    selectedParticipantStatus,
-    selectedSessionFilter,
-    selectedJuryFilter,
-    selectedBenchFilter,
-    searchQuery,
-    sortOption,
-    learnerMap
-  ]);
-
   // Stats Summary
   const stats = useMemo(() => {
     const totalRecords = eventScores.length;
@@ -602,58 +413,66 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   // CSV Export
   // ──────────────────────────────────────────────────────────────────────────
   const handleExportCSV = () => {
-    if (viewMode === 'summary') {
-      if (summaryRows.length === 0) {
-        onShowToast('No Records', 'No summary score records match the selected filters to export.', 'info');
+    if (viewMode === 'matrix') {
+      if (filteredScoreRecords.length === 0) {
+        onShowToast('No Records', 'No score records match the selected filters to export.', 'info');
         return;
       }
 
-      const isCategory = selectedCategoryFilter !== 'ALL';
       const headers = [
-        'Student Name',
+        'Delegate',
         'Constituency #',
         'Constituency Name',
         'Party',
         'Bench',
         'Participant Status',
-        'Jury',
         'Session',
-        isCategory ? 'Category' : 'View',
-        isCategory ? 'Highest Score' : 'Total Score',
-        'Max Score',
-        'Percentage (%)',
-        'Updated At',
-        'Juror Remarks'
+        'Juror',
+        'Research (30)',
+        'Agenda (20)',
+        'Delivery (20)',
+        'Conduct (12)',
+        'Originality (12)',
+        'Time (6)',
+        'Total (/100)',
+        'Remarks',
+        'Updated At'
       ];
 
-      const rows = summaryRows.map(r => [
-        `"${r.studentName.replace(/"/g, '""')}"`,
-        r.constituencyNumber ?? '',
-        `"${(r.constituencyName || '').replace(/"/g, '""')}"`,
-        `"${(r.partyName || '').replace(/"/g, '""')}"`,
-        r.bench,
-        r.isParticipantActive ? 'Active' : 'Inactive',
-        `"${r.juryName.replace(/"/g, '""')}"`,
-        `"${r.sessionName.replace(/"/g, '""')}"`,
-        `"${r.categoryName.replace(/"/g, '""')}"`,
-        r.score,
-        r.maxScore,
-        `${r.percentage}%`,
-        r.updatedAt,
-        `"${(r.remarks || '').replace(/"/g, '""')}"`
-      ]);
+      const rows = filteredScoreRecords.map(sc => {
+        const learner = learnerMap.get(sc.learner_id);
+        return [
+          `"${(sc.learner_name || learner?.full_name || 'Delegate').replace(/"/g, '""')}"`,
+          sc.constituency_number ?? learner?.constituency_number ?? '',
+          `"${(sc.constituency_name || learner?.constituency_name || '').replace(/"/g, '""')}"`,
+          `"${(sc.party_name || learner?.party_name || '').replace(/"/g, '""')}"`,
+          sc.bench || learner?.bench || '',
+          learner && isParticipantActive(learner) ? 'Active' : 'Inactive',
+          `"${(sc.session_name || 'Session').replace(/"/g, '""')}"`,
+          `"${(sc.juror_name || 'Juror').replace(/"/g, '""')}"`,
+          sc.research_constituency ?? sc.policy_knowledge ?? 0,
+          sc.relevance_agenda ?? sc.rebuttal_debate ?? 0,
+          sc.communication_delivery ?? sc.oratory ?? 0,
+          sc.parliamentary_conduct ?? 0,
+          sc.originality_preparation ?? 0,
+          sc.time_management ?? 0,
+          sc.total,
+          `"${(sc.feedback || '').replace(/"/g, '""')}"`,
+          sc.updated_at
+        ];
+      });
 
       const csvContent = [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.setAttribute('href', url);
-      link.setAttribute('download', `Score_Summary_${new Date().toISOString().slice(0, 10)}.csv`);
+      link.setAttribute('download', `Delegate_Matrix_${new Date().toISOString().slice(0, 10)}.csv`);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
 
-      onShowToast('Export Complete', `Exported ${summaryRows.length} summary score records to CSV.`, 'success');
+      onShowToast('Export Complete', `Exported ${filteredScoreRecords.length} delegate matrix records to CSV.`, 'success');
       return;
     }
 
@@ -935,20 +754,20 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
               Filters & Search Controls
             </h4>
             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500">
-              {viewMode === 'summary' ? `${summaryRows.length} delegates` : `${filteredItemizedRows.length} matching rows`}
+              {viewMode === 'matrix' ? `${filteredScoreRecords.length} evaluations` : `${filteredItemizedRows.length} matching rows`}
             </span>
           </div>
 
-          {/* View Mode Toggle: Summary View vs Detailed Itemized View vs Matrix */}
+          {/* View Mode Toggle: ONLY TWO modes: Delegate Matrix (default) & Itemized Log */}
           <div className="flex items-center gap-1 p-1 rounded-xl border bg-slate-100 dark:bg-slate-800/80" style={{ borderColor: 'var(--border)' }}>
             <button
               type="button"
-              onClick={() => setViewMode('summary')}
+              onClick={() => setViewMode('matrix')}
               className={`px-3 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 cursor-pointer ${
-                viewMode === 'summary' ? 'bg-white dark:bg-slate-900 shadow-xs text-amber-600 dark:text-amber-400' : 'text-slate-500 hover:text-slate-700'
+                viewMode === 'matrix' ? 'bg-white dark:bg-slate-900 shadow-xs text-amber-600 dark:text-amber-400' : 'text-slate-500 hover:text-slate-700'
               }`}
             >
-              <Grid className="w-3.5 h-3.5" /> Summary View
+              <Layers className="w-3.5 h-3.5" /> Delegate Matrix
             </button>
             <button
               type="button"
@@ -958,15 +777,6 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
               }`}
             >
               <TableIcon className="w-3.5 h-3.5" /> Itemized Log
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('matrix')}
-              className={`px-3 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 cursor-pointer ${
-                viewMode === 'matrix' ? 'bg-white dark:bg-slate-900 shadow-xs text-amber-600 dark:text-amber-400' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              <Layers className="w-3.5 h-3.5" /> Delegate Matrix
             </button>
           </div>
         </div>
@@ -1116,41 +926,26 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
         </div>
       </div>
 
-      {/* VIEW 1: Clean Summary / Category-Focused Result View (DEFAULT) */}
-      {viewMode === 'summary' && (
+      {/* VIEW 1: Delegate Matrix Table (Primary Admin Result View - DEFAULT) */}
+      {viewMode === 'matrix' && (
         <div
           className="rounded-2xl border shadow-sm overflow-hidden"
           style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
         >
-          <div
-            className="p-4 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-2"
-            style={{ borderColor: 'var(--border-soft)' }}
-          >
+          <div className="p-4 border-b flex items-center justify-between" style={{ borderColor: 'var(--border-soft)' }}>
             <div className="flex items-center gap-2">
               <h4 className="text-xs font-black uppercase tracking-wider" style={{ color: 'var(--text-primary)' }}>
-                {selectedCategoryFilter === 'ALL'
-                  ? `Participant Score Summary (${summaryRows.length} Delegates)`
-                  : `${SCORING_CATEGORIES.find(c => c.id === selectedCategoryFilter)?.name || selectedCategoryFilter} Results (${summaryRows.length} Delegates)`}
+                Delegate Score Matrix ({filteredScoreRecords.length} Evaluations)
               </h4>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-                1 Row Per Participant
-              </span>
+              {selectedCategoryFilter !== 'ALL' && (
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                  Focus: {SCORING_CATEGORIES.find(c => c.id === selectedCategoryFilter)?.name || selectedCategoryFilter}
+                </span>
+              )}
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-slate-400 font-mono">
-                {selectedCategoryFilter === 'ALL'
-                  ? 'Showing Total Scores (/100)'
-                  : `Showing Highest Valid Score (/ ${SCORING_CATEGORIES.find(c => c.id === selectedCategoryFilter)?.max || 100})`}
-              </span>
-              <button
-                type="button"
-                onClick={() => setViewMode('itemized')}
-                className="text-[11px] font-bold text-amber-600 dark:text-amber-400 hover:underline cursor-pointer flex items-center gap-1 ml-2"
-                title="View individual rubric item records for audit"
-              >
-                <span>View Itemized Breakdown →</span>
-              </button>
-            </div>
+            <span className="text-[10px] text-slate-400 font-mono">
+              All 6 rubric breakdown columns per session & juror
+            </span>
           </div>
 
           <div className="overflow-x-auto">
@@ -1160,92 +955,80 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
                 style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}
               >
                 <tr>
-                  <th className="p-3.5 pl-4">#</th>
-                  <th className="p-3.5">Student / Delegate</th>
+                  <th className="p-3.5 pl-4">Delegate</th>
                   <th className="p-3.5">Constituency</th>
-                  <th className="p-3.5">Party & Bench</th>
-                  <th className="p-3.5">Jury</th>
                   <th className="p-3.5">Session</th>
-                  {selectedCategoryFilter !== 'ALL' && (
-                    <th className="p-3.5">Category</th>
-                  )}
-                  <th className="p-3.5 text-right font-black">
-                    {selectedCategoryFilter === 'ALL' ? 'Total Score' : 'Highest Score'}
-                  </th>
-                  <th className="p-3.5 text-right font-bold">%</th>
-                  <th className="p-3.5 text-right font-bold">Saved At</th>
+                  <th className="p-3.5">Juror</th>
+                  <th className={`p-3.5 text-center transition-colors ${selectedCategoryFilter === 'research_constituency' ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 font-black' : ''}`}>Research (30)</th>
+                  <th className={`p-3.5 text-center transition-colors ${selectedCategoryFilter === 'relevance_agenda' ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 font-black' : ''}`}>Agenda (20)</th>
+                  <th className={`p-3.5 text-center transition-colors ${selectedCategoryFilter === 'communication_delivery' ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 font-black' : ''}`}>Delivery (20)</th>
+                  <th className={`p-3.5 text-center transition-colors ${selectedCategoryFilter === 'parliamentary_conduct' ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 font-black' : ''}`}>Conduct (12)</th>
+                  <th className={`p-3.5 text-center transition-colors ${selectedCategoryFilter === 'originality_preparation' ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 font-black' : ''}`}>Orig. (12)</th>
+                  <th className={`p-3.5 text-center transition-colors ${selectedCategoryFilter === 'time_management' ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 font-black' : ''}`}>Time (6)</th>
+                  <th className={`p-3.5 text-right font-black transition-colors ${selectedCategoryFilter === 'total' ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400' : ''}`}>Total (/100)</th>
+                  <th className="p-3.5">Remarks</th>
                 </tr>
               </thead>
               <tbody className="divide-y" style={{ borderColor: 'var(--border-soft)' }}>
-                {summaryRows.length === 0 ? (
+                {filteredScoreRecords.length === 0 ? (
                   <tr>
-                    <td colSpan={selectedCategoryFilter !== 'ALL' ? 10 : 9} className="py-12 text-center text-xs text-slate-400">
-                      No participant scores match the active status, session, jury, or search filters.
+                    <td colSpan={12} className="py-12 text-center text-xs text-slate-400">
+                      No score records match your active status, session, jury, or search filters.
                     </td>
                   </tr>
                 ) : (
-                  summaryRows.map((row, idx) => (
-                    <tr key={row.key} className="hover:bg-slate-500/5 transition-colors">
-                      <td className="p-3.5 pl-4 font-mono text-[11px] text-slate-400">#{idx + 1}</td>
-                      <td className="p-3.5 font-bold" style={{ color: 'var(--text-primary)' }}>
-                        <div className="flex items-center gap-1.5">
-                          <span>{row.studentName}</span>
-                          {row.accessCode && (
-                            <span className="font-mono text-[9px] px-1 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 border border-slate-200 dark:border-slate-700">
-                              {row.accessCode}
-                            </span>
-                          )}
-                          {!row.isParticipantActive && (
-                            <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-rose-500/10 text-rose-500 border border-rose-500/20">
-                              Inactive
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="p-3.5">
-                        <span className="font-mono font-bold text-[11px] text-blue-600 dark:text-blue-400">
-                          {row.constituencyNumber !== undefined ? `#${row.constituencyNumber} ` : ''}
-                        </span>
-                        <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
-                          {row.constituencyName || 'MLA'}
-                        </span>
-                      </td>
-                      <td className="p-3.5" style={{ color: 'var(--text-secondary)' }}>
-                        {row.partyName} •{' '}
-                        <span className={row.bench === 'Ruling' ? 'text-emerald-500 font-bold' : 'text-rose-500 font-bold'}>
-                          {row.bench}
-                        </span>
-                      </td>
-                      <td className="p-3.5">
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-                          {row.juryName}
-                        </span>
-                      </td>
-                      <td className="p-3.5">
-                        <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
-                          {row.sessionName}
-                        </span>
-                      </td>
-                      {selectedCategoryFilter !== 'ALL' && (
+                  filteredScoreRecords.map(sc => {
+                    const learner = learnerMap.get(sc.learner_id);
+                    return (
+                      <tr key={sc.id} className="hover:bg-slate-500/5 transition-colors">
+                        <td className="p-3.5 pl-4 font-bold" style={{ color: 'var(--text-primary)' }}>
+                          <div className="flex items-center gap-1.5">
+                            <span>{sc.learner_name || learner?.full_name}</span>
+                            {learner?.access_code && (
+                              <span className="font-mono text-[9px] px-1 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 border border-slate-200 dark:border-slate-700">
+                                {learner.access_code}
+                              </span>
+                            )}
+                            {learner && !isParticipantActive(learner) && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-rose-500/10 text-rose-500 border border-rose-500/20">
+                                Inactive
+                              </span>
+                            )}
+                          </div>
+                        </td>
                         <td className="p-3.5">
-                          <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400">
-                            {row.categoryName}
+                          <span className="font-mono font-bold text-blue-500">
+                            #{sc.constituency_number ?? learner?.constituency_number ?? '?'}
+                          </span>{' '}
+                          <span className="text-[11px] text-slate-400 truncate">
+                            {sc.constituency_name || learner?.constituency_name || ''}
                           </span>
                         </td>
-                      )}
-                      <td className="p-3.5 text-right font-black font-mono">
-                        <span className="text-sm text-amber-500">{row.score}</span>
-                        <span className="text-[10px] text-slate-400 font-normal"> / {row.maxScore}</span>
-                      </td>
-                      <td className="p-3.5 text-right font-mono text-[11px] font-bold text-slate-600 dark:text-slate-300">
-                        {row.percentage}%
-                      </td>
-                      <td className="p-3.5 text-right font-mono text-[10px] text-slate-400 whitespace-nowrap">
-                        {new Date(row.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} •{' '}
-                        {new Date(row.updatedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}
-                      </td>
-                    </tr>
-                  ))
+                        <td className="p-3.5">
+                          <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
+                            {sc.session_name || 'Session'}
+                          </span>
+                        </td>
+                        <td className="p-3.5">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                            {sc.juror_name || 'Juror'}
+                          </span>
+                        </td>
+                        <td className={`p-3.5 text-center font-mono ${selectedCategoryFilter === 'research_constituency' ? 'font-black text-amber-600 dark:text-amber-400 bg-amber-500/5' : ''}`}>{sc.research_constituency ?? sc.policy_knowledge ?? 0}</td>
+                        <td className={`p-3.5 text-center font-mono ${selectedCategoryFilter === 'relevance_agenda' ? 'font-black text-amber-600 dark:text-amber-400 bg-amber-500/5' : ''}`}>{sc.relevance_agenda ?? sc.rebuttal_debate ?? 0}</td>
+                        <td className={`p-3.5 text-center font-mono ${selectedCategoryFilter === 'communication_delivery' ? 'font-black text-amber-600 dark:text-amber-400 bg-amber-500/5' : ''}`}>{sc.communication_delivery ?? sc.oratory ?? 0}</td>
+                        <td className={`p-3.5 text-center font-mono ${selectedCategoryFilter === 'parliamentary_conduct' ? 'font-black text-amber-600 dark:text-amber-400 bg-amber-500/5' : ''}`}>{sc.parliamentary_conduct ?? 0}</td>
+                        <td className={`p-3.5 text-center font-mono ${selectedCategoryFilter === 'originality_preparation' ? 'font-black text-amber-600 dark:text-amber-400 bg-amber-500/5' : ''}`}>{sc.originality_preparation ?? 0}</td>
+                        <td className={`p-3.5 text-center font-mono ${selectedCategoryFilter === 'time_management' ? 'font-black text-amber-600 dark:text-amber-400 bg-amber-500/5' : ''}`}>{sc.time_management ?? 0}</td>
+                        <td className={`p-3.5 text-right font-black font-mono text-amber-500 text-sm ${selectedCategoryFilter === 'total' ? 'bg-amber-500/5' : ''}`}>
+                          {sc.total}
+                        </td>
+                        <td className="p-3.5 text-slate-400 italic text-[11px] max-w-xs truncate">
+                          {sc.feedback || '—'}
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -1253,7 +1036,7 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
         </div>
       )}
 
-      {/* VIEW 2: Itemized Score Log Table (Audit & Verification) */}
+      {/* VIEW 2: Itemized Score Log Table (Detailed Audit View) */}
       {viewMode === 'itemized' && (
         <div
           className="rounded-2xl border shadow-sm overflow-hidden"
@@ -1351,97 +1134,6 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
                       </td>
                     </tr>
                   ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* VIEW 3: Delegate Matrix Table (All categories in columns) */}
-      {viewMode === 'matrix' && (
-        <div
-          className="rounded-2xl border shadow-sm overflow-hidden"
-          style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
-        >
-          <div className="p-4 border-b flex items-center justify-between" style={{ borderColor: 'var(--border-soft)' }}>
-            <h4 className="text-xs font-black uppercase tracking-wider" style={{ color: 'var(--text-primary)' }}>
-              Delegate Score Matrix ({filteredScoreRecords.length} Evaluations)
-            </h4>
-            <span className="text-[10px] text-slate-400 font-mono">
-              Shows all 6 rubric breakdown columns per session & juror
-            </span>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead
-                className="border-b text-[10px] uppercase font-bold tracking-wider"
-                style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}
-              >
-                <tr>
-                  <th className="p-3.5 pl-4">Delegate</th>
-                  <th className="p-3.5">Constituency</th>
-                  <th className="p-3.5">Session</th>
-                  <th className="p-3.5">Juror</th>
-                  <th className="p-3.5 text-center">Research (30)</th>
-                  <th className="p-3.5 text-center">Agenda (20)</th>
-                  <th className="p-3.5 text-center">Delivery (20)</th>
-                  <th className="p-3.5 text-center">Conduct (12)</th>
-                  <th className="p-3.5 text-center">Orig. (12)</th>
-                  <th className="p-3.5 text-center">Time (6)</th>
-                  <th className="p-3.5 text-right font-black">Total (/100)</th>
-                  <th className="p-3.5">Remarks</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y" style={{ borderColor: 'var(--border-soft)' }}>
-                {filteredScoreRecords.length === 0 ? (
-                  <tr>
-                    <td colSpan={12} className="py-12 text-center text-xs text-slate-400">
-                      No score records found.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredScoreRecords.map(sc => {
-                    const learner = learnerMap.get(sc.learner_id);
-                    return (
-                      <tr key={sc.id} className="hover:bg-slate-500/5 transition-colors">
-                        <td className="p-3.5 pl-4 font-bold" style={{ color: 'var(--text-primary)' }}>
-                          {sc.learner_name || learner?.full_name}
-                        </td>
-                        <td className="p-3.5">
-                          <span className="font-mono font-bold text-blue-500">
-                            #{sc.constituency_number ?? learner?.constituency_number ?? '?'}
-                          </span>{' '}
-                          <span className="text-[11px] text-slate-400 truncate">
-                            {sc.constituency_name || learner?.constituency_name || ''}
-                          </span>
-                        </td>
-                        <td className="p-3.5">
-                          <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
-                            {sc.session_name || 'Session'}
-                          </span>
-                        </td>
-                        <td className="p-3.5">
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-                            {sc.juror_name || 'Juror'}
-                          </span>
-                        </td>
-                        <td className="p-3.5 text-center font-mono">{sc.research_constituency ?? sc.policy_knowledge ?? 0}</td>
-                        <td className="p-3.5 text-center font-mono">{sc.relevance_agenda ?? sc.rebuttal_debate ?? 0}</td>
-                        <td className="p-3.5 text-center font-mono">{sc.communication_delivery ?? sc.oratory ?? 0}</td>
-                        <td className="p-3.5 text-center font-mono">{sc.parliamentary_conduct ?? 0}</td>
-                        <td className="p-3.5 text-center font-mono">{sc.originality_preparation ?? 0}</td>
-                        <td className="p-3.5 text-center font-mono">{sc.time_management ?? 0}</td>
-                        <td className="p-3.5 text-right font-black font-mono text-amber-500 text-sm">
-                          {sc.total}
-                        </td>
-                        <td className="p-3.5 text-slate-400 italic text-[11px] max-w-xs truncate">
-                          {sc.feedback || '—'}
-                        </td>
-                      </tr>
-                    );
-                  })
                 )}
               </tbody>
             </table>
