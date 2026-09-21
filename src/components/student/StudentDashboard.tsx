@@ -41,6 +41,7 @@ import {
   ChevronUp,
   FileText
 } from 'lucide-react';
+import { StudentAllocationCard } from './StudentAllocationCard';
 
 type StudentDashboardTab = 'desk' | 'voting' | 'agenda';
 
@@ -990,6 +991,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       {activeTab === 'desk' && (
         <div className="space-y-6 animate-fadeIn">
           
+          {/* Student Allocation Confirmation Card */}
+          <StudentAllocationCard
+            student={student}
+            event={event}
+            onShowToast={onShowToast}
+          />
+
           {/* Delegate Assembly Pass Card */}
           <div className="relative overflow-hidden rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-amber-500/30 p-6 md:p-8 shadow-xl space-y-6 transition-colors">
             {/* Pass Header Banner */}

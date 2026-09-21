@@ -28,7 +28,8 @@ import {
   Monitor,
   X,
   Copy,
-  Check
+  Check,
+  CheckCircle2
 } from 'lucide-react';
 
 export type ActiveNavTab =
@@ -41,6 +42,7 @@ export type ActiveNavTab =
   | 'committees'
   | 'parties'
   | 'allocation'
+  | 'allocation_check'
   | 'cabinet'
   | 'jury'
   | 'volunteers'
@@ -97,6 +99,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'committees', label: 'Committees', icon: BookOpen },
     { id: 'parties', label: 'Parties', icon: Shield },
     { id: 'allocation', label: 'Allocation', icon: Shuffle },
+    { id: 'allocation_check', label: 'Allocation Check', icon: CheckCircle2 },
     { id: 'cabinet', label: 'Cabinet', icon: Landmark },
     { id: 'jury', label: 'Jury', icon: Scale },
     { id: 'volunteers', label: 'Volunteers', icon: HeartHandshake }

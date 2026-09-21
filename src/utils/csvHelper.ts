@@ -2,7 +2,7 @@ import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import type { Learner, AcademicYear, BenchType, Party, Committee } from '../types';
 import { generateAccessCode } from './accessCodeGenerator';
-import { getResolvedPartyName, getResolvedCommitteeName } from '../services/storageService';
+import { getResolvedPartyName, getResolvedCommitteeName, storageService, getAllocationCheckStatus } from '../services/storageService';
 import { TN_CONSTITUENCIES } from '../data/tnConstituencies';
 
 export interface CSVImportStats {
@@ -613,6 +613,24 @@ export const EXPORT_COLUMNS_REGISTRY: ExportColumnDef[] = [
     label: 'Day 2 Check-in',
     defaultSelected: false,
     getValue: (l) => l.day2_checked_in ? 'Checked In' : 'Not Checked In'
+  },
+  {
+    key: 'allocation_status',
+    label: 'Allocation Status',
+    defaultSelected: true,
+    getValue: (l) => {
+      const conf = storageService.getAllocationConfirmations(l.event_id).find(c => c.learner_id === l.id);
+      return getAllocationCheckStatus(l, conf);
+    }
+  },
+  {
+    key: 'allocation_checked_at',
+    label: 'Allocation Checked At',
+    defaultSelected: true,
+    getValue: (l) => {
+      const conf = storageService.getAllocationConfirmations(l.event_id).find(c => c.learner_id === l.id);
+      return conf?.checked_at || '';
+    }
   }
 ];
 

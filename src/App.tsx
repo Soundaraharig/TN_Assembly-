@@ -40,6 +40,7 @@ import { DaysActivitiesTab } from './components/admin/DaysActivitiesTab';
 
 import { ParticipantsTab } from './components/coordinator/ParticipantsTab';
 import { AllocationTab } from './components/coordinator/AllocationTab';
+import { AllocationCheckTab } from './components/coordinator/AllocationCheckTab';
 import { CabinetTab } from './components/coordinator/CabinetTab';
 import { JuryTab } from './components/coordinator/JuryTab';
 import { VolunteersTab } from './components/coordinator/VolunteersTab';
@@ -634,6 +635,17 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
             props.setParties(storageService.getParties(targetEventId));
             props.setLearners(storageService.getLearners(targetEventId));
           }}
+          onShowToast={props.addToast}
+        />
+      )}
+
+      {activeTabFromPath === 'allocation_check' && (
+        <AllocationCheckTab
+          learners={currentLearners}
+          parties={currentParties}
+          committees={currentCommittees}
+          eventId={activeEvent.id}
+          eventName={activeEvent.college_name}
           onShowToast={props.addToast}
         />
       )}

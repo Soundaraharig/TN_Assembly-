@@ -40,7 +40,9 @@ import type {
   DayAttendanceRecord,
   EventDayStatus,
   DayAttendanceStatus,
-  LoginRecord
+  LoginRecord,
+  LearnerAllocationConfirmation,
+  AllocationCheckStatus
 } from '../types';
 import { getRecordSessionStatuses } from '../types';
 import {
@@ -126,7 +128,8 @@ const STORAGE_KEYS = {
   VOTE_AUDIT_LOG: 'tn_assembly_vote_audit_log_v1',
   LOCK_UPDATED_AT: 'tn_assembly_lock_updated_at_v1',
   LOGIN_RECORDS: 'tn_assembly_login_records_v1',
-  ELECTIONS_BACKUP_SNAPSHOTS: 'tn_assembly_elections_backup_snapshots_v1'
+  ELECTIONS_BACKUP_SNAPSHOTS: 'tn_assembly_elections_backup_snapshots_v1',
+  ALLOCATION_CONFIRMATIONS: 'tn_assembly_allocation_confirmations_v1'
 };
 
 export const SUPABASE_COLUMNS: Record<string, string> = {
@@ -140,7 +143,8 @@ export const SUPABASE_COLUMNS: Record<string, string> = {
   JURY_MEMBERS: 'id,event_id,name,designation,assigned_bench,access_code,email,phone,status,created_at',
   VOLUNTEERS: 'id,event_id,name,email,phone,role,access_code,has_arrived,is_yuva,station,shift,created_at',
   EVENT_DAYS: 'id,event_id,day_number,name,date,status,activities,is_archived,order_index,created_at,updated_at',
-  EVENT_DAY_ATTENDANCE: 'id,event_id,day_id,event_day_id,student_id,participant_id,status,marked_by,marked_by_role,marked_at,created_at,updated_at'
+  EVENT_DAY_ATTENDANCE: 'id,event_id,day_id,event_day_id,student_id,participant_id,status,marked_by,marked_by_role,marked_at,created_at,updated_at',
+  LEARNER_ALLOCATION_CONFIRMATIONS: 'id,event_id,learner_id,allocation_hash,confirmed_party,confirmed_committee,confirmed_constituency_name,confirmed_constituency_number,confirmed_bench,checked_at,created_at,updated_at'
 };
 
 type Listener = () => void;
@@ -202,6 +206,56 @@ function sortLearnersStably(list: Learner[]): Learner[] {
     if (codeA !== codeB) return codeA.localeCompare(codeB);
     return (a.full_name || '').localeCompare(b.full_name || '');
   });
+}
+
+// ---------------------------------------------------------------------------
+// Student Allocation Confirmation & Integrity Engine
+// ---------------------------------------------------------------------------
+
+export function computeAllocationHash(learner: {
+  party_name?: string | null;
+  committee_name?: string | null;
+  constituency_name?: string | null;
+  constituency_number?: number | string | null;
+  bench?: string | null;
+}): string {
+  const p = (learner.party_name || '').trim().toLowerCase();
+  const c = (learner.committee_name || '').trim().toLowerCase();
+  const cn = (learner.constituency_name || '').trim().toLowerCase();
+  const cnum = learner.constituency_number !== undefined && learner.constituency_number !== null
+    ? String(learner.constituency_number).trim()
+    : '';
+  const b = (learner.bench || '').trim().toLowerCase();
+  return `${p}|${c}|${cn}|${cnum}|${b}`;
+}
+
+export function isAllocationComplete(learner?: {
+  party_name?: string | null;
+  committee_name?: string | null;
+  constituency_name?: string | null;
+  constituency_number?: number | string | null;
+  bench?: string | null;
+} | null): boolean {
+  if (!learner) return false;
+  const hasParty = Boolean(learner.party_name && learner.party_name.trim());
+  const hasCommittee = Boolean(learner.committee_name && learner.committee_name.trim());
+  const hasConstituency = Boolean(learner.constituency_name && learner.constituency_name.trim());
+  const hasBench = Boolean(learner.bench && learner.bench.trim());
+  return hasParty && hasCommittee && hasConstituency && hasBench;
+}
+
+export function getAllocationCheckStatus(
+  learner: Learner,
+  confirmation?: LearnerAllocationConfirmation | null
+): AllocationCheckStatus {
+  if (!confirmation || !confirmation.checked_at) {
+    return 'NOT CHECKED';
+  }
+  const currentHash = computeAllocationHash(learner);
+  if (confirmation.allocation_hash === currentHash) {
+    return 'CHECKED';
+  }
+  return 'NEEDS RE-CHECK';
 }
 
 // ---------------------------------------------------------------------------
@@ -2618,6 +2672,7 @@ class StorageService {
         const volPromise = sb.from('volunteers').select(SUPABASE_COLUMNS.VOLUNTEERS).eq('event_id', eventId);
         const attPromise = sb.from('event_day_attendance').select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE).eq('event_id', eventId);
         const eventDaysPromise = sb.from('event_days').select(SUPABASE_COLUMNS.EVENT_DAYS).eq('event_id', eventId);
+        const confPromise = sb.from('learner_allocation_confirmations').select(SUPABASE_COLUMNS.LEARNER_ALLOCATION_CONFIRMATIONS).eq('event_id', eventId);
 
         const [
           { data: eventData, error: evErr },
@@ -2627,7 +2682,8 @@ class StorageService {
           { data: partiesData },
           { data: volData },
           { data: attData },
-          { data: daysData }
+          { data: daysData },
+          { data: confData }
         ] = await Promise.all([
           eventPromise,
           learnersPromise,
@@ -2636,8 +2692,16 @@ class StorageService {
           partiesPromise,
           volPromise,
           attPromise,
-          eventDaysPromise
+          eventDaysPromise,
+          confPromise
         ]);
+
+        if (confData && confData.length > 0) {
+          const confs = confData as unknown as LearnerAllocationConfirmation[];
+          const allConfs = this.getItem<LearnerAllocationConfirmation[]>(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, []);
+          const otherConfs = allConfs.filter(c => c.event_id !== eventId);
+          this.setItem(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, [...otherConfs, ...confs]);
+        }
 
         if (evErr) console.warn('[StorageService] hydrateFullEventData eventErr:', evErr);
         if (learnersErr) console.warn('[StorageService] hydrateFullEventData learnersErr:', learnersErr);
@@ -2828,10 +2892,12 @@ class StorageService {
       // NEVER query volunteers, event_day_attendance, committees, session_agenda, or full learners
       const [
         { data: evData },
-        { data: studentData }
+        { data: studentData },
+        { data: confData }
       ] = await Promise.all([
         sb.from('college_events').select('id, college_name, event_stage, status, chapter, social_coverage').eq('id', eventId).limit(1),
-        studentId ? sb.from('learners').select('id, event_id, full_name, roll_no:constituency_number, department, year:academic_year, academic_year, party:party_name, party_name, party_id, access_code, bench, role, constituency_number, constituency_name, committee_name, committee_id').eq('id', studentId).limit(1) : Promise.resolve({ data: null })
+        studentId ? sb.from('learners').select('id, event_id, full_name, roll_no:constituency_number, department, year:academic_year, academic_year, party:party_name, party_name, party_id, access_code, bench, role, constituency_number, constituency_name, committee_name, committee_id').eq('id', studentId).limit(1) : Promise.resolve({ data: null }),
+        studentId ? sb.from('learner_allocation_confirmations').select(SUPABASE_COLUMNS.LEARNER_ALLOCATION_CONFIRMATIONS).eq('event_id', eventId).eq('learner_id', studentId).limit(1) : Promise.resolve({ data: null })
       ]);
 
       if (evData && evData.length > 0) {
@@ -2846,6 +2912,12 @@ class StorageService {
         const st = studentData[0] as unknown as Learner;
         const curLearners = this.getLearners();
         this.setItem(STORAGE_KEYS.LEARNERS, [...curLearners.filter(l => l.id !== st.id), st]);
+      }
+
+      if (confData && confData.length > 0) {
+        const conf = confData[0] as unknown as LearnerAllocationConfirmation;
+        const curConfs = this.getItem<LearnerAllocationConfirmation[]>(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, []);
+        this.setItem(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, [...curConfs.filter(c => !(c.event_id === eventId && c.learner_id === studentId)), conf]);
       }
 
       this.setCacheEntry(cacheKey, {
@@ -4632,6 +4704,7 @@ class StorageService {
         access_code: student.access_code,
         details: `Delegate App Login (${student.bench || 'Delegate'} Bench • ${student.party_name || 'Independent'})`
       });
+      this.fetchStudentAllocationConfirmation(student.id, student.event_id).catch(() => {});
       console.log(`[Auth Trace] Code: "${accessCode}" -> Matched Learner ID: "${student.id}" -> Event ID: "${student.event_id}" -> Role: "student" (Name: ${student.full_name})`);
 
       return {
@@ -4958,6 +5031,216 @@ class StorageService {
       const records = this.getItem<LoginRecord[]>(STORAGE_KEYS.LOGIN_RECORDS, []);
       this.setItem(STORAGE_KEYS.LOGIN_RECORDS, records.filter(r => r.event_id !== eventId));
     }
+  }
+
+  // ── STUDENT ALLOCATION CONFIRMATION ──────────────────────────────────────
+
+  public getAllocationConfirmations(eventId?: string): LearnerAllocationConfirmation[] {
+    const all = this.getItem<LearnerAllocationConfirmation[]>(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, []);
+    if (!eventId) return all;
+    return all.filter(c => c.event_id === eventId);
+  }
+
+  public async fetchStudentAllocationConfirmation(
+    studentId: string,
+    eventId: string
+  ): Promise<LearnerAllocationConfirmation | null> {
+    if (!studentId || !eventId) return null;
+
+    if (supabase && isSupabaseEnabled) {
+      try {
+        const { data, error } = await supabase
+          .from('learner_allocation_confirmations')
+          .select(SUPABASE_COLUMNS.LEARNER_ALLOCATION_CONFIRMATIONS)
+          .eq('event_id', eventId)
+          .eq('learner_id', studentId)
+          .limit(1)
+          .maybeSingle();
+
+        if (!error && data) {
+          const rec = data as unknown as LearnerAllocationConfirmation;
+          const all = this.getItem<LearnerAllocationConfirmation[]>(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, []);
+          const filtered = all.filter(c => !(c.event_id === eventId && c.learner_id === studentId));
+          filtered.push(rec);
+          this.setItem(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, filtered);
+          return rec;
+        }
+      } catch (err) {
+        console.warn('[fetchStudentAllocationConfirmation] error:', err);
+      }
+    }
+
+    const local = this.getItem<LearnerAllocationConfirmation[]>(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, []);
+    return local.find(c => c.event_id === eventId && c.learner_id === studentId) || null;
+  }
+
+  public async fetchAllAllocationConfirmations(
+    eventId: string
+  ): Promise<LearnerAllocationConfirmation[]> {
+    if (!eventId) return [];
+
+    if (supabase && isSupabaseEnabled) {
+      try {
+        const { data, error } = await supabase
+          .from('learner_allocation_confirmations')
+          .select(SUPABASE_COLUMNS.LEARNER_ALLOCATION_CONFIRMATIONS)
+          .eq('event_id', eventId);
+
+        if (!error && data) {
+          const records = data as unknown as LearnerAllocationConfirmation[];
+          const all = this.getItem<LearnerAllocationConfirmation[]>(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, []);
+          const otherEvents = all.filter(c => c.event_id !== eventId);
+          const merged = [...otherEvents, ...records];
+          this.setItem(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, merged);
+          this.notify();
+          return records;
+        }
+      } catch (err) {
+        console.warn('[fetchAllAllocationConfirmations] error:', err);
+      }
+    }
+
+    const local = this.getItem<LearnerAllocationConfirmation[]>(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, []);
+    return local.filter(c => c.event_id === eventId);
+  }
+
+  public async confirmStudentAllocation(
+    studentId: string,
+    eventId: string,
+    accessCode: string
+  ): Promise<{ success: boolean; error?: string; confirmation?: LearnerAllocationConfirmation }> {
+    if (!studentId || !eventId || !accessCode) {
+      return { success: false, error: 'Missing required student credentials.' };
+    }
+
+    // 1. Authoritative verification of learner identity and allocation
+    let authoritativeLearner: Learner | null = null;
+    if (supabase && isSupabaseEnabled) {
+      try {
+        const { data, error } = await supabase
+          .from('learners')
+          .select('id, event_id, full_name, access_code, party_name, party_id, committee_name, committee_id, constituency_name, constituency_number, bench')
+          .eq('id', studentId)
+          .eq('event_id', eventId)
+          .limit(1)
+          .maybeSingle();
+
+        if (error || !data) {
+          return { success: false, error: 'Student record could not be found in the event database.' };
+        }
+
+        if (data.access_code.trim().toUpperCase() !== accessCode.trim().toUpperCase()) {
+          return { success: false, error: 'Security violation: Access code does not match student identity.' };
+        }
+
+        authoritativeLearner = data as unknown as Learner;
+      } catch (err: any) {
+        console.error('[confirmStudentAllocation] Verification exception:', err);
+        return { success: false, error: 'Failed to verify allocation from database. Please check your connection.' };
+      }
+    } else {
+      const local = this.getLearners(eventId).find(l => l.id === studentId);
+      if (!local || local.access_code.trim().toUpperCase() !== accessCode.trim().toUpperCase()) {
+        return { success: false, error: 'Student record not found or access code mismatch.' };
+      }
+      authoritativeLearner = local;
+    }
+
+    // 2. Validate that allocation is complete
+    if (!isAllocationComplete(authoritativeLearner)) {
+      return {
+        success: false,
+        error: 'Your allocation is incomplete. Please contact the event coordinator.'
+      };
+    }
+
+    // 3. Compute deterministic hash and record snapshot
+    const hash = computeAllocationHash(authoritativeLearner);
+    const now = new Date().toISOString();
+
+    const record: LearnerAllocationConfirmation = {
+      id: genUuid(),
+      event_id: eventId,
+      learner_id: studentId,
+      allocation_hash: hash,
+      confirmed_party: authoritativeLearner.party_name || undefined,
+      confirmed_committee: authoritativeLearner.committee_name || undefined,
+      confirmed_constituency_name: authoritativeLearner.constituency_name || undefined,
+      confirmed_constituency_number: authoritativeLearner.constituency_number !== undefined && authoritativeLearner.constituency_number !== null
+        ? Number(authoritativeLearner.constituency_number)
+        : undefined,
+      confirmed_bench: authoritativeLearner.bench || undefined,
+      checked_at: now,
+      created_at: now,
+      updated_at: now
+    };
+
+    // 4. Save to Supabase
+    if (supabase && isSupabaseEnabled) {
+      try {
+        const { data, error } = await supabase
+          .from('learner_allocation_confirmations')
+          .upsert({
+            event_id: eventId,
+            learner_id: studentId,
+            allocation_hash: hash,
+            confirmed_party: record.confirmed_party || null,
+            confirmed_committee: record.confirmed_committee || null,
+            confirmed_constituency_name: record.confirmed_constituency_name || null,
+            confirmed_constituency_number: record.confirmed_constituency_number ?? null,
+            confirmed_bench: record.confirmed_bench || null,
+            checked_at: now,
+            updated_at: now
+          }, { onConflict: 'event_id,learner_id' })
+          .select()
+          .maybeSingle();
+
+        if (error) {
+          console.error('[confirmStudentAllocation] Supabase upsert error:', error);
+          return {
+            success: false,
+            error: 'Unable to save your confirmation. Please try again.'
+          };
+        }
+
+        if (data) {
+          record.id = data.id;
+          record.checked_at = data.checked_at;
+          record.created_at = data.created_at || now;
+          record.updated_at = data.updated_at || now;
+        }
+      } catch (err: any) {
+        console.error('[confirmStudentAllocation] Supabase exception:', err);
+        return {
+          success: false,
+          error: 'Unable to save your confirmation. Please try again.'
+        };
+      }
+    }
+
+    // 5. Update local cache
+    const all = this.getItem<LearnerAllocationConfirmation[]>(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, []);
+    const filtered = all.filter(c => !(c.event_id === eventId && c.learner_id === studentId));
+    filtered.push(record);
+    this.setItem(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, filtered);
+    this.notify();
+
+    // 6. Broadcast to any open coordinator/admin view
+    this.broadcast('allocation_confirmation_updated', {
+      eventId,
+      learnerId: studentId,
+      confirmation: record
+    }).catch(() => {});
+
+    this.logAudit({
+      event_id: eventId,
+      action: 'ALLOCATION_CONFIRMED',
+      actor_name: authoritativeLearner.full_name,
+      actor_role: 'student',
+      details: `Student confirmed allocation: Party=${record.confirmed_party}, Committee=${record.confirmed_committee}, Const=${record.confirmed_constituency_name} (#${record.confirmed_constituency_number}), Bench=${record.confirmed_bench}`
+    });
+
+    return { success: true, confirmation: record };
   }
 
   // ── AUDIT LOGS ────────────────────────────────────────────────────────────

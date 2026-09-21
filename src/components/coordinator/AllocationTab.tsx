@@ -17,8 +17,10 @@ import {
   Lock,
   ChevronDown,
   Building2,
-  MapPin
+  MapPin,
+  CheckCircle2
 } from 'lucide-react';
+import { AllocationCheckTab } from './AllocationCheckTab';
 
 interface AllocationTabProps {
   learners: Learner[];
@@ -51,7 +53,7 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
   onUpdatePartyBench,
   onShowToast
 }) => {
-  const [activeRosterView, setActiveRosterView] = useState<'party' | 'committee' | 'table'>('party');
+  const [activeRosterView, setActiveRosterView] = useState<'party' | 'committee' | 'table' | 'check_status'>('party');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedBench, setSelectedBench] = useState<string>('ALL');
   const [selectedParty, setSelectedParty] = useState<string>('ALL');
@@ -824,6 +826,19 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
             <TableIcon className="w-3.5 h-3.5" />
             <span>Master Delegate Table</span>
           </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveRosterView('check_status')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeRosterView === 'check_status'
+                ? 'bg-emerald-600 text-white shadow-sm'
+                : 'border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
+            }`}
+          >
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            <span>Allocation Confirmation</span>
+          </button>
         </div>
 
         <div className="text-xs text-slate-500 font-medium">
@@ -1201,6 +1216,17 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* 4. ALLOCATION CONFIRMATION STATUS VIEW */}
+      {activeRosterView === 'check_status' && (
+        <AllocationCheckTab
+          learners={learners}
+          parties={parties}
+          committees={committees}
+          eventId={eventId}
+          onShowToast={onShowToast}
+        />
       )}
 
       {/* Manual Quick Edit Modal */}

@@ -79,6 +79,23 @@ export interface Learner {
   updated_at?: string;
 }
 
+export type AllocationCheckStatus = 'CHECKED' | 'NOT CHECKED' | 'NEEDS RE-CHECK';
+
+export interface LearnerAllocationConfirmation {
+  id: string;
+  event_id: string;
+  learner_id: string;
+  allocation_hash: string;
+  confirmed_party?: string;
+  confirmed_committee?: string;
+  confirmed_constituency_name?: string;
+  confirmed_constituency_number?: number;
+  confirmed_bench?: string;
+  checked_at: string;
+  created_at: string;
+  updated_at?: string;
+}
+
 export interface Party {
   id: string;
   event_id: string;
@@ -430,7 +447,7 @@ export interface SecurityAuditLog {
   id: string;
   timestamp: string;
   event_id?: string;
-  action: 'JURY_CODE_COPIED' | 'JURY_LINK_COPIED' | 'ACCESS_CODE_LOGIN_SUCCESS' | 'ACCESS_CODE_LOGIN_FAILED' | 'LOCKOUT_TRIGGERED';
+  action: 'JURY_CODE_COPIED' | 'JURY_LINK_COPIED' | 'ACCESS_CODE_LOGIN_SUCCESS' | 'ACCESS_CODE_LOGIN_FAILED' | 'LOCKOUT_TRIGGERED' | 'ALLOCATION_CONFIRMED';
   actor_role?: string;
   actor_name?: string;
   details?: string;

@@ -336,9 +336,9 @@
     "semantic_hash": "5b4bc0f8532cd2bd90daced81d45749a"
   },
   "src/App.tsx": {
-    "mtime": 1789987574.7999942,
-    "seen": 1789987683.0505037,
-    "ast_hash": "73cb6c09c01c8edf45218bfdb0506e4a",
+    "mtime": 1789998160.5315406,
+    "seen": 1789998499.2438724,
+    "ast_hash": "4e7932c174d2dc151a3232c4eaaa30f9",
     "semantic_hash": ""
   },
   "src/components/admin/CreateEventModal.tsx": {
@@ -408,9 +408,9 @@
     "semantic_hash": ""
   },
   "src/components/common/Sidebar.tsx": {
-    "mtime": 1789279441.0140538,
-    "seen": 1789279470.3039799,
-    "ast_hash": "e7ddc4ef1b026a0e659701e98ffef70f",
+    "mtime": 1789998062.3465044,
+    "seen": 1789998499.2448175,
+    "ast_hash": "204b8b73feec66d73c0fc08bae1be5c9",
     "semantic_hash": ""
   },
   "src/components/common/StandaloneProjectorDisplay.tsx": {
@@ -444,10 +444,10 @@
     "semantic_hash": "ce42bb05f9d7e5a690afc2d6e5a191bf"
   },
   "src/components/coordinator/AllocationTab.tsx": {
-    "mtime": 1789110460.9284253,
-    "seen": 1789196099.9922397,
-    "ast_hash": "86f0fb984a90b4c085bca43fc4306e1d",
-    "semantic_hash": "86f0fb984a90b4c085bca43fc4306e1d"
+    "mtime": 1789998252.4789507,
+    "seen": 1789998499.2452352,
+    "ast_hash": "0857fe422f64261893d582b8f00ad9ca",
+    "semantic_hash": ""
   },
   "src/components/coordinator/AnalyticsTab.tsx": {
     "mtime": 1789279091.2576523,
@@ -612,9 +612,9 @@
     "semantic_hash": ""
   },
   "src/components/student/StudentDashboard.tsx": {
-    "mtime": 1789794841.4104543,
-    "seen": 1789794950.3047898,
-    "ast_hash": "fb0476194ca2aa5ee49a854543d8f1de",
+    "mtime": 1789997902.1893194,
+    "seen": 1789998499.247381,
+    "ast_hash": "067bff875ae252841e20da4f38caa19b",
     "semantic_hash": ""
   },
   "src/components/student/StudentJoinModal.tsx": {
@@ -666,15 +666,15 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1789987510.7776804,
-    "seen": 1789987683.056193,
-    "ast_hash": "119178309368f93bd03e9a43f2cba81c",
+    "mtime": 1789998423.0967162,
+    "seen": 1789998499.248149,
+    "ast_hash": "649572d54adfad19379ec2928fe09958",
     "semantic_hash": ""
   },
   "src/types/index.ts": {
-    "mtime": 1789965375.0490017,
-    "seen": 1789965596.39675,
-    "ast_hash": "c286c4476d090c67eda8bb09394f403e",
+    "mtime": 1789998356.519014,
+    "seen": 1789998499.2481506,
+    "ast_hash": "f8657bf6f34be6d260178a98c01ff6ea",
     "semantic_hash": ""
   },
   "src/utils/accessCodeGenerator.ts": {
@@ -690,9 +690,9 @@
     "semantic_hash": "5671e84e7b98cb19a6c92508799ec8e5"
   },
   "src/utils/csvHelper.ts": {
-    "mtime": 1789540249.1797788,
-    "seen": 1789540282.9145164,
-    "ast_hash": "1118faf9e8cc4b3e5cc4774b44302146",
+    "mtime": 1789997998.942657,
+    "seen": 1789998499.248304,
+    "ast_hash": "8a533000148e571454132e483e390415",
     "semantic_hash": ""
   },
   "src/utils/pdfExport.ts": {
@@ -708,9 +708,9 @@
     "semantic_hash": "fe5fdfef277dde26d5af43091dddf811"
   },
   "src/utils/slug.ts": {
-    "mtime": 1789573177.489822,
-    "seen": 1789575016.3836977,
-    "ast_hash": "4226af25ff899e868c491647a7e54a74",
+    "mtime": 1789998079.3032954,
+    "seen": 1789998499.2485344,
+    "ast_hash": "7f536f06bcb1056d8dd22f244035a74b",
     "semantic_hash": ""
   },
   "start_vite.ps1": {
@@ -936,9 +936,51 @@
     "semantic_hash": ""
   },
   "src/utils/csvUpdateHelper.ts": {
-    "mtime": 1789987490.27105,
-    "seen": 1789987683.0565677,
-    "ast_hash": "840f1418ef602b761943e60cacd9ce64",
+    "mtime": 1789988139.5152907,
+    "seen": 1789988245.437765,
+    "ast_hash": "8ba84ddac339bd6ece6ec53d82852776",
+    "semantic_hash": ""
+  },
+  "scratch/audit_allocations.cjs": {
+    "mtime": 1789997406.7371604,
+    "seen": 1789998499.238481,
+    "ast_hash": "c21517b962e0fc60a8ad6be373907649",
+    "semantic_hash": ""
+  },
+  "scratch/inspect_openapi.cjs": {
+    "mtime": 1789997499.1811132,
+    "seen": 1789998499.2401624,
+    "ast_hash": "07f5252d402c3efa09164f1c606ea0cc",
+    "semantic_hash": ""
+  },
+  "scratch/test_allocation_confirmation.cjs": {
+    "mtime": 1789998267.2218375,
+    "seen": 1789998499.24203,
+    "ast_hash": "d45fe36bef27ac452e3a96b70e1db912",
+    "semantic_hash": ""
+  },
+  "scratch/test_db_check.cjs": {
+    "mtime": 1789997529.2489896,
+    "seen": 1789998499.2428257,
+    "ast_hash": "f35a91cf0937b701d963a3a87484e23e",
+    "semantic_hash": ""
+  },
+  "scratch/test_tables.cjs": {
+    "mtime": 1789997447.2779057,
+    "seen": 1789998499.2436178,
+    "ast_hash": "fcd5b7fdffa1ab6d8ec069fabb82a6aa",
+    "semantic_hash": ""
+  },
+  "src/components/coordinator/AllocationCheckTab.tsx": {
+    "mtime": 1789998468.755679,
+    "seen": 1789998499.2451544,
+    "ast_hash": "355922238292d737c9c0d63d5b6f3689",
+    "semantic_hash": ""
+  },
+  "src/components/student/StudentAllocationCard.tsx": {
+    "mtime": 1789997851.1226318,
+    "seen": 1789998499.2473798,
+    "ast_hash": "07e0a8a127856739182caaa224739916",
     "semantic_hash": ""
   }
 }
