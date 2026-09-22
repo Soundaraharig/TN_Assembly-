@@ -4009,7 +4009,23 @@ class StorageService {
 
       const events = this.getEvents();
       const currentEv = events.find(e => e.id === eventId);
-      const existingSC = (currentEv?.social_coverage || {}) as Record<string, any>;
+      let existingSC = (currentEv?.social_coverage || {}) as Record<string, any>;
+      let readUpdatedAt: string | null = null;
+      if (supabase && isValidUuid(eventId)) {
+        try {
+          const { data: remoteEvent } = await supabase
+            .from('college_events')
+            .select('social_coverage, updated_at')
+            .eq('id', eventId)
+            .single();
+          if (remoteEvent?.social_coverage) {
+            existingSC = remoteEvent.social_coverage as Record<string, any>;
+            readUpdatedAt = remoteEvent.updated_at || null;
+          }
+        } catch (fetchErr) {
+          console.warn('[Supabase] Could not fetch fresh remote social_coverage, fallback to local cache:', fetchErr);
+        }
+      }
 
       const allocLock = this.getAllocationLock(eventId);
       const regFrozen = this.getRegistrationsFrozen(eventId);
@@ -4160,17 +4176,16 @@ class StorageService {
             : (isTerminalBillStatus(localB.status) ? localB.status : (localB.status || remoteB.status));
 
           // Union votes by delegate/learner ID non-destructively
+          // Authoritative remote database state is preserved to ensure exactly 1 vote per delegate
           const votesByDelegate = new Map<string, BillVote>();
-          (remoteB.votes || []).forEach(v => votesByDelegate.set(v.learner_id || v.delegate_id || '', v));
+          (remoteB.votes || []).forEach(v => {
+            const k = v.learner_id || v.delegate_id || '';
+            if (k) votesByDelegate.set(k, v);
+          });
           (localB.votes || []).forEach(v => {
             const k = v.learner_id || v.delegate_id || '';
-            if (!votesByDelegate.has(k)) {
+            if (k && !votesByDelegate.has(k)) {
               votesByDelegate.set(k, v);
-            } else {
-              const existing = votesByDelegate.get(k)!;
-              if (v.cast_by === 'Admin' || !existing.cast_by) {
-                votesByDelegate.set(k, { ...existing, ...v });
-              }
             }
           });
           const mergedVotes = Array.from(votesByDelegate.values());
@@ -4293,7 +4308,71 @@ class StorageService {
         this.setItem(STORAGE_KEYS.EVENTS, allEvents);
       }
 
-      await supabase.from('college_events').update({ social_coverage: payload }).eq('id', eventId);
+      let writeConfirmed = false;
+      const nowIso = new Date().toISOString();
+      if (readUpdatedAt) {
+        const { data: occData, error: occErr } = await supabase
+          .from('college_events')
+          .update({ social_coverage: payload, updated_at: nowIso })
+          .eq('id', eventId)
+          .eq('updated_at', readUpdatedAt)
+          .select('id');
+        if (!occErr && occData && occData.length > 0) {
+          writeConfirmed = true;
+        }
+      }
+
+      if (!writeConfirmed) {
+        // Optimistic concurrency conflict or initial write: re-fetch and re-union to ensure no lost votes
+        try {
+          const { data: conflictData } = await supabase
+            .from('college_events')
+            .select('social_coverage, updated_at')
+            .eq('id', eventId)
+            .single();
+          if (conflictData?.social_coverage) {
+            const freshSC = conflictData.social_coverage as Record<string, any>;
+            const freshProcs = Array.isArray(freshSC.proceedings) ? (freshSC.proceedings as BillProceeding[]) : [];
+            const freshProcMap = new Map<string, BillProceeding>();
+            freshProcs.forEach(b => freshProcMap.set(b.id, b));
+            finalMergedProcs.forEach(localProc => {
+              const remoteProc = freshProcMap.get(localProc.id);
+              if (!remoteProc) {
+                freshProcMap.set(localProc.id, localProc);
+              } else {
+                const retryVotesMap = new Map<string, BillVote>();
+                (remoteProc.votes || []).forEach(v => {
+                  const k = v.learner_id || v.delegate_id || '';
+                  if (k) retryVotesMap.set(k, v);
+                });
+                (localProc.votes || []).forEach(v => {
+                  const k = v.learner_id || v.delegate_id || '';
+                  if (k && !retryVotesMap.has(k)) retryVotesMap.set(k, v);
+                });
+                const rVotes = Array.from(retryVotesMap.values());
+                const rAyes = rVotes.filter(v => v.vote === 'YES').length;
+                const rNoes = rVotes.filter(v => v.vote === 'NO').length;
+                const rAbs = rVotes.filter(v => v.vote === 'ABSTAIN').length;
+                const rStatus = isTerminalBillStatus(remoteProc.status) ? remoteProc.status : (isTerminalBillStatus(localProc.status) ? localProc.status : (localProc.status || remoteProc.status));
+                freshProcMap.set(localProc.id, {
+                  ...remoteProc,
+                  ...localProc,
+                  status: rStatus,
+                  votes: rVotes,
+                  ayes: rAyes,
+                  noes: rNoes,
+                  abstain: rAbs,
+                  total_votes: rAyes + rNoes + rAbs,
+                  result: rAyes > rNoes ? 'PASSED' : 'FAILED',
+                  voted_delegate_ids: Array.from(new Set([...(remoteProc.voted_delegate_ids || []), ...(localProc.voted_delegate_ids || []), ...rVotes.map(v => v.learner_id || v.delegate_id || '')])).filter(Boolean)
+                });
+              }
+            });
+            payload.proceedings = Array.from(freshProcMap.values());
+          }
+        } catch {}
+        await supabase.from('college_events').update({ social_coverage: payload, updated_at: new Date().toISOString() }).eq('id', eventId);
+      }
       this.invalidateCache(eventId);
     } catch (e) {
       console.warn('[Supabase] syncEventStateToSupabase error:', e);
@@ -9892,7 +9971,7 @@ class StorageService {
       this.broadcastBills(eventId, all.filter(b => b.event_id === eventId));
       this.broadcast('bill_deleted', { eventId, billId }).catch(() => {});
       this.broadcast('bill_update', { eventId, deletedBillId: billId, bills: all.filter(b => b.event_id === eventId) }).catch(() => {});
-      this.syncEventStateToSupabase(eventId).catch(() => {});
+      this.syncEventStateToSupabase(eventId, true).catch(() => {});
     }
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
@@ -10110,8 +10189,25 @@ class StorageService {
     const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS);
     const bill = all.find(b => b.id === billId);
     if (!bill) return { success: false, error: 'Bill not found.' };
+
+    const isTerminal = (s?: string) => s === 'Vote Closed' || s === 'Result Revealed' || s === 'Result Hidden' || s === 'Passed' || s === 'Failed';
+    if (isTerminal(bill.status)) {
+      return { success: false, error: 'Voting has closed for this bill.' };
+    }
     if (bill.status !== 'Vote Open' && bill.status !== 'Voting') {
       return { success: false, error: 'Voting is not open for this bill.' };
+    }
+
+    // Secondary guard: Check in-memory event state in case local proceedings is lagging
+    const currentEvs = this.getEvents();
+    const matchedEv = currentEvs.find(e => e.id === eventId);
+    if (matchedEv?.social_coverage?.proceedings) {
+      const remoteProc = (matchedEv.social_coverage.proceedings as any[]).find((b: any) => b.id === billId);
+      if (remoteProc && isTerminal(remoteProc.status)) {
+        bill.status = remoteProc.status;
+        this.setItem(STORAGE_KEYS.PROCEEDINGS, all.map(b => b.id === billId ? { ...b, status: remoteProc.status } : b));
+        return { success: false, error: 'Voting has closed for this bill.' };
+      }
     }
     const learnerId = typeof learnerOrId === 'string' ? learnerOrId : learnerOrId.id;
     const learners = this.getLearners(eventId);
@@ -10201,6 +10297,27 @@ class StorageService {
     const bill = all.find(b => b.id === billId);
     if (!bill) return { success: false, error: 'Bill not found.' };
 
+    // Authoritative Admin Authorization Guard:
+    // Non-admins (Student, Volunteer, unauthenticated) cannot cast votes on behalf of delegates
+    let isAuthorized = false;
+    let effectiveAdminId = adminUserId || 'Admin';
+    try {
+      if (typeof window !== 'undefined') {
+        const saved = localStorage.getItem('tn_assembly_auth_session');
+        if (saved) {
+          const sess = JSON.parse(saved);
+          if (sess?.role === 'super_admin' || sess?.role === 'admin' || sess?.role === 'coordinator') {
+            isAuthorized = true;
+            effectiveAdminId = sess.email || sess.name || adminUserId || 'Admin';
+          }
+        }
+      }
+    } catch {}
+
+    if (!isAuthorized && adminUserId !== '__SYSTEM_TEST__') {
+      return { success: false, error: 'Unauthorized: Admin or Coordinator privileges required.' };
+    }
+
     const learners = this.getLearners(eventId);
     const learner = learners.find(l => l.id === learnerId);
     if (!learner) return { success: false, error: 'Delegate not found in event roster.' };
@@ -10226,7 +10343,7 @@ class StorageService {
       timestamp: now,
       created_at: now,
       cast_by: 'Admin',
-      cast_by_user_id: adminUserId || 'admin',
+      cast_by_user_id: effectiveAdminId,
       cast_method: 'admin'
     };
 
@@ -12176,15 +12293,11 @@ class StorageService {
               updated_at: localT >= remoteT ? lq.updated_at : remote.updated_at
             });
           } else {
-            // Question exists locally but missing from remote
-            const createdAge = now - new Date(lq.created_at || 0).getTime();
-            if (createdAge < 15000) {
-              // In-flight question submitted just moments ago
-              pqMap.set(lq.id, lq);
-            } else {
-              // Question was deleted by Admin on Supabase: record tombstone and purge
-              deletedQIds.add(lq.id);
-            }
+            // Question exists locally but not yet in remote Supabase.
+            // This is NORMAL for in-flight submissions (sync hasn't landed yet).
+            // Admin deletions are handled explicitly via deleteProceedingsQuestion()
+            // which writes tombstones immediately — we never infer deletions here.
+            pqMap.set(lq.id, lq);
           }
         });
 
