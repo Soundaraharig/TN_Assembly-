@@ -24,9 +24,9 @@
     "semantic_hash": "ca04776fe000421dc5a4f16188c0fe9f"
   },
   "src/App.tsx": {
-    "mtime": 1789998160.5315406,
-    "seen": 1789998499.2438724,
-    "ast_hash": "4e7932c174d2dc151a3232c4eaaa30f9",
+    "mtime": 1790055823.383602,
+    "seen": 1790057320.186215,
+    "ast_hash": "273ab163675edb3b9f4d6c1af6610c58",
     "semantic_hash": ""
   },
   "src/components/admin/CreateEventModal.tsx": {
@@ -36,9 +36,9 @@
     "semantic_hash": "a3f9bdf2bec8f9201297c4082dc98e27"
   },
   "src/components/admin/DaysActivitiesTab.tsx": {
-    "mtime": 1789796135.9639404,
-    "seen": 1789796442.6109533,
-    "ast_hash": "7b13afdc940e2704340004b6bd34bf9d",
+    "mtime": 1790055100.432016,
+    "seen": 1790057320.1865115,
+    "ast_hash": "cb48ff05819ca0c0e53c25910fb9c05a",
     "semantic_hash": ""
   },
   "src/components/admin/EditCoordinatorModal.tsx": {
@@ -318,9 +318,9 @@
     "semantic_hash": ""
   },
   "src/components/volunteer/VolunteerDashboard.tsx": {
-    "mtime": 1789904541.6550887,
-    "seen": 1789904632.0175426,
-    "ast_hash": "2d80f5b09a7e786e2ad52772e62840eb",
+    "mtime": 1790056896.3657424,
+    "seen": 1790057320.2038567,
+    "ast_hash": "97e2198f68b295f39d4515e8f2141616",
     "semantic_hash": ""
   },
   "src/data/initialMockData.ts": {
@@ -354,9 +354,9 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1790007883.7101605,
-    "seen": 1790008308.366588,
-    "ast_hash": "fb7c8d81134a89791dddb487efde76a7",
+    "mtime": 1790056457.9381845,
+    "seen": 1790057320.206137,
+    "ast_hash": "95780faed91439de5a139814b8dd6697",
     "semantic_hash": ""
   },
   "src/types/index.ts": {
@@ -390,10 +390,10 @@
     "semantic_hash": "52df2916f44029745d36da4946ba33b7"
   },
   "src/utils/permissions.ts": {
-    "mtime": 1788930505.7610824,
-    "seen": 1789196099.9922712,
-    "ast_hash": "fe5fdfef277dde26d5af43091dddf811",
-    "semantic_hash": "fe5fdfef277dde26d5af43091dddf811"
+    "mtime": 1790055026.8123102,
+    "seen": 1790057320.2077157,
+    "ast_hash": "3603ce5aed6f018f2e8c7ffc95b3b548",
+    "semantic_hash": ""
   },
   "src/utils/slug.ts": {
     "mtime": 1789998079.3032954,

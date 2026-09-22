@@ -922,6 +922,21 @@ class StorageService {
     }
   }
 
+  public tombstoneId(id: string): void {
+    if (!id) return;
+    const deleted = this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []);
+    if (!deleted.includes(id)) {
+      deleted.push(id);
+      this.setItem(STORAGE_KEYS.DELETED_IDS, deleted);
+    }
+  }
+
+  public isTombstoned(id: string): boolean {
+    if (!id) return false;
+    const deleted = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
+    return deleted.has(id);
+  }
+
   // ── Seed defaults ────────────────────────────────────────────────────────
 
   public initDefaults() {
@@ -1293,21 +1308,27 @@ class StorageService {
         }));
         allNoms = [...allNoms, ...nomsWithEvent];
       }
-      if (Array.isArray(sc.elections)) {
-        allElecs = [...allElecs, ...sc.elections];
-      }
-      if (Array.isArray(sc.flash_votes)) {
-        allFVotes = [...allFVotes, ...sc.flash_votes];
-      }
-      if (Array.isArray(sc.proceedings)) {
-        allProcs = [...allProcs, ...sc.proceedings];
-      }
-      if (Array.isArray(sc.deleted_question_ids) && sc.deleted_question_ids.length > 0) {
+      const remoteDeleted = [
+        ...(Array.isArray(sc.deleted_question_ids) ? sc.deleted_question_ids : []),
+        ...(Array.isArray(sc.deleted_poll_ids) ? sc.deleted_poll_ids : []),
+        ...(Array.isArray(sc.deleted_ids) ? sc.deleted_ids : [])
+      ];
+      if (remoteDeleted.length > 0) {
         const curDeleted = this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []);
-        const merged = Array.from(new Set([...curDeleted, ...sc.deleted_question_ids]));
+        const merged = Array.from(new Set([...curDeleted, ...remoteDeleted]));
         this.setItem(STORAGE_KEYS.DELETED_IDS, merged);
       }
       const activeDeletedSet = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
+
+      if (Array.isArray(sc.elections)) {
+        allElecs = [...allElecs, ...sc.elections.filter((e: any) => !activeDeletedSet.has(e.id))];
+      }
+      if (Array.isArray(sc.flash_votes)) {
+        allFVotes = [...allFVotes, ...sc.flash_votes.filter((f: any) => !activeDeletedSet.has(f.id))];
+      }
+      if (Array.isArray(sc.proceedings)) {
+        allProcs = [...allProcs, ...sc.proceedings.filter((b: any) => !activeDeletedSet.has(b.id))];
+      }
 
       if (Array.isArray(sc.questions)) {
         const validQs = sc.questions.filter((q: any) => !activeDeletedSet.has(q.id));
@@ -1481,8 +1502,10 @@ class StorageService {
     }
 
     // 3. Elections
+    const deletedSet = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
+
     if (allElecs && allElecs.length > 0) {
-      const localElecs = this.getItem<Election[]>(STORAGE_KEYS.ELECTIONS, []);
+      const localElecs = this.getItem<Election[]>(STORAGE_KEYS.ELECTIONS, []).filter(e => !deletedSet.has(e.id) && !e.is_archived && e.status !== 'archived');
       const allPartiesForSync = targetEventId ? this.getParties(targetEventId) : this.getParties();
       const elecCanonicalMap = new Map<string, Election>();
 
@@ -1492,7 +1515,7 @@ class StorageService {
         elecCanonicalMap.set(k, existing ? mergeTwoElections(existing, e) : e);
       });
 
-      allElecs.forEach(remoteE => {
+      allElecs.filter(e => !deletedSet.has(e.id) && !e.is_archived && e.status !== 'archived').forEach(remoteE => {
         const k = getElectionCanonicalKey(remoteE, allPartiesForSync) || remoteE.id;
         const localE = elecCanonicalMap.get(k);
         if (!localE) {
@@ -1507,10 +1530,10 @@ class StorageService {
 
     // 4. Flash Votes
     if (allFVotes && allFVotes.length > 0) {
-      const localFVotes = this.getItem<LiveFlashVote[]>(STORAGE_KEYS.FLASH_VOTES, []);
+      const localFVotes = this.getItem<LiveFlashVote[]>(STORAGE_KEYS.FLASH_VOTES, []).filter(f => !deletedSet.has(f.id));
       const fvoteMap = new Map<string, LiveFlashVote>();
       localFVotes.forEach(fv => fvoteMap.set(fv.id, fv));
-      allFVotes.forEach(remoteFV => {
+      allFVotes.filter(remoteFV => !deletedSet.has(remoteFV.id)).forEach(remoteFV => {
         const localFV = fvoteMap.get(remoteFV.id);
         if (!localFV) {
           fvoteMap.set(remoteFV.id, remoteFV);
@@ -1545,16 +1568,53 @@ class StorageService {
           });
         }
       });
-      this.setItem(STORAGE_KEYS.FLASH_VOTES, Array.from(fvoteMap.values()));
+      this.setItem(STORAGE_KEYS.FLASH_VOTES, Array.from(fvoteMap.values()).filter(f => !deletedSet.has(f.id)));
     }
 
     // 5. Proceedings & Questions
     if (allProcs && allProcs.length > 0) {
-      const localProcs = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, []);
+      const localProcs = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, []).filter(b => !deletedSet.has(b.id));
       const procMap = new Map<string, BillProceeding>();
       localProcs.forEach(p => procMap.set(p.id, p));
-      allProcs.forEach(p => procMap.set(p.id, p));
-      this.setItem(STORAGE_KEYS.PROCEEDINGS, Array.from(procMap.values()));
+      const isTerminalBillStatus = (s?: string) => s === 'Vote Closed' || s === 'Result Revealed' || s === 'Result Hidden' || s === 'Passed' || s === 'Failed';
+
+      allProcs.filter(remoteP => !deletedSet.has(remoteP.id)).forEach(p => {
+        const existing = procMap.get(p.id);
+        if (!existing) {
+          procMap.set(p.id, p);
+        } else {
+          const finalStatus = (isTerminalBillStatus(existing.status) && !isTerminalBillStatus(p.status))
+            ? existing.status
+            : (p.status || existing.status);
+
+          const votesByDelegate = new Map<string, any>();
+          (existing.votes || []).forEach((v: any) => votesByDelegate.set(v.delegate_id || v.learner_id, v));
+          (p.votes || []).forEach((v: any) => {
+            const k = v.delegate_id || v.learner_id;
+            if (!votesByDelegate.has(k)) votesByDelegate.set(k, v);
+          });
+          const mergedVotes = Array.from(votesByDelegate.values());
+          const mergedVotedIds = Array.from(new Set([...(existing.voted_delegate_ids || []), ...(p.voted_delegate_ids || []), ...Array.from(votesByDelegate.keys())]));
+          const ayes = mergedVotes.filter((v: any) => v.vote === 'YES').length;
+          const noes = mergedVotes.filter((v: any) => v.vote === 'NO').length;
+          const abstain = mergedVotes.filter((v: any) => v.vote === 'ABSTAIN').length;
+          const total = ayes + noes + abstain;
+
+          procMap.set(p.id, {
+            ...p,
+            ...existing,
+            status: finalStatus,
+            is_result_revealed: existing.is_result_revealed ?? p.is_result_revealed,
+            ayes: Math.max(ayes, existing.ayes || 0, p.ayes || 0),
+            noes: Math.max(noes, existing.noes || 0, p.noes || 0),
+            abstain: Math.max(abstain, existing.abstain || 0, p.abstain || 0),
+            total_votes: Math.max(total, existing.total_votes || 0, p.total_votes || 0),
+            votes: mergedVotes,
+            voted_delegate_ids: mergedVotedIds
+          });
+        }
+      });
+      this.setItem(STORAGE_KEYS.PROCEEDINGS, Array.from(procMap.values()).filter(b => !deletedSet.has(b.id)));
     }
     if (allQs && allQs.length > 0) {
       const localQs = this.getItem<ParliamentQuestion[]>(STORAGE_KEYS.QUESTIONS, []);
@@ -3307,7 +3367,7 @@ class StorageService {
       const channelName = resolvedEventId ? `tn_assembly_live_${resolvedEventId}` : 'tn_assembly_live_global';
       
       if (process.env.NODE_ENV !== 'production') {
-        console.log(`[Realtime] channel created: ${channelName}`);
+        console.log(`[Realtime] Subscription creation: channel="${channelName}", eventId="${resolvedEventId || 'global'}"`);
         console.log(`[Realtime] Active channels: ${supabase.getChannels().length + 1}`);
       }
 
@@ -3328,16 +3388,17 @@ class StorageService {
         .on('broadcast', { event: 'election_update' }, (msg: any) => {
           if (msg?.payload?.eventId) {
             const evId = msg.payload.eventId;
+            const deletedIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
             const allPartiesForSync = this.getParties(evId);
-            const localElecs = this.getItem<Election[]>(STORAGE_KEYS.ELECTIONS, []);
+            const localElecs = this.getItem<Election[]>(STORAGE_KEYS.ELECTIONS, []).filter(e => !deletedIds.has(e.id));
             const elecCanonicalMap = new Map<string, Election>();
             localElecs.forEach(e => {
               const k = getElectionCanonicalKey(e, allPartiesForSync) || e.id;
               elecCanonicalMap.set(k, e);
             });
-            const incoming = Array.isArray(msg.payload.elections)
+            const incoming = (Array.isArray(msg.payload.elections)
               ? msg.payload.elections
-              : (msg.payload.election ? [msg.payload.election] : []);
+              : (msg.payload.election ? [msg.payload.election] : [])).filter((remoteE: Election) => !deletedIds.has(remoteE.id));
             incoming.forEach((remoteE: Election) => {
               const k = getElectionCanonicalKey(remoteE, allPartiesForSync) || remoteE.id;
               const localE = elecCanonicalMap.get(k);
@@ -3349,18 +3410,44 @@ class StorageService {
             if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
           }
         })
+        .on('broadcast', { event: 'flash_vote_deleted' }, (msg: any) => {
+          if (msg?.payload?.voteId) {
+            this.tombstoneId(msg.payload.voteId);
+            const allFV = this.getItem<LiveFlashVote[]>(STORAGE_KEYS.FLASH_VOTES, []).filter(f => f.id !== msg.payload.voteId);
+            this.setItem(STORAGE_KEYS.FLASH_VOTES, allFV);
+            this.invalidateCache('portal_');
+            this.notify();
+            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+          }
+        })
         .on('broadcast', { event: 'flash_vote_update' }, (msg: any) => {
           if (msg?.payload?.eventId) {
-            const localFVotes = this.getItem<LiveFlashVote[]>(STORAGE_KEYS.FLASH_VOTES, []);
-            const fvoteMap = new Map<string, LiveFlashVote>();
-            localFVotes.forEach(fv => fvoteMap.set(fv.id, fv));
-            const incoming = Array.isArray(msg.payload.flashVotes)
-              ? msg.payload.flashVotes
-              : (msg.payload.flashVote ? [msg.payload.flashVote] : []);
-            incoming.forEach((remoteFV: LiveFlashVote) => {
-              fvoteMap.set(remoteFV.id, remoteFV);
-            });
-            this.setItem(STORAGE_KEYS.FLASH_VOTES, Array.from(fvoteMap.values()));
+            const evId = msg.payload.eventId;
+            if (msg.payload.deletedVoteId) {
+              this.tombstoneId(msg.payload.deletedVoteId);
+            }
+            const deletedIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
+            const currentFVotes = this.getItem<LiveFlashVote[]>(STORAGE_KEYS.FLASH_VOTES, []).filter(f => !deletedIds.has(f.id));
+
+            if (Array.isArray(msg.payload.flashVotes)) {
+              // Full array broadcast from authoritative sender: cleanly replace event's flash votes
+              const otherEventsFV = currentFVotes.filter(f => f.event_id !== evId);
+              const incoming = (msg.payload.flashVotes as LiveFlashVote[]).filter(f => !deletedIds.has(f.id));
+              this.setItem(STORAGE_KEYS.FLASH_VOTES, [...otherEventsFV, ...incoming]);
+            } else if (msg.payload.flashVote && !deletedIds.has(msg.payload.flashVote.id)) {
+              const remoteFV = msg.payload.flashVote as LiveFlashVote;
+              const existingIndex = currentFVotes.findIndex(f => f.id === remoteFV.id);
+              if (existingIndex >= 0) {
+                const existing = currentFVotes[existingIndex];
+                currentFVotes[existingIndex] = {
+                  ...remoteFV,
+                  status: (existing.status === 'CLOSED' || remoteFV.status === 'CLOSED') ? 'CLOSED' : remoteFV.status
+                };
+              } else {
+                currentFVotes.unshift(remoteFV);
+              }
+              this.setItem(STORAGE_KEYS.FLASH_VOTES, currentFVotes);
+            }
             this.invalidateCache('portal_');
             this.notify();
             if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
@@ -3551,16 +3638,40 @@ class StorageService {
             }
           }
         })
+        .on('broadcast', { event: 'bill_deleted' }, (msg: any) => {
+          if (msg?.payload?.billId) {
+            this.tombstoneId(msg.payload.billId);
+            const allBills = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, []).filter(b => b.id !== msg.payload.billId);
+            this.setItem(STORAGE_KEYS.PROCEEDINGS, allBills);
+            this.notify();
+            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+          }
+        })
         .on('broadcast', { event: 'bill_update' }, (msg: any) => {
           if (msg?.payload?.eventId) {
             const evId = msg.payload.eventId;
+            if (msg.payload.deletedBillId) {
+              this.tombstoneId(msg.payload.deletedBillId);
+            }
+            const deletedIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
+            const currentBills = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, []).filter(b => !deletedIds.has(b.id));
+
             if (Array.isArray(msg.payload.bills)) {
-              const otherBills = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, []).filter(b => b.event_id !== evId);
-              this.setItem(STORAGE_KEYS.PROCEEDINGS, [...otherBills, ...msg.payload.bills]);
-            } else if (msg.payload.bill && (msg.payload.bill.id || msg.payload.billId)) {
+              const otherBills = currentBills.filter(b => b.event_id !== evId);
+              const incoming = (msg.payload.bills as BillProceeding[]).filter(b => !deletedIds.has(b.id));
+              this.setItem(STORAGE_KEYS.PROCEEDINGS, [...otherBills, ...incoming]);
+            } else if (msg.payload.bill && !deletedIds.has(msg.payload.bill.id || msg.payload.billId)) {
               const bId = msg.payload.billId || msg.payload.bill.id;
-              const allBills = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, []);
-              const updated = allBills.map(b => b.id === bId ? { ...b, ...msg.payload.bill } : b);
+              const isTerminalBillStatus = (s?: string) => s === 'Vote Closed' || s === 'Result Revealed' || s === 'Result Hidden' || s === 'Passed' || s === 'Failed';
+              const updated = currentBills.map(b => {
+                if (b.id === bId) {
+                  const finalStatus = (isTerminalBillStatus(b.status) && !isTerminalBillStatus(msg.payload.bill.status))
+                    ? b.status
+                    : (msg.payload.bill.status || b.status);
+                  return { ...b, ...msg.payload.bill, status: finalStatus };
+                }
+                return b;
+              });
               if (!updated.some(b => b.id === bId)) {
                 updated.push(msg.payload.bill);
               }
@@ -3615,6 +3726,7 @@ class StorageService {
       return this.realtimeCleanupPromise;
     }
 
+    const prevEventId = this.currentRealtimeEventId;
     const ch = this.realtimeChannel;
     this.realtimeChannel = null;
     this.currentRealtimeEventId = null;
@@ -3628,7 +3740,7 @@ class StorageService {
           try {
             await supabase.removeChannel(ch);
             if (process.env.NODE_ENV !== 'production') {
-              console.log(`[Realtime] channel removed: ${topic}`);
+              console.log(`[Realtime] Subscription cleanup: channel="${topic}", eventId="${prevEventId || 'global'}"`);
               console.log(`[Realtime] Active channels: ${supabase.getChannels().length}`);
             }
           } catch (remErr) {
@@ -3839,10 +3951,11 @@ class StorageService {
       const projSettings = existingSC.projector_settings || this.getItem<ProjectorStudioSettings | null>(`tn_assembly_projector_studio_${eventId}`, null);
       const lastBell = existingSC.last_bell_ring || this.getItem<number | null>(`tn_assembly_last_bell_${eventId}`, null);
 
-      // Protect election history: retain existing elections if missing locally, and deduplicate with current active/upcoming elections
-      const existingElecs = Array.isArray(existingSC.elections) ? existingSC.elections : [];
+      // Protect election history: retain existing elections if missing locally, but respect deletions & archives
+      const deletedIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
+      const existingElecs = (Array.isArray(existingSC.elections) ? existingSC.elections : []).filter((e: any) => !deletedIds.has(e.id) && !e.is_archived && e.status !== 'archived');
       const partiesForSync = this.getParties(eventId);
-      const mergedElecs = deduplicateElectionList([...elecs, ...existingElecs], partiesForSync);
+      const mergedElecs = deduplicateElectionList([...elecs.filter(e => !deletedIds.has(e.id)), ...existingElecs], partiesForSync);
 
       // Permanent Guard: Ensure elections for confirmed elected leaders in learners are marked Closed only if already closed or not actively upcoming/live
       const eventLearners = this.getLearners(eventId);
@@ -3970,12 +4083,13 @@ class StorageService {
         last_bell_ring: lastBell || existingSC.last_bell_ring,
         open_nominations: openNoms,
         nominations: noms,
-        elections: finalElecs,
-        flash_votes: fvotes,
-        proceedings: procs,
+        elections: finalElecs.filter(e => !deletedIds.has(e.id)),
+        flash_votes: fvotes.filter(f => !deletedIds.has(f.id)),
+        proceedings: procs.filter(b => !deletedIds.has(b.id)),
         questions: finalMergedPQs,
         proceedings_questions: finalMergedPQs,
         deleted_question_ids: Array.from(deletedQIds),
+        deleted_poll_ids: Array.from(deletedIds),
         scores: finalMergedScores,
         vote_audit_log: voteAudit,
         yuva_assignments: yuvaAssignments,
@@ -8468,7 +8582,8 @@ class StorageService {
   // ── ELECTIONS ─────────────────────────────────────────────────────────────
 
   public getElections(eventId?: string, role?: string, studentId?: string): Election[] {
-    const all = this.getItem<Election[]>(STORAGE_KEYS.ELECTIONS, INITIAL_ELECTIONS);
+    const deletedIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
+    const all = this.getItem<Election[]>(STORAGE_KEYS.ELECTIONS, INITIAL_ELECTIONS).filter(e => !deletedIds.has(e.id));
     const targetId = eventId || this.getActiveEventId();
     const partiesForEvent = targetId ? this.getParties(targetId) : this.getParties();
     const rawList = targetId ? all.filter(e => e.event_id === targetId) : all;
@@ -9212,7 +9327,8 @@ class StorageService {
   // ── LIVE FLASH VOTES (Instant Yes/No Division Polls) ──────────────────────
 
   public getFlashVotes(eventId?: string, role?: string, studentId?: string): LiveFlashVote[] {
-    const all = this.getItem<LiveFlashVote[]>(STORAGE_KEYS.FLASH_VOTES, INITIAL_FLASH_VOTES);
+    const deletedIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
+    const all = this.getItem<LiveFlashVote[]>(STORAGE_KEYS.FLASH_VOTES, INITIAL_FLASH_VOTES).filter(f => !deletedIds.has(f.id));
     const list = eventId ? all.filter(f => f.event_id === eventId) : all;
     if (role === 'student') {
       return list.map(v => {
@@ -9231,7 +9347,8 @@ class StorageService {
   }
 
   private getFlashVoteAll(): LiveFlashVote[] {
-    return this.getItem<LiveFlashVote[]>(STORAGE_KEYS.FLASH_VOTES, INITIAL_FLASH_VOTES);
+    const deletedIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
+    return this.getItem<LiveFlashVote[]>(STORAGE_KEYS.FLASH_VOTES, INITIAL_FLASH_VOTES).filter(f => !deletedIds.has(f.id));
   }
 
   public createFlashVote(
@@ -9240,7 +9357,14 @@ class StorageService {
     audience: FlashVoteAudience = 'ALL',
     motionType: LiveFlashVote['motion_type'] = 'Division'
   ): LiveFlashVote {
-    const all = this.getFlashVoteAll();
+    // Single Active Rule: Auto-close any previously active flash vote for this event
+    const all = this.getFlashVoteAll().map(fv => {
+      if (fv.event_id === eventId && (fv.status === 'ACTIVE' || (fv.status as string) === 'active')) {
+        return { ...fv, status: 'CLOSED' as const };
+      }
+      return fv;
+    });
+
     const newVote: LiveFlashVote = {
       id: uid('flash'),
       event_id: eventId,
@@ -9258,9 +9382,11 @@ class StorageService {
     all.unshift(newVote);
     this.setItem(STORAGE_KEYS.FLASH_VOTES, all);
     if (eventId) {
-      this.broadcast('flash_vote_update', { eventId, flashVote: newVote }).catch(() => {});
+      this.broadcast('flash_vote_update', { eventId, flashVote: newVote, flashVotes: all.filter(f => f.event_id === eventId) }).catch(() => {});
       this.syncEventStateToSupabase(eventId);
     }
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
     return newVote;
   }
 
@@ -9280,13 +9406,13 @@ class StorageService {
     if (target.target_audience === 'RULING' && learner.bench !== 'Ruling') return false;
     if (target.target_audience === 'OPPOSITION' && learner.bench !== 'Opposition') return false;
 
-    // FAIR VOTING: Once voted, the vote is FINAL and cannot be changed
-    const existingIndex = target.votes.findIndex(v => v.learner_id === learner.id);
-    if (existingIndex >= 0) {
-      // Student has already cast their vote — reject re-voting
+    // FAIR VOTING & DOUBLE-VOTE GUARD: Once voted, vote is final and cannot be duplicated
+    const hasAlreadyVoted = (target.voter_ids && target.voter_ids.includes(learner.id)) ||
+      (target.votes && target.votes.some(v => v.learner_id === learner.id));
+    if (hasAlreadyVoted) {
       return false;
     }
-    target.voter_ids.push(learner.id);
+    target.voter_ids = Array.from(new Set([...(target.voter_ids || []), learner.id]));
 
     if (decision === 'AYE') target.ayes_count += 1;
     if (decision === 'NO') target.noes_count += 1;
@@ -9316,9 +9442,11 @@ class StorageService {
 
     this.setItem(STORAGE_KEYS.FLASH_VOTES, all);
     if (target.event_id) {
-      this.broadcast('flash_vote_update', { eventId: target.event_id, flashVote: target }).catch(() => {});
+      this.broadcast('flash_vote_update', { eventId: target.event_id, flashVote: target, flashVotes: all.filter(f => f.event_id === target.event_id) }).catch(() => {});
       this.syncEventStateToSupabase(target.event_id);
     }
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
     return true;
   }
 
@@ -9335,21 +9463,61 @@ class StorageService {
     });
     this.setItem(STORAGE_KEYS.FLASH_VOTES, all);
     if (targetEventId) {
+      const allEvs = this.getEvents();
+      const matched = allEvs.find(e => e.id === targetEventId);
+      if (matched) {
+        const sc = (matched.social_coverage || {}) as Record<string, any>;
+        const curFV = Array.isArray(sc.flash_votes) ? sc.flash_votes : [];
+        matched.social_coverage = {
+          ...sc,
+          flash_votes: curFV.map((f: any) => f.id === voteId ? { ...f, status: 'CLOSED' } : f),
+          updated_at: new Date().toISOString()
+        };
+        this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
+      }
+
       if (updatedVote) {
-        this.broadcast('flash_vote_update', { eventId: targetEventId, flashVote: updatedVote }).catch(() => {});
+        this.broadcast('flash_vote_update', {
+          eventId: targetEventId,
+          flashVote: updatedVote,
+          flashVotes: all.filter(f => f.event_id === targetEventId)
+        }).catch(() => {});
       }
       this.syncEventStateToSupabase(targetEventId);
     }
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
   }
 
   public deleteFlashVote(voteId: string) {
+    this.tombstoneId(voteId);
     const target = this.getFlashVoteAll().find(f => f.id === voteId);
     const all = this.getFlashVoteAll().filter(f => f.id !== voteId);
     this.setItem(STORAGE_KEYS.FLASH_VOTES, all);
-    if (target?.event_id) {
-      this.broadcast('flash_vote_update', { eventId: target.event_id, flashVotes: all }).catch(() => {});
-      this.syncEventStateToSupabase(target.event_id);
+    const targetEventId = target?.event_id;
+    if (targetEventId) {
+      const allEvs = this.getEvents();
+      const matched = allEvs.find(e => e.id === targetEventId);
+      if (matched) {
+        const sc = (matched.social_coverage || {}) as Record<string, any>;
+        const curFV = Array.isArray(sc.flash_votes) ? sc.flash_votes : [];
+        const curDeleted = Array.isArray(sc.deleted_poll_ids) ? sc.deleted_poll_ids : [];
+        if (!curDeleted.includes(voteId)) curDeleted.push(voteId);
+        matched.social_coverage = {
+          ...sc,
+          flash_votes: curFV.filter((f: any) => f.id !== voteId),
+          deleted_poll_ids: curDeleted,
+          updated_at: new Date().toISOString()
+        };
+        this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
+      }
+
+      this.broadcast('flash_vote_deleted', { eventId: targetEventId, voteId }).catch(() => {});
+      this.broadcast('flash_vote_update', { eventId: targetEventId, deletedVoteId: voteId, flashVotes: all.filter(f => f.event_id === targetEventId) }).catch(() => {});
+      this.syncEventStateToSupabase(targetEventId);
     }
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
   }
 
 
@@ -9432,7 +9600,8 @@ class StorageService {
   // ── PROCEEDINGS ───────────────────────────────────────────────────────────
 
   public getProceedings(eventId?: string): BillProceeding[] {
-    const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS);
+    const deletedIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
+    const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS).filter(p => !deletedIds.has(p.id));
     if (eventId) return all.filter(p => p.event_id === eventId);
     return all;
   }
@@ -9526,10 +9695,28 @@ class StorageService {
   }
 
   public deleteBill(billId: string, eventId?: string): void {
+    this.tombstoneId(billId);
     const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS).filter(b => b.id !== billId);
     this.setItem(STORAGE_KEYS.PROCEEDINGS, all);
     if (eventId) {
+      const allEvs = this.getEvents();
+      const matched = allEvs.find(e => e.id === eventId);
+      if (matched) {
+        const sc = (matched.social_coverage || {}) as Record<string, any>;
+        const curProcs = Array.isArray(sc.proceedings) ? sc.proceedings : [];
+        const curDeleted = Array.isArray(sc.deleted_poll_ids) ? sc.deleted_poll_ids : [];
+        if (!curDeleted.includes(billId)) curDeleted.push(billId);
+        matched.social_coverage = {
+          ...sc,
+          proceedings: curProcs.filter((b: any) => b.id !== billId),
+          deleted_poll_ids: curDeleted,
+          updated_at: new Date().toISOString()
+        };
+        this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
+      }
       this.broadcastBills(eventId, all.filter(b => b.event_id === eventId));
+      this.broadcast('bill_deleted', { eventId, billId }).catch(() => {});
+      this.broadcast('bill_update', { eventId, deletedBillId: billId, bills: all.filter(b => b.event_id === eventId) }).catch(() => {});
       this.syncEventStateToSupabase(eventId).catch(() => {});
     }
     this.notify();
@@ -9538,6 +9725,15 @@ class StorageService {
 
   public openBillVote(billId: string, eventId: string): void {
     const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS).map(b => {
+      // Single Active Rule: Auto-close any previously active bill for this event
+      if (b.event_id === eventId && b.id !== billId && (b.status === 'Vote Open' || b.status === 'Voting')) {
+        return {
+          ...b,
+          status: 'Vote Closed' as const,
+          is_result_revealed: false,
+          updated_at: new Date().toISOString()
+        };
+      }
       if (b.id === billId) {
         return {
           ...b,
@@ -9586,6 +9782,22 @@ class StorageService {
       return b;
     });
     this.setItem(STORAGE_KEYS.PROCEEDINGS, all);
+
+    const allEvs = this.getEvents();
+    const matched = allEvs.find(e => e.id === eventId);
+    if (matched) {
+      const sc = (matched.social_coverage || {}) as Record<string, any>;
+      const curProcs = Array.isArray(sc.proceedings) ? sc.proceedings : [];
+      const updatedProc = all.find(b => b.id === billId);
+      if (updatedProc) {
+        matched.social_coverage = {
+          ...sc,
+          proceedings: curProcs.map((b: any) => b.id === billId ? updatedProc : b),
+          updated_at: new Date().toISOString()
+        };
+        this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
+      }
+    }
 
     // Keep projector in bill_voting scene with result hidden until admin explicitly reveals it
     const proj = this.getProjectorSettings(eventId);
@@ -9687,8 +9899,10 @@ class StorageService {
       party_name: 'Independent'
     } as any);
 
+    // Double-vote guard: eventId + billId + learnerId
     const votedIds = new Set(bill.voted_delegate_ids || []);
-    if (votedIds.has(learnerId)) {
+    const hasAlreadyVoted = votedIds.has(learnerId) || (bill.votes && bill.votes.some(v => v.delegate_id === learnerId || v.learner_id === learnerId));
+    if (hasAlreadyVoted) {
       return { success: false, error: 'You have already voted on this bill.' };
     }
     votedIds.add(learnerId);

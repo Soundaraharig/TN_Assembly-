@@ -133,6 +133,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [syncedNominations, setSyncedNominations] = useState<Nomination[]>(nominations);
   const [syncedBills, setSyncedBills] = useState<BillProceeding[]>(() => storageService.getBills(resolvedEventId));
 
+  // Authoritative optimistic & pending voting states to eliminate button flicker
+  const [localFlashVotes, setLocalFlashVotes] = useState<Record<string, 'AYE' | 'NO' | 'ABSTAIN'>>({});
+  const [flashVotePending, setFlashVotePending] = useState<Record<string, boolean>>({});
+
+  const [localBillVotes, setLocalBillVotes] = useState<Record<string, 'YES' | 'NO' | 'ABSTAIN'>>({});
+  const [billVotePending, setBillVotePending] = useState<Record<string, boolean>>({});
+
+  const [localElectionVotes, setLocalElectionVotes] = useState<Record<string, string>>({});
+  const [electionVotePending, setElectionVotePending] = useState<Record<string, boolean>>({});
+
   useEffect(() => {
     setSyncedElections(elections);
   }, [elections]);
@@ -225,10 +235,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     };
   }, [eventSlug, targetEventId, event?.id, student.id, student.full_name, student.role, ministerInfo]);
 
-  // Derived live voting lists
+  // Derived live voting lists — guard against legacy duplicate active votings so only the current active one is rendered
   const liveElections = useMemo(() => syncedElections.filter(e => e.status === 'Live' || e.status === 'live'), [syncedElections]);
-  const activeFlashVotes = useMemo(() => syncedFlashVotes.filter(f => f.status === 'ACTIVE' || (f.status as string) === 'active'), [syncedFlashVotes]);
-  const liveBills = useMemo(() => syncedBills.filter(b => b.status === 'Vote Open' || b.status === 'Voting'), [syncedBills]);
+  const activeFlashVotes = useMemo(() => {
+    const active = syncedFlashVotes.filter(f => f.status === 'ACTIVE' || (f.status as string) === 'active');
+    return active.length > 1 ? [active[0]] : active;
+  }, [syncedFlashVotes]);
+  const liveBills = useMemo(() => {
+    const active = syncedBills.filter(b => b.status === 'Vote Open' || b.status === 'Voting');
+    return active.length > 1 ? [active[0]] : active;
+  }, [syncedBills]);
 
   const hasLiveVoting = useMemo(() => {
     return liveElections.length > 0 || activeFlashVotes.length > 0 || liveBills.length > 0;
@@ -640,7 +656,30 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
               <div className="space-y-4">
                 {activeFlashVotes.map(fv => {
-                  const myVote = fv.votes?.find(v => v.learner_id === student.id)?.vote;
+                  const persistedVote = fv.votes?.find(v => v.learner_id === student.id)?.vote;
+                  const authoritativeVote = persistedVote || localFlashVotes[fv.id];
+                  const hasVoted = !!authoritativeVote;
+                  const isPending = !!flashVotePending[fv.id];
+
+                  const handleVoteClick = (decision: 'AYE' | 'NO' | 'ABSTAIN') => {
+                    if (hasVoted || isPending || !onCastFlashVote) return;
+                    // Immediate optimistic selection
+                    setLocalFlashVotes(prev => ({ ...prev, [fv.id]: decision }));
+                    setFlashVotePending(prev => ({ ...prev, [fv.id]: true }));
+                    try {
+                      onCastFlashVote(fv.id, student, decision);
+                      onShowToast('Division Vote Cast', `Recorded vote: ${decision} — Your vote is final.`, 'success');
+                    } catch (err: any) {
+                      setLocalFlashVotes(prev => {
+                        const copy = { ...prev };
+                        delete copy[fv.id];
+                        return copy;
+                      });
+                      onShowToast('Vote Failed', err?.message || 'Vote failed. Please try again.', 'error');
+                    } finally {
+                      setFlashVotePending(prev => ({ ...prev, [fv.id]: false }));
+                    }
+                  };
 
                   return (
                     <div key={fv.id} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 space-y-3">
@@ -651,9 +690,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           </span>
                           <h4 className="text-base font-bold text-slate-900 dark:text-white">{fv.question}</h4>
                         </div>
-                        {myVote && (
+                        {hasVoted && (
                           <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 shrink-0">
-                            Voted: {myVote}
+                            Voted: {authoritativeVote}
                           </span>
                         )}
                       </div>
@@ -661,57 +700,48 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       <div className="grid grid-cols-3 gap-2 pt-2">
                         <button
                           type="button"
-                          disabled={!!myVote}
-                          onClick={() => {
-                            onCastFlashVote(fv.id, student, 'AYE');
-                            onShowToast('Division Vote Cast', 'Recorded vote: AYE — Your vote is final.', 'success');
-                          }}
+                          disabled={hasVoted || isPending}
+                          onClick={() => handleVoteClick('AYE')}
                           className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
-                            myVote === 'AYE'
+                            authoritativeVote === 'AYE'
                               ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg'
-                              : myVote
+                              : hasVoted
                                 ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-50'
                                 : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20 cursor-pointer'
                           }`}
                         >
-                          AYE {myVote === 'AYE' && '✓'}
+                          AYE {authoritativeVote === 'AYE' && '✓'}
                         </button>
                         <button
                           type="button"
-                          disabled={!!myVote}
-                          onClick={() => {
-                            onCastFlashVote(fv.id, student, 'NO');
-                            onShowToast('Division Vote Cast', 'Recorded vote: NO — Your vote is final.', 'info');
-                          }}
+                          disabled={hasVoted || isPending}
+                          onClick={() => handleVoteClick('NO')}
                           className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
-                            myVote === 'NO'
+                            authoritativeVote === 'NO'
                               ? 'bg-rose-500 text-white border-rose-400 shadow-lg'
-                              : myVote
+                              : hasVoted
                                 ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-50'
                                 : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30 hover:bg-rose-500/20 cursor-pointer'
                           }`}
                         >
-                          NO {myVote === 'NO' && '✓'}
+                          NO {authoritativeVote === 'NO' && '✓'}
                         </button>
                         <button
                           type="button"
-                          disabled={!!myVote}
-                          onClick={() => {
-                            onCastFlashVote(fv.id, student, 'ABSTAIN');
-                            onShowToast('Division Vote Cast', 'Recorded vote: ABSTAIN — Your vote is final.', 'info');
-                          }}
+                          disabled={hasVoted || isPending}
+                          onClick={() => handleVoteClick('ABSTAIN')}
                           className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
-                            myVote === 'ABSTAIN'
+                            authoritativeVote === 'ABSTAIN'
                               ? 'bg-slate-600 text-white border-slate-500 shadow-lg'
-                              : myVote
+                              : hasVoted
                                 ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-50'
                                 : 'bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/30 hover:bg-slate-500/20 cursor-pointer'
                           }`}
                         >
-                          ABSTAIN {myVote === 'ABSTAIN' && '✓'}
+                          ABSTAIN {authoritativeVote === 'ABSTAIN' && '✓'}
                         </button>
                       </div>
-                      {myVote && (
+                      {hasVoted && (
                         <p className="text-[10px] text-center text-slate-500 dark:text-slate-400 font-semibold pt-1">
                           🔒 Your vote is final and cannot be changed
                         </p>
@@ -750,8 +780,40 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
               <div className="space-y-4">
                 {liveBills.map(bill => {
-                  const hasVoted = bill.voted_delegate_ids?.includes(student.id);
-                  const myVote = bill.votes?.find(v => v.delegate_id === student.id)?.vote;
+                  const persistedVote = bill.votes?.find(v => v.delegate_id === student.id || v.learner_id === student.id)?.vote;
+                  const hasPersistedVoted = bill.voted_delegate_ids?.includes(student.id);
+                  const authoritativeVote = persistedVote || localBillVotes[bill.id];
+                  const hasVoted = hasPersistedVoted || !!authoritativeVote;
+                  const isPending = !!billVotePending[bill.id];
+
+                  const handleBillVoteClick = (decision: 'YES' | 'NO' | 'ABSTAIN') => {
+                    if (hasVoted || isPending) return;
+                    setLocalBillVotes(prev => ({ ...prev, [bill.id]: decision }));
+                    setBillVotePending(prev => ({ ...prev, [bill.id]: true }));
+                    try {
+                      const res = storageService.castBillVote(bill.id, resolvedEventId, student, decision);
+                      if (res.success) {
+                        setSyncedBills(storageService.getBills(resolvedEventId));
+                        onShowToast('Bill Vote Cast', `Your vote on ${bill.bill_number} was recorded as ${decision === 'YES' ? 'YES (AYE)' : decision}.`, 'success');
+                      } else {
+                        setLocalBillVotes(prev => {
+                          const copy = { ...prev };
+                          delete copy[bill.id];
+                          return copy;
+                        });
+                        onShowToast('Vote Failed', res.error || 'You may have already voted or voting has closed.', 'error');
+                      }
+                    } catch (err: any) {
+                      setLocalBillVotes(prev => {
+                        const copy = { ...prev };
+                        delete copy[bill.id];
+                        return copy;
+                      });
+                      onShowToast('Vote Failed', err?.message || 'Vote failed.', 'error');
+                    } finally {
+                      setBillVotePending(prev => ({ ...prev, [bill.id]: false }));
+                    }
+                  };
 
                   return (
                     <div key={bill.id} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 space-y-3">
@@ -774,7 +836,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         </div>
                         {hasVoted && (
                           <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 shrink-0 flex items-center gap-1">
-                            <Check className="w-3 h-3 stroke-[3]" /> Voted{myVote ? `: ${myVote}` : ''}
+                            <Check className="w-3 h-3 stroke-[3]" /> Voted{authoritativeVote ? `: ${authoritativeVote}` : ''}
                           </span>
                         )}
                       </div>
@@ -782,71 +844,47 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       <div className="grid grid-cols-3 gap-2 pt-2">
                         <button
                           type="button"
-                          disabled={hasVoted}
-                          onClick={() => {
-                            const res = storageService.castBillVote(bill.id, resolvedEventId, student, 'YES');
-                            if (res.success) {
-                              setSyncedBills(storageService.getBills(resolvedEventId));
-                              onShowToast('Bill Vote Cast', `Your vote on ${bill.bill_number} was recorded as YES (AYE).`, 'success');
-                            } else {
-                              onShowToast('Vote Failed', res.error || 'You may have already voted or voting has closed.', 'error');
-                            }
-                          }}
+                          disabled={hasVoted || isPending}
+                          onClick={() => handleBillVoteClick('YES')}
                           className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
-                            myVote === 'YES'
+                            authoritativeVote === 'YES'
                               ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg'
                               : hasVoted
                                 ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-50'
                                 : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20 cursor-pointer'
                           }`}
                         >
-                          AYE (YES) {myVote === 'YES' && '✓'}
+                          AYE (YES) {authoritativeVote === 'YES' && '✓'}
                         </button>
 
                         <button
                           type="button"
-                          disabled={hasVoted}
-                          onClick={() => {
-                            const res = storageService.castBillVote(bill.id, resolvedEventId, student, 'NO');
-                            if (res.success) {
-                              setSyncedBills(storageService.getBills(resolvedEventId));
-                              onShowToast('Bill Vote Cast', `Your vote on ${bill.bill_number} was recorded as NO.`, 'info');
-                            } else {
-                              onShowToast('Vote Failed', res.error || 'You may have already voted or voting has closed.', 'error');
-                            }
-                          }}
+                          disabled={hasVoted || isPending}
+                          onClick={() => handleBillVoteClick('NO')}
                           className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
-                            myVote === 'NO'
+                            authoritativeVote === 'NO'
                               ? 'bg-rose-500 text-white border-rose-400 shadow-lg'
                               : hasVoted
                                 ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-50'
                                 : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30 hover:bg-rose-500/20 cursor-pointer'
                           }`}
                         >
-                          NO {myVote === 'NO' && '✓'}
+                          NO {authoritativeVote === 'NO' && '✓'}
                         </button>
 
                         <button
                           type="button"
-                          disabled={hasVoted}
-                          onClick={() => {
-                            const res = storageService.castBillVote(bill.id, resolvedEventId, student, 'ABSTAIN');
-                            if (res.success) {
-                              setSyncedBills(storageService.getBills(resolvedEventId));
-                              onShowToast('Bill Vote Cast', `Your vote on ${bill.bill_number} was recorded as ABSTAIN.`, 'info');
-                            } else {
-                              onShowToast('Vote Failed', res.error || 'You may have already voted or voting has closed.', 'error');
-                            }
-                          }}
+                          disabled={hasVoted || isPending}
+                          onClick={() => handleBillVoteClick('ABSTAIN')}
                           className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
-                            myVote === 'ABSTAIN'
-                              ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-lg'
+                            authoritativeVote === 'ABSTAIN'
+                              ? 'bg-slate-600 text-white border-slate-500 shadow-lg'
                               : hasVoted
                                 ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-50'
                                 : 'bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/30 hover:bg-slate-500/20 cursor-pointer'
                           }`}
                         >
-                          ABSTAIN {myVote === 'ABSTAIN' && '✓'}
+                          ABSTAIN {authoritativeVote === 'ABSTAIN' && '✓'}
                         </button>
                       </div>
 
@@ -890,7 +928,28 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <div className="space-y-6">
                 {liveElections.map((elec) => {
                   const eligibleCheck = isStudentEligibleForElection(elec);
-                  const hasVoted = elec.voted_delegate_ids?.includes(student.id) || (elec as any).votedLearnerIds?.includes(student.id);
+                  const votedCandidateId = localElectionVotes[elec.id];
+                  const hasVoted = elec.voted_delegate_ids?.includes(student.id) || (elec as any).votedLearnerIds?.includes(student.id) || !!votedCandidateId;
+                  const isElectionPending = !!electionVotePending[elec.id];
+
+                  const handleElectionVote = (candId: string, candName: string) => {
+                    if (hasVoted || isElectionPending) return;
+                    setLocalElectionVotes(prev => ({ ...prev, [elec.id]: candId }));
+                    setElectionVotePending(prev => ({ ...prev, [elec.id]: true }));
+                    try {
+                      onCastVote(elec.id, candId, student.id);
+                      onShowToast('Vote Recorded', `You voted for ${candName} in ${elec.title}`, 'success');
+                    } catch (err: any) {
+                      setLocalElectionVotes(prev => {
+                        const copy = { ...prev };
+                        delete copy[elec.id];
+                        return copy;
+                      });
+                      onShowToast('Vote Failed', err?.message || 'Vote failed.', 'error');
+                    } finally {
+                      setElectionVotePending(prev => ({ ...prev, [elec.id]: false }));
+                    }
+                  };
 
                   return (
                     <div
@@ -958,17 +1017,23 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                                   </div>
                                 </div>
 
-                                {eligibleCheck.eligible && !hasVoted && (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      onCastVote(elec.id, cand.id, student.id);
-                                      onShowToast('Vote Recorded', `You voted for ${cand.name} in ${elec.title}`, 'success');
-                                    }}
-                                    className="w-full py-2.5 rounded-xl text-xs font-bold text-white bg-amber-500 hover:bg-amber-600 shadow-md flex items-center justify-center gap-1.5 cursor-pointer transition-all"
-                                  >
-                                    <Vote className="w-4 h-4" /> Vote for {cand.name}
-                                  </button>
+                                {eligibleCheck.eligible && (
+                                  hasVoted ? (
+                                    votedCandidateId === cand.id ? (
+                                      <div className="w-full py-2 rounded-xl text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center gap-1.5">
+                                        <Check className="w-4 h-4 stroke-[3]" /> Your Vote
+                                      </div>
+                                    ) : null
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      disabled={isElectionPending}
+                                      onClick={() => handleElectionVote(cand.id, cand.name)}
+                                      className="w-full py-2.5 rounded-xl text-xs font-bold text-white bg-amber-500 hover:bg-amber-600 shadow-md flex items-center justify-center gap-1.5 cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      <Vote className="w-4 h-4" /> Vote for {cand.name}
+                                    </button>
+                                  )
                                 )}
                               </div>
                             ))}

@@ -135,12 +135,20 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   const [deletingElection, setDeletingElection] = useState<Election | null>(null);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
 
+  const [syncedFlashVotes, setSyncedFlashVotes] = useState<LiveFlashVote[]>(() => storageService.getFlashVotes(eventId));
+
+  useEffect(() => {
+    setSyncedFlashVotes(storageService.getFlashVotes(eventId));
+  }, [flashVotes, eventId]);
+
   useEffect(() => {
     setArchivedElections(storageService.getArchivedElections(eventId));
     setBills(storageService.getBills(eventId));
+    setSyncedFlashVotes(storageService.getFlashVotes(eventId));
     const unsub = storageService.subscribe(() => {
       setArchivedElections(storageService.getArchivedElections(eventId));
       setBills(storageService.getBills(eventId));
+      setSyncedFlashVotes(storageService.getFlashVotes(eventId));
     });
     return () => unsub();
   }, [eventId]);
@@ -1917,7 +1925,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
               }`}
             >
               <Zap className="w-3.5 h-3.5" />
-              Floor Divisions ({flashVotes.length})
+              Floor Divisions ({syncedFlashVotes.length})
             </button>
             <button
               onClick={() => setActiveTabSection('HISTORY')}
@@ -2251,13 +2259,13 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
             </button>
           </div>
 
-          {flashVotes.length === 0 ? (
+          {syncedFlashVotes.length === 0 ? (
             <div className="p-12 text-center rounded-2xl border border-dashed" style={{ borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}>
               No active flash votes or floor divisions. Launch one using the button above.
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {flashVotes.map((fv) => (
+              {syncedFlashVotes.map((fv) => (
                 <div key={fv.id} className="p-5 rounded-2xl border space-y-4" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}>
                   <div className="flex items-start justify-between gap-2">
                     <div>
