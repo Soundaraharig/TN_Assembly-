@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import type { Election, LiveFlashVote, Learner, FlashVoteAudience, ElectionCandidate, Nomination, Party, LoginRecord, Committee, BillProceeding } from '../../types';
+import type { Election, LiveFlashVote, Learner, FlashVoteAudience, ElectionCandidate, Nomination, Party, LoginRecord, Committee, BillProceeding, BillVote } from '../../types';
 import {
   Vote,
   Plus,
@@ -152,6 +152,109 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
     });
     return () => unsub();
   }, [eventId]);
+
+  // Bill Voting Participation & Audit State
+  const [selectedAuditBillId, setSelectedAuditBillId] = useState<string | null>(null);
+  const [auditFilterTab, setAuditFilterTab] = useState<'ALL' | 'VOTED' | 'NOT_VOTED'>('ALL');
+  const [auditSearchQuery, setAuditSearchQuery] = useState('');
+  const [auditPartyFilter, setAuditPartyFilter] = useState('ALL');
+  const [auditBenchFilter, setAuditBenchFilter] = useState<'ALL' | 'Ruling' | 'Opposition'>('ALL');
+  const [auditSortField, setAuditSortField] = useState<'voted_at' | 'name' | 'constituency'>('voted_at');
+  const [auditSortAsc, setAuditSortAsc] = useState(false);
+
+  // Admin Cast Vote on Behalf of Delegate Modal
+  const [adminVoteTargetBill, setAdminVoteTargetBill] = useState<BillProceeding | null>(null);
+  const [adminVoteDelegate, setAdminVoteDelegate] = useState<Learner | null>(null);
+  const [adminVoteChoice, setAdminVoteChoice] = useState<'YES' | 'NO' | 'ABSTAIN'>('YES');
+  const [isAdminVoteSubmitting, setIsAdminVoteSubmitting] = useState(false);
+
+  const handleExportBillCSV = (bill: BillProceeding) => {
+    const votes = bill.votes || [];
+    const voteMap = new Map<string, BillVote>();
+    votes.forEach(v => voteMap.set(v.learner_id || v.delegate_id || '', v));
+
+    const headers = [
+      'Student Name',
+      'Access Code',
+      'Party',
+      'Committee',
+      'Bench',
+      'Constituency Name',
+      'Constituency Number',
+      'Vote Status',
+      'Vote Choice',
+      'Voted At',
+      'Cast By'
+    ];
+
+    const rows = learners.map(l => {
+      const v = voteMap.get(l.id);
+      return [
+        `"${(l.full_name || '').replace(/"/g, '""')}"`,
+        `"${(l.access_code || '').replace(/"/g, '""')}"`,
+        `"${(l.party_name || 'Independent').replace(/"/g, '""')}"`,
+        `"${((l as any).committee_name || 'N/A').replace(/"/g, '""')}"`,
+        `"${(l.bench || 'Ruling').replace(/"/g, '""')}"`,
+        `"${(l.constituency_name || 'N/A').replace(/"/g, '""')}"`,
+        `"${l.constituency_number || ''}"`,
+        `"${v ? 'VOTED' : 'NOT VOTED'}"`,
+        `"${v ? v.vote : 'N/A'}"`,
+        `"${v ? new Date(v.timestamp).toLocaleString() : 'N/A'}"`,
+        `"${v ? (v.cast_by || 'Delegate') : 'N/A'}"`
+      ];
+    });
+
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(r => r.join(','))].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `Bill_${bill.bill_number.replace(/[^a-zA-Z0-9_-]/g, '_')}_Participation_Audit.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    onShowToast('CSV Exported', `Participation audit exported for ${bill.bill_number}`, 'success');
+  };
+
+  const handleConfirmAdminVote = async () => {
+    if (!adminVoteTargetBill || !adminVoteDelegate) return;
+    setIsAdminVoteSubmitting(true);
+    try {
+      // Authoritative existence re-check directly against freshest bills state
+      const freshBills = storageService.getBills(eventId);
+      const freshBill = freshBills.find(b => b.id === adminVoteTargetBill.id);
+      const alreadyVoted = freshBill?.votes?.some(v => v.learner_id === adminVoteDelegate.id || v.delegate_id === adminVoteDelegate.id);
+      if (alreadyVoted) {
+        onShowToast('Already Voted', 'This delegate has already voted on this bill.', 'error');
+        setBills(freshBills);
+        setAdminVoteTargetBill(null);
+        setAdminVoteDelegate(null);
+        return;
+      }
+
+      const res = storageService.castBillVoteOnBehalfOfDelegate(
+        adminVoteTargetBill.id,
+        eventId,
+        adminVoteDelegate.id,
+        adminVoteChoice,
+        'Admin'
+      );
+
+      if (res.success) {
+        setBills(storageService.getBills(eventId));
+        onShowToast('Vote Recorded', `Admin cast ${adminVoteChoice} for ${adminVoteDelegate.full_name}`, 'success');
+        setAdminVoteTargetBill(null);
+        setAdminVoteDelegate(null);
+      } else {
+        onShowToast('Vote Failed', res.error || 'Unable to record vote.', 'error');
+      }
+    } catch (err: any) {
+      onShowToast('Vote Error', err?.message || 'Vote failed.', 'error');
+    } finally {
+      setIsAdminVoteSubmitting(false);
+    }
+  };
 
   const handleDeleteClick = (elec: Election) => {
     const totalVotes = elec.total_votes || (elec.candidates || []).reduce((sum, c) => sum + (c.votes || 0), 0);
@@ -2236,6 +2339,385 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                         <span>BILL {bill.result}</span>
                       </div>
                     )}
+
+                    {/* VOTING PARTICIPATION & AUDIT TOGGLE BUTTON */}
+                    <div className="pt-2 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 dark:border-slate-800">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedAuditBillId(selectedAuditBillId === bill.id ? null : bill.id);
+                        }}
+                        className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+                          selectedAuditBillId === bill.id
+                            ? 'bg-amber-500 text-slate-950 shadow-md font-black'
+                            : 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700'
+                        }`}
+                      >
+                        <Users className="w-4 h-4" />
+                        <span>Voting Participation & Audit</span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-slate-900/10 dark:bg-white/10 font-bold">
+                          {bill.votes?.length || totalVotes} / {learners.length} Voted
+                        </span>
+                        <ChevronDown className={`w-3.5 h-3.5 transition-transform ${selectedAuditBillId === bill.id ? 'rotate-180' : ''}`} />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleExportBillCSV(bill)}
+                        className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 cursor-pointer transition-colors"
+                        title="Export Participation CSV"
+                      >
+                        <Download className="w-3.5 h-3.5 text-amber-500" />
+                        <span>Export CSV</span>
+                      </button>
+                    </div>
+
+                    {/* EXPANDABLE PARTICIPATION AUDIT PANEL */}
+                    {selectedAuditBillId === bill.id && (() => {
+                      const billVotes = bill.votes || [];
+                      const voteMap = new Map<string, BillVote>();
+                      billVotes.forEach(v => voteMap.set(v.learner_id || v.delegate_id || '', v));
+
+                      const eligibleCount = learners.length;
+                      const votedCount = voteMap.size;
+                      const notVotedCount = Math.max(0, eligibleCount - votedCount);
+                      const ayesCount = billVotes.filter(v => v.vote === 'YES').length;
+                      const noesCount = billVotes.filter(v => v.vote === 'NO').length;
+                      const abstainCount = billVotes.filter(v => v.vote === 'ABSTAIN').length;
+
+                      // Filter delegates
+                      const displayedDelegates = learners.filter(l => {
+                        const hasVoted = voteMap.has(l.id);
+                        if (auditFilterTab === 'VOTED' && !hasVoted) return false;
+                        if (auditFilterTab === 'NOT_VOTED' && hasVoted) return false;
+
+                        if (auditBenchFilter !== 'ALL' && l.bench !== auditBenchFilter) return false;
+                        if (auditPartyFilter !== 'ALL' && (l.party_name || 'Independent') !== auditPartyFilter) return false;
+
+                        if (auditSearchQuery.trim()) {
+                          const q = auditSearchQuery.toLowerCase().trim();
+                          const matchesName = (l.full_name || '').toLowerCase().includes(q);
+                          const matchesCode = (l.access_code || '').toLowerCase().includes(q);
+                          const matchesConstName = (l.constituency_name || '').toLowerCase().includes(q);
+                          const matchesConstNum = String(l.constituency_number || '').toLowerCase().includes(q);
+                          if (!matchesName && !matchesCode && !matchesConstName && !matchesConstNum) return false;
+                        }
+
+                        return true;
+                      });
+
+                      // Sort delegates
+                      displayedDelegates.sort((a, b) => {
+                        if (auditSortField === 'voted_at') {
+                          const tA = voteMap.get(a.id)?.timestamp ? new Date(voteMap.get(a.id)!.timestamp).getTime() : 0;
+                          const tB = voteMap.get(b.id)?.timestamp ? new Date(voteMap.get(b.id)!.timestamp).getTime() : 0;
+                          return auditSortAsc ? tA - tB : tB - tA;
+                        } else if (auditSortField === 'name') {
+                          return auditSortAsc ? a.full_name.localeCompare(b.full_name) : b.full_name.localeCompare(a.full_name);
+                        } else if (auditSortField === 'constituency') {
+                          const cA = a.constituency_number || 0;
+                          const cB = b.constituency_number || 0;
+                          return auditSortAsc ? cA - cB : cB - cA;
+                        }
+                        return 0;
+                      });
+
+                      const availableParties = Array.from(new Set(learners.map(l => l.party_name || 'Independent'))).filter(Boolean);
+
+                      return (
+                        <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800/90 space-y-5 animate-in fade-in-50 duration-200">
+                          {/* SUMMARY CARDS */}
+                          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+                            <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center shadow-xs">
+                              <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
+                                TOTAL ELIGIBLE
+                              </span>
+                              <span className="text-xl font-mono font-black text-slate-900 dark:text-white">
+                                {eligibleCount}
+                              </span>
+                            </div>
+                            <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center shadow-xs">
+                              <span className="text-[10px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400 block">
+                                VOTED
+                              </span>
+                              <span className="text-xl font-mono font-black text-emerald-600 dark:text-emerald-400">
+                                {votedCount}
+                              </span>
+                            </div>
+                            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-center shadow-xs">
+                              <span className="text-[10px] font-black uppercase tracking-wider text-amber-600 dark:text-amber-400 block">
+                                NOT VOTED
+                              </span>
+                              <span className="text-xl font-mono font-black text-amber-600 dark:text-amber-400">
+                                {notVotedCount}
+                              </span>
+                            </div>
+                            <div className="p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/20 text-center shadow-xs">
+                              <span className="text-[10px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400 block">
+                                YES (AYE)
+                              </span>
+                              <span className="text-xl font-mono font-black text-emerald-600 dark:text-emerald-400">
+                                {ayesCount}
+                              </span>
+                            </div>
+                            <div className="p-3 rounded-xl bg-rose-500/5 border border-rose-500/20 text-center shadow-xs">
+                              <span className="text-[10px] font-black uppercase tracking-wider text-rose-600 dark:text-rose-400 block">
+                                NO (NOES)
+                              </span>
+                              <span className="text-xl font-mono font-black text-rose-600 dark:text-rose-400">
+                                {noesCount}
+                              </span>
+                            </div>
+                            <div className="p-3 rounded-xl bg-slate-500/5 border border-slate-500/20 text-center shadow-xs">
+                              <span className="text-[10px] font-black uppercase tracking-wider text-slate-600 dark:text-slate-400 block">
+                                ABSTAIN
+                              </span>
+                              <span className="text-xl font-mono font-black text-slate-600 dark:text-slate-400">
+                                {abstainCount}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* CONTROLS: TABS, SEARCH, FILTERS */}
+                          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 pt-2">
+                            {/* Filter Tabs */}
+                            <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-200/80 dark:bg-slate-900 border border-slate-300 dark:border-slate-800">
+                              <button
+                                type="button"
+                                onClick={() => setAuditFilterTab('ALL')}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                  auditFilterTab === 'ALL'
+                                    ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs'
+                                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                                }`}
+                              >
+                                ALL ({eligibleCount})
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setAuditFilterTab('VOTED')}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                                  auditFilterTab === 'VOTED'
+                                    ? 'bg-emerald-500 text-white shadow-xs'
+                                    : 'text-slate-600 dark:text-slate-400 hover:text-emerald-600'
+                                }`}
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                <span>VOTED ({votedCount})</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setAuditFilterTab('NOT_VOTED')}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                                  auditFilterTab === 'NOT_VOTED'
+                                    ? 'bg-amber-500 text-slate-950 shadow-xs'
+                                    : 'text-slate-600 dark:text-slate-400 hover:text-amber-600'
+                                }`}
+                              >
+                                <AlertCircle className="w-3.5 h-3.5" />
+                                <span>NOT VOTED ({notVotedCount})</span>
+                              </button>
+                            </div>
+
+                            {/* Search & Filter Toolbar */}
+                            <div className="flex flex-wrap items-center gap-2">
+                              {/* Search */}
+                              <div className="relative min-w-[200px] flex-1 md:flex-none">
+                                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                <input
+                                  type="text"
+                                  value={auditSearchQuery}
+                                  onChange={(e) => setAuditSearchQuery(e.target.value)}
+                                  placeholder="Search name, code, constituency..."
+                                  className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-hidden focus:border-amber-500"
+                                />
+                                {auditSearchQuery && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setAuditSearchQuery('')}
+                                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* Bench Filter */}
+                              <select
+                                value={auditBenchFilter}
+                                onChange={(e) => setAuditBenchFilter(e.target.value as any)}
+                                className="px-2.5 py-1.5 text-xs rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer"
+                              >
+                                <option value="ALL">All Benches</option>
+                                <option value="Ruling">Ruling Bench</option>
+                                <option value="Opposition">Opposition Bench</option>
+                              </select>
+
+                              {/* Party Filter */}
+                              <select
+                                value={auditPartyFilter}
+                                onChange={(e) => setAuditPartyFilter(e.target.value)}
+                                className="px-2.5 py-1.5 text-xs rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer max-w-[140px]"
+                              >
+                                <option value="ALL">All Parties</option>
+                                {availableParties.map(p => (
+                                  <option key={p} value={p}>{p}</option>
+                                ))}
+                              </select>
+
+                              {/* Sort */}
+                              <select
+                                value={`${auditSortField}-${auditSortAsc}`}
+                                onChange={(e) => {
+                                  const [field, asc] = e.target.value.split('-');
+                                  setAuditSortField(field as any);
+                                  setAuditSortAsc(asc === 'true');
+                                }}
+                                className="px-2.5 py-1.5 text-xs rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer"
+                              >
+                                <option value="voted_at-false">Time (Newest First)</option>
+                                <option value="voted_at-true">Time (Oldest First)</option>
+                                <option value="name-true">Name (A-Z)</option>
+                                <option value="constituency-true">Constituency #</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          {/* AUDIT TABLE */}
+                          <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
+                            <table className="w-full text-left text-xs border-collapse">
+                              <thead>
+                                <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/80 text-[11px] font-black uppercase text-slate-500 dark:text-slate-400 tracking-wider">
+                                  <th className="p-3 w-10 text-center">#</th>
+                                  <th className="p-3">Student / Delegate</th>
+                                  <th className="p-3">Access Code</th>
+                                  <th className="p-3">Party & Bench</th>
+                                  <th className="p-3">Constituency</th>
+                                  <th className="p-3 text-center">Vote Choice</th>
+                                  <th className="p-3">Voted At</th>
+                                  <th className="p-3 text-center">Cast By</th>
+                                  <th className="p-3 text-right">Action</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                                {displayedDelegates.length === 0 ? (
+                                  <tr>
+                                    <td colSpan={9} className="p-8 text-center text-slate-400 dark:text-slate-500 italic">
+                                      No delegates matching the current filter/search.
+                                    </td>
+                                  </tr>
+                                ) : (
+                                  displayedDelegates.map((d, idx) => {
+                                    const v = voteMap.get(d.id);
+                                    const hasVoted = !!v;
+
+                                    return (
+                                      <tr
+                                        key={d.id}
+                                        className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
+                                      >
+                                        <td className="p-3 text-center font-mono text-slate-400">
+                                          {idx + 1}
+                                        </td>
+                                        <td className="p-3">
+                                          <div className="font-bold text-slate-900 dark:text-white">
+                                            {d.full_name}
+                                          </div>
+                                          <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                                            {d.role || 'Delegate'}
+                                          </div>
+                                        </td>
+                                        <td className="p-3 font-mono font-bold text-slate-600 dark:text-slate-400">
+                                          {d.access_code || '—'}
+                                        </td>
+                                        <td className="p-3">
+                                          <div className="font-medium text-slate-800 dark:text-slate-200">
+                                            {d.party_name || 'Independent'}
+                                          </div>
+                                          <span className={`inline-block text-[10px] font-bold ${
+                                            d.bench === 'Ruling' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+                                          }`}>
+                                            {d.bench || 'Ruling'} Bench
+                                          </span>
+                                        </td>
+                                        <td className="p-3 text-slate-700 dark:text-slate-300">
+                                          {d.constituency_number ? (
+                                            <span className="font-mono font-bold mr-1 text-slate-500">
+                                              #{d.constituency_number}
+                                            </span>
+                                          ) : null}
+                                          {d.constituency_name || 'N/A'}
+                                        </td>
+                                        <td className="p-3 text-center">
+                                          {hasVoted ? (
+                                            <span className={`px-2.5 py-1 rounded-full text-[11px] font-black uppercase tracking-wider inline-flex items-center gap-1 ${
+                                              v.vote === 'YES'
+                                                ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                                                : v.vote === 'NO'
+                                                  ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
+                                                  : 'bg-slate-500/15 text-slate-600 dark:text-slate-400 border border-slate-500/30'
+                                            }`}>
+                                              {v.vote === 'YES' ? 'AYE (YES)' : v.vote === 'NO' ? 'NO' : 'ABSTAIN'}
+                                            </span>
+                                          ) : (
+                                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                                              NOT VOTED
+                                            </span>
+                                          )}
+                                        </td>
+                                        <td className="p-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                                          {hasVoted ? (
+                                            <span title={v.timestamp}>
+                                              {new Date(v.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                            </span>
+                                          ) : (
+                                            '—'
+                                          )}
+                                        </td>
+                                        <td className="p-3 text-center">
+                                          {hasVoted ? (
+                                            <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                                              v.cast_by === 'Admin'
+                                                ? 'bg-purple-500/15 text-purple-600 dark:text-purple-400 border border-purple-500/30 font-black'
+                                                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                                            }`}>
+                                              {v.cast_by || 'Delegate'}
+                                            </span>
+                                          ) : (
+                                            '—'
+                                          )}
+                                        </td>
+                                        <td className="p-3 text-right">
+                                          {!hasVoted ? (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setAdminVoteTargetBill(bill);
+                                                setAdminVoteDelegate(d);
+                                                setAdminVoteChoice('YES');
+                                              }}
+                                              className="px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 shadow-xs inline-flex items-center gap-1 cursor-pointer transition-colors"
+                                            >
+                                              <Vote className="w-3.5 h-3.5" />
+                                              <span>Cast Vote</span>
+                                            </button>
+                                          ) : (
+                                            <span className="text-[11px] text-slate-400 inline-flex items-center gap-1">
+                                              <Check className="w-3.5 h-3.5 text-emerald-500" />
+                                              <span>Recorded</span>
+                                            </span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}
@@ -3557,6 +4039,148 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
               >
                 <Check className="w-3.5 h-3.5" />
                 <span>Save Draft Bill</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ADMIN CAST VOTE MODAL */}
+      {adminVoteTargetBill && adminVoteDelegate && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-black text-white flex items-center gap-2">
+                  <Vote className="w-5 h-5 text-amber-500" />
+                  <span>Cast Vote on Behalf of Delegate</span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Administrative floor vote completion for non-voted member.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setAdminVoteTargetBill(null);
+                  setAdminVoteDelegate(null);
+                }}
+                className="p-1 rounded-lg text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Delegate & Bill Info Card */}
+            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800/80 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-400 font-medium">Delegate</span>
+                <span className="text-xs font-bold text-white">{adminVoteDelegate.full_name}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-400 font-medium">Access Code</span>
+                <span className="text-xs font-mono font-bold text-amber-400">{adminVoteDelegate.access_code}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-400 font-medium">Bench & Party</span>
+                <span className="text-xs text-slate-300">
+                  {adminVoteDelegate.bench} Bench • {adminVoteDelegate.party_name || 'Independent'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-400 font-medium">Constituency</span>
+                <span className="text-xs text-slate-300">
+                  {adminVoteDelegate.constituency_number ? `#${adminVoteDelegate.constituency_number} ` : ''}
+                  {adminVoteDelegate.constituency_name || 'N/A'}
+                </span>
+              </div>
+              <div className="pt-2 border-t border-slate-800 flex items-center justify-between">
+                <span className="text-xs text-slate-400 font-medium">Voting Bill</span>
+                <span className="text-xs font-bold text-amber-400">
+                  {adminVoteTargetBill.bill_number}: {adminVoteTargetBill.title}
+                </span>
+              </div>
+            </div>
+
+            {/* Vote Decision Selector */}
+            <div className="space-y-2">
+              <label className="text-xs font-black uppercase text-slate-400 tracking-wider block">
+                Select Floor Vote Decision
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAdminVoteChoice('YES')}
+                  className={`py-3 rounded-xl border text-xs font-black transition-all cursor-pointer ${
+                    adminVoteChoice === 'YES'
+                      ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg'
+                      : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                  }`}
+                >
+                  AYE (YES) {adminVoteChoice === 'YES' && '✓'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setAdminVoteChoice('NO')}
+                  className={`py-3 rounded-xl border text-xs font-black transition-all cursor-pointer ${
+                    adminVoteChoice === 'NO'
+                      ? 'bg-rose-500 text-white border-rose-400 shadow-lg'
+                      : 'bg-rose-500/10 text-rose-400 border-rose-500/30 hover:bg-rose-500/20'
+                  }`}
+                >
+                  NO {adminVoteChoice === 'NO' && '✓'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setAdminVoteChoice('ABSTAIN')}
+                  className={`py-3 rounded-xl border text-xs font-black transition-all cursor-pointer ${
+                    adminVoteChoice === 'ABSTAIN'
+                      ? 'bg-slate-600 text-white border-slate-500 shadow-lg'
+                      : 'bg-slate-500/10 text-slate-400 border-slate-500/30 hover:bg-slate-500/20'
+                  }`}
+                >
+                  ABSTAIN {adminVoteChoice === 'ABSTAIN' && '✓'}
+                </button>
+              </div>
+            </div>
+
+            {/* Audit Warning */}
+            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <span>
+                Confirm that you want to cast this vote on behalf of this delegate? This action will be permanently recorded in the audit log with your Admin attribution.
+              </span>
+            </div>
+
+            {/* Modal Buttons */}
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                disabled={isAdminVoteSubmitting}
+                onClick={() => {
+                  setAdminVoteTargetBill(null);
+                  setAdminVoteDelegate(null);
+                }}
+                className="px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-400 hover:text-white cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isAdminVoteSubmitting}
+                onClick={handleConfirmAdminVote}
+                className="px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 shadow-md flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {isAdminVoteSubmitting ? (
+                  <span>Recording Vote...</span>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    <span>Confirm Vote</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

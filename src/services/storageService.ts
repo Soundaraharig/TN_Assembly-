@@ -3658,8 +3658,74 @@ class StorageService {
 
             if (Array.isArray(msg.payload.bills)) {
               const otherBills = currentBills.filter(b => b.event_id !== evId);
+              const thisEventCurrent = currentBills.filter(b => b.event_id === evId);
+              const currentMap = new Map<string, BillProceeding>();
+              thisEventCurrent.forEach(b => currentMap.set(b.id, b));
+
+              const isTerminalBillStatus = (s?: string) => s === 'Vote Closed' || s === 'Result Revealed' || s === 'Result Hidden' || s === 'Passed' || s === 'Failed';
+
               const incoming = (msg.payload.bills as BillProceeding[]).filter(b => !deletedIds.has(b.id));
-              this.setItem(STORAGE_KEYS.PROCEEDINGS, [...otherBills, ...incoming]);
+              const mergedThisEvent = incoming.map(inB => {
+                const curB = currentMap.get(inB.id);
+                if (!curB) return inB;
+
+                // Terminal status cannot be downgraded by incoming broadcast
+                const finalStatus = (isTerminalBillStatus(curB.status) && !isTerminalBillStatus(inB.status))
+                  ? curB.status
+                  : (inB.status || curB.status);
+
+                // Non-destructive union of votes
+                const votesMap = new Map<string, BillVote>();
+                (curB.votes || []).forEach(v => votesMap.set(v.learner_id || v.delegate_id || '', v));
+                (inB.votes || []).forEach(v => {
+                  const k = v.learner_id || v.delegate_id || '';
+                  if (!votesMap.has(k)) {
+                    votesMap.set(k, v);
+                  } else {
+                    const ex = votesMap.get(k)!;
+                    if (v.cast_by === 'Admin' || !ex.cast_by) {
+                      votesMap.set(k, { ...ex, ...v });
+                    }
+                  }
+                });
+                const mergedVotes = Array.from(votesMap.values());
+                const mergedVotedIds = Array.from(new Set([
+                  ...(curB.voted_delegate_ids || []),
+                  ...(inB.voted_delegate_ids || []),
+                  ...mergedVotes.map(v => v.learner_id || v.delegate_id || '')
+                ])).filter(Boolean);
+
+                const ayes = mergedVotes.filter(v => v.vote === 'YES').length;
+                const noes = mergedVotes.filter(v => v.vote === 'NO').length;
+                const abstain = mergedVotes.filter(v => v.vote === 'ABSTAIN').length;
+                const total = ayes + noes + abstain;
+                const result: 'PASSED' | 'FAILED' = ayes > noes ? 'PASSED' : 'FAILED';
+                const isRevealed = (curB.is_result_revealed ?? inB.is_result_revealed) || finalStatus === 'Result Revealed';
+
+                return {
+                  ...inB,
+                  ...curB,
+                  status: finalStatus,
+                  is_result_revealed: isRevealed,
+                  ayes,
+                  noes,
+                  abstain,
+                  total_votes: total,
+                  result,
+                  votes: mergedVotes,
+                  voted_delegate_ids: mergedVotedIds
+                };
+              });
+
+              // Retain any existing bills for this event not present in incoming payload
+              const incomingIds = new Set(incoming.map(b => b.id));
+              thisEventCurrent.forEach(b => {
+                if (!incomingIds.has(b.id) && !deletedIds.has(b.id)) {
+                  mergedThisEvent.push(b);
+                }
+              });
+
+              this.setItem(STORAGE_KEYS.PROCEEDINGS, [...otherBills, ...mergedThisEvent]);
             } else if (msg.payload.bill && !deletedIds.has(msg.payload.bill.id || msg.payload.billId)) {
               const bId = msg.payload.billId || msg.payload.bill.id;
               const isTerminalBillStatus = (s?: string) => s === 'Vote Closed' || s === 'Result Revealed' || s === 'Result Hidden' || s === 'Passed' || s === 'Failed';
@@ -4077,6 +4143,115 @@ class StorageService {
       finalMergedPQs.forEach(q => combinedAllPQsMap.set(q.id, q));
       this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, Array.from(combinedAllPQsMap.values()));
 
+      // Safe non-destructive merge of proceedings (bills) by unique ID, respecting deletions and protecting terminal status
+      const isTerminalBillStatus = (s?: string) => s === 'Vote Closed' || s === 'Result Revealed' || s === 'Result Hidden' || s === 'Passed' || s === 'Failed';
+      const rawRemoteProcs = Array.isArray(existingSC.proceedings) ? (existingSC.proceedings as BillProceeding[]) : [];
+      const remoteProcs = rawRemoteProcs.filter(b => !deletedIds.has(b.id));
+      const procMap = new Map<string, BillProceeding>();
+      remoteProcs.forEach(b => procMap.set(b.id, b));
+      procs.filter(b => !deletedIds.has(b.id)).forEach(localB => {
+        const remoteB = procMap.get(localB.id);
+        if (!remoteB) {
+          procMap.set(localB.id, localB);
+        } else {
+          // Terminal status invariant: If either local or remote is terminal, status stays terminal
+          const finalStatus = (isTerminalBillStatus(remoteB.status) && !isTerminalBillStatus(localB.status))
+            ? remoteB.status
+            : (isTerminalBillStatus(localB.status) ? localB.status : (localB.status || remoteB.status));
+
+          // Union votes by delegate/learner ID non-destructively
+          const votesByDelegate = new Map<string, BillVote>();
+          (remoteB.votes || []).forEach(v => votesByDelegate.set(v.learner_id || v.delegate_id || '', v));
+          (localB.votes || []).forEach(v => {
+            const k = v.learner_id || v.delegate_id || '';
+            if (!votesByDelegate.has(k)) {
+              votesByDelegate.set(k, v);
+            } else {
+              const existing = votesByDelegate.get(k)!;
+              if (v.cast_by === 'Admin' || !existing.cast_by) {
+                votesByDelegate.set(k, { ...existing, ...v });
+              }
+            }
+          });
+          const mergedVotes = Array.from(votesByDelegate.values());
+          const mergedVotedIds = Array.from(new Set([
+            ...(remoteB.voted_delegate_ids || []),
+            ...(localB.voted_delegate_ids || []),
+            ...mergedVotes.map(v => v.learner_id || v.delegate_id || '')
+          ])).filter(Boolean);
+
+          const ayes = mergedVotes.filter(v => v.vote === 'YES').length;
+          const noes = mergedVotes.filter(v => v.vote === 'NO').length;
+          const abstain = mergedVotes.filter(v => v.vote === 'ABSTAIN').length;
+          const total = ayes + noes + abstain;
+          const result: 'PASSED' | 'FAILED' = ayes > noes ? 'PASSED' : 'FAILED';
+          const isRevealed = (localB.is_result_revealed ?? remoteB.is_result_revealed) || finalStatus === 'Result Revealed';
+
+          procMap.set(localB.id, {
+            ...remoteB,
+            ...localB,
+            status: finalStatus,
+            is_result_revealed: isRevealed,
+            ayes,
+            noes,
+            abstain,
+            total_votes: total,
+            result,
+            votes: mergedVotes,
+            voted_delegate_ids: mergedVotedIds,
+            updated_at: new Date().toISOString()
+          });
+        }
+      });
+      const finalMergedProcs = Array.from(procMap.values()).filter(b => !deletedIds.has(b.id));
+
+      // Update local storage with merged bills so current client has the accumulated votes
+      const allLocalProcs = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, []).filter(b => !deletedIds.has(b.id));
+      const combinedAllProcsMap = new Map<string, BillProceeding>();
+      allLocalProcs.forEach(b => combinedAllProcsMap.set(b.id, b));
+      finalMergedProcs.forEach(b => combinedAllProcsMap.set(b.id, b));
+      this.setItem(STORAGE_KEYS.PROCEEDINGS, Array.from(combinedAllProcsMap.values()));
+
+      // Safe non-destructive merge of flash votes
+      const rawRemoteFVotes = Array.isArray(existingSC.flash_votes) ? (existingSC.flash_votes as LiveFlashVote[]) : [];
+      const remoteFVotes = rawRemoteFVotes.filter(f => !deletedIds.has(f.id));
+      const fvoteMap = new Map<string, LiveFlashVote>();
+      remoteFVotes.forEach(f => fvoteMap.set(f.id, f));
+      fvotes.filter(f => !deletedIds.has(f.id)).forEach(localFV => {
+        const remoteFV = fvoteMap.get(localFV.id);
+        if (!remoteFV) {
+          fvoteMap.set(localFV.id, localFV);
+        } else {
+          const finalStatus = (remoteFV.status === 'CLOSED' || localFV.status === 'CLOSED') ? 'CLOSED' : localFV.status;
+          const votesByLearner = new Map<string, any>();
+          (remoteFV.votes || []).forEach(v => votesByLearner.set(v.learner_id, v));
+          (localFV.votes || []).forEach(v => {
+            if (!votesByLearner.has(v.learner_id)) votesByLearner.set(v.learner_id, v);
+          });
+          const mergedVotes = Array.from(votesByLearner.values());
+          const mergedVoterIds = Array.from(new Set([
+            ...(remoteFV.voter_ids || []),
+            ...(localFV.voter_ids || []),
+            ...mergedVotes.map(v => v.learner_id)
+          ])).filter(Boolean);
+          const ayes = mergedVotes.filter(v => v.vote === 'AYE').length;
+          const noes = mergedVotes.filter(v => v.vote === 'NO').length;
+          const abstain = mergedVotes.filter(v => v.vote === 'ABSTAIN').length;
+
+          fvoteMap.set(localFV.id, {
+            ...remoteFV,
+            ...localFV,
+            status: finalStatus,
+            ayes_count: ayes,
+            noes_count: noes,
+            abstain_count: abstain,
+            votes: mergedVotes,
+            voter_ids: mergedVoterIds
+          });
+        }
+      });
+      const finalMergedFVotes = Array.from(fvoteMap.values()).filter(f => !deletedIds.has(f.id));
+
       const payload = {
         ...existingSC,
         projector_settings: projSettings || existingSC.projector_settings,
@@ -4084,8 +4259,8 @@ class StorageService {
         open_nominations: openNoms,
         nominations: noms,
         elections: finalElecs.filter(e => !deletedIds.has(e.id)),
-        flash_votes: fvotes.filter(f => !deletedIds.has(f.id)),
-        proceedings: procs.filter(b => !deletedIds.has(b.id)),
+        flash_votes: finalMergedFVotes,
+        proceedings: finalMergedProcs,
         questions: finalMergedPQs,
         proceedings_questions: finalMergedPQs,
         deleted_question_ids: Array.from(deletedQIds),
@@ -9746,6 +9921,23 @@ class StorageService {
     });
     this.setItem(STORAGE_KEYS.PROCEEDINGS, all);
 
+    // Update in-memory social_coverage immediately
+    const allEvs = this.getEvents();
+    const matched = allEvs.find(e => e.id === eventId);
+    if (matched) {
+      const sc = (matched.social_coverage || {}) as Record<string, any>;
+      const curProcs = Array.isArray(sc.proceedings) ? sc.proceedings : [];
+      matched.social_coverage = {
+        ...sc,
+        proceedings: curProcs.map((b: any) => {
+          const u = all.find(ub => ub.id === b.id);
+          return u || b;
+        }),
+        updated_at: new Date().toISOString()
+      };
+      this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
+    }
+
     // Update projector settings to display the live bill voting scene
     const proj = this.getProjectorSettings(eventId);
     proj.activeBillId = billId;
@@ -9753,7 +9945,7 @@ class StorageService {
     this.saveProjectorSettings(eventId, proj);
 
     this.broadcastBills(eventId, all.filter(b => b.event_id === eventId));
-    this.syncEventStateToSupabase(eventId).catch(() => {});
+    this.syncEventStateToSupabase(eventId, true).catch(() => {});
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
   }
@@ -9807,7 +9999,7 @@ class StorageService {
     this.saveProjectorSettings(eventId, proj);
 
     this.broadcastBills(eventId, all.filter(b => b.event_id === eventId));
-    this.syncEventStateToSupabase(eventId).catch(() => {});
+    this.syncEventStateToSupabase(eventId, true).catch(() => {});
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
   }
@@ -9837,6 +10029,22 @@ class StorageService {
     });
     this.setItem(STORAGE_KEYS.PROCEEDINGS, all);
 
+    const allEvs = this.getEvents();
+    const matched = allEvs.find(e => e.id === eventId);
+    if (matched) {
+      const sc = (matched.social_coverage || {}) as Record<string, any>;
+      const curProcs = Array.isArray(sc.proceedings) ? sc.proceedings : [];
+      const updatedProc = all.find(b => b.id === billId);
+      if (updatedProc) {
+        matched.social_coverage = {
+          ...sc,
+          proceedings: curProcs.map((b: any) => b.id === billId ? updatedProc : b),
+          updated_at: new Date().toISOString()
+        };
+        this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
+      }
+    }
+
     // Direct projector to bill_result scene
     const proj = this.getProjectorSettings(eventId);
     proj.revealedBillId = billId;
@@ -9845,7 +10053,7 @@ class StorageService {
     this.saveProjectorSettings(eventId, proj);
 
     this.broadcastBills(eventId, all.filter(b => b.event_id === eventId));
-    this.syncEventStateToSupabase(eventId).catch(() => {});
+    this.syncEventStateToSupabase(eventId, true).catch(() => {});
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
   }
@@ -9864,6 +10072,22 @@ class StorageService {
     });
     this.setItem(STORAGE_KEYS.PROCEEDINGS, all);
 
+    const allEvs = this.getEvents();
+    const matched = allEvs.find(e => e.id === eventId);
+    if (matched) {
+      const sc = (matched.social_coverage || {}) as Record<string, any>;
+      const curProcs = Array.isArray(sc.proceedings) ? sc.proceedings : [];
+      const updatedProc = all.find(b => b.id === billId);
+      if (updatedProc) {
+        matched.social_coverage = {
+          ...sc,
+          proceedings: curProcs.map((b: any) => b.id === billId ? updatedProc : b),
+          updated_at: new Date().toISOString()
+        };
+        this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
+      }
+    }
+
     // Switch projector scene back to bill_voting showing result hidden
     const proj = this.getProjectorSettings(eventId);
     proj.revealedBillId = undefined;
@@ -9872,7 +10096,7 @@ class StorageService {
     this.saveProjectorSettings(eventId, proj);
 
     this.broadcastBills(eventId, all.filter(b => b.event_id === eventId));
-    this.syncEventStateToSupabase(eventId).catch(() => {});
+    this.syncEventStateToSupabase(eventId, true).catch(() => {});
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
   }
@@ -9907,7 +10131,9 @@ class StorageService {
     }
     votedIds.add(learnerId);
 
+    const now = new Date().toISOString();
     const newVote: BillVote = {
+      id: `vote_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       learner_id: learnerId,
       delegate_id: learnerId,
       learner_name: learner.full_name,
@@ -9915,7 +10141,10 @@ class StorageService {
       bench: learner.bench,
       party: learner.party_name,
       vote,
-      timestamp: new Date().toISOString()
+      timestamp: now,
+      created_at: now,
+      cast_by: 'Delegate',
+      cast_method: 'delegate'
     };
 
     const votes = [...(bill.votes || []), newVote];
@@ -9934,14 +10163,111 @@ class StorageService {
       result,
       voted_delegate_ids: Array.from(votedIds),
       votes,
-      updated_at: new Date().toISOString()
+      updated_at: now
     };
 
     const updatedAll = all.map(b => b.id === billId ? updatedBill : b);
     this.setItem(STORAGE_KEYS.PROCEEDINGS, updatedAll);
 
+    // Synchronously update in-memory social_coverage
+    const allEvs = this.getEvents();
+    const matched = allEvs.find(e => e.id === eventId);
+    if (matched) {
+      const sc = (matched.social_coverage || {}) as Record<string, any>;
+      const curProcs = Array.isArray(sc.proceedings) ? sc.proceedings : [];
+      matched.social_coverage = {
+        ...sc,
+        proceedings: curProcs.map((b: any) => b.id === billId ? updatedBill : b),
+        updated_at: now
+      };
+      this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
+    }
+
     this.broadcastBills(eventId, updatedAll.filter(b => b.event_id === eventId));
     this.syncEventStateToSupabase(eventId).catch(() => {});
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+    return { success: true };
+  }
+
+  public castBillVoteOnBehalfOfDelegate(
+    billId: string,
+    eventId: string,
+    learnerId: string,
+    vote: 'YES' | 'NO' | 'ABSTAIN',
+    adminUserId?: string
+  ): { success: boolean; error?: string } {
+    const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS);
+    const bill = all.find(b => b.id === billId);
+    if (!bill) return { success: false, error: 'Bill not found.' };
+
+    const learners = this.getLearners(eventId);
+    const learner = learners.find(l => l.id === learnerId);
+    if (!learner) return { success: false, error: 'Delegate not found in event roster.' };
+
+    // Authoritative double-vote existence check: event_id + voting_id + learner_id
+    const votedIds = new Set(bill.voted_delegate_ids || []);
+    const hasAlreadyVoted = votedIds.has(learnerId) || (bill.votes && bill.votes.some(v => (v.delegate_id === learnerId || v.learner_id === learnerId)));
+    if (hasAlreadyVoted) {
+      return { success: false, error: 'This delegate has already voted.' };
+    }
+    votedIds.add(learnerId);
+
+    const now = new Date().toISOString();
+    const newVote: BillVote = {
+      id: `vote_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      learner_id: learnerId,
+      delegate_id: learnerId,
+      learner_name: learner.full_name,
+      role: learner.role,
+      bench: learner.bench,
+      party: learner.party_name,
+      vote,
+      timestamp: now,
+      created_at: now,
+      cast_by: 'Admin',
+      cast_by_user_id: adminUserId || 'admin',
+      cast_method: 'admin'
+    };
+
+    const votes = [...(bill.votes || []), newVote];
+    const ayes = votes.filter(v => v.vote === 'YES').length;
+    const noes = votes.filter(v => v.vote === 'NO').length;
+    const abstain = votes.filter(v => v.vote === 'ABSTAIN').length;
+    const total = ayes + noes + abstain;
+    const result: 'PASSED' | 'FAILED' = ayes > noes ? 'PASSED' : 'FAILED';
+
+    const updatedBill: BillProceeding = {
+      ...bill,
+      ayes,
+      noes,
+      abstain,
+      total_votes: total,
+      result,
+      voted_delegate_ids: Array.from(votedIds),
+      votes,
+      updated_at: now
+    };
+
+    const updatedAll = all.map(b => b.id === billId ? updatedBill : b);
+    this.setItem(STORAGE_KEYS.PROCEEDINGS, updatedAll);
+
+    // Update in-memory social_coverage
+    const allEvs = this.getEvents();
+    const matched = allEvs.find(e => e.id === eventId);
+    if (matched) {
+      const sc = (matched.social_coverage || {}) as Record<string, any>;
+      const curProcs = Array.isArray(sc.proceedings) ? sc.proceedings : [];
+      matched.social_coverage = {
+        ...sc,
+        proceedings: curProcs.map((b: any) => b.id === billId ? updatedBill : b),
+        updated_at: now
+      };
+      this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
+    }
+
+    this.broadcastBills(eventId, updatedAll.filter(b => b.event_id === eventId));
+    this.syncEventStateToSupabase(eventId, true).catch(() => {});
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
     return { success: true };

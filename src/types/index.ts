@@ -328,6 +328,7 @@ export type BillVotingStatus =
   | 'Debating';
 
 export interface BillVote {
+  id?: string;
   learner_id: string;
   delegate_id?: string;
   learner_name: string;
@@ -336,6 +337,10 @@ export interface BillVote {
   party?: string;
   vote: 'YES' | 'NO' | 'ABSTAIN';
   timestamp: string;
+  created_at?: string;
+  cast_by?: 'Delegate' | 'Admin' | string;
+  cast_by_user_id?: string;
+  cast_method?: 'delegate' | 'admin';
 }
 
 export interface BillProceeding {
