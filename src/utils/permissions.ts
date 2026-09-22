@@ -48,3 +48,15 @@ export function canManageTeam(role?: UserRole): boolean {
   if (!role) return false;
   return role === 'super_admin' || role === 'coordinator';
 }
+
+/**
+ * Checks if the user role can use session/bulk attendance controls
+ * (Mark FN Present, Mark AN Present, Mark Both Present, Reset Absent).
+ * Restricted strictly to Super Admin, Admin, and Coordinator roles.
+ * Volunteers, Students, Jury, and Organisers are prohibited.
+ */
+export function canManageSessionAttendance(role?: UserRole | string): boolean {
+  if (!role) return false;
+  const normalized = role.toLowerCase();
+  return normalized === 'super_admin' || normalized === 'admin' || normalized === 'coordinator';
+}

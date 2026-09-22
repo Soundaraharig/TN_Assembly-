@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import type { EventDay, Learner, DayAttendanceRecord, CollegeEvent, Party, Committee, DayAttendanceStatus, LoginRecord } from '../../types';
+import type { EventDay, Learner, DayAttendanceRecord, CollegeEvent, Party, Committee, DayAttendanceStatus, LoginRecord, UserRole } from '../../types';
 import { getRecordSessionStatuses, formatMarkedBy } from '../../types';
 import { storageService } from '../../services/storageService';
+import { canManageSessionAttendance } from '../../utils/permissions';
 import { EditDayActivitiesModal } from './EditDayActivitiesModal';
 import {
   Plus,
@@ -57,6 +58,7 @@ interface DaysActivitiesTabProps {
     markedBy?: string,
     session?: 'FN' | 'AN'
   ) => Promise<void>;
+  userRole?: UserRole;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -73,6 +75,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
   onSetActiveDay,
   onSetStudentDayAttendance,
   onBatchSetDayAttendance,
+  userRole,
   onShowToast
 }) => {
   // Navigation mode: 'days' (overview of all days), 'attendance' (drilldown into day attendance), or 'login_records'
@@ -419,6 +422,10 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
   };
 
   const handleMarkAll = async (status: DayAttendanceStatus, session?: 'FN' | 'AN') => {
+    if (!canManageSessionAttendance(userRole)) {
+      onShowToast('Permission Denied', 'Only authorized Admins and Coordinators can execute batch attendance actions.', 'error');
+      return;
+    }
     if (!currentAttendanceDay) return;
     const studentIds = learners.map(l => l.id);
     const sessionLabel = session === 'FN' ? 'Forenoon (FN)' : session === 'AN' ? 'Afternoon (AN)' : 'Full Day';
@@ -1249,41 +1256,43 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
               </div>
             </div>
 
-            {/* Batch Controls for FN, AN, Both */}
-            <div className="flex flex-wrap items-center gap-2 shrink-0">
-              <button
-                onClick={() => handleMarkAll('Present', 'FN')}
-                className="px-3 py-1.5 rounded-xl border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-                title="Mark all delegates Present for Forenoon (FN)"
-              >
-                <Sun className="w-3.5 h-3.5 text-amber-400" />
-                <span>Mark FN Present</span>
-              </button>
-              <button
-                onClick={() => handleMarkAll('Present', 'AN')}
-                className="px-3 py-1.5 rounded-xl border border-sky-500/40 bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-                title="Mark all delegates Present for Afternoon (AN)"
-              >
-                <Sunset className="w-3.5 h-3.5 text-sky-400" />
-                <span>Mark AN Present</span>
-              </button>
-              <button
-                onClick={() => handleMarkAll('Present')}
-                className="px-3 py-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-                title="Mark all delegates Present for both FN and AN sessions"
-              >
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>Mark Both Present</span>
-              </button>
-              <button
-                onClick={() => handleMarkAll('Absent')}
-                className="px-3 py-1.5 rounded-xl border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-                title="Reset all delegates to Absent"
-              >
-                <XCircle className="w-3.5 h-3.5" />
-                <span>Reset Absent</span>
-              </button>
-            </div>
+            {/* Batch Controls for FN, AN, Both — strictly restricted to authorized Super Admin / Admin / Coordinator */}
+            {canManageSessionAttendance(userRole) && (
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  onClick={() => handleMarkAll('Present', 'FN')}
+                  className="px-3 py-1.5 rounded-xl border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                  title="Mark all delegates Present for Forenoon (FN)"
+                >
+                  <Sun className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Mark FN Present</span>
+                </button>
+                <button
+                  onClick={() => handleMarkAll('Present', 'AN')}
+                  className="px-3 py-1.5 rounded-xl border border-sky-500/40 bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                  title="Mark all delegates Present for Afternoon (AN)"
+                >
+                  <Sunset className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Mark AN Present</span>
+                </button>
+                <button
+                  onClick={() => handleMarkAll('Present')}
+                  className="px-3 py-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                  title="Mark all delegates Present for both FN and AN sessions"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Mark Both Present</span>
+                </button>
+                <button
+                  onClick={() => handleMarkAll('Absent')}
+                  className="px-3 py-1.5 rounded-xl border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                  title="Reset all delegates to Absent"
+                >
+                  <XCircle className="w-3.5 h-3.5" />
+                  <span>Reset Absent</span>
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Students List Table */}

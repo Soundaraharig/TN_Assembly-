@@ -72,6 +72,7 @@ import { JuryDashboard } from './components/jury/JuryDashboard';
 import { VolunteerDashboard } from './components/volunteer/VolunteerDashboard';
 import { presenceService, type PresenceUser } from './services/presenceService';
 import { isSupabaseEnabled } from './lib/supabase';
+import { canManageSessionAttendance } from './utils/permissions';
 
 const SESSION_KEY = 'tn_assembly_auth_session';
 
@@ -891,6 +892,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           onSetActiveDay={props.handleSetActiveEventDay}
           onSetStudentDayAttendance={props.handleSetStudentDayAttendance}
           onBatchSetDayAttendance={props.handleBatchSetDayAttendance}
+          userRole={props.userSession?.role || props.role}
           onShowToast={props.addToast}
         />
       )}
@@ -1906,6 +1908,11 @@ export function App() {
     markedBy?: string,
     session?: 'FN' | 'AN'
   ): Promise<void> => {
+    const effectiveRole = userSession?.role || role;
+    if (!canManageSessionAttendance(effectiveRole)) {
+      addToast('Permission Denied', 'Only authorized Admins and Coordinators can execute batch attendance actions.', 'error');
+      return;
+    }
     const activeEv = extractEventFromUrl(events) || currentEvent || events.find(e => e.id === currentVolunteer?.event_id) || events[0];
     if (!activeEv) return;
     await storageService.batchSetDayAttendance(
@@ -1914,7 +1921,7 @@ export function App() {
       studentIds,
       status,
       markedBy || userSession?.name || role,
-      role === 'volunteer' ? 'volunteer' : 'coordinator',
+      effectiveRole === 'super_admin' ? 'super_admin' : 'coordinator',
       session
     );
     setDayAttendance(storageService.getDayAttendance(activeEv.id));
@@ -2429,7 +2436,6 @@ export function App() {
           onToggleCheckIn={handleToggleCheckIn}
           onCheckInAll={handleCheckInAll}
           onSetStudentDayAttendance={handleSetStudentDayAttendance}
-          onBatchSetDayAttendance={handleBatchSetDayAttendance}
           onAddWalkIn={(l) => {
             handleAddLearner(l);
             setLearners(storageService.getLearners(currentEvent?.id));

@@ -79,6 +79,7 @@ import type {
 } from '../utils/allocationEngine';
 import { supabase, isSupabaseEnabled } from '../lib/supabase';
 import { getEventSlug, findEventBySlug } from '../utils/slug';
+import { canManageSessionAttendance } from '../utils/permissions';
 
 // ---------------------------------------------------------------------------
 // Cache versioning & Stale-While-Revalidate metadata
@@ -6387,7 +6388,7 @@ class StorageService {
     }
     const all = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, INITIAL_LEARNERS);
     const targetStudentIds = all.filter(l => l.event_id === eventId).map(l => l.id);
-    await this.batchSetDayAttendance(eventId, targetDay.id, targetStudentIds, state ? 'Present' : 'Absent', 'Mass Action', session);
+    await this.batchSetDayAttendance(eventId, targetDay.id, targetStudentIds, state ? 'Present' : 'Absent', 'Mass Action', 'coordinator', session);
   }
 
   // ── EVENT DAYS & ACTIVITIES & ATTENDANCE ─────────────────────────────
@@ -6756,10 +6757,13 @@ class StorageService {
     dayId: string,
     studentIds: string[],
     status: DayAttendanceStatus,
-    markedBy: string = 'Floor Volunteer',
-    markedByRole: string = 'volunteer',
+    markedBy: string = 'Admin Batch Action',
+    markedByRole: string = 'coordinator',
     session?: 'FN' | 'AN'
   ): Promise<void> {
+    if (!canManageSessionAttendance(markedByRole)) {
+      throw new Error(`Unauthorized: Role '${markedByRole}' is not permitted to perform batch attendance updates.`);
+    }
     const timestamp = new Date().toISOString();
     const all = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
     const existingMap = new Map<string, DayAttendanceRecord>();

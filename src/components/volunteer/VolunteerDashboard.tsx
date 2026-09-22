@@ -71,13 +71,6 @@ interface VolunteerDashboardProps {
     markedBy?: string,
     session?: 'FN' | 'AN'
   ) => Promise<DayAttendanceRecord> | void;
-  onBatchSetDayAttendance?: (
-    dayId: string,
-    studentIds: string[],
-    status: DayAttendanceStatus,
-    markedBy?: string,
-    session?: 'FN' | 'AN'
-  ) => Promise<void> | void;
   onAddWalkIn?: (learner: Partial<Learner>) => void;
   onCastVote?: (electionId: string, candidateId: string, delegateId?: string) => void;
   onCastFlashVote?: (voteId: string, learner: Learner, decision: 'AYE' | 'NO' | 'ABSTAIN') => void;
@@ -133,7 +126,6 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   onToggleCheckIn,
   onCheckInAll,
   onSetStudentDayAttendance,
-  onBatchSetDayAttendance,
   onAddWalkIn,
   onCastVote,
   onCastFlashVote,
@@ -174,7 +166,6 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
 
   // Loading state tracking for attendance buttons
   const [processingAttendanceIds, setProcessingAttendanceIds] = useState<Set<string>>(new Set());
-  const [isBatchAttendanceLoading, setIsBatchAttendanceLoading] = useState(false);
   const [attendanceRefreshKey, setAttendanceRefreshKey] = useState(0);
 
   const handleToggleWithLoading = (learnerId: string, day: 1 | 2) => {
@@ -351,53 +342,6 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
         next.delete(lockKey);
         return next;
       });
-    }
-  };
-
-  const handleBatchMarkAttendance = async (status: DayAttendanceStatus, session?: 'FN' | 'AN') => {
-    if (!activeDay) {
-      onShowToast?.(
-        'No Active Event Day',
-        'Batch attendance cannot be recorded because no event day is configured or set active for this assembly.',
-        'error'
-      );
-      return;
-    }
-    if (isBatchAttendanceLoading) return;
-    setIsBatchAttendanceLoading(true);
-    const volunteerName = volunteer?.name ? `${volunteer.name} (Volunteer)` : 'Floor Volunteer';
-    const studentIds = learners.map(l => l.id);
-    const sessionLabel = session === 'FN' ? 'Forenoon (FN)' : session === 'AN' ? 'Afternoon (AN)' : 'Full Day';
-
-    try {
-      if (onBatchSetDayAttendance) {
-        await onBatchSetDayAttendance(activeDay.id, studentIds, status, volunteerName, session);
-      } else {
-        await storageService.batchSetDayAttendance(eventId, activeDay.id, studentIds, status, volunteerName, 'volunteer', session);
-      }
-      storageService.broadcastAttendanceMarked({
-        eventId: activeDay.event_id || eventId,
-        dayId: activeDay.id,
-        studentIds,
-        session: session || 'BOTH',
-        status,
-        timestamp: new Date().toISOString()
-      }).catch(() => {});
-      setAttendanceRefreshKey(k => k + 1);
-      onShowToast?.(
-        'Attendance Updated',
-        `Successfully marked all ${learners.length} delegates as ${status} (${sessionLabel}) on ${activeDay.name}`,
-        'success'
-      );
-    } catch (err: any) {
-      console.error('[VolunteerDashboard] Batch attendance save failed:', err);
-      onShowToast?.(
-        'Batch Save Failed',
-        err?.message || 'Could not save batch attendance in database',
-        'error'
-      );
-    } finally {
-      setIsBatchAttendanceLoading(false);
     }
   };
 
@@ -1259,53 +1203,6 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                     </button>
                   ))}
                 </div>
-              </div>
-
-              <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                <button
-                  onClick={() => handleBatchMarkAttendance('Present', 'FN')}
-                  disabled={isBatchAttendanceLoading}
-                  className={`px-2.5 py-1.5 rounded-xl border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-xs font-bold flex items-center gap-1 transition ${
-                    isBatchAttendanceLoading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-                  }`}
-                  title="Mark all delegates present for Forenoon (FN)"
-                >
-                  <CheckCircle className="w-3.5 h-3.5" />
-                  <span>Mark FN</span>
-                </button>
-                <button
-                  onClick={() => handleBatchMarkAttendance('Present', 'AN')}
-                  disabled={isBatchAttendanceLoading}
-                  className={`px-2.5 py-1.5 rounded-xl border border-indigo-500/40 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 text-xs font-bold flex items-center gap-1 transition ${
-                    isBatchAttendanceLoading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-                  }`}
-                  title="Mark all delegates present for Afternoon (AN)"
-                >
-                  <CheckCircle className="w-3.5 h-3.5" />
-                  <span>Mark AN</span>
-                </button>
-                <button
-                  onClick={() => handleBatchMarkAttendance('Present')}
-                  disabled={isBatchAttendanceLoading}
-                  className={`px-2.5 py-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-xs font-bold flex items-center gap-1 transition ${
-                    isBatchAttendanceLoading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-                  }`}
-                  title="Mark all delegates present for Full Day (Both sessions)"
-                >
-                  <CheckCircle className="w-3.5 h-3.5" />
-                  <span>Mark Both</span>
-                </button>
-                <button
-                  onClick={() => handleBatchMarkAttendance('Absent')}
-                  disabled={isBatchAttendanceLoading}
-                  className={`px-2.5 py-1.5 rounded-xl border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-xs font-bold flex items-center gap-1 transition ${
-                    isBatchAttendanceLoading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-                  }`}
-                  title="Reset all delegates to absent for both sessions"
-                >
-                  <XCircle className="w-3.5 h-3.5" />
-                  <span>Reset All</span>
-                </button>
               </div>
             </div>
 
