@@ -8491,7 +8491,20 @@ class StorageService {
       this.setItem(STORAGE_KEYS.EVENTS, updatedEvents);
       if (supabase) {
         try {
-          await supabase.from('college_events').update({ social_coverage: sc }).eq('id', eventId);
+          const { data: remoteData } = await supabase
+            .from('college_events')
+            .select('social_coverage')
+            .eq('id', eventId)
+            .maybeSingle();
+          const baseSc = (remoteData?.social_coverage || sc) as Record<string, any>;
+          const remoteRoles = { ...((baseSc.leadership_roles as Record<string, string>) || {}) };
+          if (targetLearner) {
+            remoteRoles[canonicalRole] = targetLearner.id;
+          } else {
+            delete remoteRoles[canonicalRole];
+          }
+          baseSc.leadership_roles = remoteRoles;
+          await supabase.from('college_events').update({ social_coverage: baseSc }).eq('id', eventId);
         } catch (e) {
           console.warn('[Supabase] leadership_roles sync error:', e);
         }
@@ -11549,12 +11562,20 @@ class StorageService {
 
     if (supabase && isValidUuid(targetId)) {
       try {
-        const ev = events.find(e => e.id === targetId);
+        const { data: remoteData } = await supabase
+          .from('college_events')
+          .select('social_coverage')
+          .eq('id', targetId)
+          .maybeSingle();
+
+        const baseSc = (remoteData?.social_coverage || {}) as Record<string, any>;
+        const updatedSc = { ...baseSc, allocation_lock: locked };
+
         const { error } = await supabase
           .from('college_events')
           .update({
             is_locked: locked,
-            social_coverage: ev?.social_coverage || { allocation_lock: locked }
+            social_coverage: updatedSc
           })
           .eq('id', targetId);
 
@@ -11628,11 +11649,19 @@ class StorageService {
 
     if (supabase && isValidUuid(targetId)) {
       try {
-        const ev = events.find(e => e.id === targetId);
+        const { data: remoteData } = await supabase
+          .from('college_events')
+          .select('social_coverage')
+          .eq('id', targetId)
+          .maybeSingle();
+
+        const baseSc = (remoteData?.social_coverage || {}) as Record<string, any>;
+        const updatedSc = { ...baseSc, registrations_frozen: frozen };
+
         const { error } = await supabase
           .from('college_events')
           .update({
-            social_coverage: ev?.social_coverage || { registrations_frozen: frozen }
+            social_coverage: updatedSc
           })
           .eq('id', targetId);
 
@@ -11704,11 +11733,19 @@ class StorageService {
 
     if (supabase && isValidUuid(targetId)) {
       try {
-        const ev = events.find(e => e.id === targetId);
+        const { data: remoteData } = await supabase
+          .from('college_events')
+          .select('social_coverage')
+          .eq('id', targetId)
+          .maybeSingle();
+
+        const baseSc = (remoteData?.social_coverage || {}) as Record<string, any>;
+        const updatedSc = { ...baseSc, scores_locked: locked };
+
         const { error } = await supabase
           .from('college_events')
           .update({
-            social_coverage: ev?.social_coverage || { scores_locked: locked }
+            social_coverage: updatedSc
           })
           .eq('id', targetId);
 
