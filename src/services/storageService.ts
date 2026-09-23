@@ -503,7 +503,6 @@ class StorageService {
   private failedWriteSignatures = new Map<string, number>();
   private fixedLearnerIdsSynced = new Set<string>();
   private attendanceRealtimeChannel: any = null;
-  private currentAttendanceEventId: string | null = null;
   private syncDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private hydratedEventIds = new Set<string>();
   private eventsFetched = false;
@@ -3450,7 +3449,9 @@ class StorageService {
               if (existingIndex >= 0) {
                 const existing = currentFVotes[existingIndex];
                 currentFVotes[existingIndex] = {
+                  ...existing,
                   ...remoteFV,
+                  votes: existing.votes || remoteFV.votes,
                   status: (existing.status === 'CLOSED' || remoteFV.status === 'CLOSED') ? 'CLOSED' : remoteFV.status
                 };
               } else {
@@ -3855,64 +3856,12 @@ class StorageService {
   public setupAttendanceRealtimeListener(activeEventId: string) {
     if (!supabase || !activeEventId) return;
 
-    // If main realtime channel is already subscribed to this event, it already handles attendance
-    if (this.realtimeChannel && this.currentRealtimeEventId === activeEventId) {
-      return;
-    }
-
-    if (this.attendanceRealtimeChannel && this.currentAttendanceEventId === activeEventId) {
-      return;
-    }
-
-    this.cleanupAttendanceRealtimeListener().catch(() => {});
-
-    try {
-      this.currentAttendanceEventId = activeEventId;
-      const channelName = `attendance_sync_${activeEventId}`;
-      if (process.env.NODE_ENV !== 'production') {
-        console.log(`[Realtime] channel created: ${channelName}`);
-        console.log(`[Realtime] Active channels: ${supabase.getChannels().length + 1}`);
-      }
-
-      this.attendanceRealtimeChannel = supabase
-        .channel(channelName)
-        .on('broadcast', { event: 'attendance_marked' }, (msg: any) => {
-          const p = msg?.payload;
-          if (p && (p.eventId === activeEventId || !p.eventId)) {
-            if (p.record) {
-              const rawRec = p.record as DayAttendanceRecord;
-              const { fn, an, overall } = getRecordSessionStatuses(rawRec);
-              const rec: DayAttendanceRecord = {
-                ...rawRec,
-                fn_status: rawRec.fn_status || fn,
-                an_status: rawRec.an_status || an,
-                status: overall
-              };
-              const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
-              const next = curAtt.filter(
-                a => a.id !== rec.id && !(a.event_id === rec.event_id && a.day_id === rec.day_id && a.student_id === rec.student_id)
-              );
-              next.push(rec);
-              this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, next);
-            } else if (Array.isArray(p.records)) {
-              const rawRecs = p.records as DayAttendanceRecord[];
-              const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
-              const recs = rawRecs.map(r => {
-                const { fn, an, overall } = getRecordSessionStatuses(r);
-                return { ...r, fn_status: r.fn_status || fn, an_status: r.an_status || an, status: overall };
-              });
-              const keys = new Set(recs.map(r => `${r.event_id}:::${r.day_id}:::${r.student_id}`));
-              const next = curAtt.filter(a => !keys.has(`${a.event_id}:::${a.day_id}:::${a.student_id}`));
-              next.push(...recs);
-              this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, next);
-            }
-            this.notify();
-            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
-          }
-        })
-        .subscribe();
-    } catch (err) {
-      console.warn('[StorageService] setupAttendanceRealtimeListener error:', err);
+    // Route attendance sync through the unified event realtime channel (tn_assembly_live_${activeEventId})
+    // which already has the broadcast listener for 'attendance_marked'.
+    // This eliminates redundant duplicate channels and extra WebSocket connections.
+    this.setupRealtimeSync(activeEventId);
+    if (this.attendanceRealtimeChannel) {
+      this.cleanupAttendanceRealtimeListener().catch(() => {});
     }
   }
 
@@ -3923,7 +3872,6 @@ class StorageService {
 
     const ch = this.attendanceRealtimeChannel;
     this.attendanceRealtimeChannel = null;
-    this.currentAttendanceEventId = null;
 
     if (!ch || !supabase) return;
 
@@ -9107,7 +9055,8 @@ class StorageService {
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
     if (election.event_id) {
-      this.broadcast('election_update', { eventId: election.event_id, elections: this.getElections(election.event_id) });
+      const { votes_by_delegate, ...compactElec } = election as any;
+      this.broadcast('election_update', { eventId: election.event_id, election: compactElec });
       this.syncEventStateToSupabase(election.event_id);
     }
     return true;
@@ -9646,7 +9595,8 @@ class StorageService {
     all.unshift(newVote);
     this.setItem(STORAGE_KEYS.FLASH_VOTES, all);
     if (eventId) {
-      this.broadcast('flash_vote_update', { eventId, flashVote: newVote, flashVotes: all.filter(f => f.event_id === eventId) }).catch(() => {});
+      const { votes, ...compactFV } = newVote;
+      this.broadcast('flash_vote_update', { eventId, flashVote: compactFV }).catch(() => {});
       this.syncEventStateToSupabase(eventId);
     }
     this.notify();
@@ -9706,7 +9656,8 @@ class StorageService {
 
     this.setItem(STORAGE_KEYS.FLASH_VOTES, all);
     if (target.event_id) {
-      this.broadcast('flash_vote_update', { eventId: target.event_id, flashVote: target, flashVotes: all.filter(f => f.event_id === target.event_id) }).catch(() => {});
+      const { votes, ...compactFV } = target;
+      this.broadcast('flash_vote_update', { eventId: target.event_id, flashVote: compactFV }).catch(() => {});
       this.syncEventStateToSupabase(target.event_id);
     }
     this.notify();
@@ -9741,10 +9692,10 @@ class StorageService {
       }
 
       if (updatedVote) {
+        const { votes, ...compactFV } = updatedVote;
         this.broadcast('flash_vote_update', {
           eventId: targetEventId,
-          flashVote: updatedVote,
-          flashVotes: all.filter(f => f.event_id === targetEventId)
+          flashVote: compactFV
         }).catch(() => {});
       }
       this.syncEventStateToSupabase(targetEventId);
@@ -10289,7 +10240,7 @@ class StorageService {
       this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
     }
 
-    this.broadcastBills(eventId, updatedAll.filter(b => b.event_id === eventId));
+    this.broadcastBill(eventId, updatedBill);
     this.syncEventStateToSupabase(eventId).catch(() => {});
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
@@ -10393,20 +10344,36 @@ class StorageService {
       this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
     }
 
-    this.broadcastBills(eventId, updatedAll.filter(b => b.event_id === eventId));
-    this.syncEventStateToSupabase(eventId, true).catch(() => {});
+    this.broadcastBill(eventId, updatedBill);
+    this.syncEventStateToSupabase(eventId).catch(() => {});
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
     return { success: true };
   }
 
-  public async broadcastBills(eventId: string, bills: BillProceeding[]): Promise<void> {
+  public async broadcastBill(eventId: string, bill: BillProceeding): Promise<void> {
     if (supabase && this.realtimeChannel) {
       try {
+        const { votes, ...compactBill } = bill;
         await this.realtimeChannel.send({
           type: 'broadcast',
           event: 'bill_update',
-          payload: { eventId, bills }
+          payload: { eventId, bill: compactBill }
+        });
+      } catch (e) {
+        console.warn('Realtime broadcast bill_update failed:', e);
+      }
+    }
+  }
+
+  public async broadcastBills(eventId: string, bills: BillProceeding[]): Promise<void> {
+    if (supabase && this.realtimeChannel) {
+      try {
+        const compactBills = bills.map(({ votes, ...rest }) => rest);
+        await this.realtimeChannel.send({
+          type: 'broadcast',
+          event: 'bill_update',
+          payload: { eventId, bills: compactBills }
         });
       } catch (e) {
         console.warn('Realtime broadcast bill_update failed:', e);
