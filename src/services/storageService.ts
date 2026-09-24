@@ -3253,11 +3253,31 @@ class StorageService {
       if (!agendaErr && agendaData) {
         const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== activeEventId);
         const sortedAgenda = (agendaData as unknown as AgendaItem[]).sort((a: any, b: any) => {
-          if (a.order_number !== undefined && b.order_number !== undefined) return a.order_number - b.order_number;
-          if (a.time && b.time) return String(a.time).localeCompare(String(b.time));
-          return 0;
+          const orderA = a.order ?? a.order_number;
+          const orderB = b.order ?? b.order_number;
+          if (orderA !== undefined && orderB !== undefined && orderA !== orderB) {
+            return orderA - orderB;
+          }
+          const timeDiff = this.parseTimeToMinutes(a.time) - this.parseTimeToMinutes(b.time);
+          if (timeDiff !== 0) return timeDiff;
+          return (a.created_at || '').localeCompare(b.created_at || '');
         });
         this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...sortedAgenda]);
+
+        // Reconcile projector selectedAgendaId with the authoritative is_current from session_agenda.
+        // When a new browser loads the projector, there is no localStorage yet, so projector settings
+        // come from social_coverage which may have a stale selectedAgendaId (e.g. a Pre-Event item).
+        // The session_agenda table has the correct is_current flag set by setCurrentAgendaItem().
+        const currentItem = sortedAgenda.find((a: any) => a.is_current);
+        if (currentItem) {
+          const proj = this.getProjectorSettings(activeEventId);
+          if (proj.selectedAgendaId !== currentItem.id) {
+            proj.selectedAgendaId = currentItem.id;
+            // Save to localStorage so getProjectorSettings() will find it on next read
+            this.setItem(`tn_assembly_projector_studio_${activeEventId}`, proj);
+            this.setItem('tn_assembly_projector_studio_v1', proj);
+          }
+        }
       }
 
       if (typeof delegateCount === 'number' && delegateCount > 0) {
@@ -3753,9 +3773,11 @@ class StorageService {
         .on('broadcast', { event: 'agenda_update' }, (msg: any) => {
           if (msg?.payload?.eventId) {
             const evId = msg.payload.eventId;
+            let incomingAgenda: AgendaItem[] | null = null;
             if (Array.isArray(msg.payload.agenda)) {
+              incomingAgenda = msg.payload.agenda;
               const otherAgenda = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, []).filter(a => a.event_id !== evId);
-              this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...msg.payload.agenda]);
+              this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...incomingAgenda!]);
             } else if (msg.payload.agendaItem && msg.payload.agendaItem.id) {
               const aId = msg.payload.agendaItem.id;
               const allAgenda = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, []);
@@ -3764,7 +3786,24 @@ class StorageService {
                 updated.push(msg.payload.agendaItem);
               }
               this.setItem(STORAGE_KEYS.AGENDA, updated);
+              incomingAgenda = updated.filter(a => a.event_id === evId);
             }
+
+            // Reconcile projector selectedAgendaId with the authoritative is_current from the broadcast.
+            // This is a belt-and-suspenders fix: even if projector_update broadcast is delayed or lost,
+            // the agenda_update broadcast carries the correct is_current flag, so we reconcile here.
+            if (incomingAgenda) {
+              const currentItem = incomingAgenda.find(a => a.is_current);
+              if (currentItem) {
+                const proj = this.getProjectorSettings(evId);
+                if (proj.selectedAgendaId !== currentItem.id) {
+                  proj.selectedAgendaId = currentItem.id;
+                  this.setItem(`tn_assembly_projector_studio_${evId}`, proj);
+                  this.setItem('tn_assembly_projector_studio_v1', proj);
+                }
+              }
+            }
+
             this.notify();
             if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
           }
@@ -4101,7 +4140,9 @@ class StorageService {
       const allocLock = this.getAllocationLock(eventId);
       const regFrozen = this.getRegistrationsFrozen(eventId);
       const scLocked = this.getScoresLocked(eventId);
-      const projSettings = existingSC.projector_settings || this.getItem<ProjectorStudioSettings | null>(`tn_assembly_projector_studio_${eventId}`, null);
+      // LOCAL projector settings are authoritative — they reflect the most recent setCurrentAgendaItem() call.
+      // Remote existingSC.projector_settings may be stale (e.g. pointing to an old Pre-Event agenda item).
+      const projSettings = this.getItem<ProjectorStudioSettings | null>(`tn_assembly_projector_studio_${eventId}`, null) || existingSC.projector_settings;
       const lastBell = existingSC.last_bell_ring || this.getItem<number | null>(`tn_assembly_last_bell_${eventId}`, null);
 
       // Protect election history: retain existing elections if missing locally, but respect deletions & archives
@@ -7964,13 +8005,40 @@ class StorageService {
 
   // ── AGENDA ────────────────────────────────────────────────────────────────
 
+  public parseTimeToMinutes(timeStr?: string): number {
+    if (!timeStr) return 9999;
+    try {
+      const clean = timeStr.trim().toUpperCase();
+      const isPM = clean.includes('PM');
+      const isAM = clean.includes('AM');
+      const parts = clean.replace(/(AM|PM)/g, '').trim().split(':');
+      let hours = parseInt(parts[0], 10) || 0;
+      const minutes = parseInt(parts[1], 10) || 0;
+      if (isPM && hours < 12) hours += 12;
+      if (isAM && hours === 12) hours = 0;
+      return hours * 60 + minutes;
+    } catch {
+      return 9999;
+    }
+  }
+
   public getAgenda(eventId?: string): AgendaItem[] {
     const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA);
+    const sortFn = (a: AgendaItem, b: AgendaItem) => {
+      const orderA = a.order ?? (a as any).order_number;
+      const orderB = b.order ?? (b as any).order_number;
+      if (orderA !== undefined && orderB !== undefined && orderA !== orderB) {
+        return orderA - orderB;
+      }
+      const timeDiff = this.parseTimeToMinutes(a.time) - this.parseTimeToMinutes(b.time);
+      if (timeDiff !== 0) return timeDiff;
+      return (a.created_at || '').localeCompare(b.created_at || '');
+    };
     if (eventId) {
       const eventItems = all.filter(a => a.event_id === eventId);
-      return [...eventItems].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+      return [...eventItems].sort(sortFn);
     }
-    return [...all].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+    return [...all].sort(sortFn);
   }
 
   public async clearEventAgenda(eventId: string): Promise<boolean> {
@@ -12056,11 +12124,14 @@ class StorageService {
     };
 
     if (eventId) {
+      // LOCAL localStorage is authoritative — it reflects the most recent setCurrentAgendaItem()
+      // and saveProjectorSettings() calls from this browser. social_coverage from the Supabase
+      // event snapshot may be stale (e.g. pointing to an old Pre-Event selectedAgendaId).
+      const local = this.getItem<ProjectorStudioSettings | null>(`tn_assembly_projector_studio_${eventId}`, null);
+      if (local) return local;
       const ev = this.getEvents().find(e => e.id === eventId);
       const sc = (ev?.social_coverage || {}) as Record<string, any>;
       if (sc.projector_settings) return sc.projector_settings;
-      const local = this.getItem<ProjectorStudioSettings | null>(`tn_assembly_projector_studio_${eventId}`, null);
-      if (local) return local;
     }
     const fallback = this.getItem<ProjectorStudioSettings | null>('tn_assembly_projector_studio_v1', null);
     return fallback || defaultSettings;
