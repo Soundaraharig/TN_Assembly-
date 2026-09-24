@@ -1,0 +1,10 @@
+====================================================================
+SUPABASE EDGE FUNCTIONS INVENTORY
+Project: Tamil Nadu Youth Legislative Assembly (TN Assembly)
+====================================================================
+
+Status: NONE CONFIGURED / NONE DEPLOYED
+- No supabase/functions/ directory exists in the codebase.
+- No calls to supabase.functions.invoke() exist in the application code.
+- All backend business logic is handled through PostgreSQL constraints/triggers
+  and client-side state machine synchronization.

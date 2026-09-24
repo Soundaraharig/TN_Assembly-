@@ -1,0 +1,81 @@
+====================================================================
+APPLICATION SUPABASE CONFIGURATION INVENTORY
+Project: Tamil Nadu Youth Legislative Assembly (TN Assembly)
+Source Project Ref: svtjphzbuicnirynorlx
+Generated At: 2026-09-24
+====================================================================
+
+1. ENVIRONMENT VARIABLE NAMES:
+- VITE_SUPABASE_URL:
+  Location: .env
+  Purpose: Supabase Project API URL endpoint for database and Realtime
+- VITE_SUPABASE_ANON_KEY:
+  Location: .env
+  Purpose: Supabase Anonymous public JWT key for REST API & Realtime channels
+
+(No database password, service_role key, or secret tokens are present in application code)
+
+2. SUPABASE CLIENT INITIALIZATION:
+- Primary Client:
+  File: src/lib/supabase.ts
+  Lines: 20-22
+  Pattern:
+    export const supabase = isConfigured
+      ? createClient(supabaseUrl, supabaseAnonKey)
+      : null;
+- Presence & Realtime Consumer:
+  File: src/services/presenceService.ts (imports supabase from src/lib/supabase)
+- Data Cache & Sync Consumer:
+  File: src/services/storageService.ts (imports supabase from src/lib/supabase)
+
+3. FILES REFERENCING SUPABASE URL / CLIENT:
+- .env
+- src/lib/supabase.ts
+- src/services/storageService.ts
+- src/services/presenceService.ts
+- src/components/student/StudentJoinModal.tsx
+- src/components/student/StudentDashboard.tsx
+- src/components/volunteer/VolunteerDashboard.tsx
+- src/components/admin/MyEventsDashboard.tsx
+- src/components/admin/SuperAdminDashboard.tsx
+- src/components/admin/DaysActivitiesTab.tsx
+- src/components/coordinator/ProceedingsTab.tsx
+
+4. EDGE FUNCTION URLS:
+- None configured in application code.
+- No calls to supabase.functions.invoke() exist.
+
+5. STORAGE URLS:
+- None configured in application code.
+- No public bucket CDN URLs exist.
+- All file generation (PDF exports, Excel exports) is performed client-side using jsPDF and XLSX libraries.
+
+6. REALTIME CONFIGURATION LOCATIONS:
+- src/services/storageService.ts (lines 3372-3950: setupRealtimeSync)
+  * Event Channel: tn_assembly_live_${eventId}
+  * Global Channel: tn_assembly_live_global
+  * Broadcast Events: projector_update, speaker_bell, election_update, flash_vote_update,
+    flash_vote_deleted, question_update, question_deleted, event_deadline_update,
+    ministries_update, attendance_marked, student_attendance_update, timer_update,
+    bill_update, bill_deleted, agenda_update, login_recorded,
+    allocation_confirmation_updated, speaking_request_update, speaking_turn_update,
+    hands_down, hand_raise_setting_changed
+- src/services/presenceService.ts (lines 110-160: join)
+  * Presence Room: presence:event_${eventId}
+  * Tracking Keys: userId, name, role, accessCode, onlineAt
+  * Listeners: sync, join, leave
+
+7. AUTH REDIRECT CONFIGURATION:
+- None configured.
+- The application does not use Supabase GoTrue Auth OAuth / magic link redirects.
+- In-app routing is handled client-side via react-router-dom:
+  * /login - Access code and coordinator login
+  * /student - Delegate dashboard
+  * /volunteer - Volunteer portal
+  * /jury - Jury scoring portal
+  * /coordinator - Event management dashboard
+  * /admin - Super admin dashboard
+
+8. WEBHOOK ENDPOINTS:
+- None configured in the database or client code.
+====================================================================
