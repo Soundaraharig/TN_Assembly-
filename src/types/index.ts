@@ -265,6 +265,8 @@ export interface Election {
   archived_at?: string;
   completed_at?: string;
   reset_at?: string;
+  is_result_revealed?: boolean;
+  is_dismissed?: boolean;
   updated_at?: string;
   created_at: string;
   createdAt?: string;
@@ -311,6 +313,8 @@ export interface LiveFlashVote {
   abstain_count: number;
   voter_ids: string[];
   votes: IndividualVote[];
+  is_result_revealed?: boolean;
+  is_dismissed?: boolean;
 }
 
 export type BillVotingStatus =
@@ -360,6 +364,7 @@ export interface BillProceeding {
   abstain?: number;
   total_votes?: number;
   is_result_revealed?: boolean;
+  is_dismissed?: boolean;
   result?: 'PASSED' | 'FAILED';
   voted_delegate_ids?: string[];
   votes?: BillVote[];
@@ -463,6 +468,8 @@ export interface ProjectorStudioSettings {
   revealedElectionId?: string;
   revealedBillId?: string;
   activeBillId?: string;
+  revealedFlashVoteId?: string;
+  activeFlashVoteId?: string;
   timer?: LiveTimerState;
   tickerMessage: string;
   isTickerActive: boolean;

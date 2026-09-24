@@ -102,9 +102,9 @@
     "semantic_hash": ""
   },
   "src/components/common/StandaloneProjectorDisplay.tsx": {
-    "mtime": 1789794823.6042159,
-    "seen": 1789794950.3024046,
-    "ast_hash": "f24943ffa9e32b3d9634f1dc46e4646d",
+    "mtime": 1790231193.1234577,
+    "seen": 1790232719.410079,
+    "ast_hash": "e3b521be65392a7162f41c8aa03598fd",
     "semantic_hash": ""
   },
   "src/components/common/Toast.tsx": {
@@ -210,9 +210,9 @@
     "semantic_hash": "a866683017f14bd81bc76c2fd58997d5"
   },
   "src/components/coordinator/ElectionsTab.tsx": {
-    "mtime": 1790069746.6693318,
-    "seen": 1790069803.0849009,
-    "ast_hash": "419e6994c0921ac24e83347811a71e34",
+    "mtime": 1790232598.4548595,
+    "seen": 1790232719.4267888,
+    "ast_hash": "2ec9b5ce99f828e3cc23b57d991b44bb",
     "semantic_hash": ""
   },
   "src/components/coordinator/FeedbackTab.tsx": {
@@ -300,9 +300,9 @@
     "semantic_hash": ""
   },
   "src/components/student/StudentDashboard.tsx": {
-    "mtime": 1790228549.5512106,
-    "seen": 1790228686.2971282,
-    "ast_hash": "f88e79dd8f8302cb5dff878f6c76f5c0",
+    "mtime": 1790230938.4477136,
+    "seen": 1790232719.4395666,
+    "ast_hash": "cdfc6964c0fa49b35f1348923d871f10",
     "semantic_hash": ""
   },
   "src/components/student/StudentJoinModal.tsx": {
@@ -354,15 +354,15 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1790227985.622426,
-    "seen": 1790228686.3030107,
-    "ast_hash": "d53f2f64438c08b3a314a5fb4d96a966",
+    "mtime": 1790233447.4115207,
+    "seen": 1790233745.0082211,
+    "ast_hash": "e216a7f30c53528f30f45945144b125e",
     "semantic_hash": ""
   },
   "src/types/index.ts": {
-    "mtime": 1790146180.1245997,
-    "seen": 1790148168.3856502,
-    "ast_hash": "bd52c675869290444aff2a3ec85fa2bd",
+    "mtime": 1790230298.803779,
+    "seen": 1790232719.446482,
+    "ast_hash": "9fc12950e725097276d5b504c6fa9e71",
     "semantic_hash": ""
   },
   "src/utils/accessCodeGenerator.ts": {
@@ -555,6 +555,24 @@
     "mtime": 1790146100.884084,
     "seen": 1790148168.3781626,
     "ast_hash": "e6c47cd40325daa905409be2072fee49",
+    "semantic_hash": ""
+  },
+  "src/components/common/RevealResultControls.tsx": {
+    "mtime": 1790230462.590312,
+    "seen": 1790232719.4093084,
+    "ast_hash": "a36cfe0ceab0430b7993039a778066dd",
+    "semantic_hash": ""
+  },
+  "scratch/test_vote_lifecycle.cjs": {
+    "mtime": 1790232799.8082943,
+    "seen": 1790233744.960506,
+    "ast_hash": "c08d3fbe50b9b9df1a18bbb80fcc0df0",
+    "semantic_hash": ""
+  },
+  "scratch/verify_all_vote_lifecycles.ts": {
+    "mtime": 1790233603.817758,
+    "seen": 1790233744.9605153,
+    "ast_hash": "8e5129efa69f80e45c2190903b9dc9f0",
     "semantic_hash": ""
   }
 }

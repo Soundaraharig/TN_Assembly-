@@ -381,7 +381,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         setSyncedFlashVotes(updatedFV);
         const updatedNoms = storageService.getNominations(activeId, 'student', student.id);
         setSyncedNominations(updatedNoms);
-        const updatedBills = storageService.getBills(activeId);
+        const updatedBills = storageService.getBills(activeId, 'student', student.id);
         setSyncedBills(updatedBills);
       }
     };

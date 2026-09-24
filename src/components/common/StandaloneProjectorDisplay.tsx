@@ -132,17 +132,27 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
   };
 
   // Authoritative Election State
-  const activeElection = elections.find(e => e.status === 'Live');
+  const activeElection = elections.find(e => (e.status === 'Live' || e.status === 'live') && !e.is_archived);
   const targetBallotElection = settings.revealedElectionId
     ? elections.find(e => e.id === settings.revealedElectionId)
-    : (activeElection || elections.find(e => e.status === 'Closed') || elections[0]);
-  const isElectionLive = targetBallotElection?.status === 'Live';
+    : (activeElection || (settings.displayScene === 'election' ? elections.find(e => e.status === 'Closed' && !e.is_dismissed) : null));
+  const isElectionLive = targetBallotElection?.status === 'Live' || targetBallotElection?.status === 'live';
   const isElectionClosed = targetBallotElection?.status === 'Closed';
 
-  // Revealed Election Candidate Tally
+  // Revealed Election Candidate Tally (ONLY when explicitly requested by settings.revealedElectionId or displayScene === 'election_result')
   const revealedElection = settings.revealedElectionId
     ? elections.find(e => e.id === settings.revealedElectionId)
-    : elections.find(e => e.status === 'Closed' || (e.winner && e.winner.trim().length > 0)) || elections[0];
+    : (settings.displayScene === 'election_result' ? elections.find(e => e.is_result_revealed && !e.is_dismissed) : null);
+
+  const isElectionResultScene = !!(
+    (settings.displayScene === 'election_result' && revealedElection) ||
+    (settings.displayScene === 'auto' && settings.revealedElectionId && revealedElection && revealedElection.is_result_revealed && !revealedElection.is_dismissed)
+  );
+
+  const isElectionVotingScene = !!(
+    (settings.displayScene === 'election' && targetBallotElection) ||
+    (settings.displayScene === 'auto' && isElectionLive)
+  );
 
   const sortedCandidates = [...(revealedElection?.candidates || [])].sort((a, b) => (b.votes || 0) - (a.votes || 0));
   const winnerCandidate = sortedCandidates.length > 0
@@ -164,35 +174,40 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
     : (winnerCandidate?.votes || 0);
 
   // Authoritative Bill State
-  const activeBill = (settings.revealedBillId || settings.activeBillId)
+  const liveBill = bills.find(b => b.status === 'Vote Open' || b.status === 'Voting');
+  const targetBill = (settings.revealedBillId || settings.activeBillId)
     ? bills.find(b => b.id === (settings.revealedBillId || settings.activeBillId))
-    : (bills.find(b => b.status === 'Vote Open' || b.status === 'Voting') ||
-       bills.find(b => b.is_result_revealed) ||
-       bills.find(b => b.status === 'Vote Closed') ||
-       bills[0]);
+    : (liveBill || null);
 
   const isBillResultRevealed = !!(
-    settings.displayScene === 'bill_result' ||
-    (activeBill && activeBill.is_result_revealed && settings.displayScene !== 'agenda' && settings.displayScene !== 'welcome' && settings.displayScene !== 'break')
+    (settings.displayScene === 'bill_result' && targetBill && targetBill.is_result_revealed) ||
+    (settings.displayScene === 'auto' && settings.revealedBillId && targetBill && targetBill.is_result_revealed && !targetBill.is_dismissed)
   );
 
   const isBillVotingActive = !!(
-    settings.displayScene === 'bill_voting' ||
-    (activeBill && (activeBill.status === 'Vote Open' || activeBill.status === 'Voting') && settings.displayScene === 'auto')
+    (settings.displayScene === 'bill_voting' && targetBill && (targetBill.status === 'Vote Open' || targetBill.status === 'Voting')) ||
+    (settings.displayScene === 'auto' && liveBill)
   );
 
   const isBillClosedUnrevealed = !!(
-    activeBill && activeBill.status === 'Vote Closed' && !activeBill.is_result_revealed &&
-    (settings.displayScene === 'bill_voting' || (settings.displayScene === 'auto' && !activeElection))
+    settings.displayScene === 'bill_voting' && targetBill && targetBill.status === 'Vote Closed' && !targetBill.is_result_revealed
   );
 
   const isBillUpcoming = !!(
-    activeBill && (activeBill.status === 'Draft' || activeBill.status === 'Ready') &&
-    settings.displayScene === 'bill_voting'
+    settings.displayScene === 'bill_voting' && targetBill && (targetBill.status === 'Draft' || targetBill.status === 'Ready')
   );
 
-  // Active Flash Vote
-  const activeFlashVote = flashVotes.find(f => f.status === 'ACTIVE');
+  // Authoritative Flash Vote State
+  const liveFlashVote = flashVotes.find(f => (f.status === 'ACTIVE' || (f.status as string) === 'active') && !f.is_dismissed);
+  const revealedFlashVote = settings.revealedFlashVoteId
+    ? flashVotes.find(f => f.id === settings.revealedFlashVoteId)
+    : (settings.displayScene === 'flash_vote' ? flashVotes.find(f => f.is_result_revealed && !f.is_dismissed) : null);
+  const activeFlashVote = liveFlashVote || revealedFlashVote;
+
+  const isFlashVoteScene = !!(
+    (settings.displayScene === 'flash_vote' && activeFlashVote) ||
+    (settings.displayScene === 'auto' && liveFlashVote)
+  );
 
   // Timer Display Derivations
   const timerMins = Math.floor(displaySeconds / 60);
@@ -314,7 +329,7 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
         /* ══════════════════════════════════════════════════════════════════════ */
         /* SCENE 2: BILL VOTING RESULT REVEAL (VERY LARGE STAGE MESSAGE)          */
         /* ══════════════════════════════════════════════════════════════════════ */
-        ) : isBillResultRevealed && activeBill ? (
+        ) : isBillResultRevealed && targetBill ? (
           <div className="space-y-8 animate-result-reveal max-w-5xl mx-auto w-full">
             
             {/* Header */}
@@ -323,19 +338,19 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
                 <FileText className="w-5 h-5 text-purple-400" /> LEGISLATIVE BILL RESULT DECLARED
               </span>
               <div className="text-xl md:text-2xl font-mono font-black text-purple-400">
-                {activeBill.bill_number}
+                {targetBill.bill_number}
               </div>
               <h1 className="text-4xl md:text-6xl font-black text-white tracking-tight leading-tight drop-shadow-2xl">
-                {activeBill.title}
+                {targetBill.title}
               </h1>
-              {activeBill.description && (
+              {targetBill.description && (
                 <p className="text-sm md:text-lg text-slate-300 max-w-3xl mx-auto font-medium">
-                  {activeBill.description}
+                  {targetBill.description}
                 </p>
               )}
-              {activeBill.proposer && (
+              {targetBill.proposer && (
                 <p className="text-xs md:text-sm text-slate-400">
-                  Introduced by: <span className="text-slate-200 font-semibold">{activeBill.proposer}</span>
+                  Introduced by: <span className="text-slate-200 font-semibold">{targetBill.proposer}</span>
                 </p>
               )}
             </div>
@@ -347,7 +362,7 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
                   AYES (YES)
                 </span>
                 <span className="text-4xl md:text-6xl font-mono font-black text-white">
-                  {activeBill.ayes}
+                  {targetBill.ayes}
                 </span>
               </div>
 
@@ -356,7 +371,7 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
                   NOES (NO)
                 </span>
                 <span className="text-4xl md:text-6xl font-mono font-black text-white">
-                  {activeBill.noes}
+                  {targetBill.noes}
                 </span>
               </div>
 
@@ -365,7 +380,7 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
                   ABSTAIN
                 </span>
                 <span className="text-4xl md:text-6xl font-mono font-black text-white">
-                  {activeBill.abstain || 0}
+                  {targetBill.abstain || 0}
                 </span>
               </div>
 
@@ -374,14 +389,14 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
                   TOTAL VOTES
                 </span>
                 <span className="text-4xl md:text-6xl font-mono font-black text-amber-300">
-                  {activeBill.total_votes || (activeBill.ayes + activeBill.noes + (activeBill.abstain || 0))}
+                  {targetBill.total_votes || (targetBill.ayes + targetBill.noes + (targetBill.abstain || 0))}
                 </span>
               </div>
             </div>
 
             {/* GIANT BILL PASSED / BILL FAILED BANNER */}
             <div className="pt-4 max-w-4xl mx-auto">
-              {activeBill.result === 'PASSED' ? (
+              {targetBill.result === 'PASSED' ? (
                 <div className="p-8 md:p-12 rounded-3xl bg-gradient-to-b from-emerald-950/90 via-slate-900 to-emerald-950/90 border-4 border-emerald-400 text-emerald-400 shadow-2xl shadow-emerald-950/80 animate-gold-glow flex flex-col items-center justify-center gap-4">
                   <CheckCircle2 className="w-16 h-16 md:w-20 md:h-20 text-emerald-400 animate-bounce" />
                   <span className="text-5xl md:text-8xl font-black tracking-tight text-white drop-shadow-2xl">
@@ -409,23 +424,23 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
         /* ══════════════════════════════════════════════════════════════════════ */
         /* SCENE 3: BILL VOTING LIVE STAGE (VOTING NOT OPEN / OPEN / CLOSED)     */
         /* ══════════════════════════════════════════════════════════════════════ */
-        ) : (isBillVotingActive || isBillClosedUnrevealed || isBillUpcoming) && activeBill ? (
+        ) : (isBillVotingActive || isBillClosedUnrevealed || isBillUpcoming) && targetBill ? (
           <div className="flex flex-col items-center justify-center space-y-6 animate-slide-up max-w-4xl mx-auto text-center py-6 w-full">
             <span className="text-xs md:text-sm font-black uppercase tracking-widest text-purple-400 bg-purple-500/10 px-6 py-2 rounded-full border border-purple-500/30 inline-flex items-center gap-2 shadow-lg">
               <FileText className="w-4 h-4" /> BILL VOTING • FLOOR DIVISION
             </span>
 
             <div className="text-xl md:text-2xl font-mono font-bold text-purple-400">
-              {activeBill.bill_number}
+              {targetBill.bill_number}
             </div>
 
             <h1 className="text-4xl md:text-6xl font-black text-white tracking-tight leading-tight drop-shadow-2xl">
-              {activeBill.title}
+              {targetBill.title}
             </h1>
 
-            {activeBill.description && (
+            {targetBill.description && (
               <p className="text-lg md:text-xl text-slate-300 max-w-2xl mx-auto font-medium">
-                {activeBill.description}
+                {targetBill.description}
               </p>
             )}
 
@@ -440,7 +455,7 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
                   Cast your vote (AYE / NO / ABSTAIN)
                 </p>
                 <div className="px-6 py-2 rounded-2xl bg-slate-900/80 border border-slate-800 text-xs md:text-sm text-slate-400 font-mono inline-block">
-                  Votes Submitted: <span className="text-purple-400 font-bold">{activeBill.voted_delegate_ids?.length || activeBill.total_votes || 0}</span>
+                  Votes Submitted: <span className="text-purple-400 font-bold">{targetBill.voted_delegate_ids?.length || targetBill.total_votes || 0}</span>
                 </div>
               </div>
             ) : isBillClosedUnrevealed ? (
@@ -470,7 +485,7 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
         /* ══════════════════════════════════════════════════════════════════════ */
         /* SCENE 4: ANIMATED CANDIDATE ELECTION RESULT REVEAL SCREEN              */
         /* ══════════════════════════════════════════════════════════════════════ */
-        ) : settings.displayScene === 'election_result' ? (
+        ) : isElectionResultScene && revealedElection ? (
           <div className="space-y-8 animate-result-reveal max-w-6xl mx-auto w-full">
             
             {/* Reveal Header */}
@@ -589,7 +604,7 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
         /* ══════════════════════════════════════════════════════════════════════ */
         /* SCENE 5: PARLIAMENTARY ELECTION VOTING STAGE                          */
         /* ══════════════════════════════════════════════════════════════════════ */
-        ) : settings.displayScene === 'election' || (settings.displayScene === 'auto' && (isElectionLive || isElectionClosed)) ? (
+        ) : isElectionVotingScene && targetBallotElection ? (
           <div className="flex flex-col items-center justify-center space-y-6 animate-slide-up max-w-4xl mx-auto text-center py-6 w-full">
             <span className="text-xs md:text-sm font-black uppercase tracking-widest text-amber-400 bg-amber-500/10 px-6 py-2 rounded-full border border-amber-500/30 inline-block shadow-lg">
               PARLIAMENTARY ELECTION
@@ -639,28 +654,43 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
         /* ══════════════════════════════════════════════════════════════════════ */
         /* SCENE 6: LIVE FLOOR DIVISION (FLASH VOTE) STAGE                       */
         /* ══════════════════════════════════════════════════════════════════════ */
-        ) : settings.displayScene === 'flash_vote' || (settings.displayScene === 'auto' && activeFlashVote) ? (
+        ) : isFlashVoteScene && activeFlashVote ? (
           <div className="space-y-6 animate-slide-up max-w-5xl mx-auto">
             <span className="text-sm md:text-base font-black uppercase tracking-widest text-amber-400 bg-amber-500/10 px-6 py-2 rounded-full border border-amber-500/30 inline-block shadow-lg">
               <Sparkles className="w-5 h-5 inline mr-2" /> LIVE FLOOR DIVISION • {activeFlashVote?.motion_type || 'PROCEDURAL MOTION'}
+              {activeFlashVote.is_result_revealed ? ' • RESULT REVEALED' : activeFlashVote.status === 'CLOSED' ? ' • VOTING CLOSED' : ' • VOTING OPEN'}
             </span>
             <h1 className="text-4xl md:text-6xl font-black text-white max-w-4xl mx-auto leading-tight tracking-tight drop-shadow-lg">
               {activeFlashVote?.question || 'Should the Assembly Bill pass the House Division vote?'}
             </h1>
-            <div className="flex items-center justify-center gap-8 pt-6">
-              <div className="bg-emerald-950/90 border-2 border-emerald-500/50 px-10 py-6 rounded-3xl text-center shadow-2xl min-w-[160px]">
-                <span className="text-sm uppercase text-emerald-400 font-extrabold block tracking-wider">AYE</span>
-                <span className="text-5xl md:text-6xl font-mono font-black text-white">{activeFlashVote?.ayes_count || 0}</span>
+            {activeFlashVote.status === 'CLOSED' && !activeFlashVote.is_result_revealed ? (
+              <div className="space-y-4 pt-4">
+                <div className="px-10 py-3.5 rounded-full border-2 border-amber-500/80 bg-amber-950/40 text-amber-400 text-3xl md:text-5xl font-extrabold flex items-center justify-center gap-3 shadow-2xl shadow-amber-500/20 inline-flex">
+                  <span>VOTING CLOSED</span>
+                </div>
+                <p className="text-xl md:text-3xl font-medium text-slate-300">
+                  RESULT NOT YET REVEALED
+                </p>
+                <p className="text-sm md:text-base text-slate-500 font-medium">
+                  Awaiting Speaker declaration of floor division totals.
+                </p>
               </div>
-              <div className="bg-rose-950/90 border-2 border-rose-500/50 px-10 py-6 rounded-3xl text-center shadow-2xl min-w-[160px]">
-                <span className="text-sm uppercase text-rose-400 font-extrabold block tracking-wider">NO</span>
-                <span className="text-5xl md:text-6xl font-mono font-black text-white">{activeFlashVote?.noes_count || 0}</span>
+            ) : (
+              <div className="flex items-center justify-center gap-8 pt-6">
+                <div className="bg-emerald-950/90 border-2 border-emerald-500/50 px-10 py-6 rounded-3xl text-center shadow-2xl min-w-[160px]">
+                  <span className="text-sm uppercase text-emerald-400 font-extrabold block tracking-wider">AYE</span>
+                  <span className="text-5xl md:text-6xl font-mono font-black text-white">{activeFlashVote?.ayes_count || 0}</span>
+                </div>
+                <div className="bg-rose-950/90 border-2 border-rose-500/50 px-10 py-6 rounded-3xl text-center shadow-2xl min-w-[160px]">
+                  <span className="text-sm uppercase text-rose-400 font-extrabold block tracking-wider">NO</span>
+                  <span className="text-5xl md:text-6xl font-mono font-black text-white">{activeFlashVote?.noes_count || 0}</span>
+                </div>
+                <div className="bg-slate-900/90 border-2 border-slate-700 px-10 py-6 rounded-3xl text-center shadow-2xl min-w-[160px]">
+                  <span className="text-sm uppercase text-slate-400 font-extrabold block tracking-wider">ABSTAIN</span>
+                  <span className="text-5xl md:text-6xl font-mono font-black text-white">{activeFlashVote?.abstain_count || 0}</span>
+                </div>
               </div>
-              <div className="bg-slate-900/90 border-2 border-slate-700 px-10 py-6 rounded-3xl text-center shadow-2xl min-w-[160px]">
-                <span className="text-sm uppercase text-slate-400 font-extrabold block tracking-wider">ABSTAIN</span>
-                <span className="text-5xl md:text-6xl font-mono font-black text-white">{activeFlashVote?.abstain_count || 0}</span>
-              </div>
-            </div>
+            )}
           </div>
 
         /* ══════════════════════════════════════════════════════════════════════ */

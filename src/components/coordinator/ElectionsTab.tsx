@@ -35,12 +35,11 @@ import {
   Archive,
   ShieldAlert,
   ScrollText,
-  Eye,
-  EyeOff,
   FileText
 } from 'lucide-react';
 import { getProjectorSettings, saveProjectorSettings } from './ProjectorTab';
 import { storageService, getResolvedPartyName, deduplicateElectionList } from '../../services/storageService';
+import { RevealResultControls } from '../common/RevealResultControls';
 
 interface ElectionsTabProps {
   elections: Election[];
@@ -891,17 +890,8 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
   const handleProjectResult = (electionId: string, title: string) => {
     updateRevealStage(electionId, 'revealed');
-    try {
-      const cur = getProjectorSettings(eventId);
-      saveProjectorSettings({
-        ...cur,
-        displayScene: 'election_result',
-        revealedElectionId: electionId
-      }, eventId);
-      onShowToast('Projected on Display', `Broadcasting animated result declaration for "${title}" to stage screen.`, 'success');
-    } catch {
-      onShowToast('Projector Sync', `Updated stage display with results for "${title}"`, 'info');
-    }
+    storageService.revealElectionResult(electionId, eventId);
+    onShowToast('Projected on Display', `Broadcasting animated result declaration for "${title}" to stage screen.`, 'success');
   };
 
   const handleProjectLiveElection = (electionId: string, title: string) => {
@@ -920,6 +910,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
   const handleCloseElection = (electionId: string, title: string) => {
     onCloseElection(electionId);
+    storageService.closeElection(electionId, eventId);
     updateRevealStage(electionId, 'ready');
     try {
       const cur = getProjectorSettings(eventId);
@@ -928,7 +919,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
         displayScene: 'election',
         revealedElectionId: electionId
       }, eventId);
-      onShowToast('Voting Closed', `Ballot for "${title}" is sealed. Click "Reveal Result on Projector" to announce winner.`, 'info');
+      onShowToast('Voting Closed', `Ballot for "${title}" is sealed. Click "Reveal Results" to announce winner.`, 'info');
     } catch {
       onShowToast('Voting Closed', `Ballot closed for "${title}"`, 'info');
     }
@@ -937,6 +928,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   const handleCloseRevealResult = (electionId?: string) => {
     if (electionId) {
       updateRevealStage(electionId, 'done');
+      storageService.dismissElectionResult(electionId, eventId);
     } else {
       setRevealStages(prev => {
         const next = { ...prev };
@@ -950,18 +942,14 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
         }
         return next;
       });
+      const allE = storageService.getElections(eventId);
+      allE.forEach(e => {
+        if (e.is_result_revealed) {
+          storageService.dismissElectionResult(e.id, eventId);
+        }
+      });
     }
-    try {
-      const cur = getProjectorSettings(eventId);
-      saveProjectorSettings({
-        ...cur,
-        displayScene: 'auto',
-        revealedElectionId: undefined
-      }, eventId);
-      onShowToast('Stage Screen Reset', 'Closed result reveal and returned stage display to active agenda', 'info');
-    } catch {
-      onShowToast('Stage Reset', 'Returned stage display to active agenda', 'info');
-    }
+    onShowToast('Stage Screen Reset', 'Closed result reveal and returned stage display to active agenda', 'info');
   };
 
   const renderElectionRow = (elec: Election, index: number) => {
@@ -978,12 +966,9 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
     const liveVotedCount = elec.voted_delegate_ids?.length || 0;
     const liveTurnoutPct = totalEligible > 0 ? Math.round((liveVotedCount / totalEligible) * 100) : 0;
     const liveRemainingCount = Math.max(0, totalEligible - liveVotedCount);
-
     const currentProjector = getProjectorSettings(eventId);
     const isProjectorRevealingThis = currentProjector?.displayScene === 'election_result' && currentProjector?.revealedElectionId === elec.id;
-    const effectiveRevealStage: 'ready' | 'revealed' | 'done' = isProjectorRevealingThis
-      ? 'revealed'
-      : (revealStages[elec.id] || (elec.completed_at ? 'done' : 'ready'));
+    const isActuallyRevealed = elec.is_result_revealed === true || isProjectorRevealingThis || revealStages[elec.id] === 'revealed';
 
     return (
       <div
@@ -1033,7 +1018,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
               {elec.eligibility && (
                 <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-500/15 text-blue-400 border border-blue-500/30">
                   {elec.eligibility.scope === 'all'
-                    ? 'All Delegates'
+                    ? 'All House'
                     : elec.eligibility.scope === 'party'
                     ? `Party: ${elec.eligibility.targetName || 'Restricted'}`
                     : `Committee: ${elec.eligibility.targetName || 'Restricted'}`}
@@ -1113,51 +1098,19 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                 )}
 
                 {isClosed && (
-                  <>
-                    {effectiveRevealStage === 'ready' && (
-                      <button
-                        onClick={() => handleProjectResult(elec.id, elec.title)}
-                        className="px-3.5 py-1.5 rounded-lg text-xs font-bold text-slate-950 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 shadow-md flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
-                        title="Project animated winner declaration on auditorium display"
-                      >
-                        <Tv className="w-3.5 h-3.5 text-slate-950" /> Reveal Result on Projector 🎬
-                      </button>
-                    )}
-
-                    {effectiveRevealStage === 'revealed' && (
-                      <button
-                        onClick={() => handleCloseRevealResult(elec.id)}
-                        className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
-                        title="Close result reveal and return stage screen to normal active agenda display"
-                      >
-                        <XCircle className="w-3.5 h-3.5 text-rose-400" /> Close Reveal Result ✖
-                      </button>
-                    )}
-
-                    {effectiveRevealStage === 'done' && (
-                      <button
-                        onClick={() => handleProjectResult(elec.id, elec.title)}
-                        className="px-3 py-1 rounded-full text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 hover:bg-emerald-500/20 flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
-                        title="Result declared and finalized. Click to re-reveal results on stage screen."
-                      >
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> Done
-                      </button>
-                    )}
-
-                    <button
-                      onClick={() => {
-                        if (window.confirm(`Reset ballot for "${elec.title}"? This will clear all cast votes and reset the election to Upcoming.`)) {
-                          updateRevealStage(elec.id, 'ready');
-                          if (onResetElection) onResetElection(elec.id);
-                          onShowToast('Ballot Reset', `Reset votes for "${elec.title}".`, 'info');
-                        }
-                      }}
-                      className="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-600 flex items-center gap-1 cursor-pointer transition-all"
-                      title="Reset Ballot and clear all cast votes"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5" /> Reset Ballot
-                    </button>
-                  </>
+                  <button
+                    onClick={() => {
+                      if (window.confirm(`Reset ballot for "${elec.title}"? This will clear all cast votes and reset the election to Upcoming.`)) {
+                        updateRevealStage(elec.id, 'ready');
+                        if (onResetElection) onResetElection(elec.id);
+                        onShowToast('Ballot Reset', `Reset votes for "${elec.title}".`, 'info');
+                      }
+                    }}
+                    className="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-600 flex items-center gap-1 cursor-pointer transition-all"
+                    title="Reset Ballot and clear all cast votes"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" /> Reset Ballot
+                  </button>
                 )}
 
                 {!CONSTITUTIONAL_POSTS.some(p => p.position === elec.position || p.type === elec.type) && (
@@ -1171,6 +1124,21 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                 )}
               </div>
             </div>
+
+            {/* Standardized Result Controls when Closed */}
+            {isClosed && (
+              <RevealResultControls
+                voteId={elec.id}
+                title={elec.title}
+                status={elec.status}
+                votesCast={liveVotedCount}
+                totalEligible={totalEligible}
+                isRevealed={isActuallyRevealed}
+                isDismissed={Boolean(elec.is_dismissed)}
+                onReveal={() => handleProjectResult(elec.id, elec.title)}
+                onDismiss={() => handleCloseRevealResult(elec.id)}
+              />
+            )}
 
             {/* Live Voter Progress Bar */}
             {isLive && (
@@ -1202,49 +1170,57 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
 
             {/* Winner Banner if Closed */}
             {isClosed && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center font-black">
-                      <Trophy className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <span className="text-[10px] uppercase font-bold tracking-widest text-amber-500 block">
-                        {(elec.type === 'SPEAKER' || elec.position === 'Speaker') ? 'Elected Assembly Speaker (1st Highest)' : 'Elected Winner'}
-                      </span>
-                      <h4 className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>
-                        {elec.winner || (leader ? leader.name : 'No winner declared')}
-                      </h4>
-                      {leader && (
-                        <p className="text-[11px] text-slate-400">
-                          Won with {leader.votes} votes ({elec.total_votes > 0 ? Math.round((leader.votes / elec.total_votes) * 100) : 0}%) • {leader.party}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {(elec.type === 'SPEAKER' || elec.position === 'Speaker') && sortedCandidates.length > 1 && sortedCandidates[1].votes > 0 && (
-                  <div className="p-3 rounded-lg bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-between gap-3">
+              isActuallyRevealed ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-indigo-500 text-white flex items-center justify-center font-black">
-                        <Crown className="w-5 h-5" />
+                      <div className="w-10 h-10 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center font-black">
+                        <Trophy className="w-5 h-5" />
                       </div>
                       <div>
-                        <span className="text-[10px] uppercase font-bold tracking-widest text-indigo-400 block">
-                          Designated Deputy Speaker (2nd Highest)
+                        <span className="text-[10px] uppercase font-bold tracking-widest text-amber-500 block">
+                          {(elec.type === 'SPEAKER' || elec.position === 'Speaker') ? 'Elected Assembly Speaker (1st Highest)' : 'Elected Winner'}
                         </span>
                         <h4 className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>
-                          {sortedCandidates[1].name}
+                          {elec.winner || (leader ? leader.name : 'No winner declared')}
                         </h4>
-                        <p className="text-[11px] text-slate-400">
-                          {sortedCandidates[1].votes} votes ({elec.total_votes > 0 ? Math.round((sortedCandidates[1].votes / elec.total_votes) * 100) : 0}%) • {sortedCandidates[1].party}
-                        </p>
+                        {leader && (
+                          <p className="text-[11px] text-slate-400">
+                            Won with {leader.votes} votes ({elec.total_votes > 0 ? Math.round((leader.votes / elec.total_votes) * 100) : 0}%) • {leader.party}
+                          </p>
+                        )}
                       </div>
                     </div>
                   </div>
-                )}
-              </div>
+
+                  {(elec.type === 'SPEAKER' || elec.position === 'Speaker') && sortedCandidates.length > 1 && sortedCandidates[1].votes > 0 && (
+                    <div className="p-3 rounded-lg bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-indigo-500 text-white flex items-center justify-center font-black">
+                          <Crown className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <span className="text-[10px] uppercase font-bold tracking-widest text-indigo-400 block">
+                            Designated Deputy Speaker (2nd Highest)
+                          </span>
+                          <h4 className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>
+                            {sortedCandidates[1].name}
+                          </h4>
+                          <p className="text-[11px] text-slate-400">
+                            {sortedCandidates[1].votes} votes ({elec.total_votes > 0 ? Math.round((sortedCandidates[1].votes / elec.total_votes) * 100) : 0}%) • {sortedCandidates[1].party}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="p-3.5 rounded-xl border border-amber-500/30 bg-amber-500/10 flex items-center justify-between text-xs text-amber-300">
+                  <span className="font-semibold flex items-center gap-2">
+                    <Lock className="w-4 h-4 text-amber-400" /> Voting is closed. Result remains hidden until you click &quot;Reveal Results&quot;.
+                  </span>
+                </div>
+              )
             )}
 
             {/* Nominated Candidates Roster */}
@@ -2247,34 +2223,6 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                           </button>
                         )}
 
-                        {/* 3. Reveal Result Button */}
-                        {isVotingClosed && !isRevealed && (
-                          <button
-                            onClick={() => {
-                              storageService.revealBillResult(bill.id, eventId);
-                              setBills(storageService.getBills(eventId));
-                              onShowToast('Result Revealed', `${bill.bill_number} result transmitted to projector screen`, 'success');
-                            }}
-                            className="px-4 py-2 rounded-xl text-xs font-black bg-purple-600 hover:bg-purple-500 text-white shadow-md flex items-center gap-1.5 cursor-pointer"
-                          >
-                            <Eye className="w-3.5 h-3.5" /> Reveal Result
-                          </button>
-                        )}
-
-                        {/* 4. Hide Result Button */}
-                        {isVotingClosed && isRevealed && (
-                          <button
-                            onClick={() => {
-                              storageService.hideBillResult(bill.id, eventId);
-                              setBills(storageService.getBills(eventId));
-                              onShowToast('Result Hidden', `${bill.bill_number} vote totals hidden from projector`, 'info');
-                            }}
-                            className="px-4 py-2 rounded-xl text-xs font-black bg-slate-700 hover:bg-slate-600 text-white shadow-md flex items-center gap-1.5 cursor-pointer"
-                          >
-                            <EyeOff className="w-3.5 h-3.5" /> Hide Result
-                          </button>
-                        )}
-
                         {/* Delete/Archive Button */}
                         <button
                           onClick={() => {
@@ -2291,6 +2239,49 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                         </button>
                       </div>
                     </div>
+
+                    {/* Live Voter Progress Bar while Voting is Open */}
+                    {isVotingOpen && (
+                      <div className="p-3.5 rounded-xl border space-y-2 bg-amber-500/10 border-amber-500/30">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                            <Zap className="w-3.5 h-3.5 animate-pulse text-amber-500" /> Live Voter Progress
+                          </span>
+                          <span className="font-mono font-bold text-white">
+                            {totalVotes} / {learners.length} voted ({learners.length > 0 ? Math.round((totalVotes / learners.length) * 100) : 0}%)
+                          </span>
+                        </div>
+                        <div className="w-full h-2.5 rounded-full bg-slate-800 overflow-hidden border border-slate-700/50">
+                          <div
+                            className="h-full bg-gradient-to-r from-amber-500 to-emerald-500 transition-all duration-500"
+                            style={{ width: `${learners.length > 0 ? Math.min(100, Math.round((totalVotes / learners.length) * 100)) : 0}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Standardized Result Controls when Voting Closed */}
+                    {isVotingClosed && (
+                      <RevealResultControls
+                        voteId={bill.id}
+                        title={bill.bill_number}
+                        status={bill.status}
+                        votesCast={totalVotes}
+                        totalEligible={learners.length}
+                        isRevealed={Boolean(isRevealed)}
+                        isDismissed={Boolean(bill.is_dismissed)}
+                        onReveal={() => {
+                          storageService.revealBillResult(bill.id, eventId);
+                          setBills(storageService.getBills(eventId));
+                          onShowToast('Result Revealed', `${bill.bill_number} result transmitted to projector screen`, 'success');
+                        }}
+                        onDismiss={() => {
+                          storageService.dismissBillResult(bill.id, eventId);
+                          setBills(storageService.getBills(eventId));
+                          onShowToast('Session Restored', 'Closed bill result and returned stage display to active agenda', 'info');
+                        }}
+                      />
+                    )}
 
                     {/* Vote Counts Breakdown */}
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
@@ -2747,66 +2738,124 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {syncedFlashVotes.map((fv) => (
-                <div key={fv.id} className="p-5 rounded-2xl border space-y-4" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <span className="text-[10px] uppercase font-bold text-amber-400 tracking-wider">
-                        {fv.motion_type || 'Division Motion'}
-                      </span>
-                      <h4 className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>{fv.question}</h4>
-                    </div>
-                    {fv.status === 'ACTIVE' ? (
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 animate-pulse">
-                        Active
-                      </span>
-                    ) : (
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
-                        Concluded
-                      </span>
-                    )}
-                  </div>
+              {syncedFlashVotes.map((fv) => {
+                const totalCast = (fv.ayes_count || 0) + (fv.noes_count || 0) + (fv.abstain_count || 0);
+                const totalEligible = learners.length;
+                const liveTurnoutPct = totalEligible > 0 ? Math.round((totalCast / totalEligible) * 100) : 0;
+                const isRevealed = Boolean(fv.is_result_revealed);
+                const isClosed = fv.status !== 'ACTIVE';
 
-                  <div className="grid grid-cols-3 gap-2 text-center">
-                    <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
-                      <div className="text-lg font-black text-emerald-400">{fv.ayes_count || 0}</div>
-                      <div className="text-[10px] uppercase font-bold text-emerald-500/80">AYES</div>
+                return (
+                  <div key={fv.id} className="p-5 rounded-2xl border space-y-4" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border-soft)' }}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-amber-400 tracking-wider">
+                          {fv.motion_type || 'Division Motion'}
+                        </span>
+                        <h4 className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>{fv.question}</h4>
+                      </div>
+                      {fv.status === 'ACTIVE' ? (
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 animate-pulse">
+                          Active
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                          Concluded
+                        </span>
+                      )}
                     </div>
-                    <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20">
-                      <div className="text-lg font-black text-rose-400">{fv.noes_count || 0}</div>
-                      <div className="text-[10px] uppercase font-bold text-rose-500/80">NOES</div>
-                    </div>
-                    <div className="p-2.5 rounded-xl bg-slate-500/10 border border-slate-500/20">
-                      <div className="text-lg font-black text-slate-400">{fv.abstain_count || 0}</div>
-                      <div className="text-[10px] uppercase font-bold text-slate-400">ABSTAIN</div>
-                    </div>
-                  </div>
 
-                  <div className="flex items-center gap-2 pt-2 border-t" style={{ borderColor: 'var(--border-soft)' }}>
+                    {/* Live Voter Progress Bar while Active */}
                     {fv.status === 'ACTIVE' && (
-                      <button
-                        onClick={() => onCloseFlashVote(fv.id)}
-                        className="flex-1 py-2 rounded-xl text-xs font-bold text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 cursor-pointer transition-colors"
-                      >
-                        Close Floor Division
-                      </button>
+                      <div className="p-3.5 rounded-xl border space-y-2 bg-amber-500/10 border-amber-500/30">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                            <Zap className="w-3.5 h-3.5 animate-pulse text-amber-500" /> Live Voter Progress
+                          </span>
+                          <span className="font-mono font-bold text-white">
+                            {totalCast} / {totalEligible} voted ({liveTurnoutPct}%)
+                          </span>
+                        </div>
+                        <div className="w-full h-2.5 rounded-full bg-slate-800 overflow-hidden border border-slate-700/50">
+                          <div
+                            className="h-full bg-gradient-to-r from-amber-500 to-emerald-500 transition-all duration-500"
+                            style={{ width: `${liveTurnoutPct}%` }}
+                          />
+                        </div>
+                      </div>
                     )}
-                    <button
-                      onClick={() => {
-                        if (window.confirm(`Are you sure you want to delete the "${fv.question}" vote?`)) {
-                          onDeleteFlashVote?.(fv.id);
-                          onShowToast('Floor Division Deleted', `Deleted "${fv.question}" vote successfully.`, 'info');
-                        }
-                      }}
-                      className={`py-2 px-3 rounded-xl text-xs font-bold text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${fv.status !== 'ACTIVE' ? 'w-full' : ''}`}
-                      title="Delete Floor Division"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Delete Vote</span>
-                    </button>
+
+                    {/* Standardized Result Controls when Concluded */}
+                    {isClosed && (
+                      <RevealResultControls
+                        voteId={fv.id}
+                        title={fv.question}
+                        status={fv.status}
+                        votesCast={totalCast}
+                        totalEligible={totalEligible}
+                        isRevealed={isRevealed}
+                        isDismissed={Boolean(fv.is_dismissed)}
+                        onReveal={() => {
+                          storageService.revealFlashVoteResult(fv.id, eventId);
+                          setSyncedFlashVotes(storageService.getFlashVotes(eventId));
+                          onShowToast('Result Revealed', 'Flash vote results broadcast to projector & delegates', 'success');
+                        }}
+                        onDismiss={() => {
+                          storageService.dismissFlashVoteResult(fv.id, eventId);
+                          setSyncedFlashVotes(storageService.getFlashVotes(eventId));
+                          onShowToast('Session Restored', 'Flash vote display dismissed, returned projector to active agenda', 'info');
+                        }}
+                      />
+                    )}
+
+                    {/* Vote Counts Breakdown - Revealed vs Hidden */}
+                    {isClosed && !isRevealed ? (
+                      <div className="p-3.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-xs text-amber-300 font-semibold flex items-center gap-2">
+                        <Lock className="w-4 h-4 text-amber-400" /> Voting is closed. Result remains hidden until you click &quot;Reveal Results&quot;.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-3 gap-2 text-center">
+                        <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                          <div className="text-lg font-black text-emerald-400">{fv.ayes_count || 0}</div>
+                          <div className="text-[10px] uppercase font-bold text-emerald-500/80">AYES</div>
+                        </div>
+                        <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20">
+                          <div className="text-lg font-black text-rose-400">{fv.noes_count || 0}</div>
+                          <div className="text-[10px] uppercase font-bold text-rose-500/80">NOES</div>
+                        </div>
+                        <div className="p-2.5 rounded-xl bg-slate-500/10 border border-slate-500/20">
+                          <div className="text-lg font-black text-slate-400">{fv.abstain_count || 0}</div>
+                          <div className="text-[10px] uppercase font-bold text-slate-400">ABSTAIN</div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-2 pt-2 border-t" style={{ borderColor: 'var(--border-soft)' }}>
+                      {fv.status === 'ACTIVE' && (
+                        <button
+                          onClick={() => onCloseFlashVote(fv.id)}
+                          className="flex-1 py-2 rounded-xl text-xs font-bold text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 cursor-pointer transition-colors"
+                        >
+                          Close Floor Division
+                        </button>
+                      )}
+                      <button
+                        onClick={() => {
+                          if (window.confirm(`Are you sure you want to delete the "${fv.question}" vote?`)) {
+                            onDeleteFlashVote?.(fv.id);
+                            onShowToast('Floor Division Deleted', `Deleted "${fv.question}" vote successfully.`, 'info');
+                          }
+                        }}
+                        className={`py-2 px-3 rounded-xl text-xs font-bold text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${fv.status !== 'ACTIVE' ? 'w-full' : ''}`}
+                        title="Delete Floor Division"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete Vote</span>
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

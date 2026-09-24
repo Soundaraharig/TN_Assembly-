@@ -470,6 +470,8 @@ export function mergeTwoElections(base: Election, other: Election): Election {
     votes_by_delegate: mergedVotesByDelegate,
     total_votes: totalVotes,
     winner: primary.winner || secondary.winner,
+    is_result_revealed: (primary.is_result_revealed ?? secondary.is_result_revealed) || false,
+    is_dismissed: (primary.is_dismissed ?? secondary.is_dismissed) || false,
     completed_at: primary.completed_at || secondary.completed_at,
     created_at: primary.created_at || secondary.created_at,
     createdAt: primary.createdAt || secondary.createdAt || primary.created_at || secondary.created_at
@@ -9692,12 +9694,14 @@ class StorageService {
     if (role === 'student') {
       return nonDeputyList.filter(e => !e.is_archived && e.status !== 'archived').map(e => ({
         ...e,
-        total_votes: undefined as any,
+        winner: e.is_result_revealed ? e.winner : undefined,
+        total_votes: e.is_result_revealed ? e.total_votes : 0,
         voted_delegate_ids: studentId && e.voted_delegate_ids?.includes(studentId) ? [studentId] : [],
         candidates: (e.candidates || []).map(c => ({
           ...c,
-          votes: undefined as any
-        }))
+          votes: e.is_result_revealed ? c.votes : 0
+        })),
+        is_result_revealed: !!e.is_result_revealed
       }));
     }
     return nonDeputyList.filter(e => !e.is_archived && e.status !== 'archived');
@@ -9872,8 +9876,8 @@ class StorageService {
     return true;
   }
 
-  public closeElection(electionId: string) {
-    let targetEventId = '';
+  public closeElection(electionId: string, eventId?: string) {
+    let targetEventId = eventId || '';
     let winnerRoleToAssign = '';
     let winnerCandidate: ElectionCandidate | undefined;
 
@@ -9902,6 +9906,8 @@ class StorageService {
           ...e,
           status: 'Closed' as const,
           winner: win,
+          is_result_revealed: false,
+          is_dismissed: false,
           completed_at: e.completed_at || new Date().toISOString(),
           updated_at: new Date().toISOString()
         };
@@ -9949,6 +9955,129 @@ class StorageService {
       this.broadcast('election_update', { eventId: targetEventId, elections: this.getElections(targetEventId) });
       this.syncEventStateToSupabase(targetEventId);
     }
+  }
+
+  public revealElectionResult(electionId: string, eventId: string): void {
+    let targetEventId = eventId;
+    const all = this.getElectionAll().map(e => {
+      if (e.id === electionId) {
+        targetEventId = e.event_id || eventId;
+        const sorted = [...(e.candidates || [])].sort((a, b) => (b.votes || 0) - (a.votes || 0));
+        const win = e.winner || (sorted.length > 0 && sorted[0].votes > 0 ? sorted[0].name : undefined);
+        return {
+          ...e,
+          winner: win,
+          is_result_revealed: true,
+          is_dismissed: false,
+          updated_at: new Date().toISOString()
+        };
+      }
+      return e;
+    });
+    this.setItem(STORAGE_KEYS.ELECTIONS, all);
+
+    if (targetEventId) {
+      // Update in-memory and persisted social_coverage
+      const allEvs = this.getEvents();
+      const matched = allEvs.find(e => e.id === targetEventId);
+      if (matched) {
+        const sc = (matched.social_coverage || {}) as Record<string, any>;
+        const curElecs = Array.isArray(sc.elections) ? sc.elections : [];
+        const updatedE = all.find(e => e.id === electionId);
+        if (updatedE) {
+          matched.social_coverage = {
+            ...sc,
+            elections: curElecs.map((el: any) => el.id === electionId ? updatedE : el),
+            updated_at: new Date().toISOString()
+          };
+          this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
+        }
+      }
+
+      // Direct projector to election_result scene
+      const proj = this.getProjectorSettings(targetEventId);
+      proj.revealedElectionId = electionId;
+      proj.displayScene = 'election_result';
+      this.saveProjectorSettings(targetEventId, proj);
+
+      this.broadcast('election_update', { eventId: targetEventId, elections: this.getElections(targetEventId) }).catch(() => {});
+      this.syncEventStateToSupabase(targetEventId, true).catch(() => {});
+    }
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+  }
+
+  public dismissElectionResult(electionId: string, eventId: string): void {
+    let targetEventId = eventId;
+    const all = this.getElectionAll().map(e => {
+      if (e.id === electionId) {
+        targetEventId = e.event_id || eventId;
+        return {
+          ...e,
+          is_dismissed: true,
+          updated_at: new Date().toISOString()
+        };
+      }
+      return e;
+    });
+    this.setItem(STORAGE_KEYS.ELECTIONS, all);
+
+    if (targetEventId) {
+      const allEvs = this.getEvents();
+      const matched = allEvs.find(e => e.id === targetEventId);
+      if (matched) {
+        const sc = (matched.social_coverage || {}) as Record<string, any>;
+        const curElecs = Array.isArray(sc.elections) ? sc.elections : [];
+        const updatedE = all.find(e => e.id === electionId);
+        if (updatedE) {
+          matched.social_coverage = {
+            ...sc,
+            elections: curElecs.map((el: any) => el.id === electionId ? updatedE : el),
+            updated_at: new Date().toISOString()
+          };
+          this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
+        }
+      }
+
+      // Return projector display to current active session / agenda
+      const proj = this.getProjectorSettings(targetEventId);
+      proj.revealedElectionId = undefined;
+      proj.displayScene = 'agenda';
+      this.saveProjectorSettings(targetEventId, proj);
+
+      this.broadcast('election_update', { eventId: targetEventId, elections: this.getElections(targetEventId) }).catch(() => {});
+      this.syncEventStateToSupabase(targetEventId, true).catch(() => {});
+    }
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+  }
+
+  public hideElectionResult(electionId: string, eventId: string): void {
+    let targetEventId = eventId;
+    const all = this.getElectionAll().map(e => {
+      if (e.id === electionId) {
+        targetEventId = e.event_id || eventId;
+        return {
+          ...e,
+          is_result_revealed: false,
+          updated_at: new Date().toISOString()
+        };
+      }
+      return e;
+    });
+    this.setItem(STORAGE_KEYS.ELECTIONS, all);
+
+    if (targetEventId) {
+      const proj = this.getProjectorSettings(targetEventId);
+      proj.revealedElectionId = undefined;
+      proj.displayScene = 'election';
+      this.saveProjectorSettings(targetEventId, proj);
+
+      this.broadcast('election_update', { eventId: targetEventId, elections: this.getElections(targetEventId) }).catch(() => {});
+      this.syncEventStateToSupabase(targetEventId, true).catch(() => {});
+    }
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
   }
 
   public setElectionStatus(electionId: string, status: 'Upcoming' | 'Live' | 'Closed') {
@@ -10358,11 +10487,12 @@ class StorageService {
         const studentVote = studentId && v.votes ? v.votes.find(vt => vt.learner_id === studentId) : undefined;
         return {
           ...v,
-          ayes_count: 0,
-          noes_count: 0,
-          abstain_count: 0,
+          ayes_count: v.is_result_revealed ? v.ayes_count : 0,
+          noes_count: v.is_result_revealed ? v.noes_count : 0,
+          abstain_count: v.is_result_revealed ? v.abstain_count : 0,
           voter_ids: studentId && v.voter_ids?.includes(studentId) ? [studentId] : [],
-          votes: studentVote ? [studentVote] : []
+          votes: v.is_result_revealed ? (v.votes || []) : (studentVote ? [studentVote] : []),
+          is_result_revealed: !!v.is_result_revealed
         };
       });
     }
@@ -10383,7 +10513,7 @@ class StorageService {
     // Single Active Rule: Auto-close any previously active flash vote for this event
     const all = this.getFlashVoteAll().map(fv => {
       if (fv.event_id === eventId && (fv.status === 'ACTIVE' || (fv.status as string) === 'active')) {
-        return { ...fv, status: 'CLOSED' as const };
+        return { ...fv, status: 'CLOSED' as const, is_result_revealed: false, is_dismissed: false };
       }
       return fv;
     });
@@ -10400,11 +10530,20 @@ class StorageService {
       noes_count: 0,
       abstain_count: 0,
       voter_ids: [],
-      votes: []
+      votes: [],
+      is_result_revealed: false,
+      is_dismissed: false
     };
     all.unshift(newVote);
     this.setItem(STORAGE_KEYS.FLASH_VOTES, all);
     if (eventId) {
+      // Update projector to show live flash vote
+      const proj = this.getProjectorSettings(eventId);
+      proj.activeFlashVoteId = newVote.id;
+      proj.revealedFlashVoteId = undefined;
+      proj.displayScene = 'flash_vote';
+      this.saveProjectorSettings(eventId, proj);
+
       const { votes, ...compactFV } = newVote;
       this.broadcast('flash_vote_update', { eventId, flashVote: compactFV }).catch(() => {});
       this.syncEventStateToSupabase(eventId);
@@ -10481,7 +10620,12 @@ class StorageService {
     const all = this.getFlashVoteAll().map(v => {
       if (v.id === voteId) {
         targetEventId = v.event_id;
-        updatedVote = { ...v, status: 'CLOSED' as const };
+        updatedVote = {
+          ...v,
+          status: 'CLOSED' as const,
+          is_result_revealed: false,
+          is_dismissed: false
+        };
         return updatedVote;
       }
       return v;
@@ -10495,7 +10639,7 @@ class StorageService {
         const curFV = Array.isArray(sc.flash_votes) ? sc.flash_votes : [];
         matched.social_coverage = {
           ...sc,
-          flash_votes: curFV.map((f: any) => f.id === voteId ? { ...f, status: 'CLOSED' } : f),
+          flash_votes: curFV.map((f: any) => f.id === voteId ? { ...f, status: 'CLOSED', is_result_revealed: false, is_dismissed: false } : f),
           updated_at: new Date().toISOString()
         };
         this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
@@ -10509,6 +10653,107 @@ class StorageService {
         }).catch(() => {});
       }
       this.syncEventStateToSupabase(targetEventId);
+    }
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+  }
+
+  public revealFlashVoteResult(voteId: string, eventId: string): void {
+    let targetEventId = eventId;
+    let updatedVote: LiveFlashVote | undefined;
+    const all = this.getFlashVoteAll().map(v => {
+      if (v.id === voteId) {
+        targetEventId = v.event_id || eventId;
+        updatedVote = {
+          ...v,
+          is_result_revealed: true,
+          is_dismissed: false
+        };
+        return updatedVote;
+      }
+      return v;
+    });
+    this.setItem(STORAGE_KEYS.FLASH_VOTES, all);
+
+    if (targetEventId) {
+      const allEvs = this.getEvents();
+      const matched = allEvs.find(e => e.id === targetEventId);
+      if (matched) {
+        const sc = (matched.social_coverage || {}) as Record<string, any>;
+        const curFV = Array.isArray(sc.flash_votes) ? sc.flash_votes : [];
+        matched.social_coverage = {
+          ...sc,
+          flash_votes: curFV.map((f: any) => f.id === voteId ? { ...f, is_result_revealed: true, is_dismissed: false } : f),
+          updated_at: new Date().toISOString()
+        };
+        this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
+      }
+
+      // Direct projector to show the flash_vote scene with revealed result
+      const proj = this.getProjectorSettings(targetEventId);
+      proj.revealedFlashVoteId = voteId;
+      proj.activeFlashVoteId = voteId;
+      proj.displayScene = 'flash_vote';
+      this.saveProjectorSettings(targetEventId, proj);
+
+      if (updatedVote) {
+        const { votes, ...compactFV } = updatedVote;
+        this.broadcast('flash_vote_update', {
+          eventId: targetEventId,
+          flashVote: compactFV
+        }).catch(() => {});
+      }
+      this.syncEventStateToSupabase(targetEventId, true).catch(() => {});
+    }
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+  }
+
+  public dismissFlashVoteResult(voteId: string, eventId: string): void {
+    let targetEventId = eventId;
+    let updatedVote: LiveFlashVote | undefined;
+    const all = this.getFlashVoteAll().map(v => {
+      if (v.id === voteId) {
+        targetEventId = v.event_id || eventId;
+        updatedVote = {
+          ...v,
+          is_dismissed: true
+        };
+        return updatedVote;
+      }
+      return v;
+    });
+    this.setItem(STORAGE_KEYS.FLASH_VOTES, all);
+
+    if (targetEventId) {
+      const allEvs = this.getEvents();
+      const matched = allEvs.find(e => e.id === targetEventId);
+      if (matched) {
+        const sc = (matched.social_coverage || {}) as Record<string, any>;
+        const curFV = Array.isArray(sc.flash_votes) ? sc.flash_votes : [];
+        matched.social_coverage = {
+          ...sc,
+          flash_votes: curFV.map((f: any) => f.id === voteId ? { ...f, is_dismissed: true } : f),
+          updated_at: new Date().toISOString()
+        };
+        this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
+      }
+
+      // Switch projector back to active agenda / session
+      const proj = this.getProjectorSettings(targetEventId);
+      proj.revealedFlashVoteId = undefined;
+      proj.activeFlashVoteId = undefined;
+      proj.displayScene = 'agenda';
+      this.saveProjectorSettings(targetEventId, proj);
+
+      if (updatedVote) {
+        const { votes, ...compactFV } = updatedVote;
+        this.broadcast('flash_vote_update', {
+          eventId: targetEventId,
+          flashVote: compactFV
+        }).catch(() => {});
+      }
+      this.syncEventStateToSupabase(targetEventId, true).catch(() => {});
     }
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
@@ -10624,11 +10869,26 @@ class StorageService {
 
   // ── PROCEEDINGS ───────────────────────────────────────────────────────────
 
-  public getProceedings(eventId?: string): BillProceeding[] {
+  public getProceedings(eventId?: string, role?: string, studentId?: string): BillProceeding[] {
     const deletedIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
     const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS).filter(p => !deletedIds.has(p.id));
-    if (eventId) return all.filter(p => p.event_id === eventId);
-    return all;
+    const list = eventId ? all.filter(p => p.event_id === eventId) : all;
+    if (role === 'student') {
+      return list.map(b => {
+        const studentVote = studentId && b.votes ? b.votes.find(v => v.delegate_id === studentId || v.learner_id === studentId) : undefined;
+        return {
+          ...b,
+          ayes: b.is_result_revealed ? b.ayes : 0,
+          noes: b.is_result_revealed ? b.noes : 0,
+          abstain: b.is_result_revealed ? (b.abstain || 0) : 0,
+          total_votes: b.is_result_revealed ? b.total_votes : 0,
+          result: b.is_result_revealed ? b.result : undefined,
+          votes: b.is_result_revealed ? (b.votes || []) : (studentVote ? [studentVote] : []),
+          is_result_revealed: !!b.is_result_revealed
+        };
+      });
+    }
+    return list;
   }
 
   public addBill(bill: Partial<BillProceeding>): BillProceeding {
@@ -10666,8 +10926,8 @@ class StorageService {
     this.setItem(STORAGE_KEYS.PROCEEDINGS, all);
   }
 
-  public getBills(eventId?: string): BillProceeding[] {
-    return this.getProceedings(eventId);
+  public getBills(eventId?: string, role?: string, studentId?: string): BillProceeding[] {
+    return this.getProceedings(eventId, role, studentId);
   }
 
   public createBill(bill: Partial<BillProceeding>, eventId?: string): BillProceeding {
@@ -10943,6 +11203,48 @@ class StorageService {
     proj.revealedBillId = undefined;
     proj.activeBillId = billId;
     proj.displayScene = 'bill_voting';
+    this.saveProjectorSettings(eventId, proj);
+
+    this.broadcastBills(eventId, all.filter(b => b.event_id === eventId));
+    this.syncEventStateToSupabase(eventId, true).catch(() => {});
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+  }
+
+  public dismissBillResult(billId: string, eventId: string): void {
+    const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS).map(b => {
+      if (b.id === billId) {
+        return {
+          ...b,
+          is_dismissed: true,
+          updated_at: new Date().toISOString()
+        };
+      }
+      return b;
+    });
+    this.setItem(STORAGE_KEYS.PROCEEDINGS, all);
+
+    const allEvs = this.getEvents();
+    const matched = allEvs.find(e => e.id === eventId);
+    if (matched) {
+      const sc = (matched.social_coverage || {}) as Record<string, any>;
+      const curProcs = Array.isArray(sc.proceedings) ? sc.proceedings : [];
+      const updatedProc = all.find(b => b.id === billId);
+      if (updatedProc) {
+        matched.social_coverage = {
+          ...sc,
+          proceedings: curProcs.map((b: any) => b.id === billId ? updatedProc : b),
+          updated_at: new Date().toISOString()
+        };
+        this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
+      }
+    }
+
+    // Switch projector scene to active agenda session
+    const proj = this.getProjectorSettings(eventId);
+    proj.revealedBillId = undefined;
+    proj.activeBillId = undefined;
+    proj.displayScene = 'agenda';
     this.saveProjectorSettings(eventId, proj);
 
     this.broadcastBills(eventId, all.filter(b => b.event_id === eventId));
