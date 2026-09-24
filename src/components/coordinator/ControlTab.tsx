@@ -32,7 +32,8 @@ import {
   History,
   X,
   Mic,
-  Search
+  Search,
+  Hand
 } from 'lucide-react';
 
 import { storageService } from '../../services/storageService';
@@ -196,7 +197,24 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   };
 
   // ── Speaking Floor & Hand-Raise State (Real Persisted) ───────────────────
-  const [isPhoneHandRaiseOn, setIsPhoneHandRaiseOn] = useState(true);
+  const [isPhoneHandRaiseOn, setIsPhoneHandRaiseOn] = useState(() => {
+    return currentEvent?.id ? storageService.getHandRaiseEnabled(currentEvent.id) : true;
+  });
+
+  useEffect(() => {
+    if (!currentEvent?.id) return;
+    const syncHandRaise = () => {
+      setIsPhoneHandRaiseOn(storageService.getHandRaiseEnabled(currentEvent.id));
+    };
+    syncHandRaise();
+    window.addEventListener('tn_assembly_hand_raise_setting', syncHandRaise);
+    const unsub = storageService.subscribe(syncHandRaise);
+    return () => {
+      unsub();
+      window.removeEventListener('tn_assembly_hand_raise_setting', syncHandRaise);
+    };
+  }, [currentEvent?.id]);
+
   const [speakingRequests, setSpeakingRequests] = useState<SpeakingRequest[]>(() => {
     return currentEvent?.id ? storageService.getSpeakingRequests(currentEvent.id) : [];
   });
@@ -205,6 +223,8 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   });
   const [callingSpeakerId, setCallingSpeakerId] = useState<string | null>(null);
   const [finishingTurnId, setFinishingTurnId] = useState<string | null>(null);
+  const [showHandsDownModal, setShowHandsDownModal] = useState(false);
+  const [isLoweringHands, setIsLoweringHands] = useState(false);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [historySearchQuery, setHistorySearchQuery] = useState('');
   const [historySessionFilter, setHistorySessionFilter] = useState<string>('all');
@@ -241,11 +261,13 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     const unsub = storageService.subscribe(refreshSpeakingData);
     window.addEventListener('tn_assembly_speaking_request_update', handleReqUpdate);
     window.addEventListener('tn_assembly_speaking_turn_update', handleTurnUpdate);
+    window.addEventListener('tn_assembly_speaking_update', handleReqUpdate);
 
     return () => {
       unsub();
       window.removeEventListener('tn_assembly_speaking_request_update', handleReqUpdate);
       window.removeEventListener('tn_assembly_speaking_turn_update', handleTurnUpdate);
+      window.removeEventListener('tn_assembly_speaking_update', handleReqUpdate);
     };
   }, [currentEvent?.id, activeAgendaItem.id, activeAgendaItem.title]);
 
@@ -355,6 +377,28 @@ export const ControlTab: React.FC<ControlTabProps> = ({
       onShowToast('Request Dismissed', `${req.learner_name}'s request was dismissed`, 'info');
     } catch (err: any) {
       onShowToast('Dismiss Error', err?.message || 'Failed to dismiss request', 'error');
+    }
+  };
+
+  const handleTogglePhoneHandRaise = async () => {
+    if (!currentEvent?.id) return;
+    const next = !isPhoneHandRaiseOn;
+    setIsPhoneHandRaiseOn(next);
+    await storageService.setHandRaiseEnabled(currentEvent.id, next);
+    onShowToast('Hand-Raise Control', next ? 'Phone hand-raise active for delegates' : 'Phone hand-raise disabled', 'info');
+  };
+
+  const handleLowerAllHands = async () => {
+    if (!currentEvent?.id) return;
+    setIsLoweringHands(true);
+    try {
+      const res = await storageService.lowerAllSpeakingRequests(currentEvent.id, activeAgendaItem.id);
+      setShowHandsDownModal(false);
+      onShowToast('Hands Down', `Cleared ${res.count} waiting speaking request${res.count === 1 ? '' : 's'}.`, 'success');
+    } catch (err: any) {
+      onShowToast('Hands Down Failed', err?.message || 'Error clearing waiting requests', 'error');
+    } finally {
+      setIsLoweringHands(false);
     }
   };
 
@@ -670,7 +714,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
           {/* 3. SPEAKING FLOOR CARD (Production Realtime & Persisted) */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <span className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
                   ✋ Speaking Floor
@@ -679,16 +723,30 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   {waitingRequests.length} waiting
                 </span>
               </div>
-              <button
-                onClick={() => {
-                  setIsPhoneHandRaiseOn(!isPhoneHandRaiseOn);
-                  onShowToast('Hand-Raise Control', isPhoneHandRaiseOn ? 'Phone hand-raise disabled' : 'Phone hand-raise active for delegates', 'info');
-                }}
-                className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-600 dark:text-slate-300 flex items-center gap-1 cursor-pointer transition-colors"
-              >
-                <Smartphone className="w-3.5 h-3.5" />
-                <span>Phone hand-raise: {isPhoneHandRaiseOn ? 'On' : 'Off'}</span>
-              </button>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setShowHandsDownModal(true)}
+                  disabled={waitingRequests.length === 0}
+                  className="px-2.5 py-1 rounded-lg border border-rose-300 dark:border-rose-800/60 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-[11px] font-black uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Hand className="w-3.5 h-3.5 rotate-180" />
+                  <span>HANDS DOWN</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleTogglePhoneHandRaise}
+                  className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                    isPhoneHandRaiseOn
+                      ? 'border-emerald-500/40 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50'
+                      : 'border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-slate-200'
+                  }`}
+                >
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span>Phone hand-raise: {isPhoneHandRaiseOn ? 'On' : 'Off'}</span>
+                </button>
+              </div>
             </div>
 
             <div className="flex items-center justify-between text-xs text-slate-500">
@@ -696,7 +754,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                 Live session: <strong className="text-slate-800 dark:text-slate-200">{activeAgendaItem.title}</strong>
               </div>
               <span className="text-[11px] text-slate-400">
-                Priority: Lowest Turns &gt; Earliest Hand
+                Priority: Lowest Turns → Earliest Hand
               </span>
             </div>
 
@@ -772,8 +830,8 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                         className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/60 hover:border-slate-300 dark:hover:border-slate-700 transition-all flex items-center justify-between gap-2"
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
-                          <span className="w-5 h-5 rounded-md bg-slate-200 dark:bg-slate-700 text-[10px] font-bold text-slate-700 dark:text-slate-300 flex items-center justify-center shrink-0">
-                            #{idx + 1}
+                          <span className="w-6 h-6 rounded-md bg-slate-200 dark:bg-slate-700 text-[10px] font-mono font-bold text-slate-700 dark:text-slate-300 flex items-center justify-center shrink-0">
+                            #{learner?.constituency_number || (idx + 1)}
                           </span>
                           <div className="min-w-0">
                             <div className="flex items-center gap-1.5 flex-wrap">
@@ -800,7 +858,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                               </span>
                             </div>
                             <div className="text-[10px] text-slate-400 truncate">
-                              {learner?.constituency_name ? `${learner.constituency_name} · ` : ''}
+                              {learner?.constituency_number ? `#${learner.constituency_number} ${learner?.constituency_name || ''} · ` : (learner?.constituency_name ? `${learner.constituency_name} · ` : '')}
                               Raised {new Date(req.requested_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                             </div>
                           </div>
@@ -1634,6 +1692,50 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                 className="px-4 py-2 rounded-xl bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-xs font-bold hover:opacity-90 transition-all cursor-pointer"
               >
                 Close Record
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hands Down Confirmation Modal */}
+      {showHandsDownModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="relative w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 flex items-center justify-center shrink-0">
+                <Hand className="w-5 h-5 rotate-180 text-rose-500" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900 dark:text-white">
+                  Lower all raised hands?
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  All currently waiting speaking requests for this session will be cleared.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowHandsDownModal(false)}
+                disabled={isLoweringHands}
+                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleLowerAllHands}
+                disabled={isLoweringHands}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black shadow-md shadow-rose-900/20 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {isLoweringHands ? 'Lowering...' : 'Lower All Hands'}
               </button>
             </div>
           </div>

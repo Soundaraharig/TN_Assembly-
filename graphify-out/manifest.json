@@ -24,9 +24,9 @@
     "semantic_hash": "ca04776fe000421dc5a4f16188c0fe9f"
   },
   "src/App.tsx": {
-    "mtime": 1790055823.383602,
-    "seen": 1790057320.186215,
-    "ast_hash": "273ab163675edb3b9f4d6c1af6610c58",
+    "mtime": 1790228058.684482,
+    "seen": 1790228686.2586293,
+    "ast_hash": "5ca63d4a6bfd8f38cc909994beb87fe8",
     "semantic_hash": ""
   },
   "src/components/admin/CreateEventModal.tsx": {
@@ -180,9 +180,9 @@
     "semantic_hash": "3d1db61d896d7a7ddbe19b109b93c6bc"
   },
   "src/components/coordinator/ControlTab.tsx": {
-    "mtime": 1790148081.657151,
-    "seen": 1790148168.3519456,
-    "ast_hash": "17762ca09c99635463317bbbbc44ee12",
+    "mtime": 1790226945.949643,
+    "seen": 1790228686.2809105,
+    "ast_hash": "7a688b648830300f32b6aae24fef2ac6",
     "semantic_hash": ""
   },
   "src/components/coordinator/CoordinatorDashboard.tsx": {
@@ -300,9 +300,9 @@
     "semantic_hash": ""
   },
   "src/components/student/StudentDashboard.tsx": {
-    "mtime": 1790147474.143849,
-    "seen": 1790148168.3786623,
-    "ast_hash": "9f160548df88c8d54e2be945a236cff1",
+    "mtime": 1790228549.5512106,
+    "seen": 1790228686.2971282,
+    "ast_hash": "f88e79dd8f8302cb5dff878f6c76f5c0",
     "semantic_hash": ""
   },
   "src/components/student/StudentJoinModal.tsx": {
@@ -318,9 +318,9 @@
     "semantic_hash": ""
   },
   "src/components/volunteer/VolunteerDashboard.tsx": {
-    "mtime": 1790056896.3657424,
-    "seen": 1790057320.2038567,
-    "ast_hash": "97e2198f68b295f39d4515e8f2141616",
+    "mtime": 1790228119.7749946,
+    "seen": 1790228686.298599,
+    "ast_hash": "cac03bd842a53d8adbcfba0f0c1d9793",
     "semantic_hash": ""
   },
   "src/data/initialMockData.ts": {
@@ -354,9 +354,9 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1790224812.3718925,
-    "seen": 1790224883.212261,
-    "ast_hash": "1ab4ddd76db9664050a78d5c6e9c3f22",
+    "mtime": 1790227985.622426,
+    "seen": 1790228686.3030107,
+    "ast_hash": "d53f2f64438c08b3a314a5fb4d96a966",
     "semantic_hash": ""
   },
   "src/types/index.ts": {

@@ -13,8 +13,12 @@ import type {
   EventDeadline,
   ProceedingsQuestion,
   BillProceeding,
-  SpeakingRequest
+  SpeakingRequest,
+  SpeakingTurn,
+  DayAttendanceRecord,
+  AllocationCheckStatus
 } from '../../types';
+import { getRecordSessionStatuses } from '../../types';
 import {
   storageService,
   isQuestionForMinister,
@@ -43,14 +47,16 @@ import {
   Check,
   Crown,
   AlertCircle,
+  AlertTriangle,
   Calendar,
   ChevronDown,
   ChevronUp,
   FileText,
   Eye,
-  X
+  X,
+  Mic,
+  Smartphone
 } from 'lucide-react';
-import { StudentAllocationCard } from './StudentAllocationCard';
 
 type StudentDashboardTab = 'desk' | 'voting' | 'agenda';
 
@@ -99,14 +105,36 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const resolvedEventId = event?.id || storageService.getEvents().find(e => getEventSlug(e) === eventSlug)?.id || eventSlug;
   const targetEventId = resolvedEventId;
 
-  // Active Assembly Session & Speaking Floor State (Part 3, 4, 12)
+  // Active Assembly Session & Speaking Floor State
   const [activeSession, setActiveSession] = useState<{ id: string; title: string }>(() =>
     storageService.getActiveSession(resolvedEventId)
   );
   const [activeSpeakingRequest, setActiveSpeakingRequest] = useState<SpeakingRequest | null>(null);
   const [isSubmittingFloorRequest, setIsSubmittingFloorRequest] = useState(false);
+  const [isHandRaiseEnabled, setIsHandRaiseEnabled] = useState<boolean>(() =>
+    storageService.getHandRaiseEnabled(resolvedEventId)
+  );
 
-  // Check allocation confirmation status on mount (Part 1 & 2)
+  // Sync hand-raise master switch state
+  useEffect(() => {
+    const syncHandRaise = () => {
+      setIsHandRaiseEnabled(storageService.getHandRaiseEnabled(resolvedEventId));
+    };
+    syncHandRaise();
+    window.addEventListener('tn_assembly_hand_raise_setting', syncHandRaise);
+    const unsub = storageService.subscribe(syncHandRaise);
+    return () => {
+      unsub();
+      window.removeEventListener('tn_assembly_hand_raise_setting', syncHandRaise);
+    };
+  }, [resolvedEventId]);
+
+  // Check allocation confirmation status on mount
+  const [allocationCheckStatus, setAllocationCheckStatus] = useState<AllocationCheckStatus>(() => {
+    const localConf = storageService.getAllocationConfirmations(resolvedEventId).find(c => c.learner_id === student?.id);
+    return student ? getAllocationCheckStatus(student, localConf) : 'CHECKED';
+  });
+
   useEffect(() => {
     if (!student?.id || !resolvedEventId) return;
     let isMounted = true;
@@ -115,14 +143,60 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       .then(conf => {
         if (!isMounted) return;
         const status = getAllocationCheckStatus(student, conf);
+        setAllocationCheckStatus(status);
         if (status !== 'CHECKED') {
           setShowAllocationModal(true);
+        } else {
+          setShowAllocationModal(false);
         }
       })
       .catch(() => {});
 
     return () => { isMounted = false; };
   }, [student?.id, resolvedEventId, student]);
+
+  // Attendance for active event day
+  const [dayAttendanceList, setDayAttendanceList] = useState<DayAttendanceRecord[]>(() =>
+    storageService.getDayAttendance(resolvedEventId)
+  );
+
+  useEffect(() => {
+    if (!resolvedEventId || !student?.id) return;
+    storageService.fetchStudentDayAttendance(resolvedEventId, student.id).then(() => {
+      setDayAttendanceList(storageService.getDayAttendance(resolvedEventId));
+    }).catch(() => {});
+
+    const handleAttendanceUpdate = () => {
+      setDayAttendanceList(storageService.getDayAttendance(resolvedEventId));
+    };
+    window.addEventListener('tn_assembly_attendance_update', handleAttendanceUpdate);
+    const unsub = storageService.subscribe(handleAttendanceUpdate);
+    return () => {
+      unsub();
+      window.removeEventListener('tn_assembly_attendance_update', handleAttendanceUpdate);
+    };
+  }, [resolvedEventId, student?.id]);
+
+  const activeEventDay = useMemo(() => {
+    const days = storageService.getEventDays(resolvedEventId);
+    return days.find(d => d.status === 'Active' || d.is_active) || days[0] || null;
+  }, [resolvedEventId]);
+
+  const activeDayAttendance = useMemo(() => {
+    if (!activeEventDay || !student?.id) return null;
+    return dayAttendanceList.find(r => r.day_id === activeEventDay.id && (r.student_id === student.id || r.learner_id === student.id)) || null;
+  }, [activeEventDay, student?.id, dayAttendanceList]);
+
+  const { fnStatus, anStatus } = useMemo(() => {
+    if (!activeDayAttendance) {
+      return { fnStatus: 'NOT MARKED', anStatus: 'NOT MARKED' };
+    }
+    const { fn, an } = getRecordSessionStatuses(activeDayAttendance);
+    return {
+      fnStatus: fn === 'Present' ? 'PRESENT' : 'ABSENT',
+      anStatus: an === 'Present' ? 'PRESENT' : 'ABSENT'
+    };
+  }, [activeDayAttendance]);
 
   // Sync active speaking status for this student
   const checkMySpeakingStatus = React.useCallback(() => {
@@ -152,6 +226,63 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       window.removeEventListener('tn_assembly_speaking_update', handleSpeakingUpdate);
     };
   }, [resolvedEventId, checkMySpeakingStatus]);
+
+  // Speaker Presiding Floor State (when student is Speaker or Deputy Speaker)
+  const [allSpeakingRequests, setAllSpeakingRequests] = useState<SpeakingRequest[]>(() =>
+    resolvedEventId ? storageService.getSpeakingRequests(resolvedEventId) : []
+  );
+  const [speakingTurns, setSpeakingTurns] = useState<SpeakingTurn[]>(() =>
+    resolvedEventId ? storageService.getSpeakingTurns(resolvedEventId) : []
+  );
+  const [showHandsDownModal, setShowHandsDownModal] = useState(false);
+  const [isLoweringHands, setIsLoweringHands] = useState(false);
+  const [callingSpeakerId, setCallingSpeakerId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const syncAllSpeaking = () => {
+      if (resolvedEventId) {
+        setAllSpeakingRequests(storageService.getSpeakingRequests(resolvedEventId));
+        setSpeakingTurns(storageService.getSpeakingTurns(resolvedEventId));
+      }
+    };
+    syncAllSpeaking();
+    window.addEventListener('tn_assembly_speaking_update', syncAllSpeaking);
+    window.addEventListener('tn_assembly_speaking_turn_update', syncAllSpeaking);
+    const unsub = storageService.subscribe(syncAllSpeaking);
+    return () => {
+      unsub();
+      window.removeEventListener('tn_assembly_speaking_update', syncAllSpeaking);
+      window.removeEventListener('tn_assembly_speaking_turn_update', syncAllSpeaking);
+    };
+  }, [resolvedEventId]);
+
+  const speakerSessionTurnCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const t of speakingTurns) {
+      if (t.session_id === activeSession.id && t.status === 'SPOKEN') {
+        counts[t.learner_id] = (counts[t.learner_id] || 0) + 1;
+      }
+    }
+    return counts;
+  }, [speakingTurns, activeSession.id]);
+
+  const speakerWaitingRequests = useMemo(() => {
+    return allSpeakingRequests
+      .filter(r => r.session_id === activeSession.id && r.status === 'WAITING')
+      .sort((a, b) => {
+        const countA = speakerSessionTurnCounts[a.learner_id] || 0;
+        const countB = speakerSessionTurnCounts[b.learner_id] || 0;
+        if (countA !== countB) return countA - countB;
+        const timeA = new Date(a.requested_at).getTime();
+        const timeB = new Date(b.requested_at).getTime();
+        if (timeA !== timeB) return timeA - timeB;
+        return a.learner_name.localeCompare(b.learner_name);
+      });
+  }, [allSpeakingRequests, speakerSessionTurnCounts, activeSession.id]);
+
+  const speakerActiveTurn = useMemo(() => {
+    return speakingTurns.find(t => t.session_id === activeSession.id && t.status === 'SPEAKING');
+  }, [speakingTurns, activeSession.id]);
   const [deadline, setDeadline] = useState<EventDeadline>(() => {
     return storageService.getEventDeadline(eventSlug) || storageService.getEventDeadline(resolvedEventId);
   });
@@ -532,11 +663,40 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     if (!student || !resolvedEventId) return;
     if (isSubmittingFloorRequest) return;
 
-    if (activeSpeakingRequest) {
+    // Toggle: State B -> State A (Lower Hand)
+    if (activeSpeakingRequest?.status === 'WAITING') {
+      setIsSubmittingFloorRequest(true);
+      try {
+        await storageService.cancelSpeakingRequest(activeSpeakingRequest.id, resolvedEventId, activeSession.id);
+        setActiveSpeakingRequest(null);
+        onShowToast(
+          'Hand Lowered',
+          'Your speaking request has been withdrawn.',
+          'info'
+        );
+      } catch (err: any) {
+        onShowToast('Action Failed', err?.message || 'Error lowering hand.', 'error');
+      } finally {
+        setIsSubmittingFloorRequest(false);
+      }
+      return;
+    }
+
+    if (activeSpeakingRequest?.status === 'CALLED') {
       onShowToast(
-        'Already Queued',
-        'Your request is already in the speaking queue.',
+        'Speaking Now',
+        'You have been called to the floor by the Speaker. Please speak at the podium.',
         'info'
+      );
+      return;
+    }
+
+    // State A -> State B (Raise to Speak)
+    if (!isHandRaiseEnabled) {
+      onShowToast(
+        'Hand Raise Closed',
+        'Hand raise is currently closed by the Speaker.',
+        'error'
       );
       return;
     }
@@ -553,7 +713,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       if (res.success && res.request) {
         setActiveSpeakingRequest(res.request);
         onShowToast(
-          'Point of Order Submitted',
+          'Hand Raised',
           `Floor request sent to Assembly Speaker for ${student.full_name} (${student.constituency_name || 'MLA'})`,
           'success'
         );
@@ -564,6 +724,79 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       onShowToast('Request Error', err?.message || 'Error sending floor request.', 'error');
     } finally {
       setIsSubmittingFloorRequest(false);
+    }
+  };
+
+  const handleSpeakerCall = async (req: SpeakingRequest) => {
+    if (!resolvedEventId) return;
+    setCallingSpeakerId(req.id);
+    try {
+      const res = await storageService.callSpeaker({
+        requestId: req.id,
+        eventId: resolvedEventId,
+        sessionId: req.session_id,
+        sessionName: req.session_name,
+        learnerId: req.learner_id,
+        learnerName: req.learner_name,
+        calledBy: student.full_name || 'Hon. Speaker'
+      });
+      if (res.success) {
+        onShowToast('Floor Granted', `${req.learner_name} has been called to the floor`, 'success');
+      } else {
+        onShowToast('Call Failed', res.error || 'Could not call delegate', 'error');
+      }
+    } catch (err: any) {
+      onShowToast('Call Error', err?.message || 'Error calling delegate', 'error');
+    } finally {
+      setCallingSpeakerId(null);
+    }
+  };
+
+  const handleSpeakerCompleteTurn = async (turn: SpeakingTurn) => {
+    if (!resolvedEventId) return;
+    try {
+      await storageService.completeSpeakingTurn({
+        turnId: turn.id,
+        requestId: turn.request_id,
+        eventId: resolvedEventId,
+        sessionId: turn.session_id || activeSession.id
+      });
+      onShowToast('Turn Completed', `${turn.learner_name}'s speaking turn concluded`, 'info');
+    } catch (err: any) {
+      onShowToast('Error', err?.message || 'Failed to complete turn', 'error');
+    }
+  };
+
+  const handleToggleSpeakerHandRaise = async () => {
+    if (!resolvedEventId) return;
+    const nextState = !isHandRaiseEnabled;
+    try {
+      await storageService.setHandRaiseEnabled(resolvedEventId, nextState);
+      onShowToast(
+        'Hand-Raise Master Switch',
+        nextState ? 'Phone hand-raise is now open for delegates.' : 'Phone hand-raise has been closed.',
+        'info'
+      );
+    } catch (err: any) {
+      onShowToast('Error', err?.message || 'Failed to toggle hand-raise setting', 'error');
+    }
+  };
+
+  const handleSpeakerLowerAllHands = async () => {
+    if (!resolvedEventId) return;
+    setIsLoweringHands(true);
+    try {
+      const res = await storageService.lowerAllSpeakingRequests(resolvedEventId, activeSession.id);
+      setShowHandsDownModal(false);
+      onShowToast(
+        'Hands Down',
+        `Cleared ${res.count} waiting speaking request${res.count === 1 ? '' : 's'}.`,
+        'success'
+      );
+    } catch (err: any) {
+      onShowToast('Action Failed', err?.message || 'Error clearing waiting queue.', 'error');
+    } finally {
+      setIsLoweringHands(false);
     }
   };
 
@@ -628,6 +861,47 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   return (
     <div className="max-w-4xl mx-auto space-y-4 sm:space-y-6">
       
+      {/* ── TODAY'S ATTENDANCE (ACTIVE DAY) ── */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3 sm:p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors">
+        <div className="flex items-center gap-2.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-200">
+              Today's Attendance
+            </span>
+            <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+              ({activeEventDay ? (activeEventDay.name || `Day ${activeEventDay.day_number}`) : 'Active Assembly Day'})
+            </span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          {/* FN Status */}
+          <div className={`px-3 py-1.5 rounded-xl border flex items-center gap-1.5 font-bold text-xs tracking-tight ${
+            fnStatus === 'PRESENT'
+              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+              : fnStatus === 'ABSENT'
+              ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30'
+              : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700'
+          }`}>
+            <span className="text-[10px] uppercase font-mono tracking-wider opacity-75 font-black">FN</span>
+            <span>{fnStatus === 'PRESENT' ? '✓ PRESENT' : fnStatus === 'ABSENT' ? '✕ ABSENT' : '— NOT MARKED'}</span>
+          </div>
+
+          {/* AN Status */}
+          <div className={`px-3 py-1.5 rounded-xl border flex items-center gap-1.5 font-bold text-xs tracking-tight ${
+            anStatus === 'PRESENT'
+              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+              : anStatus === 'ABSENT'
+              ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30'
+              : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700'
+          }`}>
+            <span className="text-[10px] uppercase font-mono tracking-wider opacity-75 font-black">AN</span>
+            <span>{anStatus === 'PRESENT' ? '✓ PRESENT' : anStatus === 'ABSENT' ? '✕ ABSENT' : '— NOT MARKED'}</span>
+          </div>
+        </div>
+      </div>
+
       {/* ── MOBILE-FIRST SEGMENTED / STICKY TAB NAVIGATION BAR ── */}
       <div className="sticky top-2 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md p-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl transition-all">
         <div className="grid grid-cols-3 gap-1 sm:gap-2">
@@ -1161,12 +1435,31 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       {activeTab === 'desk' && (
         <div className="space-y-6 animate-fadeIn">
           
-          {/* Student Allocation Confirmation Card */}
-          <StudentAllocationCard
-            student={student}
-            event={event}
-            onShowToast={onShowToast}
-          />
+          {/* Allocation Verification Notice — Only shown if unconfirmed / re-check required. Never permanently shown after confirmation */}
+          {allocationCheckStatus !== 'CHECKED' && (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5 text-amber-500" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-black uppercase tracking-wider text-amber-700 dark:text-amber-300">
+                    Official Allocation Verification Pending
+                  </h4>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                    Please verify your parliamentary allocation details before proceeding to the Assembly Floor.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllocationModal(true)}
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow transition-all cursor-pointer shrink-0"
+              >
+                Verify Allocation
+              </button>
+            </div>
+          )}
 
           {/* Delegate Assembly Pass Card */}
           <div className="relative overflow-hidden rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-amber-500/30 p-6 md:p-8 shadow-xl space-y-6 transition-colors">
@@ -1191,6 +1484,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <span className="text-xs uppercase text-emerald-700 dark:text-emerald-400 font-extrabold tracking-wider">
                   Verified MLA Delegate
                 </span>
+                {allocationCheckStatus === 'CHECKED' && (
+                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold ml-1">
+                    (Checked ✓)
+                  </span>
+                )}
               </div>
             </div>
 
@@ -1294,49 +1592,172 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </div>
           </div>
 
-          {/* Interactive Assembly Floor Request */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4 transition-colors">
-            <div>
-              <div className="flex items-center gap-2">
-                <h4 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <Hand className="w-5 h-5 text-amber-500" /> Request Assembly Floor Time
-                </h4>
-                <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500">
-                  {activeSession.title}
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Submit a Point of Order or speech request to the Assembly Speaker during live debates
-              </p>
-            </div>
+          {/* Interactive Assembly Floor Request / Speaker Presiding Desk */}
+          {isAssignedSpeakerOrDeputySpeaker ? (
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xl space-y-4 transition-colors">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
+                    <Hand className="w-5 h-5 text-amber-500" /> Speaker Presiding Desk — Speaking Floor
+                  </span>
+                  <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                    {speakerWaitingRequests.length} waiting
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setShowHandsDownModal(true)}
+                    disabled={speakerWaitingRequests.length === 0}
+                    className="px-2.5 py-1 rounded-lg border border-rose-300 dark:border-rose-800/60 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-[11px] font-black uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Hand className="w-3.5 h-3.5 rotate-180" />
+                    <span>HANDS DOWN</span>
+                  </button>
 
-            <button
-              type="button"
-              onClick={handleRequestFloor}
-              disabled={Boolean(activeSpeakingRequest) || isSubmittingFloorRequest}
-              className={`px-5 py-2.5 rounded-xl font-bold text-xs shadow-lg transition-all flex items-center gap-2 cursor-pointer ${
-                activeSpeakingRequest?.status === 'CALLED'
-                  ? 'bg-emerald-600 text-white shadow-emerald-950/50 animate-pulse ring-2 ring-emerald-400'
-                  : activeSpeakingRequest?.status === 'WAITING'
-                  ? 'bg-amber-600/90 text-white shadow-amber-950/50 cursor-not-allowed opacity-90'
-                  : 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-950/50'
-              }`}
-            >
-              {activeSpeakingRequest?.status === 'CALLED' ? (
-                <>
-                  <Sparkles className="w-4 h-4 text-amber-300" /> Called! Floor is Yours
-                </>
-              ) : activeSpeakingRequest?.status === 'WAITING' ? (
-                <>
-                  <CheckCircle2 className="w-4 h-4" /> In Speaking Queue (Waiting)
-                </>
-              ) : (
-                <>
-                  <Hand className="w-4 h-4" /> Raise Point of Order
-                </>
+                  <button
+                    type="button"
+                    onClick={handleToggleSpeakerHandRaise}
+                    className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                      isHandRaiseEnabled
+                        ? 'border-emerald-500/40 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50'
+                        : 'border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-slate-200'
+                    }`}
+                  >
+                    <Smartphone className="w-3.5 h-3.5" />
+                    <span>Phone hand-raise: {isHandRaiseEnabled ? 'On' : 'Off'}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between text-xs text-slate-500">
+                <span>Live session: <strong className="text-slate-800 dark:text-slate-200">{activeSession.title}</strong></span>
+                <span className="text-[11px] text-slate-400">Priority: Lowest Turns → Earliest Hand</span>
+              </div>
+
+              {/* Active Speaker Card */}
+              {speakerActiveTurn && (
+                <div className="p-3.5 rounded-xl border border-emerald-500/40 bg-emerald-50/60 dark:bg-emerald-950/30 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-xs font-black text-emerald-800 dark:text-emerald-200 truncate">
+                        NOW SPEAKING: {speakerActiveTurn.learner_name}
+                      </div>
+                      <div className="text-[10px] text-emerald-600 dark:text-emerald-400">
+                        Called at {new Date(speakerActiveTurn.called_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleSpeakerCompleteTurn(speakerActiveTurn)}
+                    className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm cursor-pointer shrink-0"
+                  >
+                    Complete Turn
+                  </button>
+                </div>
               )}
-            </button>
-          </div>
+
+              {/* Waiting Queue */}
+              <div className="space-y-2">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  WAITING TO SPEAK ({speakerWaitingRequests.length})
+                </span>
+                {speakerWaitingRequests.length === 0 ? (
+                  <div className="p-4 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-center text-xs text-slate-400">
+                    No delegates currently waiting to speak.
+                  </div>
+                ) : (
+                  <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                    {speakerWaitingRequests.map((req, idx) => (
+                      <div
+                        key={req.id}
+                        className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/60 flex items-center justify-between gap-2"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="w-6 h-6 rounded-md bg-slate-200 dark:bg-slate-700 text-[10px] font-mono font-bold text-slate-700 dark:text-slate-300 flex items-center justify-center shrink-0">
+                            #{idx + 1}
+                          </span>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                                {req.learner_name}
+                              </span>
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                                {speakerSessionTurnCounts[req.learner_id] || 0} turns
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 truncate">
+                              Raised {new Date(req.requested_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleSpeakerCall(req)}
+                          disabled={callingSpeakerId === req.id}
+                          className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50 shrink-0"
+                        >
+                          <Mic className="w-3 h-3" />
+                          <span>{callingSpeakerId === req.id ? 'Calling...' : 'CALL'}</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4 transition-colors">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h4 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <Hand className="w-5 h-5 text-amber-500" /> Request Assembly Floor Time
+                  </h4>
+                  <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500">
+                    {activeSession.title}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  {!isHandRaiseEnabled && !activeSpeakingRequest ? (
+                    <span className="text-rose-500 font-semibold">Hand raise is currently closed.</span>
+                  ) : (
+                    'Request permission to speak before the Assembly Speaker during live debates'
+                  )}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleRequestFloor}
+                disabled={isSubmittingFloorRequest || (!isHandRaiseEnabled && !activeSpeakingRequest)}
+                className={`px-5 py-2.5 rounded-xl font-bold text-xs shadow-lg transition-all flex items-center gap-2 ${
+                  activeSpeakingRequest?.status === 'CALLED'
+                    ? 'bg-emerald-600 text-white shadow-emerald-950/50 animate-pulse ring-2 ring-emerald-400 cursor-default'
+                    : activeSpeakingRequest?.status === 'WAITING'
+                    ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-950/50 ring-2 ring-amber-400/50 cursor-pointer'
+                    : !isHandRaiseEnabled
+                    ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 shadow-none cursor-not-allowed opacity-80'
+                    : 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-950/50 cursor-pointer'
+                }`}
+              >
+                {activeSpeakingRequest?.status === 'CALLED' ? (
+                  <>
+                    <Sparkles className="w-4 h-4 text-amber-300" /> Called! Floor is Yours
+                  </>
+                ) : activeSpeakingRequest?.status === 'WAITING' ? (
+                  <>
+                    <Hand className="w-4 h-4" /> ✋ HAND RAISED — LOWER HAND
+                  </>
+                ) : (
+                  <>
+                    <Hand className="w-4 h-4" /> ✋ RAISE TO SPEAK
+                  </>
+                )}
+              </button>
+            </div>
+          )}
 
           {/* Overview & Narrative Card ("Your Day in the House") */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-xl space-y-4 transition-colors">
@@ -2196,9 +2617,56 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         isOpen={showAllocationModal}
         student={student}
         eventId={resolvedEventId}
-        onConfirmed={() => setShowAllocationModal(false)}
+        onConfirmed={() => {
+          setShowAllocationModal(false);
+          setAllocationCheckStatus('CHECKED');
+        }}
         onShowToast={onShowToast}
       />
+
+      {/* Hands Down Confirmation Modal for Speaker / Presiding Officer */}
+      {showHandsDownModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="relative w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 flex items-center justify-center shrink-0">
+                <Hand className="w-5 h-5 rotate-180 text-rose-500" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900 dark:text-white">
+                  Lower all raised hands?
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  All currently waiting speaking requests for this session will be cleared.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowHandsDownModal(false)}
+                disabled={isLoweringHands}
+                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSpeakerLowerAllHands}
+                disabled={isLoweringHands}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black shadow-md shadow-rose-900/20 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {isLoweringHands ? 'Lowering...' : 'Lower All Hands'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

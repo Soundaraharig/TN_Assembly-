@@ -1064,7 +1064,10 @@ export function App() {
 
     const urlEvent = extractEventFromUrl(evs);
     const studentEventId = (role === 'student' && currentStudent?.event_id) ? currentStudent.event_id : undefined;
-    const activeId = targetEventId || studentEventId || urlEvent?.id || currentEventRef.current?.id || savedEventId;
+    const volunteerEventId = (role === 'volunteer' && currentVolunteer?.event_id) ? currentVolunteer.event_id : undefined;
+    const juryEventId = (role === 'jury' && currentJury?.event_id) ? currentJury.event_id : undefined;
+    const roleEventId = studentEventId || volunteerEventId || juryEventId;
+    const activeId = targetEventId || roleEventId || urlEvent?.id || currentEventRef.current?.id || savedEventId;
     let activeEv = evs.find(e => e.id === activeId) || urlEvent || (role === 'student' ? null : (evs.find(e => (e as any).is_active) || evs[0]));
 
     if (activeEv) {
@@ -1084,14 +1087,15 @@ export function App() {
       } else if (role === 'volunteer') {
         // STRICTLY SCOPED: Volunteer portal only gets learners, parties, committees, eventDays, dayAttendance, elections, flashVotes
         // NEVER fetches: jury, agenda, scores, nominations, questions, proceedings, chat, feedback, team
-        const eventLearners = storageService.getLearners(activeEv.id);
+        const targetEventIdForVol = currentVolunteer?.event_id || activeEv.id;
+        const eventLearners = storageService.getLearners(targetEventIdForVol);
         setLearners(eventLearners);
-        setParties(storageService.getParties(activeEv.id));
-        setCommittees(storageService.getCommittees(activeEv.id));
-        setElections(storageService.getElections(activeEv.id));
-        setFlashVotes(storageService.getFlashVotes(activeEv.id));
-        setEventDays(storageService.getEventDays(activeEv.id));
-        setDayAttendance(storageService.getDayAttendance(activeEv.id));
+        setParties(storageService.getParties(targetEventIdForVol));
+        setCommittees(storageService.getCommittees(targetEventIdForVol));
+        setElections(storageService.getElections(targetEventIdForVol));
+        setFlashVotes(storageService.getFlashVotes(targetEventIdForVol));
+        setEventDays(storageService.getEventDays(targetEventIdForVol));
+        setDayAttendance(storageService.getDayAttendance(targetEventIdForVol));
       } else if (role === 'jury') {
         // STRICTLY SCOPED: Jury portal only gets learners, agenda, and scores
         // NEVER fetches: volunteers, dayAttendance, eventDays, elections, flashVotes, nominations
@@ -2140,7 +2144,7 @@ export function App() {
     }
 
     const allEvs = storageService.getEvents();
-    const targetEv = authResult.event || allEvs.find(e => e.id === authResult.eventId) || events.find(e => e.id === authResult.eventId) || currentEvent || allEvs[0];
+    const targetEv = authResult.event || allEvs.find(e => e.id === authResult.eventId) || events.find(e => e.id === authResult.eventId) || (currentEvent?.id === authResult.eventId ? currentEvent : (allEvs.find(e => e.id === authResult.eventId) || { id: authResult.eventId, college_name: 'College Assembly', slug: 'college-assembly' } as CollegeEvent));
     if (allEvs.length > 0) {
       setEvents(allEvs);
     }
@@ -2155,6 +2159,8 @@ export function App() {
       setNominations(storageService.getNominations(targetEv.id));
       setElections(storageService.getElections(targetEv.id));
       setFlashVotes(storageService.getFlashVotes(targetEv.id));
+      setEventDays(storageService.getEventDays(targetEv.id));
+      setDayAttendance(storageService.getDayAttendance(targetEv.id));
       setVolunteers(storageService.getVolunteers(targetEv.id));
     }
 

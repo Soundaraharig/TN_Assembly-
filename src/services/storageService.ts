@@ -3850,6 +3850,56 @@ class StorageService {
               window.dispatchEvent(new Event('storage'));
             }
           }
+        })
+        .on('broadcast', { event: 'hands_down' }, (msg: any) => {
+          const p = msg?.payload;
+          if (p?.eventId && p?.sessionId) {
+            const all = this.getItem<SpeakingRequest[]>(STORAGE_KEYS.SPEAKING_REQUESTS, []);
+            const now = new Date().toISOString();
+            const next = all.map(r => (r.event_id === p.eventId && r.session_id === p.sessionId && r.status === 'WAITING')
+              ? { ...r, status: 'CANCELLED' as SpeakingRequestStatus, resolved_at: now, updated_at: now }
+              : r
+            );
+            this.setItem(STORAGE_KEYS.SPEAKING_REQUESTS, next);
+            this.notify();
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_speaking_update', { detail: p }));
+              window.dispatchEvent(new Event('storage'));
+            }
+          }
+        })
+        .on('broadcast', { event: 'hand_raise_setting_changed' }, (msg: any) => {
+          const p = msg?.payload;
+          if (p?.eventId && typeof p?.enabled === 'boolean') {
+            if (typeof localStorage !== 'undefined') {
+              try {
+                localStorage.setItem(`tn_assembly_hand_raise_enabled_${p.eventId}`, p.enabled ? '1' : '0');
+              } catch {}
+            }
+            this.notify();
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_hand_raise_setting', { detail: p }));
+              window.dispatchEvent(new Event('storage'));
+            }
+          }
+        })
+        .on('broadcast', { event: 'student_attendance_update' }, (msg: any) => {
+          const p = msg?.payload;
+          if (p?.studentId && p?.dayId && p?.record) {
+            const all = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+            const idx = all.findIndex(a => a.event_id === p.eventId && a.day_id === p.dayId && (a.student_id === p.studentId || a.learner_id === p.studentId));
+            if (idx >= 0) {
+              all[idx] = { ...all[idx], ...p.record };
+            } else {
+              all.push(p.record);
+            }
+            this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, all);
+            this.notify();
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_attendance_update', { detail: p }));
+              window.dispatchEvent(new Event('storage'));
+            }
+          }
         });
 
       channel.subscribe();
@@ -5160,7 +5210,25 @@ class StorageService {
           if (!vols.some(v => v.id === matchedVol.id)) {
             this.setItem(STORAGE_KEYS.VOLUNTEERS, [...vols, matchedVol as unknown as Volunteer]);
           }
-          this.fetchVolunteerPortalData(matchedVol.event_id, matchedVol.id, true).catch(() => {});
+
+          // Step 2: Fetch and cache the volunteer's assigned event metadata
+          let matchedEvent: CollegeEvent | undefined;
+          if (matchedVol.event_id) {
+            const { data: eventRow } = await supabase
+              .from('college_events')
+              .select(SUPABASE_COLUMNS.COLLEGE_EVENTS_LIST)
+              .eq('id', matchedVol.event_id)
+              .maybeSingle();
+
+            if (eventRow) {
+              matchedEvent = this.normalizeEvent(eventRow as unknown as CollegeEvent);
+              const curEvents = this.getEvents();
+              this.setItem(STORAGE_KEYS.EVENTS, [...curEvents.filter(e => e.id !== matchedEvent!.id), matchedEvent]);
+            }
+          }
+
+          // Await volunteer portal data so learners, days, and attendance are loaded for this specific event
+          await this.fetchVolunteerPortalData(matchedVol.event_id, matchedVol.id, true);
 
           this.logAudit({
             event_id: matchedVol.event_id,
@@ -5178,7 +5246,7 @@ class StorageService {
             details: `Volunteer Desk Access (${matchedVol.station || 'Operations'})`
           });
           console.log(`[Auth Trace] Code: "${accessCode}" -> Matched Record ID: "${matchedVol.id}" -> Event ID: "${matchedVol.event_id}" -> Role: "volunteer" (Name: ${matchedVol.name})`);
-          return { role: 'volunteer', user: matchedVol as unknown as Volunteer, eventId: matchedVol.event_id };
+          return { role: 'volunteer', user: matchedVol as unknown as Volunteer, eventId: matchedVol.event_id, event: matchedEvent };
         }
       }
 
@@ -5209,7 +5277,24 @@ class StorageService {
           if (!juries.some(j => j.id === matchedJury.id)) {
             this.setItem(STORAGE_KEYS.JURY, [...juries, matchedJury as unknown as JuryMember]);
           }
-          this.fetchJuryPortalData(matchedJury.event_id, matchedJury.id, true).catch(() => {});
+
+          // Step 2: Fetch and cache the jury member's assigned event metadata
+          let matchedEvent: CollegeEvent | undefined;
+          if (matchedJury.event_id) {
+            const { data: eventRow } = await supabase
+              .from('college_events')
+              .select(SUPABASE_COLUMNS.COLLEGE_EVENTS_LIST)
+              .eq('id', matchedJury.event_id)
+              .maybeSingle();
+
+            if (eventRow) {
+              matchedEvent = this.normalizeEvent(eventRow as unknown as CollegeEvent);
+              const curEvents = this.getEvents();
+              this.setItem(STORAGE_KEYS.EVENTS, [...curEvents.filter(e => e.id !== matchedEvent!.id), matchedEvent]);
+            }
+          }
+
+          await this.fetchJuryPortalData(matchedJury.event_id, matchedJury.id, true);
 
           this.logAudit({
             event_id: matchedJury.event_id,
@@ -5227,7 +5312,7 @@ class StorageService {
             details: `Jury Pass Access (${matchedJury.designation || 'Jury Member'})`
           });
           console.log(`[Auth Trace] Code: "${accessCode}" -> Matched Record ID: "${matchedJury.id}" -> Event ID: "${matchedJury.event_id}" -> Role: "jury" (Name: ${matchedJury.name})`);
-          return { role: 'jury', user: matchedJury as unknown as JuryMember, eventId: matchedJury.event_id };
+          return { role: 'jury', user: matchedJury as unknown as JuryMember, eventId: matchedJury.event_id, event: matchedEvent };
         }
       }
 
@@ -7000,6 +7085,45 @@ class StorageService {
     return all.filter(a => a.event_id === eventId && (!dayId || a.day_id === dayId));
   }
 
+  public async fetchStudentDayAttendance(eventId: string, studentId: string): Promise<DayAttendanceRecord | null> {
+    if (!eventId || !studentId) return null;
+    if (supabase && isSupabaseEnabled) {
+      try {
+        const [attRes, daysRes] = await Promise.all([
+          supabase
+            .from('event_day_attendance')
+            .select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE)
+            .eq('event_id', eventId)
+            .eq('student_id', studentId),
+          supabase
+            .from('event_days')
+            .select(SUPABASE_COLUMNS.EVENT_DAYS)
+            .eq('event_id', eventId)
+        ]);
+
+        if (daysRes.data && Array.isArray(daysRes.data)) {
+          const days = daysRes.data as unknown as EventDay[];
+          const curDays = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []);
+          const otherDays = curDays.filter(d => d.event_id !== eventId);
+          this.setItem(STORAGE_KEYS.EVENT_DAYS, [...otherDays, ...days]);
+        }
+
+        if (attRes.data && Array.isArray(attRes.data) && attRes.data.length > 0) {
+          const records = attRes.data as unknown as DayAttendanceRecord[];
+          const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+          const otherAtt = curAtt.filter(a => !(a.event_id === eventId && (a.student_id === studentId || a.learner_id === studentId)));
+          this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...otherAtt, ...records]);
+          this.notify();
+          return records[0];
+        }
+      } catch (err) {
+        console.warn('[fetchStudentDayAttendance] error:', err);
+      }
+    }
+    const localRecords = this.getDayAttendance(eventId);
+    return localRecords.find(a => a.student_id === studentId || a.learner_id === studentId) || null;
+  }
+
   public async setStudentDayAttendance(
     eventId: string,
     dayId: string,
@@ -8134,6 +8258,12 @@ class StorageService {
   }
 
   public setCurrentAgendaItem(eventId: string, itemId: string) {
+    const currentAgenda = this.getAgenda(eventId);
+    const priorItem = currentAgenda.find(a => a.is_current);
+    if (priorItem && priorItem.id !== itemId) {
+      this.lowerAllSpeakingRequests(eventId, priorItem.id).catch(() => {});
+    }
+
     const all = this.getAgenda().map(a => {
       if (a.event_id === eventId) {
         const wasCurrent = a.is_current;
@@ -8171,6 +8301,67 @@ class StorageService {
   }
 
   // ── ASSEMBLY SPEAKING FLOOR & HAND-RAISE SYSTEM ─────────────────────────
+
+  public getHandRaiseEnabled(eventId?: string): boolean {
+    const key = `tn_assembly_hand_raise_enabled_${eventId || 'default'}`;
+    if (typeof localStorage !== 'undefined') {
+      const val = localStorage.getItem(key);
+      if (val === '0' || val === 'false') return false;
+      if (val === '1' || val === 'true') return true;
+    }
+    if (eventId) {
+      const ev = this.getEvents().find(e => e.id === eventId);
+      const sc = (ev?.social_coverage || {}) as Record<string, any>;
+      if (typeof sc.hand_raise_enabled === 'boolean') {
+        return sc.hand_raise_enabled;
+      }
+    }
+    return true;
+  }
+
+  public async setHandRaiseEnabled(eventId: string, enabled: boolean): Promise<void> {
+    const key = `tn_assembly_hand_raise_enabled_${eventId || 'default'}`;
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem(key, enabled ? '1' : '0');
+      } catch {}
+    }
+
+    if (eventId && supabase && isSupabaseEnabled) {
+      (async () => {
+        const sb = supabase;
+        if (!sb) return;
+        try {
+          const { data: evData } = await sb
+            .from('college_events')
+            .select('social_coverage')
+            .eq('id', eventId)
+            .maybeSingle();
+          const sc = (evData?.social_coverage || {}) as Record<string, any>;
+          await sb
+            .from('college_events')
+            .update({
+              social_coverage: {
+                ...sc,
+                hand_raise_enabled: enabled,
+                updated_at: new Date().toISOString()
+              }
+            })
+            .eq('id', eventId);
+        } catch (err) {
+          console.warn('[setHandRaiseEnabled] Error syncing to Supabase:', err);
+        }
+      })().catch(() => {});
+    }
+
+    this.broadcast('hand_raise_setting_changed', { eventId, enabled }).catch(() => {});
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_hand_raise_setting', { detail: { eventId, enabled } }));
+      window.dispatchEvent(new Event('storage'));
+    }
+    this.notify();
+  }
 
   public getActiveSession(eventId?: string): { id: string; title: string } {
     if (eventId) {
@@ -8294,6 +8485,11 @@ class StorageService {
     const { eventId, sessionId, sessionName, learner } = params;
     if (!eventId || !sessionId || !learner?.id) {
       return { success: false, error: 'Missing required request parameters' };
+    }
+
+    // Backend enforcement: Check if phone hand-raise master switch is enabled
+    if (!this.getHandRaiseEnabled(eventId)) {
+      return { success: false, error: 'Hand raise is currently closed by the Speaker.' };
     }
 
     // Check duplicate active request in this session
@@ -8592,6 +8788,30 @@ class StorageService {
 
     if (supabase && isSupabaseEnabled) {
       supabase.from('speaking_requests').update({ status: 'CANCELLED', resolved_at: now, updated_at: now }).eq('id', requestId).then();
+
+      (async () => {
+        const sb = supabase;
+        if (!sb) return;
+        try {
+          const { data: evData } = await sb
+            .from('college_events')
+            .select('social_coverage')
+            .eq('id', eventId)
+            .maybeSingle();
+          const sc = (evData?.social_coverage || {}) as Record<string, any>;
+          const curReqs = Array.isArray(sc.speaking_requests) ? sc.speaking_requests : [];
+          await sb
+            .from('college_events')
+            .update({
+              social_coverage: {
+                ...sc,
+                speaking_requests: curReqs.map((r: any) => r.id === requestId ? { ...r, status: 'CANCELLED', resolved_at: now, updated_at: now } : r),
+                updated_at: now
+              }
+            })
+            .eq('id', eventId);
+        } catch {}
+      })().catch(() => {});
     }
 
     this.broadcast('speaking_request_update', {
@@ -8601,7 +8821,77 @@ class StorageService {
       requestId
     }).catch(() => {});
 
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_speaking_update', { detail: { action: 'cancelled', requestId, eventId, sessionId } }));
+      window.dispatchEvent(new Event('storage'));
+    }
+
     return { success: true };
+  }
+
+  public async lowerAllSpeakingRequests(eventId: string, sessionId: string): Promise<{ success: boolean; count: number }> {
+    const now = new Date().toISOString();
+    const allReqs = this.getItem<SpeakingRequest[]>(STORAGE_KEYS.SPEAKING_REQUESTS, []);
+    let count = 0;
+    const next = allReqs.map(r => {
+      if (r.event_id === eventId && r.session_id === sessionId && r.status === 'WAITING') {
+        count++;
+        return { ...r, status: 'CANCELLED' as SpeakingRequestStatus, resolved_at: now, updated_at: now };
+      }
+      return r;
+    });
+    this.setItem(STORAGE_KEYS.SPEAKING_REQUESTS, next);
+    this.notify();
+
+    if (supabase && isSupabaseEnabled) {
+      supabase
+        .from('speaking_requests')
+        .update({ status: 'CANCELLED', resolved_at: now, updated_at: now })
+        .eq('event_id', eventId)
+        .eq('session_id', sessionId)
+        .eq('status', 'WAITING')
+        .then();
+
+      (async () => {
+        const sb = supabase;
+        if (!sb) return;
+        try {
+          const { data: evData } = await sb
+            .from('college_events')
+            .select('social_coverage')
+            .eq('id', eventId)
+            .maybeSingle();
+          const sc = (evData?.social_coverage || {}) as Record<string, any>;
+          const curReqs = Array.isArray(sc.speaking_requests) ? sc.speaking_requests : [];
+          await sb
+            .from('college_events')
+            .update({
+              social_coverage: {
+                ...sc,
+                speaking_requests: curReqs.map((r: any) =>
+                  (r.session_id === sessionId && r.status === 'WAITING')
+                    ? { ...r, status: 'CANCELLED', resolved_at: now, updated_at: now }
+                    : r
+                ),
+                updated_at: now
+              }
+            })
+            .eq('id', eventId);
+        } catch {}
+      })().catch(() => {});
+    }
+
+    this.broadcast('hands_down', {
+      eventId,
+      sessionId
+    }).catch(() => {});
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_speaking_update', { detail: { action: 'hands_down', eventId, sessionId } }));
+      window.dispatchEvent(new Event('storage'));
+    }
+
+    return { success: true, count };
   }
 
   // ── JURY ──────────────────────────────────────────────────────────────────

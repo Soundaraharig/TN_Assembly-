@@ -114,15 +114,15 @@ const formatConstituencyName = (l: Learner): string => {
 
 export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   volunteer,
-  event,
-  learners,
+  event: propEvent,
+  learners: propLearners = [],
   checklist = [],
   parties: _parties = [],
   committees: _committees = [],
   elections = [],
   flashVotes = [],
-  eventDays = [],
-  dayAttendance = [],
+  eventDays: propEventDays = [],
+  dayAttendance: propDayAttendance = [],
   onToggleCheckIn,
   onCheckInAll,
   onSetStudentDayAttendance,
@@ -192,8 +192,36 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     }, 450);
   };
 
-  // YUVA Assignments State (Persisted via StorageService)
-  const eventId = event?.id || volunteer?.event_id || 'ev_tn_assembly_2026';
+  // Authoritative event for this volunteer: strictly prioritize volunteer.event_id
+  const eventId = volunteer?.event_id || propEvent?.id || 'ev_tn_assembly_2026';
+
+  const event = useMemo(() => {
+    if (propEvent && propEvent.id === eventId) return propEvent;
+    const allEvs = storageService.getEvents();
+    return allEvs.find(e => e.id === eventId) || propEvent || null;
+  }, [propEvent, eventId]);
+
+  // Ensure portal data for the volunteer's assigned event is fetched on mount
+  useEffect(() => {
+    if (eventId && volunteer?.id) {
+      storageService.fetchVolunteerPortalData(eventId, volunteer.id, true).then(() => {
+        setAttendanceRefreshKey(k => k + 1);
+      }).catch(() => {});
+    }
+  }, [eventId, volunteer?.id]);
+
+  // Strictly scoped learners: only learners of this specific event
+  const learners = useMemo(() => {
+    const list = storageService.getLearners(eventId);
+    if (list.length > 0) return list;
+    return propLearners.filter(l => !l.event_id || l.event_id === eventId);
+  }, [eventId, propLearners, attendanceRefreshKey]);
+
+  const eventDays = useMemo(() => {
+    const list = storageService.getEventDays(eventId);
+    if (list.length > 0) return list;
+    return propEventDays.filter(d => !d.event_id || d.event_id === eventId);
+  }, [eventId, propEventDays]);
 
   // Active Event Day for Volunteer Attendance (automatically driven by Admin)
   const activeDay = useMemo(() => {
@@ -210,11 +238,11 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     if (localRecords.length > 0) {
       return localRecords;
     }
-    if (dayAttendance && dayAttendance.length > 0) {
-      return dayAttendance.filter(a => a.day_id === activeDay.id);
+    if (propDayAttendance && propDayAttendance.length > 0) {
+      return propDayAttendance.filter(a => a.day_id === activeDay.id && (!a.event_id || a.event_id === eventId));
     }
     return [];
-  }, [activeDay, dayAttendance, eventId, attendanceRefreshKey]);
+  }, [activeDay, propDayAttendance, eventId, attendanceRefreshKey]);
 
   const activeDayAttMap = useMemo(() => {
     const map = new Map<string, DayAttendanceRecord>();
