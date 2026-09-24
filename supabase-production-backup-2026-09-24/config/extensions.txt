@@ -1,8 +1,0 @@
-====================================================================
-POSTGRESQL EXTENSIONS INVENTORY
-Project: Tamil Nadu Youth Legislative Assembly (TN Assembly)
-====================================================================
-
-1. REQUIRED EXTENSIONS:
-- uuid-ossp: Used for gen_random_uuid() / uuid_generate_v4() primary keys
-- pgcrypto: Used for cryptographic hashing and random UUID generation

@@ -1,8 +1,0 @@
-====================================================================
-DATABASE WEBHOOKS INVENTORY
-Project: Tamil Nadu Youth Legislative Assembly (TN Assembly)
-====================================================================
-
-Status: NONE CONFIGURED
-The application utilizes Supabase Realtime broadcast channels and direct client
-synchronization; no external outbound database webhooks are registered.

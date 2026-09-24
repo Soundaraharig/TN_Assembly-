@@ -1,8 +1,0 @@
-====================================================================
-STORAGE SIZE REPORT (STAGE 2C FRESH BACKUP)
-Project: Tamil Nadu Youth Legislative Assembly (TN Assembly)
-====================================================================
-
-Total Storage Buckets:             0
-Total Storage Objects:             0
-Total Storage Bytes:               0 bytes
