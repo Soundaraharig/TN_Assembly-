@@ -1219,33 +1219,11 @@ class StorageService {
   }
 
   /**
-   * Defensive recovery to ensure event 200fdd74-4d21-44d5-9f63-9a07bf267824 retains its correct
-   * identity ("JKKNCET TN ASSEMBLY 2026") and coordinator mapping ("soundaraharigece2025@jkkn.ac.in").
-   * STRICTLY checks target event ID '200fdd74-4d21-44d5-9f63-9a07bf267824' so other events created
-   * by the same coordinator are never forcibly renamed or overwritten.
+   * Disabled automatic restoration behavior to prevent overwriting user edits.
+   * Kept as a safe no-op method so external callers do not break.
    */
   public restoreJkkncetEvent(): void {
-    try {
-      const allEvents = this.getEvents();
-      let changed = false;
-      const targetId = '200fdd74-4d21-44d5-9f63-9a07bf267824';
-      const updatedEvents = allEvents.map(ev => {
-        if (ev.id === targetId && !ev.slug) {
-          changed = true;
-          return {
-            ...ev,
-            slug: 'jkkncet-tn-assembly-2026-tamil-nadu-2026'
-          };
-        }
-        return ev;
-      });
-
-      if (changed) {
-        this.setItem(STORAGE_KEYS.EVENTS, updatedEvents);
-      }
-    } catch (e) {
-      console.warn('[StorageService] Error during restoreJkkncetEvent:', e);
-    }
+    // Disabled automatic restoration behavior to protect manual edits
   }
 
   private unpackEventState(events: CollegeEvent[]): {
@@ -2973,7 +2951,7 @@ class StorageService {
         { data: studentData },
         { data: confData }
       ] = await Promise.all([
-        sb.from('college_events').select('id, college_name, event_stage, status, chapter, social_coverage').eq('id', eventId).limit(1),
+        sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS_LIST).eq('id', eventId).limit(1),
         studentId ? sb.from('learners').select('id, event_id, full_name, roll_no:constituency_number, department, year:academic_year, academic_year, party:party_name, party_name, party_id, access_code, bench, role, constituency_number, constituency_name, committee_name, committee_id').eq('id', studentId).limit(1) : Promise.resolve({ data: null }),
         studentId ? sb.from('learner_allocation_confirmations').select(SUPABASE_COLUMNS.LEARNER_ALLOCATION_CONFIRMATIONS).eq('event_id', eventId).eq('learner_id', studentId).limit(1) : Promise.resolve({ data: null })
       ]);
@@ -2981,9 +2959,10 @@ class StorageService {
       if (evData && evData.length > 0) {
         const ev = this.normalizeEvent(evData[0] as unknown as CollegeEvent);
         const curEvs = this.getEvents();
-        this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), ev]);
-        this.restoreJkkncetEvent();
-        this.unpackAndApplyEventState([ev], eventId);
+        const existing = curEvs.find(e => e.id === ev.id);
+        const merged = existing ? { ...existing, ...ev } : ev;
+        this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), merged]);
+        this.unpackAndApplyEventState([merged], eventId);
       }
 
       if (studentData && studentData.length > 0) {
@@ -3035,7 +3014,7 @@ class StorageService {
         { data: learnersData }
       ] = await Promise.all([
         this.dedupeInFlight<{ data: any }>(`query_event_${eventId}`, async () =>
-          await sb.from('college_events').select('id, college_name, event_stage, status, chapter, social_coverage').eq('id', eventId).limit(1)
+          await sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS_LIST).eq('id', eventId).limit(1)
         ),
         this.dedupeInFlight<{ data: any }>(`query_learners_${eventId}`, async () =>
           await sb.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('event_id', eventId)
@@ -3045,9 +3024,10 @@ class StorageService {
       if (evData && evData.length > 0) {
         const ev = this.normalizeEvent(evData[0] as unknown as CollegeEvent);
         const curEvs = this.getEvents();
-        this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), ev]);
-        this.restoreJkkncetEvent();
-        this.unpackAndApplyEventState([ev], eventId);
+        const existing = curEvs.find(e => e.id === ev.id);
+        const merged = existing ? { ...existing, ...ev } : ev;
+        this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), merged]);
+        this.unpackAndApplyEventState([merged], eventId);
 
         // Extract jury-scoped scores from social_coverage.scores (no standalone scores table exists)
         try {
@@ -3140,7 +3120,7 @@ class StorageService {
         { data: attData }
       ] = await Promise.all([
         this.dedupeInFlight<{ data: any }>(`query_event_${eventId}`, async () =>
-          await sb.from('college_events').select('id, college_name, event_stage, status, chapter, social_coverage').eq('id', eventId).limit(1)
+          await sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS_LIST).eq('id', eventId).limit(1)
         ),
         this.dedupeInFlight<{ data: any }>(`query_event_days_${eventId}`, async () =>
           await sb.from('event_days').select(SUPABASE_COLUMNS.EVENT_DAYS).eq('event_id', eventId).order('day_number', { ascending: true })
@@ -3156,9 +3136,10 @@ class StorageService {
       if (evData && evData.length > 0) {
         const ev = this.normalizeEvent(evData[0] as unknown as CollegeEvent);
         const curEvs = this.getEvents();
-        this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), ev]);
-        this.restoreJkkncetEvent();
-        this.unpackAndApplyEventState([ev], eventId);
+        const existing = curEvs.find(e => e.id === ev.id);
+        const merged = existing ? { ...existing, ...ev } : ev;
+        this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), merged]);
+        this.unpackAndApplyEventState([merged], eventId);
       }
 
       if (daysData) {
@@ -3234,7 +3215,7 @@ class StorageService {
       if (cached && cached.social_coverage) {
         targetEv = cached;
       } else {
-        let evQuery = sb.from('college_events').select('id, college_name, event_stage, status, chapter, level, social_coverage, slug');
+        let evQuery = sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS_LIST);
         if (isUuid(resolvedEventId)) {
           evQuery = evQuery.eq('id', resolvedEventId);
         } else if (isUuid(slugOrId)) {
@@ -3248,9 +3229,10 @@ class StorageService {
           targetEv = this.normalizeEvent(evData[0] as unknown as CollegeEvent);
           resolvedEventId = targetEv.id;
           const curEvs = this.getEvents();
-          this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== targetEv!.id), targetEv]);
-          this.restoreJkkncetEvent();
-          this.unpackAndApplyEventState([targetEv], targetEv.id);
+          const existing = curEvs.find(e => e.id === targetEv!.id);
+          const merged = existing ? { ...existing, ...targetEv } : targetEv;
+          this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== targetEv!.id), merged]);
+          this.unpackAndApplyEventState([merged], targetEv.id);
         }
       }
 
@@ -4723,7 +4705,7 @@ class StorageService {
     if (!sb) {
       return { success: false, error: new Error('Supabase not configured') };
     }
-    const sanitized = this.sanitizeRecordForTable(table, patch);
+    const sanitized = this.sanitizeRecordForTable(table, { ...patch, id });
     const fieldsToUpdate: Record<string, unknown> = {};
     for (const key of Object.keys(patch)) {
       if (key !== 'id') {
@@ -5711,17 +5693,26 @@ class StorageService {
     return newEvent;
   }
 
-  public async updateEvent(event: CollegeEvent): Promise<{ success: boolean; error?: any; data?: any }> {
+  public async updateEvent(event: Partial<CollegeEvent> & { id: string }): Promise<{ success: boolean; error?: any; data?: any }> {
+    const existing = this.getEvents().find(e => e.id === event.id);
+    if (!existing) {
+      return { success: false, error: new Error('Event not found') };
+    }
+
     if (event.is_locked !== undefined) {
-      const sc = { ...((event.social_coverage as Record<string, any>) || {}) };
-      sc.allocation_lock = event.is_locked;
-      event.social_coverage = sc;
       this.setItem(`${STORAGE_KEYS.ALLOCATION_LOCK}_${event.id}`, event.is_locked);
     }
-    const all = this.getEvents().map(e => (e.id === event.id ? event : e));
+
+    // Merge metadata locally while strictly protecting existing social_coverage
+    const merged: CollegeEvent = {
+      ...existing,
+      ...event,
+      social_coverage: existing.social_coverage
+    };
+    const all = this.getEvents().map(e => (e.id === event.id ? merged : e));
     this.setItem(STORAGE_KEYS.EVENTS, all);
 
-    // Build targeted patch containing ONLY modified metadata fields — NEVER overwrite social_coverage
+    // Build targeted patch containing ONLY explicitly modified metadata fields — NEVER overwrite social_coverage
     const patch: Record<string, unknown> = {};
     if (event.college_name !== undefined) patch.college_name = event.college_name;
     if (event.location !== undefined) patch.location = event.location;
@@ -5739,9 +5730,6 @@ class StorageService {
     if (event.treasury_whatsapp_link !== undefined) patch.treasury_whatsapp_link = event.treasury_whatsapp_link;
     if (event.opposition_whatsapp_link !== undefined) patch.opposition_whatsapp_link = event.opposition_whatsapp_link;
     if (event.slug !== undefined) patch.slug = event.slug;
-    if (event.social_coverage !== undefined && typeof event.social_coverage === 'object' && Object.keys(event.social_coverage).length > 0) {
-      patch.social_coverage = event.social_coverage;
-    }
     patch.updated_at = new Date().toISOString();
 
     const res = await this.sbUpdate('college_events', event.id, patch);
@@ -7380,7 +7368,13 @@ class StorageService {
       targetEv.social_coverage = sc;
 
       this.setItem(STORAGE_KEYS.EVENTS, events);
-      this.sbUpsert('college_events', targetEv as unknown as Record<string, unknown>);
+      if (supabase && isValidUuid(eventId)) {
+        supabase
+          .from('college_events')
+          .update({ social_coverage: sc, updated_at: new Date().toISOString() })
+          .eq('id', eventId)
+          .then();
+      }
     } catch (e) {
       console.warn('Failed to mirror event days into social_coverage:', e);
     }
@@ -12314,14 +12308,19 @@ class StorageService {
       const ev = events.find(e => e.id === eventId);
       if (ev) {
         const sc = (ev.social_coverage || {}) as any;
-        const updatedEv = {
-          ...ev,
-          social_coverage: {
-            ...sc,
-            yuva_assignments: assignments
-          }
+        const updatedSc = {
+          ...sc,
+          yuva_assignments: assignments
         };
-        this.updateEvent(updatedEv);
+        ev.social_coverage = updatedSc;
+        this.setItem(STORAGE_KEYS.EVENTS, events);
+        if (isValidUuid(eventId)) {
+          supabase
+            .from('college_events')
+            .update({ social_coverage: updatedSc, updated_at: new Date().toISOString() })
+            .eq('id', eventId)
+            .then();
+        }
       }
     }
 
