@@ -1,5 +1,15 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import type { Learner, Party, AgendaItem, ScoreRecord, Election, LiveFlashVote, CollegeEvent } from '../../types';
+import type {
+  Learner,
+  Party,
+  AgendaItem,
+  ScoreRecord,
+  Election,
+  LiveFlashVote,
+  CollegeEvent,
+  SpeakingRequest,
+  SpeakingTurn
+} from '../../types';
 import {
   Clock,
   Play,
@@ -18,7 +28,11 @@ import {
   Smartphone,
   ChevronDown,
   ChevronUp,
-  Monitor
+  Monitor,
+  History,
+  X,
+  Mic,
+  Search
 } from 'lucide-react';
 
 import { storageService } from '../../services/storageService';
@@ -181,10 +195,168 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     return `${mins.toString().padStart(2, '0')}:${rem.toString().padStart(2, '0')}`;
   };
 
-  // ── Speaking Floor & Hand-Raise State ─────────────────────────────────────
-  const [isPhoneHandRaiseOn, setIsPhoneHandRaiseOn] = useState(false);
-  const [speakerQueue, setSpeakerQueue] = useState<Learner[]>(() => learners.slice(0, 3));
-  const [spokenLearnersCount, setSpokenLearnersCount] = useState(0);
+  // ── Speaking Floor & Hand-Raise State (Real Persisted) ───────────────────
+  const [isPhoneHandRaiseOn, setIsPhoneHandRaiseOn] = useState(true);
+  const [speakingRequests, setSpeakingRequests] = useState<SpeakingRequest[]>(() => {
+    return currentEvent?.id ? storageService.getSpeakingRequests(currentEvent.id) : [];
+  });
+  const [speakingTurns, setSpeakingTurns] = useState<SpeakingTurn[]>(() => {
+    return currentEvent?.id ? storageService.getSpeakingTurns(currentEvent.id) : [];
+  });
+  const [callingSpeakerId, setCallingSpeakerId] = useState<string | null>(null);
+  const [finishingTurnId, setFinishingTurnId] = useState<string | null>(null);
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [historySearchQuery, setHistorySearchQuery] = useState('');
+  const [historySessionFilter, setHistorySessionFilter] = useState<string>('all');
+  const [selectedHistoryLearnerId, setSelectedHistoryLearnerId] = useState<string | null>(null);
+
+  // Sync active session and speaking floor data with persistent storage & realtime
+  useEffect(() => {
+    if (!currentEvent?.id) return;
+
+    // Set active session for speaking requests
+    storageService.setActiveSession(currentEvent.id, { id: activeAgendaItem.id, title: activeAgendaItem.title });
+
+    const refreshSpeakingData = () => {
+      if (!currentEvent?.id) return;
+      const reqs = storageService.getSpeakingRequests(currentEvent.id);
+      const turns = storageService.getSpeakingTurns(currentEvent.id);
+      setSpeakingRequests([...reqs]);
+      setSpeakingTurns([...turns]);
+    };
+
+    refreshSpeakingData();
+
+    // Async fetch from Supabase
+    storageService.fetchActiveSpeakingRequests(currentEvent.id).then(reqs => {
+      setSpeakingRequests([...reqs]);
+    }).catch(console.error);
+
+    storageService.fetchSpeakingTurns(currentEvent.id).then(turns => {
+      setSpeakingTurns([...turns]);
+    }).catch(console.error);
+
+    const handleReqUpdate = () => refreshSpeakingData();
+    const handleTurnUpdate = () => refreshSpeakingData();
+    const unsub = storageService.subscribe(refreshSpeakingData);
+    window.addEventListener('tn_assembly_speaking_request_update', handleReqUpdate);
+    window.addEventListener('tn_assembly_speaking_turn_update', handleTurnUpdate);
+
+    return () => {
+      unsub();
+      window.removeEventListener('tn_assembly_speaking_request_update', handleReqUpdate);
+      window.removeEventListener('tn_assembly_speaking_turn_update', handleTurnUpdate);
+    };
+  }, [currentEvent?.id, activeAgendaItem.id, activeAgendaItem.title]);
+
+  // Turn counts for each learner in the CURRENT session
+  const sessionTurnCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    speakingTurns
+      .filter(t => t.session_id === activeAgendaItem.id && t.status === 'SPOKEN')
+      .forEach(t => {
+        counts[t.learner_id] = (counts[t.learner_id] || 0) + 1;
+      });
+    return counts;
+  }, [speakingTurns, activeAgendaItem.id]);
+
+  // Speaking priority queue for CURRENT session:
+  // 1. Lowest speaking count in current session first
+  // 2. Earliest hand-raise/request time first
+  // 3. Stable deterministic tie-breaker
+  const waitingRequests = useMemo(() => {
+    return speakingRequests
+      .filter(r => r.session_id === activeAgendaItem.id && r.status === 'WAITING')
+      .sort((a, b) => {
+        const countA = sessionTurnCounts[a.learner_id] || 0;
+        const countB = sessionTurnCounts[b.learner_id] || 0;
+        if (countA !== countB) return countA - countB;
+
+        const timeA = new Date(a.requested_at).getTime();
+        const timeB = new Date(b.requested_at).getTime();
+        if (timeA !== timeB) return timeA - timeB;
+
+        return a.learner_name.localeCompare(b.learner_name);
+      });
+  }, [speakingRequests, sessionTurnCounts, activeAgendaItem.id]);
+
+  // Currently active speaker turn for this session (status === 'SPEAKING')
+  const activeSpeakerTurn = useMemo(() => {
+    return speakingTurns.find(t => t.session_id === activeAgendaItem.id && t.status === 'SPEAKING');
+  }, [speakingTurns, activeAgendaItem.id]);
+
+  // Unique learners who have spoken in this session
+  const spokenLearnerIds = useMemo(() => {
+    const ids = new Set<string>();
+    speakingTurns
+      .filter(t => t.session_id === activeAgendaItem.id && t.status === 'SPOKEN')
+      .forEach(t => ids.add(t.learner_id));
+    return ids;
+  }, [speakingTurns, activeAgendaItem.id]);
+
+  const spokenLearnersCount = spokenLearnerIds.size;
+
+  // Actual event participants who have NOT yet spoken in the current session
+  const yetToSpeakLearners = useMemo(() => {
+    return learners.filter(l => !spokenLearnerIds.has(l.id));
+  }, [learners, spokenLearnerIds]);
+
+  const handleCallSpeaker = async (req: SpeakingRequest) => {
+    if (!currentEvent?.id) return;
+    setCallingSpeakerId(req.id);
+    try {
+      const res = await storageService.callSpeaker({
+        requestId: req.id,
+        eventId: currentEvent.id,
+        sessionId: req.session_id,
+        sessionName: req.session_name,
+        learnerId: req.learner_id,
+        learnerName: req.learner_name,
+        calledBy: 'Speaker / Control'
+      });
+      if (res.success) {
+        onShowToast('Floor Granted', `${req.learner_name} has been called to the floor`, 'success');
+      } else {
+        onShowToast('Call Failed', res.error || 'Failed to call speaker', 'error');
+      }
+    } catch (err: any) {
+      onShowToast('Call Failed', err?.message || 'Failed to call speaker', 'error');
+    } finally {
+      setCallingSpeakerId(null);
+    }
+  };
+
+  const handleFinishTurn = async (turn: SpeakingTurn) => {
+    if (!currentEvent?.id) return;
+    setFinishingTurnId(turn.id);
+    try {
+      const res = await storageService.completeSpeakingTurn({
+        turnId: turn.id,
+        requestId: turn.request_id,
+        eventId: currentEvent.id,
+        sessionId: turn.session_id
+      });
+      if (res.success) {
+        onShowToast('Turn Completed', `${turn.learner_name}'s speech recorded in Hansard`, 'success');
+      } else {
+        onShowToast('Turn Finish Error', res.error || 'Failed to complete speaking turn', 'error');
+      }
+    } catch (err: any) {
+      onShowToast('Turn Finish Error', err?.message || 'Failed to complete speaking turn', 'error');
+    } finally {
+      setFinishingTurnId(null);
+    }
+  };
+
+  const handleCancelRequest = async (req: SpeakingRequest) => {
+    if (!currentEvent?.id) return;
+    try {
+      await storageService.cancelSpeakingRequest(req.id, currentEvent.id, req.session_id);
+      onShowToast('Request Dismissed', `${req.learner_name}'s request was dismissed`, 'info');
+    } catch (err: any) {
+      onShowToast('Dismiss Error', err?.message || 'Failed to dismiss request', 'error');
+    }
+  };
 
   // ── Government Formation State (Parties & Bench) ──────────────────────────
   const handlePartyBenchChange = (partyId: string, newBench: 'Ruling' | 'Opposition' | 'Independent') => {
@@ -334,13 +506,6 @@ export const ControlTab: React.FC<ControlTabProps> = ({
       setIsTimerRunning(false);
       onShowToast('Previous Session Item', prevItem.title, 'info');
     }
-  };
-
-  const handleGenerateQueue = () => {
-    const shuffled = [...learners].sort(() => 0.5 - Math.random()).slice(0, 4);
-    setSpeakerQueue(shuffled);
-    setSpokenLearnersCount(0);
-    onShowToast('Speaker Queue Generated', `Auto-queued ${shuffled.length} floor delegates`, 'success');
   };
 
   const handlePushToProjector = () => {
@@ -503,12 +668,15 @@ export const ControlTab: React.FC<ControlTabProps> = ({
             </div>
           </div>
 
-          {/* 3. SPEAKING FLOOR CARD */}
+          {/* 3. SPEAKING FLOOR CARD (Production Realtime & Persisted) */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
                   ✋ Speaking Floor
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                  {waitingRequests.length} waiting
                 </span>
               </div>
               <button
@@ -516,50 +684,190 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   setIsPhoneHandRaiseOn(!isPhoneHandRaiseOn);
                   onShowToast('Hand-Raise Control', isPhoneHandRaiseOn ? 'Phone hand-raise disabled' : 'Phone hand-raise active for delegates', 'info');
                 }}
-                className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-600 dark:text-slate-300 flex items-center gap-1 cursor-pointer"
+                className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[11px] font-semibold text-slate-600 dark:text-slate-300 flex items-center gap-1 cursor-pointer transition-colors"
               >
                 <Smartphone className="w-3.5 h-3.5" />
                 <span>Phone hand-raise: {isPhoneHandRaiseOn ? 'On' : 'Off'}</span>
               </button>
             </div>
 
-            <div className="text-xs text-slate-500">
-              Live session: <strong>{activeAgendaItem.title}</strong>
+            <div className="flex items-center justify-between text-xs text-slate-500">
+              <div>
+                Live session: <strong className="text-slate-800 dark:text-slate-200">{activeAgendaItem.title}</strong>
+              </div>
+              <span className="text-[11px] text-slate-400">
+                Priority: Lowest Turns &gt; Earliest Hand
+              </span>
+            </div>
+
+            {/* Active Speaker Banner (if someone is called and currently speaking) */}
+            {activeSpeakerTurn && (
+              <div className="p-3.5 rounded-xl border border-emerald-500/30 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent dark:from-emerald-950/40 dark:via-emerald-950/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <div className="relative">
+                    <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-black shadow">
+                      <Mic className="w-4 h-4 animate-pulse" />
+                    </div>
+                    <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                    </span>
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                        NOW SPEAKING
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        Turn #{activeSpeakerTurn.sequence_number}
+                      </span>
+                    </div>
+                    <div className="text-sm font-bold text-slate-900 dark:text-white">
+                      {activeSpeakerTurn.learner_name}
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      Called at {new Date(activeSpeakerTurn.called_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => handleFinishTurn(activeSpeakerTurn)}
+                  disabled={finishingTurnId === activeSpeakerTurn.id}
+                  className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>{finishingTurnId === activeSpeakerTurn.id ? 'Recording...' : 'Mark Spoken / Yield Floor'}</span>
+                </button>
+              </div>
+            )}
+
+            {/* Priority Waiting Queue */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  WAITING TO SPEAK ({waitingRequests.length})
+                </span>
+                {waitingRequests.length > 0 && (
+                  <span className="text-[10px] text-slate-400 italic">
+                    Ordered by priority
+                  </span>
+                )}
+              </div>
+
+              {waitingRequests.length === 0 ? (
+                <div className="py-5 text-center text-xs text-slate-400 italic rounded-xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30">
+                  No delegates currently waiting to speak in this session.
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                  {waitingRequests.map((req, idx) => {
+                    const learner = learners.find(l => l.id === req.learner_id);
+                    const turnCount = sessionTurnCounts[req.learner_id] || 0;
+                    const isCalling = callingSpeakerId === req.id;
+
+                    return (
+                      <div
+                        key={req.id}
+                        className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/60 hover:border-slate-300 dark:hover:border-slate-700 transition-all flex items-center justify-between gap-2"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="w-5 h-5 rounded-md bg-slate-200 dark:bg-slate-700 text-[10px] font-bold text-slate-700 dark:text-slate-300 flex items-center justify-center shrink-0">
+                            #{idx + 1}
+                          </span>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                                {req.learner_name}
+                              </span>
+                              {learner?.bench && (
+                                <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
+                                  learner.bench === 'Ruling'
+                                    ? 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
+                                    : learner.bench === 'Opposition'
+                                    ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300'
+                                    : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                                }`}>
+                                  {learner.bench}
+                                </span>
+                              )}
+                              <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
+                                turnCount === 0
+                                  ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
+                                  : 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300'
+                              }`}>
+                                {turnCount === 0 ? '0 turns in session' : `${turnCount} turn${turnCount > 1 ? 's' : ''}`}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 truncate">
+                              {learner?.constituency_name ? `${learner.constituency_name} · ` : ''}
+                              Raised {new Date(req.requested_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            onClick={() => handleCallSpeaker(req)}
+                            disabled={isCalling}
+                            className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                          >
+                            <Mic className="w-3 h-3" />
+                            <span>{isCalling ? 'Calling...' : 'CALL'}</span>
+                          </button>
+                          <button
+                            onClick={() => handleCancelRequest(req)}
+                            title="Dismiss hand-raise"
+                            className="p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             {/* Speaking Progress Bar */}
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 pt-1">
               <div className="flex justify-between text-xs text-slate-500 font-medium">
-                <span>{spokenLearnersCount} of {speakerQueue.length || 1} have spoken</span>
-                <span>{Math.round((spokenLearnersCount / Math.max(speakerQueue.length, 1)) * 100)}%</span>
+                <span>{spokenLearnersCount} of {learners.length || 1} delegates have spoken</span>
+                <span>{Math.round((spokenLearnersCount / Math.max(learners.length, 1)) * 100)}%</span>
               </div>
               <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
                 <div
                   className="bg-emerald-500 h-full transition-all duration-300"
-                  style={{ width: `${Math.round((spokenLearnersCount / Math.max(speakerQueue.length, 1)) * 100)}%` }}
+                  style={{ width: `${Math.round((spokenLearnersCount / Math.max(learners.length, 1)) * 100)}%` }}
                 />
               </div>
             </div>
 
             {/* Yet to speak list */}
             <div className="space-y-2 pt-1">
-              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-                YET TO SPEAK — {speakerQueue.length || 1}
-              </span>
-              <div className="flex flex-wrap gap-2">
-                {speakerQueue.length > 0 ? (
-                  speakerQueue.map((s, idx) => (
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  YET TO SPEAK — {yetToSpeakLearners.length}
+                </span>
+                <span className="text-[10px] text-slate-400">
+                  Zero turns in this session
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto pr-1">
+                {yetToSpeakLearners.length > 0 ? (
+                  yetToSpeakLearners.map((s, idx) => (
                     <span
                       key={s.id || idx}
-                      className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-800/60 shadow-sm flex items-center gap-1.5"
+                      className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-800/60 shadow-sm flex items-center gap-1"
                     >
-                      <span className="font-mono opacity-80">#{s.constituency_number || (idx + 101)}</span>
+                      <span className="font-mono text-[11px] opacity-75">#{s.constituency_number || (idx + 101)}</span>
                       <span>{s.full_name}</span>
                     </span>
                   ))
                 ) : (
-                  <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-800/60 shadow-sm">
-                    #111 Deekshaa
+                  <span className="text-xs text-slate-400 italic">
+                    All delegates in the roster have spoken in this session.
                   </span>
                 )}
               </div>
@@ -568,13 +876,13 @@ export const ControlTab: React.FC<ControlTabProps> = ({
             <p className="text-[11px] text-slate-500 leading-relaxed pt-1">
               Turns are counted from the Now Speaking desk — call on someone above when hands go up to keep the floor fair.
             </p>
-            <a
-              href="#speakers"
-              onClick={(e) => { e.preventDefault(); onShowToast('Speaking Record', 'Hansard speaking record opened', 'info'); }}
-              className="text-xs text-amber-600 dark:text-amber-400 font-bold hover:underline inline-block"
+            <button
+              onClick={() => setIsHistoryModalOpen(true)}
+              className="text-xs text-amber-600 dark:text-amber-400 font-bold hover:underline inline-flex items-center gap-1 cursor-pointer"
             >
-              See the full speaking record →
-            </a>
+              <History className="w-3.5 h-3.5" />
+              <span>See the full speaking record →</span>
+            </button>
           </div>
 
           {/* 4. GOVERNMENT FORMATION COLLAPSIBLE (Matching User Reference Image 2) */}
@@ -694,25 +1002,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
 
 
-          {/* 6. SPEAKERS SECTION */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Users className="w-4 h-4 text-slate-500" />
-                <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">Speakers</h4>
-              </div>
-              <button
-                onClick={handleGenerateQueue}
-                className="px-3.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 shadow-sm cursor-pointer"
-              >
-                <span>Generate Queue</span>
-              </button>
-            </div>
 
-            <div className="py-6 text-center text-xs text-slate-400 italic rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
-              No speakers queued for this item. Click 'Generate Queue' to auto-populate.
-            </div>
-          </div>
 
           {/* 7. BROADCAST (PROJECTOR BANNER) CARD */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
@@ -1098,6 +1388,257 @@ export const ControlTab: React.FC<ControlTabProps> = ({
         </div>
 
       </div>
+
+      {/* ── HANSARD SPEAKING RECORD MODAL (Part 11) ────────────────────────────── */}
+      {isHistoryModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-4xl w-full max-h-[88vh] flex flex-col shadow-2xl overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/30">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 flex items-center justify-center font-bold">
+                  <History className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 dark:text-white">
+                    Assembly Hansard — Speaking History
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Official audit log of delegate speaking turns across assembly sessions
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsHistoryModalOpen(false)}
+                className="p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Filter & Search Bar */}
+            <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col sm:flex-row gap-3 items-center justify-between">
+              <div className="relative w-full sm:w-80">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Filter by delegate, constituency, party..."
+                  value={historySearchQuery}
+                  onChange={(e) => setHistorySearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                <select
+                  value={historySessionFilter}
+                  onChange={(e) => setHistorySessionFilter(e.target.value)}
+                  className="px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+                >
+                  <option value="all">All Assembly Sessions</option>
+                  <option value={activeAgendaItem.id}>Current: {activeAgendaItem.title}</option>
+                  {Array.from(new Set(speakingTurns.map(t => t.session_name || t.session_id)))
+                    .filter(s => s !== activeAgendaItem.title && s !== activeAgendaItem.id)
+                    .map(sess => (
+                      <option key={sess} value={sess}>{sess}</option>
+                    ))}
+                </select>
+
+                <div className="px-3 py-1.5 rounded-xl bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20 text-xs font-bold whitespace-nowrap">
+                  {speakingTurns.length} Total Turns
+                </div>
+              </div>
+            </div>
+
+            {/* Speaking Records List */}
+            <div className="p-6 overflow-y-auto space-y-3 flex-1">
+              {(() => {
+                // Filter turns by session if selected
+                const filteredTurns = speakingTurns.filter(turn => {
+                  if (historySessionFilter === 'all') return true;
+                  return turn.session_id === historySessionFilter || turn.session_name === historySessionFilter;
+                });
+
+                // Group turns by learner
+                const turnsByLearner = new Map<string, SpeakingTurn[]>();
+                filteredTurns.forEach(turn => {
+                  const list = turnsByLearner.get(turn.learner_id) || [];
+                  list.push(turn);
+                  turnsByLearner.set(turn.learner_id, list);
+                });
+
+                // Convert to participant summaries
+                const participantSummaries = Array.from(turnsByLearner.entries()).map(([learnerId, turns]) => {
+                  const learner = learners.find(l => l.id === learnerId);
+                  const sortedTurns = [...turns].sort((a, b) => new Date(b.called_at).getTime() - new Date(a.called_at).getTime());
+                  const latestTurn = sortedTurns[0];
+                  const currentSessionTurns = turns.filter(t => t.session_id === activeAgendaItem.id).length;
+
+                  return {
+                    learnerId,
+                    name: learner?.full_name || turns[0]?.learner_name || 'Delegate',
+                    constituency: learner?.constituency_name || 'Tamil Nadu',
+                    constituencyNo: learner?.constituency_number || '',
+                    party: learner?.party_name || 'Independent',
+                    bench: learner?.bench || 'Independent',
+                    turns: sortedTurns,
+                    totalTurns: turns.length,
+                    currentSessionTurns,
+                    latestTurnAt: latestTurn?.called_at
+                  };
+                });
+
+                // Search query filter
+                const searchedSummaries = participantSummaries.filter(p => {
+                  if (!historySearchQuery.trim()) return true;
+                  const q = historySearchQuery.toLowerCase();
+                  return (
+                    p.name.toLowerCase().includes(q) ||
+                    p.constituency.toLowerCase().includes(q) ||
+                    p.party.toLowerCase().includes(q) ||
+                    p.bench.toLowerCase().includes(q)
+                  );
+                });
+
+                if (searchedSummaries.length === 0) {
+                  return (
+                    <div className="py-16 text-center space-y-2">
+                      <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-400 mx-auto flex items-center justify-center">
+                        <History className="w-6 h-6 opacity-40" />
+                      </div>
+                      <p className="text-sm font-bold text-slate-700 dark:text-slate-300">
+                        {speakingTurns.length === 0 ? 'No speaking records recorded yet' : 'No delegates match your search'}
+                      </p>
+                      <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                        {speakingTurns.length === 0
+                          ? 'When the Speaker calls delegates from the Speaking Floor, every speaking turn is permanently recorded here with timestamps.'
+                          : 'Try searching with a different name or clear the filter.'}
+                      </p>
+                    </div>
+                  );
+                }
+
+                return searchedSummaries.map(p => {
+                  const isExpanded = selectedHistoryLearnerId === p.learnerId;
+
+                  return (
+                    <div
+                      key={p.learnerId}
+                      className="border border-slate-200 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900/80 shadow-sm overflow-hidden transition-all"
+                    >
+                      <div
+                        onClick={() => setSelectedHistoryLearnerId(isExpanded ? null : p.learnerId)}
+                        className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center justify-center font-bold text-xs shrink-0">
+                            #{p.constituencyNo || p.turns[0]?.sequence_number || '•'}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                                {p.name}
+                              </h4>
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                p.bench === 'Ruling'
+                                  ? 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
+                                  : p.bench === 'Opposition'
+                                  ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300'
+                                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                              }`}>
+                                {p.bench}
+                              </span>
+                              <span className="text-xs text-slate-400">
+                                {p.party} · {p.constituency}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-slate-500 mt-0.5">
+                              Latest speech: {p.latestTurnAt ? new Date(p.latestTurnAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'N/A'}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-3 shrink-0 self-end sm:self-center">
+                          <div className="text-right">
+                            <div className="text-xs font-black text-slate-900 dark:text-white">
+                              {p.totalTurns} Turn{p.totalTurns > 1 ? 's' : ''} Recorded
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                              ({p.currentSessionTurns} in this session)
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                          >
+                            {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Expanded Turns Breakdown */}
+                      {isExpanded && (
+                        <div className="px-4 pb-4 pt-1 border-t border-slate-100 dark:border-slate-800/80 bg-slate-50/50 dark:bg-slate-950/30">
+                          <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2">
+                            Speaking Turn Timeline ({p.turns.length})
+                          </div>
+                          <div className="space-y-1.5">
+                            {p.turns.map((turn, tIdx) => (
+                              <div
+                                key={turn.id || tIdx}
+                                className="p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between text-xs"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <span className="w-5 h-5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[10px] font-bold flex items-center justify-center shrink-0">
+                                    {turn.sequence_number || tIdx + 1}
+                                  </span>
+                                  <div>
+                                    <span className="font-semibold text-slate-800 dark:text-slate-200">
+                                      {turn.session_name || 'Assembly Session'}
+                                    </span>
+                                    <div className="text-[10px] text-slate-400">
+                                      Called by {turn.called_by || 'Speaker'}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="text-right">
+                                  <div className="font-mono text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                                    {new Date(turn.called_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                  </div>
+                                  <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.2 rounded ${
+                                    turn.status === 'SPEAKING'
+                                      ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300'
+                                      : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+                                  }`}>
+                                    {turn.status}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 flex items-center justify-between">
+              <span className="text-[11px] text-slate-400">
+                Data persisted server-side • Hansard records cannot be overwritten
+              </span>
+              <button
+                onClick={() => setIsHistoryModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-xs font-bold hover:opacity-90 transition-all cursor-pointer"
+              >
+                Close Record
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

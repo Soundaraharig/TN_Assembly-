@@ -689,3 +689,43 @@ export interface LoginRecord {
   details?: string;
 }
 
+export type SpeakingRequestStatus = 'WAITING' | 'CALLED' | 'SPOKEN' | 'CANCELLED';
+
+export interface SpeakingRequest {
+  id: string;
+  event_id: string;
+  session_id: string;
+  session_name: string;
+  learner_id: string;
+  learner_name: string;
+  constituency_number?: number;
+  bench?: string;
+  status: SpeakingRequestStatus;
+  requested_at: string;
+  called_at?: string;
+  resolved_at?: string;
+  resolved_by?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export type SpeakingTurnStatus = 'SPEAKING' | 'SPOKEN' | 'CANCELLED';
+
+export interface SpeakingTurn {
+  id: string;
+  event_id: string;
+  session_id: string;
+  session_name: string;
+  learner_id: string;
+  learner_name: string;
+  request_id?: string;
+  sequence_number: number;
+  called_at: string;
+  started_at?: string;
+  completed_at?: string;
+  called_by?: string;
+  status: SpeakingTurnStatus;
+  created_at?: string;
+}
+
+

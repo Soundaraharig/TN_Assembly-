@@ -12,13 +12,16 @@ import type {
   LiveFlashVote,
   EventDeadline,
   ProceedingsQuestion,
-  BillProceeding
+  BillProceeding,
+  SpeakingRequest
 } from '../../types';
 import {
   storageService,
   isQuestionForMinister,
-  getMinisterAssignedMinistry
+  getMinisterAssignedMinistry,
+  getAllocationCheckStatus
 } from '../../services/storageService';
+import { AllocationVerificationModal } from './AllocationVerificationModal';
 import { getEventSlug } from '../../utils/slug';
 import {
   Landmark,
@@ -82,7 +85,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   onCastFlashVote,
   onShowToast
 }) => {
-  const [floorRequested, setFloorRequested] = useState(false);
+  const [showAllocationModal, setShowAllocationModal] = useState(false);
 
   // Nomination form state
   const [selectedNomPosition, setSelectedNomPosition] = useState<string>(
@@ -95,6 +98,60 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const eventSlug = event ? getEventSlug(event) : 'jkkncet-tn-assembly-2026';
   const resolvedEventId = event?.id || storageService.getEvents().find(e => getEventSlug(e) === eventSlug)?.id || eventSlug;
   const targetEventId = resolvedEventId;
+
+  // Active Assembly Session & Speaking Floor State (Part 3, 4, 12)
+  const [activeSession, setActiveSession] = useState<{ id: string; title: string }>(() =>
+    storageService.getActiveSession(resolvedEventId)
+  );
+  const [activeSpeakingRequest, setActiveSpeakingRequest] = useState<SpeakingRequest | null>(null);
+  const [isSubmittingFloorRequest, setIsSubmittingFloorRequest] = useState(false);
+
+  // Check allocation confirmation status on mount (Part 1 & 2)
+  useEffect(() => {
+    if (!student?.id || !resolvedEventId) return;
+    let isMounted = true;
+
+    storageService.fetchStudentAllocationConfirmation(student.id, resolvedEventId)
+      .then(conf => {
+        if (!isMounted) return;
+        const status = getAllocationCheckStatus(student, conf);
+        if (status !== 'CHECKED') {
+          setShowAllocationModal(true);
+        }
+      })
+      .catch(() => {});
+
+    return () => { isMounted = false; };
+  }, [student?.id, resolvedEventId, student]);
+
+  // Sync active speaking status for this student
+  const checkMySpeakingStatus = React.useCallback(() => {
+    if (!student?.id || !resolvedEventId) return;
+    const currentSession = storageService.getActiveSession(resolvedEventId);
+    setActiveSession(currentSession);
+    const reqs = storageService.getSpeakingRequests(resolvedEventId, currentSession.id);
+    const myActive = reqs.find(
+      r => r.learner_id === student.id && (r.status === 'WAITING' || r.status === 'CALLED')
+    );
+    setActiveSpeakingRequest(myActive || null);
+  }, [student?.id, resolvedEventId]);
+
+  useEffect(() => {
+    checkMySpeakingStatus();
+    if (resolvedEventId) {
+      storageService.fetchActiveSpeakingRequests(resolvedEventId).then(() => {
+        checkMySpeakingStatus();
+      });
+    }
+
+    const unsub = storageService.subscribe(checkMySpeakingStatus);
+    const handleSpeakingUpdate = () => checkMySpeakingStatus();
+    window.addEventListener('tn_assembly_speaking_update', handleSpeakingUpdate);
+    return () => {
+      unsub();
+      window.removeEventListener('tn_assembly_speaking_update', handleSpeakingUpdate);
+    };
+  }, [resolvedEventId, checkMySpeakingStatus]);
   const [deadline, setDeadline] = useState<EventDeadline>(() => {
     return storageService.getEventDeadline(eventSlug) || storageService.getEventDeadline(resolvedEventId);
   });
@@ -471,14 +528,43 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     return { eligible: true };
   };
 
-  const handleRequestFloor = () => {
-    setFloorRequested(true);
-    onShowToast(
-      'Point of Order Submitted',
-      `Floor request sent to Assembly Speaker for ${student.full_name} (${student.constituency_name || 'MLA'})`,
-      'success'
-    );
-    setTimeout(() => setFloorRequested(false), 5000);
+  const handleRequestFloor = async () => {
+    if (!student || !resolvedEventId) return;
+    if (isSubmittingFloorRequest) return;
+
+    if (activeSpeakingRequest) {
+      onShowToast(
+        'Already Queued',
+        'Your request is already in the speaking queue.',
+        'info'
+      );
+      return;
+    }
+
+    setIsSubmittingFloorRequest(true);
+    try {
+      const res = await storageService.submitSpeakingRequest({
+        eventId: resolvedEventId,
+        sessionId: activeSession.id,
+        sessionName: activeSession.title,
+        learner: student
+      });
+
+      if (res.success && res.request) {
+        setActiveSpeakingRequest(res.request);
+        onShowToast(
+          'Point of Order Submitted',
+          `Floor request sent to Assembly Speaker for ${student.full_name} (${student.constituency_name || 'MLA'})`,
+          'success'
+        );
+      } else {
+        onShowToast('Request Failed', res.error || 'Failed to submit floor request.', 'error');
+      }
+    } catch (err: any) {
+      onShowToast('Request Error', err?.message || 'Error sending floor request.', 'error');
+    } finally {
+      setIsSubmittingFloorRequest(false);
+    }
   };
 
   const handleStudentNominationSubmit = (e: React.FormEvent) => {
@@ -1211,10 +1297,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           {/* Interactive Assembly Floor Request */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4 transition-colors">
             <div>
-              <h4 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Hand className="w-5 h-5 text-amber-500" /> Request Assembly Floor Time
-              </h4>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
+              <div className="flex items-center gap-2">
+                <h4 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Hand className="w-5 h-5 text-amber-500" /> Request Assembly Floor Time
+                </h4>
+                <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500">
+                  {activeSession.title}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                 Submit a Point of Order or speech request to the Assembly Speaker during live debates
               </p>
             </div>
@@ -1222,16 +1313,22 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <button
               type="button"
               onClick={handleRequestFloor}
-              disabled={floorRequested}
+              disabled={Boolean(activeSpeakingRequest) || isSubmittingFloorRequest}
               className={`px-5 py-2.5 rounded-xl font-bold text-xs shadow-lg transition-all flex items-center gap-2 cursor-pointer ${
-                floorRequested
-                  ? 'bg-emerald-600 text-white shadow-emerald-950/50'
+                activeSpeakingRequest?.status === 'CALLED'
+                  ? 'bg-emerald-600 text-white shadow-emerald-950/50 animate-pulse ring-2 ring-emerald-400'
+                  : activeSpeakingRequest?.status === 'WAITING'
+                  ? 'bg-amber-600/90 text-white shadow-amber-950/50 cursor-not-allowed opacity-90'
                   : 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-950/50'
               }`}
             >
-              {floorRequested ? (
+              {activeSpeakingRequest?.status === 'CALLED' ? (
                 <>
-                  <CheckCircle2 className="w-4 h-4" /> Request Sent to Speaker!
+                  <Sparkles className="w-4 h-4 text-amber-300" /> Called! Floor is Yours
+                </>
+              ) : activeSpeakingRequest?.status === 'WAITING' ? (
+                <>
+                  <CheckCircle2 className="w-4 h-4" /> In Speaking Queue (Waiting)
                 </>
               ) : (
                 <>
@@ -2093,6 +2190,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           </div>
         </div>
       )}
+
+      {/* Automatic Allocation Verification Popup Modal (Part 1 & 2) */}
+      <AllocationVerificationModal
+        isOpen={showAllocationModal}
+        student={student}
+        eventId={resolvedEventId}
+        onConfirmed={() => setShowAllocationModal(false)}
+        onShowToast={onShowToast}
+      />
 
     </div>
   );

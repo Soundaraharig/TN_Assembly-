@@ -42,7 +42,11 @@ import type {
   DayAttendanceStatus,
   LoginRecord,
   LearnerAllocationConfirmation,
-  AllocationCheckStatus
+  AllocationCheckStatus,
+  SpeakingRequest,
+  SpeakingRequestStatus,
+  SpeakingTurn,
+  SpeakingTurnStatus
 } from '../types';
 import { getRecordSessionStatuses } from '../types';
 import {
@@ -131,7 +135,9 @@ const STORAGE_KEYS = {
   LOCK_UPDATED_AT: 'tn_assembly_lock_updated_at_v1',
   LOGIN_RECORDS: 'tn_assembly_login_records_v1',
   ELECTIONS_BACKUP_SNAPSHOTS: 'tn_assembly_elections_backup_snapshots_v1',
-  ALLOCATION_CONFIRMATIONS: 'tn_assembly_allocation_confirmations_v1'
+  ALLOCATION_CONFIRMATIONS: 'tn_assembly_allocation_confirmations_v1',
+  SPEAKING_REQUESTS: 'tn_assembly_speaking_requests_v1',
+  SPEAKING_TURNS: 'tn_assembly_speaking_turns_v1'
 };
 
 export const SUPABASE_COLUMNS: Record<string, string> = {
@@ -146,7 +152,9 @@ export const SUPABASE_COLUMNS: Record<string, string> = {
   VOLUNTEERS: 'id,event_id,name,email,phone,role,access_code,has_arrived,is_yuva,station,shift,created_at',
   EVENT_DAYS: 'id,event_id,day_number,name,date,status,activities,is_archived,order_index,created_at,updated_at',
   EVENT_DAY_ATTENDANCE: 'id,event_id,day_id,event_day_id,student_id,participant_id,status,marked_by,marked_by_role,marked_at,created_at,updated_at',
-  LEARNER_ALLOCATION_CONFIRMATIONS: 'id,event_id,learner_id,allocation_hash,confirmed_party,confirmed_committee,confirmed_constituency_name,confirmed_constituency_number,confirmed_bench,checked_at,created_at,updated_at'
+  LEARNER_ALLOCATION_CONFIRMATIONS: 'id,event_id,learner_id,allocation_hash,confirmed_party,confirmed_committee,confirmed_constituency_name,confirmed_constituency_number,confirmed_bench,checked_at,created_at,updated_at',
+  SPEAKING_REQUESTS: 'id,event_id,session_id,session_name,learner_id,learner_name,constituency_number,bench,status,requested_at,called_at,resolved_at,resolved_by,created_at,updated_at',
+  SPEAKING_TURNS: 'id,event_id,session_id,session_name,learner_id,learner_name,request_id,sequence_number,called_at,started_at,completed_at,called_by,status,created_at'
 };
 
 type Listener = () => void;
@@ -3787,6 +3795,77 @@ class StorageService {
               this.setItem(STORAGE_KEYS.LOGIN_RECORDS, records);
               this.notify();
               if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+            }
+          }
+        })
+        .on('broadcast', { event: 'allocation_confirmation_updated' }, (msg: any) => {
+          if (msg?.payload?.confirmation) {
+            const conf = msg.payload.confirmation as LearnerAllocationConfirmation;
+            const current = this.getItem<LearnerAllocationConfirmation[]>(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, []);
+            const next = current.filter(c => !(c.event_id === conf.event_id && c.learner_id === conf.learner_id));
+            next.push(conf);
+            this.setItem(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, next);
+            this.notify();
+            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+          }
+        })
+        .on('broadcast', { event: 'speaking_request_update' }, (msg: any) => {
+          const p = msg?.payload;
+          if (p?.request) {
+            const req = p.request as SpeakingRequest;
+            const all = this.getItem<SpeakingRequest[]>(STORAGE_KEYS.SPEAKING_REQUESTS, []);
+            const next = all.filter(r => r.id !== req.id);
+            next.push(req);
+            this.setItem(STORAGE_KEYS.SPEAKING_REQUESTS, next);
+            this.notify();
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_speaking_update', { detail: p }));
+              window.dispatchEvent(new Event('storage'));
+            }
+          } else if (p?.requestId && p?.action === 'cancelled') {
+            const all = this.getItem<SpeakingRequest[]>(STORAGE_KEYS.SPEAKING_REQUESTS, []);
+            const next = all.map(r => r.id === p.requestId ? { ...r, status: 'CANCELLED' as SpeakingRequestStatus } : r);
+            this.setItem(STORAGE_KEYS.SPEAKING_REQUESTS, next);
+            this.notify();
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_speaking_update', { detail: p }));
+              window.dispatchEvent(new Event('storage'));
+            }
+          }
+        })
+        .on('broadcast', { event: 'speaking_turn_update' }, (msg: any) => {
+          const p = msg?.payload;
+          if (p?.turn) {
+            const turn = p.turn as SpeakingTurn;
+            const allTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+            const nextTurns = allTurns.filter(t => t.id !== turn.id);
+            nextTurns.push(turn);
+            this.setItem(STORAGE_KEYS.SPEAKING_TURNS, nextTurns);
+
+            if (p.requestId) {
+              const allReqs = this.getItem<SpeakingRequest[]>(STORAGE_KEYS.SPEAKING_REQUESTS, []);
+              const nextReqs = allReqs.map(r => r.id === p.requestId ? { ...r, status: 'CALLED' as SpeakingRequestStatus } : r);
+              this.setItem(STORAGE_KEYS.SPEAKING_REQUESTS, nextReqs);
+            }
+            this.notify();
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_speaking_update', { detail: p }));
+              window.dispatchEvent(new Event('storage'));
+            }
+          } else if (p?.action === 'completed' && p?.turnId) {
+            const allTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+            const nextTurns = allTurns.map(t => t.id === p.turnId ? { ...t, status: 'SPOKEN' as SpeakingTurnStatus } : t);
+            this.setItem(STORAGE_KEYS.SPEAKING_TURNS, nextTurns);
+
+            if (p.requestId) {
+              const allReqs = this.getItem<SpeakingRequest[]>(STORAGE_KEYS.SPEAKING_REQUESTS, []);
+              const nextReqs = allReqs.map(r => r.id === p.requestId ? { ...r, status: 'SPOKEN' as SpeakingRequestStatus } : r);
+              this.setItem(STORAGE_KEYS.SPEAKING_REQUESTS, nextReqs);
+            }
+            this.notify();
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_speaking_update', { detail: p }));
+              window.dispatchEvent(new Event('storage'));
             }
           }
         });
@@ -8095,6 +8174,440 @@ class StorageService {
 
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+  }
+
+  // ── ASSEMBLY SPEAKING FLOOR & HAND-RAISE SYSTEM ─────────────────────────
+
+  public getActiveSession(eventId?: string): { id: string; title: string } {
+    if (eventId) {
+      const agenda = this.getAgenda(eventId);
+      const current = agenda.find(a => a.is_current);
+      if (current) return { id: current.id, title: current.title };
+      if (agenda.length > 0) return { id: agenda[0].id, title: agenda[0].title };
+    }
+    return { id: 'speaker_election', title: 'Speaker Election' };
+  }
+
+  public async setActiveSession(eventId: string, session: { id: string; title: string }): Promise<void> {
+    if (!eventId) return;
+    this.setCurrentAgendaItem(eventId, session.id);
+  }
+
+  public getSpeakingRequests(eventId?: string, sessionId?: string): SpeakingRequest[] {
+    const all = this.getItem<SpeakingRequest[]>(STORAGE_KEYS.SPEAKING_REQUESTS, []);
+    return all.filter(r => (!eventId || r.event_id === eventId) && (!sessionId || r.session_id === sessionId));
+  }
+
+  public getSpeakingTurns(eventId?: string, sessionId?: string): SpeakingTurn[] {
+    const all = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+    return all.filter(t => (!eventId || t.event_id === eventId) && (!sessionId || t.session_id === sessionId));
+  }
+
+  public async fetchActiveSpeakingRequests(eventId: string, sessionId?: string): Promise<SpeakingRequest[]> {
+    if (!eventId) return [];
+    if (supabase && isSupabaseEnabled) {
+      try {
+        let query = supabase
+          .from('speaking_requests')
+          .select(SUPABASE_COLUMNS.SPEAKING_REQUESTS)
+          .eq('event_id', eventId);
+        if (sessionId) {
+          query = query.eq('session_id', sessionId);
+        }
+        const { data, error } = await query;
+        if (!error && data) {
+          const records = data as unknown as SpeakingRequest[];
+          const all = this.getItem<SpeakingRequest[]>(STORAGE_KEYS.SPEAKING_REQUESTS, []);
+          const other = all.filter(r => r.event_id !== eventId || (sessionId && r.session_id !== sessionId));
+          const merged = [...other, ...records];
+          this.setItem(STORAGE_KEYS.SPEAKING_REQUESTS, merged);
+          return records;
+        }
+      } catch (err) {
+        console.warn('[fetchActiveSpeakingRequests] Supabase table error, falling back to social_coverage:', err);
+      }
+
+      // Fallback: social_coverage.speaking_requests
+      try {
+        const { data: evData } = await supabase
+          .from('college_events')
+          .select('social_coverage')
+          .eq('id', eventId)
+          .maybeSingle();
+        const sc = (evData?.social_coverage || {}) as Record<string, any>;
+        const requests = Array.isArray(sc.speaking_requests) ? (sc.speaking_requests as SpeakingRequest[]) : [];
+        const all = this.getItem<SpeakingRequest[]>(STORAGE_KEYS.SPEAKING_REQUESTS, []);
+        const other = all.filter(r => r.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.SPEAKING_REQUESTS, [...other, ...requests]);
+        return sessionId ? requests.filter(r => r.session_id === sessionId) : requests;
+      } catch (e) {
+        console.warn('[fetchActiveSpeakingRequests] Fallback error:', e);
+      }
+    }
+    return this.getSpeakingRequests(eventId, sessionId);
+  }
+
+  public async fetchSpeakingTurns(eventId: string, sessionId?: string): Promise<SpeakingTurn[]> {
+    if (!eventId) return [];
+    if (supabase && isSupabaseEnabled) {
+      try {
+        let query = supabase
+          .from('speaking_turns')
+          .select(SUPABASE_COLUMNS.SPEAKING_TURNS)
+          .eq('event_id', eventId);
+        if (sessionId) {
+          query = query.eq('session_id', sessionId);
+        }
+        const { data, error } = await query.order('called_at', { ascending: true });
+        if (!error && data) {
+          const records = data as unknown as SpeakingTurn[];
+          const all = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+          const other = all.filter(t => t.event_id !== eventId || (sessionId && t.session_id !== sessionId));
+          const merged = [...other, ...records];
+          this.setItem(STORAGE_KEYS.SPEAKING_TURNS, merged);
+          return records;
+        }
+      } catch (err) {
+        console.warn('[fetchSpeakingTurns] Supabase table error, falling back to social_coverage:', err);
+      }
+
+      // Fallback: social_coverage.speaking_turns
+      try {
+        const { data: evData } = await supabase
+          .from('college_events')
+          .select('social_coverage')
+          .eq('id', eventId)
+          .maybeSingle();
+        const sc = (evData?.social_coverage || {}) as Record<string, any>;
+        const turns = Array.isArray(sc.speaking_turns) ? (sc.speaking_turns as SpeakingTurn[]) : [];
+        const all = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+        const other = all.filter(t => t.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.SPEAKING_TURNS, [...other, ...turns]);
+        return sessionId ? turns.filter(t => t.session_id === sessionId) : turns;
+      } catch (e) {
+        console.warn('[fetchSpeakingTurns] Fallback error:', e);
+      }
+    }
+    return this.getSpeakingTurns(eventId, sessionId);
+  }
+
+  public async submitSpeakingRequest(params: {
+    eventId: string;
+    sessionId: string;
+    sessionName: string;
+    learner: Learner;
+  }): Promise<{ success: boolean; request?: SpeakingRequest; error?: string }> {
+    const { eventId, sessionId, sessionName, learner } = params;
+    if (!eventId || !sessionId || !learner?.id) {
+      return { success: false, error: 'Missing required request parameters' };
+    }
+
+    // Check duplicate active request in this session
+    const currentReqs = this.getSpeakingRequests(eventId, sessionId);
+    const hasActive = currentReqs.some(
+      r => r.learner_id === learner.id && (r.status === 'WAITING' || r.status === 'CALLED')
+    );
+    if (hasActive) {
+      return { success: false, error: 'Your request is already in the speaking queue.' };
+    }
+
+    const now = new Date().toISOString();
+    const newRequest: SpeakingRequest = {
+      id: genUuid(),
+      event_id: eventId,
+      session_id: sessionId,
+      session_name: sessionName,
+      learner_id: learner.id,
+      learner_name: learner.full_name,
+      constituency_number: learner.constituency_number !== undefined && learner.constituency_number !== null
+        ? Number(learner.constituency_number)
+        : undefined,
+      bench: learner.bench || 'Ruling',
+      status: 'WAITING',
+      requested_at: now,
+      created_at: now,
+      updated_at: now
+    };
+
+    const all = this.getItem<SpeakingRequest[]>(STORAGE_KEYS.SPEAKING_REQUESTS, []);
+    all.push(newRequest);
+    this.setItem(STORAGE_KEYS.SPEAKING_REQUESTS, all);
+    this.notify();
+
+    // Persist to Supabase speaking_requests table with fallback
+    if (supabase && isSupabaseEnabled) {
+      supabase
+        .from('speaking_requests')
+        .insert({
+          id: newRequest.id,
+          event_id: newRequest.event_id,
+          session_id: newRequest.session_id,
+          session_name: newRequest.session_name,
+          learner_id: newRequest.learner_id,
+          learner_name: newRequest.learner_name,
+          constituency_number: newRequest.constituency_number ?? null,
+          bench: newRequest.bench || null,
+          status: newRequest.status,
+          requested_at: newRequest.requested_at,
+          created_at: now,
+          updated_at: now
+        })
+        .then(() => {}, async () => {
+          const sb = supabase;
+          if (!sb) return;
+          try {
+            const { data: evData } = await sb
+              .from('college_events')
+              .select('social_coverage')
+              .eq('id', eventId)
+              .maybeSingle();
+            const sc = (evData?.social_coverage || {}) as Record<string, any>;
+            const existingReqs = Array.isArray(sc.speaking_requests) ? sc.speaking_requests : [];
+            await sb
+              .from('college_events')
+              .update({
+                social_coverage: {
+                  ...sc,
+                  speaking_requests: [...existingReqs.filter((r: any) => r.id !== newRequest.id), newRequest],
+                  updated_at: now
+                }
+              })
+              .eq('id', eventId);
+          } catch {}
+        });
+    }
+
+    // Broadcast compact micro-payload
+    this.broadcast('speaking_request_update', {
+      eventId,
+      sessionId,
+      action: 'created',
+      request: newRequest
+    }).catch(() => {});
+
+    return { success: true, request: newRequest };
+  }
+
+  public async callSpeaker(params: {
+    requestId: string;
+    eventId: string;
+    sessionId: string;
+    sessionName: string;
+    learnerId: string;
+    learnerName: string;
+    calledBy?: string;
+  }): Promise<{ success: boolean; turn?: SpeakingTurn; error?: string }> {
+    const { requestId, eventId, sessionId, sessionName, learnerId, learnerName, calledBy = 'Speaker' } = params;
+    const now = new Date().toISOString();
+
+    // 1. Update request to CALLED
+    const allReqs = this.getItem<SpeakingRequest[]>(STORAGE_KEYS.SPEAKING_REQUESTS, []);
+    let updatedReq: SpeakingRequest | undefined;
+    const nextReqs = allReqs.map(r => {
+      if (r.id === requestId) {
+        updatedReq = { ...r, status: 'CALLED' as SpeakingRequestStatus, called_at: now, updated_at: now };
+        return updatedReq;
+      }
+      return r;
+    });
+    this.setItem(STORAGE_KEYS.SPEAKING_REQUESTS, nextReqs);
+
+    // 2. Compute sequence number from existing session turns
+    const allTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+    const sessionTurns = allTurns.filter(t => t.event_id === eventId && t.session_id === sessionId);
+    const nextSeq = sessionTurns.length + 1;
+
+    // 3. Create speaking turn record
+    const newTurn: SpeakingTurn = {
+      id: genUuid(),
+      event_id: eventId,
+      session_id: sessionId,
+      session_name: sessionName,
+      learner_id: learnerId,
+      learner_name: learnerName,
+      request_id: requestId,
+      sequence_number: nextSeq,
+      called_at: now,
+      started_at: now,
+      called_by: calledBy,
+      status: 'SPEAKING',
+      created_at: now
+    };
+
+    allTurns.push(newTurn);
+    this.setItem(STORAGE_KEYS.SPEAKING_TURNS, allTurns);
+    this.notify();
+
+    // 4. Persist to Supabase tables and fallback
+    if (supabase && isSupabaseEnabled) {
+      supabase
+        .from('speaking_requests')
+        .update({ status: 'CALLED', called_at: now, updated_at: now })
+        .eq('id', requestId)
+        .then();
+
+      supabase
+        .from('speaking_turns')
+        .insert({
+          id: newTurn.id,
+          event_id: newTurn.event_id,
+          session_id: newTurn.session_id,
+          session_name: newTurn.session_name,
+          learner_id: newTurn.learner_id,
+          learner_name: newTurn.learner_name,
+          request_id: newTurn.request_id || null,
+          sequence_number: newTurn.sequence_number,
+          called_at: newTurn.called_at,
+          started_at: newTurn.started_at,
+          called_by: newTurn.called_by || null,
+          status: newTurn.status,
+          created_at: now
+        })
+        .then(() => {}, async () => {
+          const sb = supabase;
+          if (!sb) return;
+          try {
+            const { data: evData } = await sb
+              .from('college_events')
+              .select('social_coverage')
+              .eq('id', eventId)
+              .maybeSingle();
+            const sc = (evData?.social_coverage || {}) as Record<string, any>;
+            const curReqs = Array.isArray(sc.speaking_requests) ? sc.speaking_requests : [];
+            const curTurns = Array.isArray(sc.speaking_turns) ? sc.speaking_turns : [];
+            await sb
+              .from('college_events')
+              .update({
+                social_coverage: {
+                  ...sc,
+                  speaking_requests: curReqs.map((r: any) => r.id === requestId ? { ...r, status: 'CALLED', called_at: now } : r),
+                  speaking_turns: [...curTurns.filter((t: any) => t.id !== newTurn.id), newTurn],
+                  updated_at: now
+                }
+              })
+              .eq('id', eventId);
+          } catch {}
+        });
+    }
+
+    // 5. Broadcast
+    this.broadcast('speaking_turn_update', {
+      eventId,
+      sessionId,
+      action: 'called',
+      requestId,
+      turn: newTurn
+    }).catch(() => {});
+
+    return { success: true, turn: newTurn };
+  }
+
+  public async completeSpeakingTurn(params: {
+    turnId: string;
+    requestId?: string;
+    eventId: string;
+    sessionId: string;
+  }): Promise<{ success: boolean; error?: string }> {
+    const { turnId, requestId, eventId, sessionId } = params;
+    const now = new Date().toISOString();
+
+    // 1. Mark turn as SPOKEN
+    const allTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+    let updatedTurn: SpeakingTurn | undefined;
+    const nextTurns = allTurns.map(t => {
+      if (t.id === turnId) {
+        updatedTurn = { ...t, status: 'SPOKEN' as SpeakingTurnStatus, completed_at: now };
+        return updatedTurn;
+      }
+      return t;
+    });
+    this.setItem(STORAGE_KEYS.SPEAKING_TURNS, nextTurns);
+
+    // 2. Mark request as SPOKEN
+    const allReqs = this.getItem<SpeakingRequest[]>(STORAGE_KEYS.SPEAKING_REQUESTS, []);
+    const nextReqs = allReqs.map(r => {
+      if (r.id === requestId || (!requestId && updatedTurn && r.learner_id === updatedTurn.learner_id && r.status === 'CALLED')) {
+        return { ...r, status: 'SPOKEN' as SpeakingRequestStatus, resolved_at: now, updated_at: now };
+      }
+      return r;
+    });
+    this.setItem(STORAGE_KEYS.SPEAKING_REQUESTS, nextReqs);
+    this.notify();
+
+    // 3. Persist to Supabase
+    if (supabase && isSupabaseEnabled) {
+      supabase
+        .from('speaking_turns')
+        .update({ status: 'SPOKEN', completed_at: now })
+        .eq('id', turnId)
+        .then();
+
+      if (requestId) {
+        supabase
+          .from('speaking_requests')
+          .update({ status: 'SPOKEN', resolved_at: now, updated_at: now })
+          .eq('id', requestId)
+          .then();
+      }
+
+      (async () => {
+        const sb = supabase;
+        if (!sb) return;
+        try {
+          const { data: evData } = await sb
+            .from('college_events')
+            .select('social_coverage')
+            .eq('id', eventId)
+            .maybeSingle();
+          const sc = (evData?.social_coverage || {}) as Record<string, any>;
+          const curReqs = Array.isArray(sc.speaking_requests) ? sc.speaking_requests : [];
+          const curTurns = Array.isArray(sc.speaking_turns) ? sc.speaking_turns : [];
+          await sb
+            .from('college_events')
+            .update({
+              social_coverage: {
+                ...sc,
+                speaking_turns: curTurns.map((t: any) => t.id === turnId ? { ...t, status: 'SPOKEN', completed_at: now } : t),
+                speaking_requests: curReqs.map((r: any) => (r.id === requestId || (updatedTurn && r.learner_id === updatedTurn.learner_id && r.status === 'CALLED')) ? { ...r, status: 'SPOKEN', resolved_at: now } : r),
+                updated_at: now
+              }
+            })
+            .eq('id', eventId);
+        } catch {}
+      })().catch(() => {});
+    }
+
+    // 4. Broadcast
+    this.broadcast('speaking_turn_update', {
+      eventId,
+      sessionId,
+      action: 'completed',
+      turnId,
+      requestId
+    }).catch(() => {});
+
+    return { success: true };
+  }
+
+  public async cancelSpeakingRequest(requestId: string, eventId: string, sessionId: string): Promise<{ success: boolean }> {
+    const now = new Date().toISOString();
+    const allReqs = this.getItem<SpeakingRequest[]>(STORAGE_KEYS.SPEAKING_REQUESTS, []);
+    const next = allReqs.map(r => r.id === requestId ? { ...r, status: 'CANCELLED' as SpeakingRequestStatus, resolved_at: now, updated_at: now } : r);
+    this.setItem(STORAGE_KEYS.SPEAKING_REQUESTS, next);
+    this.notify();
+
+    if (supabase && isSupabaseEnabled) {
+      supabase.from('speaking_requests').update({ status: 'CANCELLED', resolved_at: now, updated_at: now }).eq('id', requestId).then();
+    }
+
+    this.broadcast('speaking_request_update', {
+      eventId,
+      sessionId,
+      action: 'cancelled',
+      requestId
+    }).catch(() => {});
+
+    return { success: true };
   }
 
   // ── JURY ──────────────────────────────────────────────────────────────────
