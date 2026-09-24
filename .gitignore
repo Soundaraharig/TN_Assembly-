@@ -30,4 +30,4 @@ dist-ssr
 
 # Supabase Production Backups
 supabase-production-backup*
-scratch/create_*.mjs
+scratch/*.mjs
