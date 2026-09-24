@@ -1,0 +1,51 @@
+====================================================================
+SUPABASE REALTIME INVENTORY
+Project: Tamil Nadu Youth Legislative Assembly (TN Assembly)
+Source Project Ref: svtjphzbuicnirynorlx
+Date: 2026-09-24T11:01:37.003Z
+====================================================================
+
+1. REALTIME CHANNELS:
+A. Live Event Channel:
+   - Pattern: 'tn_assembly_live_${eventId}' (event-scoped)
+   - Fallback: 'tn_assembly_live_global'
+   - Mechanism: Supabase Realtime Broadcast (sub-50ms peer-to-peer distribution)
+
+B. Presence Room:
+   - Pattern: 'presence:event_${eventId}'
+   - Mechanism: Supabase Realtime Presence
+   - Tracked State:
+     * userId: string
+     * name: string
+     * role: string ('coordinator' | 'volunteer' | 'jury' | 'student' | 'admin')
+     * accessCode: string
+     * onlineAt: ISO timestamp
+   - Event Handlers: sync, join, leave
+
+2. BROADCAST TOPICS / EVENTS:
+- 'projector_update': Projector display scene, ticker message, active bill ID, clock toggle
+- 'speaker_bell': Speaker attention bell sound and alert payload
+- 'election_update': Live parliamentary election state, nominations, voting tallies
+- 'flash_vote_update': Live pop-up vote creation, active status, voter participation
+- 'flash_vote_deleted': Deletion tombstone for cancelled flash votes
+- 'question_update': Proceedings question submissions, status updates (Approved/Starred/Rejected)
+- 'question_deleted': Deletion tombstone for removed questions
+- 'event_deadline_update': Submission deadlines, question window open/close states
+- 'ministries_update': Cabinet ministry assignments and portfolios
+- 'attendance_marked': Attendance records sync (FN, AN, Overall status)
+- 'student_attendance_update': Single student attendance change
+- 'timer_update': Parliamentary debate countdown timer synchronization
+- 'bill_update': Bill introduction, status (Discussion/Voting/Closed), vote counts (Ayes/Noes/Abstain)
+- 'bill_deleted': Bill deletion tombstone
+- 'agenda_update': Session agenda items and active item pointer
+- 'login_recorded': Activity logs for user authentication
+- 'allocation_confirmation_updated': Delegate seat/role confirmations
+- 'speaking_request_update': Student hand-raises and speaking floor requests
+- 'speaking_turn_update': Active speaker podium turns and elapsed speaking time
+- 'hands_down': Bulk cancellation of waiting speaker requests
+- 'hand_raise_setting_changed': Toggle permission for student hand-raises
+
+3. POSTGRES_CHANGES PUBLICATIONS:
+- The application architecture relies primarily on Realtime Broadcasts for ultra-fast UI updates
+  paired with direct Supabase REST writes for persistent storage.
+- Standard Supabase publication 'supabase_realtime' exists on the database for change listening.

@@ -1,0 +1,42 @@
+[
+  {
+    "id": "b8542b04-8019-40cc-964c-2529880770cc",
+    "event_id": "05fb9c3e-af0d-4b0e-b48a-1ca4c0671cb8",
+    "name": "Rohan",
+    "email": "rohanj25uca@jkkn.ac.in",
+    "password_hash": "3JmsVQwXbf",
+    "raw_temp_password": "3JmsVQwXbf",
+    "created_at": "2026-09-07T17:39:15.292+00:00",
+    "updated_at": "2026-09-07T17:39:15.292+00:00"
+  },
+  {
+    "id": "c7dbe6cf-ad48-4842-bd4a-813ced0ef328",
+    "event_id": "35f87a38-62de-4e0c-bffb-59c394f987b1",
+    "name": "Varun",
+    "email": "varun@varun.com",
+    "password_hash": "ngIiKI2jO#",
+    "raw_temp_password": "ngIiKI2jO#",
+    "created_at": "2026-09-10T09:47:45.948+00:00",
+    "updated_at": "2026-09-10T09:47:45.948+00:00"
+  },
+  {
+    "id": "39a94fee-e8d2-428d-a327-13eecbfd8e63",
+    "event_id": "200fdd74-4d21-44d5-9f63-9a07bf267824",
+    "name": "Soundarahari",
+    "email": "soundaraharigece2025@jkkn.ac.in",
+    "password_hash": "hari@123",
+    "raw_temp_password": "hari@123",
+    "created_at": "2026-09-07T18:03:33.465+00:00",
+    "updated_at": "2026-09-11T04:47:23.405+00:00"
+  },
+  {
+    "id": "aceb1553-f35d-4628-9049-55a18bd3f530",
+    "event_id": "648790e1-0836-4a29-8a53-74929e7404f3",
+    "name": "Monish",
+    "email": "monish@monish.com",
+    "password_hash": "vOzsmxwnq1",
+    "raw_temp_password": "vOzsmxwnq1",
+    "created_at": "2026-09-11T05:12:05.522+00:00",
+    "updated_at": "2026-09-11T05:12:05.522+00:00"
+  }
+]

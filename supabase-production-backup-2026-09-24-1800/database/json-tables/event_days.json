@@ -1,0 +1,220 @@
+[
+  {
+    "id": "d1c2bae8-013a-4a2e-abee-238b39f5c065",
+    "event_id": "200fdd74-4d21-44d5-9f63-9a07bf267824",
+    "day_number": 2,
+    "name": "Day 2",
+    "date": null,
+    "status": "Completed",
+    "activities": [
+      "Speaker & Party Leader Selection",
+      "Government Formation + CM & LOP Election"
+    ],
+    "is_archived": false,
+    "order_index": 1,
+    "created_at": "2026-09-20T11:42:52.830385+00:00",
+    "updated_at": "2026-09-22T10:14:16.085+00:00"
+  },
+  {
+    "id": "7d417c8e-afa9-4da2-b10d-a11b274e5b1b",
+    "event_id": "200fdd74-4d21-44d5-9f63-9a07bf267824",
+    "day_number": 1,
+    "name": "Day 1",
+    "date": null,
+    "status": "Completed",
+    "activities": [
+      "Student Orientation",
+      "Party & Constituency Allocation + Group Formation"
+    ],
+    "is_archived": false,
+    "order_index": 0,
+    "created_at": "2026-09-20T11:42:52.830385+00:00",
+    "updated_at": "2026-09-22T10:14:18.204+00:00"
+  },
+  {
+    "id": "e3ac5d23-7f3a-4840-97b6-6e288e7c7be0",
+    "event_id": "05fb9c3e-af0d-4b0e-b48a-1ca4c0671cb8",
+    "day_number": 6,
+    "name": "90 sec speech",
+    "date": null,
+    "status": "Completed",
+    "activities": [
+      "90 sec speech"
+    ],
+    "is_archived": false,
+    "order_index": 5,
+    "created_at": "2026-09-21T06:01:19.384+00:00",
+    "updated_at": "2026-09-24T05:22:10.482+00:00"
+  },
+  {
+    "id": "1dabcb72-5e63-4803-a6cb-ba772b95b43c",
+    "event_id": "05fb9c3e-af0d-4b0e-b48a-1ca4c0671cb8",
+    "day_number": 7,
+    "name": "Main mock Day 1",
+    "date": null,
+    "status": "Active",
+    "activities": [
+      "Mock Assembly"
+    ],
+    "is_archived": false,
+    "order_index": 6,
+    "created_at": "2026-09-24T05:22:27.186+00:00",
+    "updated_at": "2026-09-24T05:22:27.187+00:00"
+  },
+  {
+    "id": "6e374ef9-8dcc-412a-bdf0-f2edc8eecd29",
+    "event_id": "648790e1-0836-4a29-8a53-74929e7404f3",
+    "day_number": 1,
+    "name": "Day 1",
+    "date": null,
+    "status": "Active",
+    "activities": [
+      "Student Orientation",
+      "Party & Constituency Allocation + Group Formation"
+    ],
+    "is_archived": false,
+    "order_index": 0,
+    "created_at": "2026-09-11T05:50:19.905+00:00",
+    "updated_at": "2026-09-11T08:23:23.821+00:00"
+  },
+  {
+    "id": "2d56f252-391d-41f5-9dcd-2e0504fc4d4b",
+    "event_id": "05fb9c3e-af0d-4b0e-b48a-1ca4c0671cb8",
+    "day_number": 1,
+    "name": "Day 1",
+    "date": null,
+    "status": "Completed",
+    "activities": [
+      "Student Orientation",
+      "Party & Constituency Allocation + Group Formation"
+    ],
+    "is_archived": false,
+    "order_index": 0,
+    "created_at": "2026-09-10T07:14:19.477487+00:00",
+    "updated_at": "2026-09-17T04:10:13.99+00:00"
+  },
+  {
+    "id": "3ae6bfb8-8ab1-4db8-8b92-671e68f9873d",
+    "event_id": "05fb9c3e-af0d-4b0e-b48a-1ca4c0671cb8",
+    "day_number": 2,
+    "name": "Day 2",
+    "date": null,
+    "status": "Completed",
+    "activities": [
+      "Speaker & Party Leader Selection",
+      "Government Formation + CM & LOP Election"
+    ],
+    "is_archived": false,
+    "order_index": 1,
+    "created_at": "2026-09-10T07:15:02.330966+00:00",
+    "updated_at": "2026-09-17T04:10:18.443+00:00"
+  },
+  {
+    "id": "373113e4-faf4-413f-ba81-ffc50dc6dbed",
+    "event_id": "05fb9c3e-af0d-4b0e-b48a-1ca4c0671cb8",
+    "day_number": 3,
+    "name": "Day 3",
+    "date": null,
+    "status": "Completed",
+    "activities": [
+      "Cabinet Formation"
+    ],
+    "is_archived": false,
+    "order_index": 2,
+    "created_at": "2026-09-10T07:15:02.520357+00:00",
+    "updated_at": "2026-09-17T04:10:22.051+00:00"
+  },
+  {
+    "id": "43504a58-b356-4651-999b-048df3e9ea17",
+    "event_id": "05fb9c3e-af0d-4b0e-b48a-1ca4c0671cb8",
+    "day_number": 4,
+    "name": "ARTS MOCK",
+    "date": "17 September 2026",
+    "status": "Completed",
+    "activities": [
+      "Mock Assembly"
+    ],
+    "is_archived": false,
+    "order_index": 3,
+    "created_at": "2026-09-17T03:36:36.331+00:00",
+    "updated_at": "2026-09-18T06:19:29.721+00:00"
+  },
+  {
+    "id": "ea3566a3-5d81-430b-bc2a-ec2e1193736e",
+    "event_id": "35f87a38-62de-4e0c-bffb-59c394f987b1",
+    "day_number": 1,
+    "name": "Day 1",
+    "date": null,
+    "status": "Active",
+    "activities": [
+      "Student Orientation",
+      "Party & Constituency Allocation + Group Formation"
+    ],
+    "is_archived": false,
+    "order_index": 0,
+    "created_at": "2026-09-20T11:42:52.830385+00:00",
+    "updated_at": "2026-09-20T11:42:52.830385+00:00"
+  },
+  {
+    "id": "8ecaf921-6f25-4050-8923-ff5b24d533c7",
+    "event_id": "35f87a38-62de-4e0c-bffb-59c394f987b1",
+    "day_number": 2,
+    "name": "Day 2",
+    "date": null,
+    "status": "Upcoming",
+    "activities": [
+      "Speaker & Party Leader Selection",
+      "Government Formation + CM & LOP Election"
+    ],
+    "is_archived": false,
+    "order_index": 1,
+    "created_at": "2026-09-20T11:42:52.830385+00:00",
+    "updated_at": "2026-09-20T11:42:52.830385+00:00"
+  },
+  {
+    "id": "0738c5fa-735e-4761-8d15-5f21df077bea",
+    "event_id": "05fb9c3e-af0d-4b0e-b48a-1ca4c0671cb8",
+    "day_number": 5,
+    "name": "MOCK ASSEMBLY",
+    "date": "18/09/2026",
+    "status": "Completed",
+    "activities": [
+      "Mock Assembly"
+    ],
+    "is_archived": false,
+    "order_index": 4,
+    "created_at": "2026-09-18T06:11:37.88+00:00",
+    "updated_at": "2026-09-21T06:06:55.877+00:00"
+  },
+  {
+    "id": "02a5b3f1-002d-4502-a7a2-59947f64647a",
+    "event_id": "200fdd74-4d21-44d5-9f63-9a07bf267824",
+    "day_number": 4,
+    "name": "after BREAK",
+    "date": null,
+    "status": "Active",
+    "activities": [
+      "Mock Assembly"
+    ],
+    "is_archived": false,
+    "order_index": 3,
+    "created_at": "2026-09-22T10:12:30.63+00:00",
+    "updated_at": "2026-09-22T10:12:30.631+00:00"
+  },
+  {
+    "id": "e01ebc11-9010-4ee7-9ee3-bd5987ff5206",
+    "event_id": "200fdd74-4d21-44d5-9f63-9a07bf267824",
+    "day_number": 3,
+    "name": "PRE MOCK",
+    "date": null,
+    "status": "Completed",
+    "activities": [
+      "BILL PASSING",
+      "90 SEC SPEECH"
+    ],
+    "is_archived": false,
+    "order_index": 2,
+    "created_at": "2026-09-22T04:27:23.836+00:00",
+    "updated_at": "2026-09-22T10:13:52.808+00:00"
+  }
+]

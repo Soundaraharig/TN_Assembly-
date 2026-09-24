@@ -1,0 +1,12 @@
+====================================================================
+STAGE 2C — BACKUP VERIFICATION REPORT
+Generated: 2026-09-24T12:28:56.897Z
+====================================================================
+1. Database SQL Dump (data.sql): EXISTS, Size = 1709731 bytes
+2. Database Schema DDL (schema.sql): EXISTS, Size = 57631 bytes
+3. Roles Configuration (roles.sql): EXISTS, Size = 1177 bytes
+4. Table JSON Exports: 14/14 tables exported
+5. Auth Exports: 4 coordinator accounts, 374 learners, 24 volunteers, 13 jury members
+6. Storage Audit: 0 buckets, 0 objects confirmed
+7. Realtime Specifications: Preserved in config/realtime-inventory.txt
+8. Production Integrity Check: 0 rows modified in OLD production

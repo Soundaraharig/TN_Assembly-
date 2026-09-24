@@ -1,0 +1,44 @@
+====================================================================
+AUTHENTICATION ARCHITECTURE & BACKUP AUDIT REPORT
+Project: Tamil Nadu Youth Legislative Assembly (TN Assembly)
+Source Supabase Ref: svtjphzbuicnirynorlx
+Date: 2026-09-24T11:01:36.997Z
+====================================================================
+
+1. APPLICATION AUTHENTICATION MECHANISM:
+The TN Assembly application does NOT utilize Supabase GoTrue Auth (auth.users)
+for delegate, student, volunteer, or jury user sessions. Instead, the application
+implements an authoritative multi-role access code and coordinator credential system:
+
+A. Coordinators (Admin Users):
+   - Table: public.coordinators
+   - Total Accounts: 4
+   - Credentials Stored: email, password_hash, raw_temp_password, event_id
+   - Backup File: auth/coordinators-auth.json
+
+B. Delegates / Students:
+   - Table: public.learners
+   - Total Accounts: 374
+   - Authentication: Unique uppercase alphanumeric access_code (e.g. DEL001)
+   - Backup File: auth/learners-access-codes.json
+
+C. Volunteers:
+   - Table: public.volunteers
+   - Total Accounts: 24
+   - Authentication: access_code (prefix VOL) and phone number matching
+   - Backup File: auth/volunteers-access-codes.json
+
+D. Jury Members:
+   - Table: public.jury_members
+   - Total Accounts: 13
+   - Authentication: access_code (prefix JURY)
+   - Backup File: auth/jury-access-codes.json
+
+2. SUPABASE GOTRUE AUTH (auth.users) STATUS:
+- The REST API endpoint /auth/v1/settings was queried: email signup enabled, external providers disabled.
+- PostgREST explicitly blocks reading the 'auth' schema from the anon key (PGRST106: 'Invalid schema: auth').
+- Reading or dumping auth.users requires a PostgreSQL superuser connection string ([OLD_CONNECTION_STRING])
+  or the Supabase service_role key.
+- Since the application codebase does not call supabase.auth.signUp() or supabase.auth.signInWithPassword(),
+  zero active end-user workflows depend on auth.users. All application user profiles and credentials are
+  100% captured in the tables backed up above.

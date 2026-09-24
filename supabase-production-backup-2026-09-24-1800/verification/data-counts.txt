@@ -1,0 +1,47 @@
+====================================================================
+LIVE PRODUCTION DATABASE ROW & ENTITY COUNTS (STAGE 2C FRESH BACKUP)
+Project: Tamil Nadu Youth Legislative Assembly (TN Assembly)
+Source Supabase Ref: svtjphzbuicnirynorlx
+Timestamp: 2026-09-24T12:28:56.840Z
+====================================================================
+
+A. DATABASE TABLES (ACTUAL ROWS):
+--------------------------------------------------------------------
+college_events:                    4
+learners (students/participants):  374
+coordinators:                      4
+political_parties:                 20
+committees:                        24
+session_agenda:                    198
+jury_members:                      13
+volunteers:                        24
+event_days:                        14
+day_activities:                    0
+event_day_attendance:              931
+learner_allocation_confirmations:  111
+team_members:                      0
+checklist_items:                   0
+
+TOTAL DATABASE ROWS:               1717
+
+B. STRUCTURED SUB-ENTITIES (PERSISTED IN SOCIAL_COVERAGE JSONB):
+--------------------------------------------------------------------
+bills:                             6
+bill_votes:                        395
+elections:                         33
+election_votes:                    0
+flash_votes:                       6
+flash_vote_casts:                  288
+jury_scores:                       25
+proceedings_questions:             13
+nominations:                       28
+speaking_records:                  0
+
+C. AUTH & STORAGE TOTALS:
+--------------------------------------------------------------------
+Auth Users (Coordinators in DB):   4
+Auth Access Codes (Learners):      374
+Auth Access Codes (Volunteers):    24
+Auth Access Codes (Jury):          13
+Storage Buckets:                   0
+Storage Objects:                   0
