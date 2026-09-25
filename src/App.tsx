@@ -1241,7 +1241,18 @@ export function App() {
             const allL = storageService.getLearners();
             const matched = allL.find(l => (l.access_code || '').trim().toUpperCase() === cleanCode);
             if (matched) {
-              setCurrentStudent(matched);
+              setCurrentStudent(prev => {
+                if (prev && prev.id === matched.id &&
+                    prev.party_name === matched.party_name &&
+                    prev.committee_name === matched.committee_name &&
+                    prev.constituency_number === matched.constituency_number &&
+                    prev.bench === matched.bench &&
+                    prev.role === matched.role &&
+                    prev.full_name === matched.full_name) {
+                  return prev;
+                }
+                return matched;
+              });
             }
           } else if (sess.role === 'jury' && sess.juryCode) {
             const cleanCode = sess.juryCode.trim().toUpperCase();

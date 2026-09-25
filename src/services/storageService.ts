@@ -2938,8 +2938,10 @@ class StorageService {
 
         // 3. Commit agenda schedule
         if (agendaData && Array.isArray(agendaData)) {
-          const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== eventId);
-          const sortedAgenda = (agendaData as unknown as AgendaItem[]).sort((a: any, b: any) => {
+          const deletedIds = this.getDeletedIds();
+          const validAgenda = (agendaData as unknown as AgendaItem[]).filter(a => !deletedIds.has(a.id));
+          const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== eventId && !deletedIds.has(a.id));
+          const sortedAgenda = validAgenda.sort((a: any, b: any) => {
             if (a.order_number !== undefined && b.order_number !== undefined) return a.order_number - b.order_number;
             if (a.time && b.time) return String(a.time).localeCompare(String(b.time));
             return 0;
@@ -3065,9 +3067,10 @@ class StorageService {
         .eq('event_id', eventId)
         .order('time', { ascending: true });
       if (!error && data) {
-        const items = data as unknown as AgendaItem[];
+        const deletedIds = this.getDeletedIds();
+        const items = (data as unknown as AgendaItem[]).filter(a => !deletedIds.has(a.id));
         this.sessionAgendaCache.set(eventId, items);
-        const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== eventId);
+        const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== eventId && !deletedIds.has(a.id));
         this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...items]);
         this.notify();
         return items;
@@ -3404,8 +3407,10 @@ class StorageService {
       ]);
 
       if (!agendaErr && agendaData) {
-        const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== activeEventId);
-        const sortedAgenda = (agendaData as unknown as AgendaItem[]).sort((a: any, b: any) => {
+        const deletedIds = this.getDeletedIds();
+        const validAgenda = (agendaData as unknown as AgendaItem[]).filter(a => !deletedIds.has(a.id));
+        const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== activeEventId && !deletedIds.has(a.id));
+        const sortedAgenda = validAgenda.sort((a: any, b: any) => {
           const orderA = a.order ?? a.order_number;
           const orderB = b.order ?? b.order_number;
           if (orderA !== undefined && orderB !== undefined && orderA !== orderB) {
@@ -5758,64 +5763,92 @@ class StorageService {
 
   public async fetchStudentAllocationConfirmation(
     studentId: string,
-    eventId: string
+    eventId: string,
+    force = false
   ): Promise<LearnerAllocationConfirmation | null> {
     if (!studentId || !eventId) return null;
 
-    if (supabase && isSupabaseEnabled) {
-      try {
-        const { data, error } = await supabase
-          .from('learner_allocation_confirmations')
-          .select(SUPABASE_COLUMNS.LEARNER_ALLOCATION_CONFIRMATIONS)
-          .eq('event_id', eventId)
-          .eq('learner_id', studentId)
-          .limit(1)
-          .maybeSingle();
+    const cacheKey = `student_alloc_conf_${eventId}_${studentId}`;
 
-        if (!error && data) {
-          const rec = data as unknown as LearnerAllocationConfirmation;
-          const all = this.getItem<LearnerAllocationConfirmation[]>(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, []);
-          const filtered = all.filter(c => !(c.event_id === eventId && c.learner_id === studentId));
-          filtered.push(rec);
-          this.setItem(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, filtered);
-          return rec;
+    return this.fetchCached<LearnerAllocationConfirmation | null>(
+      cacheKey,
+      async () => {
+        if (supabase && isSupabaseEnabled) {
+          try {
+            const { data, error } = await supabase
+              .from('learner_allocation_confirmations')
+              .select(SUPABASE_COLUMNS.LEARNER_ALLOCATION_CONFIRMATIONS)
+              .eq('event_id', eventId)
+              .eq('learner_id', studentId)
+              .limit(1)
+              .maybeSingle();
+
+            if (!error && data) {
+              const rec = data as unknown as LearnerAllocationConfirmation;
+              const all = this.getItem<LearnerAllocationConfirmation[]>(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, []);
+              const existing = all.find(c => c.event_id === eventId && c.learner_id === studentId);
+              // Only update storage if data actually changed to avoid spurious notify storms
+              if (!existing || existing.allocation_hash !== rec.allocation_hash || existing.checked_at !== rec.checked_at) {
+                const filtered = all.filter(c => !(c.event_id === eventId && c.learner_id === studentId));
+                filtered.push(rec);
+                this.setItem(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, filtered);
+              }
+              return rec;
+            }
+          } catch (err) {
+            console.warn('[fetchStudentAllocationConfirmation] error:', err);
+          }
         }
-      } catch (err) {
-        console.warn('[fetchStudentAllocationConfirmation] error:', err);
-      }
-    }
 
-    const local = this.getItem<LearnerAllocationConfirmation[]>(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, []);
-    return local.find(c => c.event_id === eventId && c.learner_id === studentId) || null;
+        const local = this.getItem<LearnerAllocationConfirmation[]>(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, []);
+        return local.find(c => c.event_id === eventId && c.learner_id === studentId) || null;
+      },
+      { force, ttl: 5 * 60 * 1000 }
+    );
   }
 
   public async fetchAllAllocationConfirmations(
-    eventId: string
+    eventId: string,
+    force = false
   ): Promise<LearnerAllocationConfirmation[]> {
     if (!eventId) return [];
 
-    if (supabase && isSupabaseEnabled) {
-      try {
-        const { data, error } = await supabase
-          .from('learner_allocation_confirmations')
-          .select(SUPABASE_COLUMNS.LEARNER_ALLOCATION_CONFIRMATIONS)
-          .eq('event_id', eventId);
+    const cacheKey = `all_alloc_conf_${eventId}`;
 
-        if (!error && data) {
-          const records = data as unknown as LearnerAllocationConfirmation[];
-          const all = this.getItem<LearnerAllocationConfirmation[]>(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, []);
-          const otherEvents = all.filter(c => c.event_id !== eventId);
-          const merged = [...otherEvents, ...records];
-          this.setItem(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, merged);
-          return records;
+    return this.fetchCached<LearnerAllocationConfirmation[]>(
+      cacheKey,
+      async () => {
+        if (supabase && isSupabaseEnabled) {
+          try {
+            const { data, error } = await supabase
+              .from('learner_allocation_confirmations')
+              .select(SUPABASE_COLUMNS.LEARNER_ALLOCATION_CONFIRMATIONS)
+              .eq('event_id', eventId);
+
+            if (!error && data) {
+              const records = data as unknown as LearnerAllocationConfirmation[];
+              const all = this.getItem<LearnerAllocationConfirmation[]>(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, []);
+              const otherEvents = all.filter(c => c.event_id !== eventId);
+              const merged = [...otherEvents, ...records];
+              this.setItem(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, merged);
+              // Also populate individual student caches
+              for (const r of records) {
+                if (r.learner_id) {
+                  this.setCached(`student_alloc_conf_${eventId}_${r.learner_id}`, r);
+                }
+              }
+              return records;
+            }
+          } catch (err) {
+            console.warn('[fetchAllAllocationConfirmations] error:', err);
+          }
         }
-      } catch (err) {
-        console.warn('[fetchAllAllocationConfirmations] error:', err);
-      }
-    }
 
-    const local = this.getItem<LearnerAllocationConfirmation[]>(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, []);
-    return local.filter(c => c.event_id === eventId);
+        const local = this.getItem<LearnerAllocationConfirmation[]>(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, []);
+        return local.filter(c => c.event_id === eventId);
+      },
+      { force, ttl: 60 * 1000 }
+    );
   }
 
   public async confirmStudentAllocation(
@@ -5937,6 +5970,7 @@ class StorageService {
     const filtered = all.filter(c => !(c.event_id === eventId && c.learner_id === studentId));
     filtered.push(record);
     this.setItem(STORAGE_KEYS.ALLOCATION_CONFIRMATIONS, filtered);
+    this.setCached(`student_alloc_conf_${eventId}_${studentId}`, record);
     this.notify();
 
     // 6. Broadcast to any open coordinator/admin view
@@ -7338,43 +7372,50 @@ class StorageService {
     return all.filter(a => a.event_id === eventId && (!dayId || a.day_id === dayId));
   }
 
-  public async fetchStudentDayAttendance(eventId: string, studentId: string): Promise<DayAttendanceRecord | null> {
+  public async fetchStudentDayAttendance(eventId: string, studentId: string, force = false): Promise<DayAttendanceRecord | null> {
     if (!eventId || !studentId) return null;
-    if (supabase && isSupabaseEnabled) {
-      try {
-        const [attRes, daysRes] = await Promise.all([
-          supabase
-            .from('event_day_attendance')
-            .select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE)
-            .eq('event_id', eventId)
-            .eq('student_id', studentId),
-          supabase
-            .from('event_days')
-            .select(SUPABASE_COLUMNS.EVENT_DAYS)
-            .eq('event_id', eventId)
-        ]);
+    const cacheKey = `student_day_att_${eventId}_${studentId}`;
 
-        if (daysRes.data && Array.isArray(daysRes.data)) {
-          const days = daysRes.data as unknown as EventDay[];
-          const curDays = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []);
-          const otherDays = curDays.filter(d => d.event_id !== eventId);
-          this.setItem(STORAGE_KEYS.EVENT_DAYS, [...otherDays, ...days]);
-        }
+    return this.fetchCached<DayAttendanceRecord | null>(
+      cacheKey,
+      async () => {
+        if (supabase && isSupabaseEnabled) {
+          try {
+            const [attRes, daysRes] = await Promise.all([
+              supabase
+                .from('event_day_attendance')
+                .select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE)
+                .eq('event_id', eventId)
+                .eq('student_id', studentId),
+              supabase
+                .from('event_days')
+                .select(SUPABASE_COLUMNS.EVENT_DAYS)
+                .eq('event_id', eventId)
+            ]);
 
-        if (attRes.data && Array.isArray(attRes.data) && attRes.data.length > 0) {
-          const records = attRes.data as unknown as DayAttendanceRecord[];
-          const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
-          const otherAtt = curAtt.filter(a => !(a.event_id === eventId && (a.student_id === studentId || a.learner_id === studentId)));
-          this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...otherAtt, ...records]);
-          this.notify();
-          return records[0];
+            if (daysRes.data && Array.isArray(daysRes.data)) {
+              const days = daysRes.data as unknown as EventDay[];
+              const curDays = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []);
+              const otherDays = curDays.filter(d => d.event_id !== eventId);
+              this.setItem(STORAGE_KEYS.EVENT_DAYS, [...otherDays, ...days]);
+            }
+
+            if (attRes.data && Array.isArray(attRes.data) && attRes.data.length > 0) {
+              const records = attRes.data as unknown as DayAttendanceRecord[];
+              const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+              const otherAtt = curAtt.filter(a => !(a.event_id === eventId && (a.student_id === studentId || a.learner_id === studentId)));
+              this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...otherAtt, ...records]);
+              return records[0];
+            }
+          } catch (err) {
+            console.warn('[fetchStudentDayAttendance] error:', err);
+          }
         }
-      } catch (err) {
-        console.warn('[fetchStudentDayAttendance] error:', err);
-      }
-    }
-    const localRecords = this.getDayAttendance(eventId);
-    return localRecords.find(a => a.student_id === studentId || a.learner_id === studentId) || null;
+        const localRecords = this.getDayAttendance(eventId);
+        return localRecords.find(a => a.student_id === studentId || a.learner_id === studentId) || null;
+      },
+      { force, ttl: 60 * 1000 }
+    );
   }
 
   public async setStudentDayAttendance(
@@ -8233,7 +8274,8 @@ class StorageService {
   }
 
   public getAgenda(eventId?: string): AgendaItem[] {
-    const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA);
+    const deletedIds = this.getDeletedIds();
+    const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA).filter(a => !deletedIds.has(a.id));
     const sortFn = (a: AgendaItem, b: AgendaItem) => {
       const orderA = a.order ?? (a as any).order_number;
       const orderB = b.order ?? (b as any).order_number;
@@ -8253,8 +8295,14 @@ class StorageService {
 
   public async clearEventAgenda(eventId: string): Promise<boolean> {
     if (!eventId) return false;
-    // 1. Remove from local storage
     const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA);
+    const eventItems = all.filter(a => a.event_id === eventId);
+    const eventItemIds = eventItems.map(a => a.id);
+    if (eventItemIds.length > 0) {
+      this.addDeletedIds(eventItemIds);
+    }
+    this.sessionAgendaCache.delete(eventId);
+    // 1. Remove from local storage
     const remaining = all.filter(a => a.event_id !== eventId);
     this.setItem(STORAGE_KEYS.AGENDA, remaining);
 
@@ -8274,6 +8322,7 @@ class StorageService {
 
     // 3. Notify listeners
     this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
     return true;
   }
 
@@ -8282,6 +8331,7 @@ class StorageService {
     await this.clearEventAgenda(eventId);
     return this.seedDefaultAgendaForEvent(eventId);
   }
+
 
   public seedDefaultAgendaForEvent(eventId: string): AgendaItem[] {
     const defaultItems: Partial<AgendaItem>[] = [
@@ -8451,11 +8501,57 @@ class StorageService {
   }
 
   public deleteAgendaItem(itemId: string) {
+    this.addDeletedIds([itemId]);
     const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA);
+    const targetItem = all.find(a => a.id === itemId);
+    if (targetItem?.event_id) {
+      this.sessionAgendaCache.delete(targetItem.event_id);
+    }
     const filtered = all.filter(a => a.id !== itemId);
     this.setItem(STORAGE_KEYS.AGENDA, filtered);
     this.sbDelete('session_agenda', itemId);
     this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+  }
+
+  public resetIndividualAgendaItem(eventId: string, itemId: string): { success: boolean; item?: AgendaItem; error?: string } {
+    const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA);
+    let target: AgendaItem | undefined;
+    const updated = all.map(a => {
+      if (a.id === itemId && (a.event_id === eventId || !a.event_id)) {
+        target = {
+          ...a,
+          status: 'Upcoming',
+          is_current: false,
+          updated_at: new Date().toISOString()
+        };
+        return target;
+      }
+      return a;
+    });
+
+    if (!target) {
+      return { success: false, error: 'Agenda item not found.' };
+    }
+
+    this.setItem(STORAGE_KEYS.AGENDA, updated);
+    this.sbUpsert('session_agenda', target as unknown as Record<string, unknown>);
+    if (target.event_id) {
+      this.sessionAgendaCache.delete(target.event_id);
+    }
+    this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+
+    if (supabase && this.realtimeChannel) {
+      const eventAgenda = updated.filter(a => a.event_id === eventId);
+      this.realtimeChannel.send({
+        type: 'broadcast',
+        event: 'agenda_update',
+        payload: { eventId, agenda: eventAgenda }
+      }).catch(() => {});
+    }
+
+    return { success: true, item: target };
   }
 
   public duplicateAgendaItem(itemId: string): AgendaItem | null {
@@ -10289,6 +10385,13 @@ class StorageService {
     }
 
     if (targetEventId) {
+      // Keep projector in election scene with result sealed/hidden until explicitly revealed
+      const proj = this.getProjectorSettings(targetEventId);
+      proj.activeElectionId = electionId;
+      proj.revealedElectionId = undefined;
+      proj.displayScene = 'election';
+      this.saveProjectorSettings(targetEventId, proj);
+
       this.saveElectionSnapshot(targetEventId, {
         election_id: electionId,
         election_title: all.find(e => e.id === electionId)?.title || 'Election Ballot',
@@ -10341,6 +10444,7 @@ class StorageService {
       // Direct projector to election_result scene
       const proj = this.getProjectorSettings(targetEventId);
       proj.revealedElectionId = electionId;
+      proj.activeElectionId = electionId;
       proj.displayScene = 'election_result';
       this.saveProjectorSettings(targetEventId, proj);
 
@@ -10383,10 +10487,8 @@ class StorageService {
         }
       }
 
-      // Return projector display to current active session / agenda
-      const proj = this.getProjectorSettings(targetEventId);
-      proj.revealedElectionId = undefined;
-      proj.displayScene = 'agenda';
+      // Return projector display to previous active agenda session
+      const proj = this.restoreReturnAgendaContext(targetEventId);
       this.saveProjectorSettings(targetEventId, proj);
 
       this.broadcast('election_update', { eventId: targetEventId, elections: this.getElections(targetEventId) }).catch(() => {});
@@ -10490,7 +10592,19 @@ class StorageService {
     }
 
     if (targetEventId) {
-      if (status === 'Closed') {
+      if (status === 'Live') {
+        const proj = this.captureReturnAgendaContext(targetEventId);
+        proj.activeElectionId = electionId;
+        proj.revealedElectionId = undefined;
+        proj.displayScene = 'election';
+        this.saveProjectorSettings(targetEventId, proj);
+      } else if (status === 'Closed') {
+        const proj = this.getProjectorSettings(targetEventId);
+        proj.activeElectionId = electionId;
+        proj.revealedElectionId = undefined;
+        proj.displayScene = 'election';
+        this.saveProjectorSettings(targetEventId, proj);
+
         this.saveElectionSnapshot(targetEventId, {
           election_id: electionId,
           election_title: all.find(e => e.id === electionId)?.title || 'Election Ballot',
@@ -10881,8 +10995,8 @@ class StorageService {
     all.unshift(newVote);
     this.setItem(STORAGE_KEYS.FLASH_VOTES, all);
     if (eventId) {
-      // Update projector to show live flash vote
-      const proj = this.getProjectorSettings(eventId);
+      // Update projector to show live flash vote, capturing return agenda context
+      const proj = this.captureReturnAgendaContext(eventId);
       proj.activeFlashVoteId = newVote.id;
       proj.revealedFlashVoteId = undefined;
       proj.displayScene = 'flash_vote';
@@ -10989,6 +11103,13 @@ class StorageService {
         this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
       }
 
+      // Keep projector in flash_vote scene with result sealed/hidden until explicitly revealed
+      const proj = this.getProjectorSettings(targetEventId);
+      proj.activeFlashVoteId = voteId;
+      proj.revealedFlashVoteId = undefined;
+      proj.displayScene = 'flash_vote';
+      this.saveProjectorSettings(targetEventId, proj);
+
       if (updatedVote) {
         const { votes, ...compactFV } = updatedVote;
         this.broadcast('flash_vote_update', {
@@ -11084,10 +11205,7 @@ class StorageService {
       }
 
       // Switch projector back to active agenda / session
-      const proj = this.getProjectorSettings(targetEventId);
-      proj.revealedFlashVoteId = undefined;
-      proj.activeFlashVoteId = undefined;
-      proj.displayScene = 'agenda';
+      const proj = this.restoreReturnAgendaContext(targetEventId);
       this.saveProjectorSettings(targetEventId, proj);
 
       if (updatedVote) {
@@ -11397,9 +11515,10 @@ class StorageService {
       this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
     }
 
-    // Update projector settings to display the live bill voting scene
-    const proj = this.getProjectorSettings(eventId);
+    // Update projector settings to display the live bill voting scene, capturing return agenda context
+    const proj = this.captureReturnAgendaContext(eventId);
     proj.activeBillId = billId;
+    proj.revealedBillId = undefined;
     proj.displayScene = 'bill_voting';
     this.saveProjectorSettings(eventId, proj);
 
@@ -11590,10 +11709,7 @@ class StorageService {
     }
 
     // Switch projector scene to active agenda session
-    const proj = this.getProjectorSettings(eventId);
-    proj.revealedBillId = undefined;
-    proj.activeBillId = undefined;
-    proj.displayScene = 'agenda';
+    const proj = this.restoreReturnAgendaContext(eventId);
     this.saveProjectorSettings(eventId, proj);
 
     this.broadcastBills(eventId, all.filter(b => b.event_id === eventId));
@@ -12447,6 +12563,40 @@ class StorageService {
     if (eventId) {
       await this.syncEventStateToSupabase(eventId);
     }
+  }
+
+  public captureReturnAgendaContext(eventId: string, existingSettings?: ProjectorStudioSettings): ProjectorStudioSettings {
+    const proj = existingSettings ? { ...existingSettings } : this.getProjectorSettings(eventId);
+    const agenda = this.getAgenda(eventId);
+    const currentAgenda = agenda.find(a => a.is_current) || (proj.selectedAgendaId ? agenda.find(a => a.id === proj.selectedAgendaId) : undefined) || agenda[0];
+    if (currentAgenda) {
+      proj.return_agenda_item_id = currentAgenda.id;
+      proj.return_agenda_event_id = eventId;
+      proj.return_agenda_day_id = currentAgenda.day;
+      proj.selectedAgendaId = currentAgenda.id;
+    }
+    return proj;
+  }
+
+  public restoreReturnAgendaContext(eventId: string, existingSettings?: ProjectorStudioSettings): ProjectorStudioSettings {
+    const proj = existingSettings ? { ...existingSettings } : this.getProjectorSettings(eventId);
+    proj.displayScene = 'agenda';
+    proj.revealedElectionId = undefined;
+    proj.activeElectionId = undefined;
+    proj.revealedBillId = undefined;
+    proj.activeBillId = undefined;
+    proj.revealedFlashVoteId = undefined;
+    proj.activeFlashVoteId = undefined;
+
+    if (proj.return_agenda_item_id) {
+      proj.selectedAgendaId = proj.return_agenda_item_id;
+      const agenda = this.getAgenda(eventId);
+      const targetItem = agenda.find(a => a.id === proj.return_agenda_item_id);
+      if (targetItem) {
+        this.setCurrentAgendaItem(eventId, targetItem.id);
+      }
+    }
+    return proj;
   }
 
   public async triggerSpeakerBell(eventId?: string): Promise<void> {

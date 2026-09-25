@@ -23,7 +23,8 @@ import {
   storageService,
   isQuestionForMinister,
   getMinisterAssignedMinistry,
-  getAllocationCheckStatus
+  getAllocationCheckStatus,
+  computeAllocationHash
 } from '../../services/storageService';
 import { AllocationVerificationModal } from './AllocationVerificationModal';
 import { getEventSlug } from '../../utils/slug';
@@ -135,14 +136,34 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     return student ? getAllocationCheckStatus(student, localConf) : 'CHECKED';
   });
 
+  const studentRef = useRef(student);
+  useEffect(() => {
+    studentRef.current = student;
+  }, [student]);
+
+  const studentAllocationHash = useMemo(() => student ? computeAllocationHash(student) : '', [
+    student?.party_name,
+    student?.committee_name,
+    student?.constituency_name,
+    student?.constituency_number,
+    student?.bench
+  ]);
+
+  const hasCheckedAllocRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (!student?.id || !resolvedEventId) return;
+    const checkKey = `${student.id}_${resolvedEventId}_${studentAllocationHash}`;
+    if (hasCheckedAllocRef.current === checkKey) return;
+    hasCheckedAllocRef.current = checkKey;
+
     let isMounted = true;
 
     storageService.fetchStudentAllocationConfirmation(student.id, resolvedEventId)
       .then(conf => {
         if (!isMounted) return;
-        const status = getAllocationCheckStatus(student, conf);
+        const currentStudentObj = studentRef.current || student;
+        const status = getAllocationCheckStatus(currentStudentObj, conf);
         setAllocationCheckStatus(status);
         if (status !== 'CHECKED') {
           setShowAllocationModal(true);
@@ -153,7 +174,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       .catch(() => {});
 
     return () => { isMounted = false; };
-  }, [student?.id, resolvedEventId, student]);
+  }, [student?.id, resolvedEventId, studentAllocationHash]);
 
   // Attendance for active event day
   const [dayAttendanceList, setDayAttendanceList] = useState<DayAttendanceRecord[]>(() =>

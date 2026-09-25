@@ -122,14 +122,18 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
   }, [currentEvent?.id, initialEvent?.id]);
 
   // Authoritative Current Agenda Item
-  const selectedAgenda = agenda.find(a => a.id === settings.selectedAgendaId) || agenda.find(a => a.is_current) || agenda[0] || {
-    title: 'Speaker Election & Floor Proceedings',
-    description: 'Legislative Assembly Floor Proceedings',
-    day: 'Day 1',
-    time: '10:00 AM',
-    speaker_role: 'CURRENT SESSION',
-    duration_minutes: 10
-  };
+  const selectedAgenda =
+    (settings.selectedAgendaId ? agenda.find(a => a.id === settings.selectedAgendaId) : null) ||
+    (settings.return_agenda_item_id ? agenda.find(a => a.id === settings.return_agenda_item_id) : null) ||
+    agenda.find(a => a.is_current) ||
+    agenda[0] || {
+      title: 'Speaker Election & Floor Proceedings',
+      description: 'Legislative Assembly Floor Proceedings',
+      day: 'Day 1',
+      time: '10:00 AM',
+      speaker_role: 'CURRENT SESSION',
+      duration_minutes: 10
+    };
 
   // Authoritative Election State
   const activeElection = elections.find(e => (e.status === 'Live' || e.status === 'live') && !e.is_archived);
@@ -713,32 +717,87 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
         /* SCENE 8: DEFAULT AUTHORITATIVE AGENDA BROADCAST STAGE                 */
         /* ══════════════════════════════════════════════════════════════════════ */
         ) : (
-          <div className="space-y-6 animate-slide-up max-w-5xl mx-auto">
+          <div className="space-y-6 animate-slide-up max-w-6xl mx-auto w-full px-4">
             <span className="text-xs md:text-sm font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/10 px-6 py-2 rounded-full border border-emerald-500/30 inline-block shadow-md">
               {selectedAgenda.speaker_role || 'CURRENT SESSION'}
             </span>
             
-            <h1 className="text-5xl md:text-8xl font-black text-white tracking-tight leading-none drop-shadow-2xl">
+            <h1 className="text-4xl md:text-7xl lg:text-8xl font-black text-white tracking-tight leading-tight drop-shadow-2xl">
               {selectedAgenda.title}
             </h1>
 
             {selectedAgenda.description && (
-              <p className="text-lg md:text-2xl text-slate-300 max-w-3xl mx-auto font-medium leading-relaxed">
+              <p className="text-base md:text-xl text-slate-300 max-w-3xl mx-auto font-medium leading-relaxed">
                 {selectedAgenda.description}
               </p>
             )}
 
-            <div className="flex flex-wrap items-center justify-center gap-4 pt-4">
-              <span className="px-6 py-2.5 rounded-2xl bg-slate-900 border border-slate-800 text-base md:text-lg font-mono font-bold text-amber-400 flex items-center gap-2">
-                <Clock className="w-5 h-5 text-amber-400" />
-                Planned Duration: {selectedAgenda.duration_minutes ? `${selectedAgenda.duration_minutes} min` : (selectedAgenda.time || '10 min')}
-              </span>
+            {/* DOMINANT PROMINENT STAGE TIMER DISPLAY AREA */}
+            <div className="py-4 md:py-6 flex flex-col items-center justify-center">
+              <div
+                className={`w-full max-w-xl p-6 md:p-8 rounded-3xl border-2 transition-all flex flex-col items-center justify-center shadow-2xl ${
+                  isTimerRunning
+                    ? 'bg-emerald-950/40 border-emerald-500/70 shadow-emerald-950/80 ring-8 ring-emerald-500/20'
+                    : isTimerPaused
+                      ? 'bg-amber-950/40 border-amber-500/70 shadow-amber-950/80 ring-8 ring-amber-500/20'
+                      : isTimerExpired
+                        ? 'bg-rose-950/50 border-rose-500/80 shadow-rose-950/80 ring-8 ring-rose-500/30'
+                        : 'bg-slate-900/70 border-slate-700/80 shadow-slate-950/60'
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <Clock
+                    className={`w-6 h-6 md:w-7 md:h-7 ${
+                      isTimerRunning
+                        ? 'text-emerald-400 animate-pulse'
+                        : isTimerPaused
+                          ? 'text-amber-400'
+                          : isTimerExpired
+                            ? 'text-rose-400 animate-bounce'
+                            : 'text-slate-400'
+                    }`}
+                  />
+                  <span className="text-xs md:text-sm font-black uppercase tracking-widest text-slate-300">
+                    {isTimerRunning
+                      ? 'SESSION TIME REMAINING'
+                      : isTimerPaused
+                        ? 'SESSION TIMER PAUSED'
+                        : isTimerExpired
+                          ? 'SESSION TIME ELAPSED'
+                          : 'SESSION TIMER'}
+                  </span>
+                </div>
 
-              {selectedAgenda.category && (
-                <span className="px-6 py-2.5 rounded-2xl bg-slate-900 border border-slate-800 text-base md:text-lg font-bold text-slate-300">
-                  {selectedAgenda.category}
-                </span>
-              )}
+                <div
+                  className={`font-mono text-7xl md:text-9xl font-black tracking-tight drop-shadow-2xl select-none leading-none my-2 ${
+                    isTimerRunning
+                      ? 'text-emerald-400'
+                      : isTimerPaused
+                        ? 'text-amber-400'
+                        : isTimerExpired
+                          ? 'text-rose-400 animate-pulse'
+                          : 'text-white'
+                  }`}
+                >
+                  {formattedTimer}
+                </div>
+
+                <div className="flex items-center gap-3 mt-2 text-xs md:text-sm text-slate-400 font-semibold">
+                  <span>Planned: {selectedAgenda.duration_minutes ? `${selectedAgenda.duration_minutes} min` : (selectedAgenda.time || '10 min')}</span>
+                  {selectedAgenda.category && (
+                    <>
+                      <span>•</span>
+                      <span className="text-slate-300">{selectedAgenda.category}</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-center gap-4">
+              <span className="px-5 py-2 rounded-2xl bg-slate-900/90 border border-slate-800 text-sm md:text-base font-bold text-slate-300">
+                {selectedAgenda.day || 'Day 1'} • {selectedAgenda.time || '10:00 AM'}
+              </span>
             </div>
           </div>
         )}

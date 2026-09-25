@@ -897,11 +897,11 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   const handleProjectLiveElection = (electionId: string, title: string) => {
     try {
       const cur = getProjectorSettings(eventId);
-      saveProjectorSettings({
-        ...cur,
-        displayScene: 'election',
-        revealedElectionId: electionId
-      }, eventId);
+      const proj = storageService.captureReturnAgendaContext(eventId, cur);
+      proj.displayScene = 'election';
+      proj.activeElectionId = electionId;
+      proj.revealedElectionId = undefined;
+      saveProjectorSettings(proj, eventId);
       onShowToast('Live Voting Projected', `Broadcasting live ballot progress for "${title}" to stage screen.`, 'info');
     } catch {
       onShowToast('Projector Sync', `Updated stage display with live voting for "${title}"`, 'info');
@@ -917,7 +917,8 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
       saveProjectorSettings({
         ...cur,
         displayScene: 'election',
-        revealedElectionId: electionId
+        activeElectionId: electionId,
+        revealedElectionId: undefined
       }, eventId);
       onShowToast('Voting Closed', `Ballot for "${title}" is sealed. Click "Reveal Results" to announce winner.`, 'info');
     } catch {

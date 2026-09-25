@@ -470,6 +470,7 @@ export interface SecurityAuditLog {
 export interface ProjectorStudioSettings {
   displayScene: 'auto' | 'welcome' | 'agenda' | 'flash_vote' | 'election' | 'election_result' | 'bill_voting' | 'bill_result' | 'break';
   revealedElectionId?: string;
+  activeElectionId?: string;
   revealedBillId?: string;
   activeBillId?: string;
   revealedFlashVoteId?: string;
@@ -482,6 +483,9 @@ export interface ProjectorStudioSettings {
   showClock: boolean;
   showSpeakerBadge: boolean;
   selectedAgendaId?: string;
+  return_agenda_item_id?: string;
+  return_agenda_event_id?: string;
+  return_agenda_day_id?: string;
   customWelcomeTitle?: string;
 }
 

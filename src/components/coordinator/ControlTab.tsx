@@ -441,6 +441,28 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
   const [isGovtFormationOpen, setIsGovtFormationOpen] = useState(true);
 
+  // ── Individual Agenda Item Reset State ────────────────────────────────────
+  const [resetConfirmItem, setResetConfirmItem] = useState<AgendaItem | null>(null);
+  const [isResettingItem, setIsResettingItem] = useState(false);
+
+  const handleConfirmResetItem = async () => {
+    if (!resetConfirmItem || !currentEvent) return;
+    setIsResettingItem(true);
+    try {
+      const res = storageService.resetIndividualAgendaItem(currentEvent.id, resetConfirmItem.id);
+      if (res.success) {
+        onShowToast('Agenda Item Reset', `"${resetConfirmItem.title}" marked as Upcoming and can now be activated.`, 'success');
+      } else {
+        onShowToast('Reset Failed', res.error || 'Could not reset agenda item.', 'error');
+      }
+    } catch (e: any) {
+      onShowToast('Error', e.message || 'Failed to reset agenda item', 'error');
+    } finally {
+      setIsResettingItem(false);
+      setResetConfirmItem(null);
+    }
+  };
+
   // ── Projector Broadcast State ─────────────────────────────────────────────
   const [bannerText, setBannerText] = useState('');
   const [flashBanner, setFlashBanner] = useState(true);
@@ -642,9 +664,27 @@ export const ControlTab: React.FC<ControlTabProps> = ({
             </div>
 
             <div>
-              <h2 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
-                {activeAgendaItem.title}
-              </h2>
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <h2 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+                  {activeAgendaItem.title}
+                </h2>
+                {activeAgendaItem.status === 'Completed' && (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-300/80 dark:border-slate-700">
+                    COMPLETED
+                  </span>
+                )}
+                {activeAgendaItem.status === 'Completed' && (
+                  <button
+                    type="button"
+                    onClick={() => setResetConfirmItem(activeAgendaItem)}
+                    className="px-2.5 py-1 rounded-xl text-xs font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 hover:bg-amber-100 dark:hover:bg-amber-900/60 flex items-center gap-1 cursor-pointer transition-all shadow-sm active:scale-95"
+                    title="Reset this completed agenda item"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                    <span>Reset</span>
+                  </button>
+                )}
+              </div>
               <div className="flex items-center gap-2 mt-1.5 text-xs">
                 <span className="text-slate-500 dark:text-slate-400">
                   Planned duration: <strong>{activeAgendaItem.description || '10 min'}</strong>
@@ -1199,6 +1239,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
             <div className="space-y-1.5 max-h-[460px] overflow-y-auto pr-1">
               {filteredAgendaList.map((item, idx) => {
                 const isSelected = item.id === activeAgendaItem.id;
+                const isCompleted = item.status === 'Completed';
                 const durationText = item.duration_minutes
                   ? `${item.duration_minutes} min`
                   : item.description && item.description.includes('min')
@@ -1209,6 +1250,10 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   <div
                     key={item.id}
                     onClick={() => {
+                      if (isCompleted) {
+                        onShowToast('Item Completed', `"${item.title}" is already completed. Click Reset to re-open it.`, 'info');
+                        return;
+                      }
                       setCurrentAgendaIndex(idx);
                       const targetItem = item;
                       if (currentEvent) {
@@ -1228,47 +1273,80 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                         });
                       }
                     }}
-                    className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 cursor-pointer ${
-                      isSelected
-                        ? 'bg-emerald-50/90 dark:bg-emerald-950/40 border-emerald-400/80 dark:border-emerald-600/80 shadow-sm'
-                        : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800/80 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                    className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 ${
+                      isCompleted
+                        ? 'opacity-85 bg-slate-50/80 dark:bg-slate-900/60 border-slate-200/80 dark:border-slate-800'
+                        : isSelected
+                          ? 'bg-emerald-50/90 dark:bg-emerald-950/40 border-emerald-400/80 dark:border-emerald-600/80 shadow-sm cursor-pointer'
+                          : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800/80 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer'
                     }`}
                   >
                     <div className="flex items-start gap-3 min-w-0 flex-1">
-                      {/* Status Bullet: Green solid dot if selected, Circle outline if unselected */}
+                      {/* Status Bullet: Green solid dot if selected, check icon if completed, Circle outline if unselected */}
                       {isSelected ? (
                         <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 mt-1.5 shrink-0 animate-pulse" />
+                      ) : isCompleted ? (
+                        <span className="w-3.5 h-3.5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 mt-0.5 shrink-0 flex items-center justify-center text-[9px] font-black">
+                          ✓
+                        </span>
                       ) : (
                         <span className="w-3.5 h-3.5 rounded-full border border-slate-300 dark:border-slate-600 mt-0.5 shrink-0 flex items-center justify-center text-[8px] text-slate-400" />
                       )}
 
                       <div className="min-w-0 flex-1">
-                        <h5 className={`text-xs font-bold leading-tight ${
-                          isSelected
-                            ? 'text-emerald-800 dark:text-emerald-300 font-extrabold'
-                            : 'text-slate-900 dark:text-white font-bold'
-                        }`}>
-                          {item.title}
-                        </h5>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h5 className={`text-xs font-bold leading-tight ${
+                            isSelected
+                              ? 'text-emerald-800 dark:text-emerald-300 font-extrabold'
+                              : isCompleted
+                                ? 'text-slate-500 dark:text-slate-400 font-semibold line-through'
+                                : 'text-slate-900 dark:text-white font-bold'
+                          }`}>
+                            {item.title}
+                          </h5>
+                          {isCompleted && (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-300/80 dark:border-slate-700">
+                              COMPLETED
+                            </span>
+                          )}
+                        </div>
                         <span className="text-[11px] text-slate-400 dark:text-slate-500 block mt-0.5 font-normal">
                           {durationText}
                         </span>
                       </div>
                     </div>
 
-                    {/* Pencil Edit Icon */}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onShowToast('Edit Agenda Item', `Editing "${item.title}" in Agenda Builder`, 'info');
-                      }}
-                      className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors shrink-0 cursor-pointer"
-                      title="Edit item"
-                    >
-                      <svg className="w-3.5 h-3.5 stroke-current fill-none stroke-[2]" viewBox="0 0 24 24">
-                        <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-                      </svg>
-                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {/* Small Reset Button - Visible ONLY for completed item */}
+                      {isCompleted && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setResetConfirmItem(item);
+                          }}
+                          className="px-2 py-1 rounded-lg text-[11px] font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 hover:bg-amber-100 dark:hover:bg-amber-900/60 flex items-center gap-1 cursor-pointer transition-all shadow-sm active:scale-95"
+                          title="Reset this completed agenda item"
+                        >
+                          <RotateCcw className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                          <span>Reset</span>
+                        </button>
+                      )}
+
+                      {/* Pencil Edit Icon */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onShowToast('Edit Agenda Item', `Editing "${item.title}" in Agenda Builder`, 'info');
+                        }}
+                        className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors shrink-0 cursor-pointer"
+                        title="Edit item"
+                      >
+                        <svg className="w-3.5 h-3.5 stroke-current fill-none stroke-[2]" viewBox="0 0 24 24">
+                          <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -1760,6 +1838,54 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                 className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black shadow-md shadow-rose-900/20 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
               >
                 {isLoweringHands ? 'Lowering...' : 'Lower All Hands'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Individual Agenda Item Reset Confirmation Modal */}
+      {resetConfirmItem && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="relative w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 flex items-center justify-center shrink-0">
+                <RotateCcw className="w-5 h-5 text-amber-500" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-base font-black text-slate-900 dark:text-white">
+                  Reset this agenda item?
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                  This will mark this agenda item as active again and allow it to be started again.
+                </p>
+                <div className="mt-2.5 px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Item: <span className="font-bold text-slate-900 dark:text-white">{resetConfirmItem.title}</span> ({resetConfirmItem.day})
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setResetConfirmItem(null)}
+                disabled={isResettingItem}
+                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmResetItem}
+                disabled={isResettingItem}
+                className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-black shadow-md shadow-amber-950/20 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>{isResettingItem ? 'Resetting...' : 'Reset Agenda Item'}</span>
               </button>
             </div>
           </div>
