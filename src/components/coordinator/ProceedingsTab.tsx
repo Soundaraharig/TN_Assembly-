@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { BillProceeding, Learner, EventDeadline, ProceedingsQuestion, ProceedingsMotion, UserRole } from '../../types';
+import { getCanonicalQuestionStatus } from '../../types';
 import { storageService } from '../../services/storageService';
 import { getEventSlug } from '../../utils/slug';
 import {
@@ -298,15 +299,13 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
     window.print();
   };
 
-  // Canonical status normalizer
-  const normalizeStatus = (status?: string): 'Submitted' | 'Under Review' | 'Approved' | 'Starred' | 'Rejected' => {
-    if (!status) return 'Submitted';
-    const s = status.toLowerCase().trim();
-    if (s === 'approved') return 'Approved';
-    if (s === 'starred') return 'Starred';
-    if (s === 'rejected') return 'Rejected';
-    if (s === 'under review' || s === 'under_review') return 'Under Review';
-    return 'Submitted';
+  // Canonical status normalizer — delegating to the single source of truth in types
+  const normalizeStatus = (qOrStatus?: ProceedingsQuestion | string): 'Submitted' | 'Under Review' | 'Approved' | 'Starred' | 'Rejected' => {
+    if (!qOrStatus) return 'Submitted';
+    if (typeof qOrStatus === 'object') {
+      return getCanonicalQuestionStatus(qOrStatus);
+    }
+    return getCanonicalQuestionStatus({ status: qOrStatus });
   };
 
   // Calculations for Questions Sub-Tab
@@ -315,15 +314,15 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   const progressPct = Math.min(100, Math.round((uniqueSubmittersCount / totalMembersCount) * 100));
 
   const totalSubmitted = questions.length;
-  const pendingCount = questions.filter(q => normalizeStatus(q.status) === 'Submitted').length;
-  const underReviewCount = questions.filter(q => normalizeStatus(q.status) === 'Under Review').length;
-  const approvedCount = questions.filter(q => normalizeStatus(q.status) === 'Approved').length;
-  const starredCount = questions.filter(q => normalizeStatus(q.status) === 'Starred').length;
-  const rejectedCount = questions.filter(q => normalizeStatus(q.status) === 'Rejected').length;
+  const pendingCount = questions.filter(q => getCanonicalQuestionStatus(q) === 'Submitted').length;
+  const underReviewCount = questions.filter(q => getCanonicalQuestionStatus(q) === 'Under Review').length;
+  const approvedCount = questions.filter(q => getCanonicalQuestionStatus(q) === 'Approved').length;
+  const starredCount = questions.filter(q => getCanonicalQuestionStatus(q) === 'Starred').length;
+  const rejectedCount = questions.filter(q => getCanonicalQuestionStatus(q) === 'Rejected').length;
   const readyToPutCount = approvedCount + starredCount;
 
   const filteredQuestions = questions.filter(q => {
-    const canonicalStatus = normalizeStatus(q.status);
+    const canonicalStatus = getCanonicalQuestionStatus(q);
     if (statusFilter !== 'All' && canonicalStatus !== statusFilter) return false;
     if (benchFilter !== 'All' && (q.bench || '').toLowerCase() !== benchFilter.toLowerCase()) return false;
     if (ministryFilter !== 'All' && q.ministry !== ministryFilter) return false;
@@ -727,7 +726,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                         <td className="p-3.5 font-semibold text-slate-500">{q.question_type}</td>
                         <td className="p-3.5">
                           {(() => {
-                            const canonicalStatus = normalizeStatus(q.status);
+                            const canonicalStatus = normalizeStatus(q);
                             const isUnderReview = canonicalStatus === 'Under Review';
                             const isApproved = canonicalStatus === 'Approved';
                             const isStarred = canonicalStatus === 'Starred';
@@ -764,7 +763,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                         <td className="p-3.5 font-mono text-slate-400">#{q.queue_order || idx + 1}</td>
                         <td className="p-3.5 text-right">
                           {(() => {
-                            const currentCanonical = normalizeStatus(q.status);
+                            const currentCanonical = normalizeStatus(q);
                             const isApproved = currentCanonical === 'Approved';
                             const isStarred = currentCanonical === 'Starred';
                             const isRejected = currentCanonical === 'Rejected';
@@ -844,8 +843,8 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
             const submitter = learners.find(
               l => l.id === selectedQuestion.student_id || l.full_name?.toLowerCase() === selectedQuestion.student_name?.toLowerCase()
             );
-            const currentCanonical = normalizeStatus(selectedQuestion.status);
-            const isUnderReview = currentCanonical === 'Under Review' || selectedQuestion.status === 'Under Review';
+            const currentCanonical = normalizeStatus(selectedQuestion);
+            const isUnderReview = currentCanonical === 'Under Review';
             const isApproved = currentCanonical === 'Approved';
             const isStarred = currentCanonical === 'Starred';
             const isRejected = currentCanonical === 'Rejected';

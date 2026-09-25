@@ -528,6 +528,35 @@ export interface ProceedingsQuestion {
   seat_number?: string;
 }
 
+export type CanonicalQuestionStatus = 'Submitted' | 'Under Review' | 'Approved' | 'Starred' | 'Rejected';
+
+/**
+ * Single Canonical Question Status Normalizer
+ * Provides the single source of truth across Student, Administrator, Main Admin, and Minister dashboards.
+ * 
+ * Precedence:
+ * 1. Approved / Starred -> Approved / Starred (Final decision by Main Admin)
+ * 2. Rejected -> Rejected (Final decision by Main Admin)
+ * 3. Under Review / Flagged for Admin -> Under Review (Reviewed and forwarded to Main Admin)
+ * 4. Submitted / Pending -> Submitted (Initial student submission)
+ */
+export function getCanonicalQuestionStatus(q?: {
+  status?: string;
+  flagged_for_admin?: boolean;
+  reviewed_by?: string;
+  reviewed_at?: string;
+} | null): CanonicalQuestionStatus {
+  if (!q) return 'Submitted';
+  const s = (q.status || '').toLowerCase().trim();
+  if (s === 'approved') return 'Approved';
+  if (s === 'starred') return 'Starred';
+  if (s === 'rejected') return 'Rejected';
+  if (s === 'under review' || s === 'under_review' || Boolean(q.flagged_for_admin)) {
+    return 'Under Review';
+  }
+  return 'Submitted';
+}
+
 export interface ProceedingsMotion {
   id: string;
   event_id: string;

@@ -42,7 +42,7 @@ import type {
   DayAttendanceStatus,
   ProceedingsQuestion
 } from '../../types';
-import { getRecordSessionStatuses, formatMarkedBy } from '../../types';
+import { getRecordSessionStatuses, formatMarkedBy, getCanonicalQuestionStatus } from '../../types';
 import { useTheme } from '../../lib/theme';
 import { storageService, getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
 import { presenceService } from '../../services/presenceService';
@@ -516,22 +516,14 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     };
   }, [eventId, hasQuestionReviewAccess, onShowToast]);
 
-  // Canonical question status normalizer
-  const normalizeQStatus = (status?: string): 'Submitted' | 'Under Review' | 'Approved' | 'Starred' | 'Rejected' => {
-    if (!status) return 'Submitted';
-    const s = status.toLowerCase().trim();
-    if (s === 'approved') return 'Approved';
-    if (s === 'starred') return 'Starred';
-    if (s === 'rejected') return 'Rejected';
-    if (s === 'under review' || s === 'under_review') return 'Under Review';
-    return 'Submitted';
-  };
-
   const totalQuestionsCount = questions.length;
-  const pendingQuestionsCount = questions.filter(q => normalizeQStatus(q.status) === 'Submitted').length;
-  const underReviewQuestionsCount = questions.filter(q => normalizeQStatus(q.status) === 'Under Review').length;
-  const approvedQuestionsCount = questions.filter(q => normalizeQStatus(q.status) === 'Approved' || normalizeQStatus(q.status) === 'Starred').length;
-  const rejectedQuestionsCount = questions.filter(q => normalizeQStatus(q.status) === 'Rejected').length;
+  const pendingQuestionsCount = questions.filter(q => getCanonicalQuestionStatus(q) === 'Submitted').length;
+  const underReviewQuestionsCount = questions.filter(q => getCanonicalQuestionStatus(q) === 'Under Review').length;
+  const approvedQuestionsCount = questions.filter(q => {
+    const s = getCanonicalQuestionStatus(q);
+    return s === 'Approved' || s === 'Starred';
+  }).length;
+  const rejectedQuestionsCount = questions.filter(q => getCanonicalQuestionStatus(q) === 'Rejected').length;
 
   const availableMinistries = useMemo(() => {
     const qMinistries = questions.map(q => q.ministry).filter(Boolean);
@@ -541,7 +533,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
 
   const filteredQuestions = useMemo(() => {
     return questions.filter(q => {
-      const canonical = normalizeQStatus(q.status);
+      const canonical = getCanonicalQuestionStatus(q);
       if (questionStatusFilter !== 'All' && canonical !== questionStatusFilter) return false;
       if (questionMinistryFilter !== 'All' && q.ministry !== questionMinistryFilter) return false;
       if (questionSearch.trim()) {
@@ -1413,7 +1405,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                       </tr>
                     ) : (
                       filteredQuestions.map((q, idx) => {
-                        const canonical = normalizeQStatus(q.status);
+                        const canonical = getCanonicalQuestionStatus(q);
                         const isUnderReview = canonical === 'Under Review';
                         const isApproved = canonical === 'Approved' || canonical === 'Starred';
                         const isRejected = canonical === 'Rejected';
@@ -2665,9 +2657,9 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
       {/* ───────────────────────────────────────────────────────────── */}
       {selectedQuestionForReview && (() => {
         const q = selectedQuestionForReview;
-        const canonical = normalizeQStatus(q.status);
+        const canonical = getCanonicalQuestionStatus(q);
         const isApproved = canonical === 'Approved' || canonical === 'Starred';
-        const isUnderReview = canonical === 'Under Review' || q.flagged_for_admin;
+        const isUnderReview = canonical === 'Under Review';
 
         return (
           <div

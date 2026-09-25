@@ -48,7 +48,7 @@ import type {
   SpeakingTurn,
   SpeakingTurnStatus
 } from '../types';
-import { getRecordSessionStatuses } from '../types';
+import { getRecordSessionStatuses, getCanonicalQuestionStatus } from '../types';
 import {
   INITIAL_EVENTS,
   INITIAL_COORDINATORS,
@@ -1659,15 +1659,17 @@ class StorageService {
           const remote = pqMap.get(local.id)!;
           const localT = new Date(local.updated_at || local.created_at || 0).getTime();
           const remoteT = new Date(remote.updated_at || remote.created_at || 0).getTime();
-          const mergedStatus = (remote.status === 'Approved' || local.status === 'Approved')
+          const remoteCanonical = getCanonicalQuestionStatus(remote);
+          const localCanonical = getCanonicalQuestionStatus(local);
+          const mergedStatus = (remoteCanonical === 'Approved' || localCanonical === 'Approved')
             ? 'Approved'
-            : (remote.status === 'Starred' || local.status === 'Starred')
+            : (remoteCanonical === 'Starred' || localCanonical === 'Starred')
             ? 'Starred'
-            : (remote.status === 'Rejected' || local.status === 'Rejected')
+            : (remoteCanonical === 'Rejected' || localCanonical === 'Rejected')
             ? 'Rejected'
-            : (remote.status === 'Under Review' || local.status === 'Under Review')
+            : (remoteCanonical === 'Under Review' || localCanonical === 'Under Review')
             ? 'Under Review'
-            : (local.status || remote.status);
+            : (localT >= remoteT ? (localCanonical || local.status) : (remoteCanonical || remote.status));
           pqMap.set(local.id, {
             ...(localT >= remoteT ? local : remote),
             status: mergedStatus,
@@ -2063,24 +2065,44 @@ class StorageService {
           this.setItem(STORAGE_KEYS.QUESTIONS, allQs);
 
           // Smart merge local and remote proceedings questions by unique ID
-          const deletedQIds = new Set([
-            ...this.getItem<string[]>(STORAGE_KEYS.DELETED_QUESTION_IDS, []),
-            ...this.getItem<string[]>('tn_assembly_deleted_question_ids', [])
-          ]);
-          const localPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []).filter(q => !deletedQIds.has(q.id));
+          const deletedQIds = this.getAllDeletedQuestionIds();
+          this.setItem(STORAGE_KEYS.QUESTIONS, allQs.filter(q => !deletedQIds.has(q.id) && (q.status as any) !== 'Deleted' && !(q as any).deleted));
+          const localPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []).filter(q => !deletedQIds.has(q.id) && (q.status as any) !== 'Deleted' && !(q as any).deleted);
           const pqMap = new Map<string, ProceedingsQuestion>();
           localPQs.forEach(q => pqMap.set(q.id, q));
-          (allProceedingsQs || []).filter(remoteQ => !deletedQIds.has(remoteQ.id)).forEach(remoteQ => {
+          (allProceedingsQs || []).filter(remoteQ => !deletedQIds.has(remoteQ.id) && (remoteQ.status as any) !== 'Deleted' && !(remoteQ as any).deleted).forEach(remoteQ => {
             const local = pqMap.get(remoteQ.id);
             if (!local) {
-              pqMap.set(remoteQ.id, remoteQ);
+              pqMap.set(remoteQ.id, {
+                ...remoteQ,
+                status: getCanonicalQuestionStatus(remoteQ)
+              });
             } else {
               const localT = new Date(local.updated_at || local.created_at || 0).getTime();
               const remoteT = new Date(remoteQ.updated_at || remoteQ.created_at || 0).getTime();
+              const remoteCanonical = getCanonicalQuestionStatus(remoteQ);
+              const localCanonical = getCanonicalQuestionStatus(local);
+              const mergedStatus = (remoteCanonical === 'Approved' || localCanonical === 'Approved')
+                ? 'Approved'
+                : (remoteCanonical === 'Starred' || localCanonical === 'Starred')
+                ? 'Starred'
+                : (remoteCanonical === 'Rejected' || localCanonical === 'Rejected')
+                ? 'Rejected'
+                : (remoteCanonical === 'Under Review' || localCanonical === 'Under Review')
+                ? 'Under Review'
+                : (localT >= remoteT ? (localCanonical || local.status) : (remoteCanonical || remoteQ.status));
               pqMap.set(remoteQ.id, {
                 ...remoteQ,
                 ...local,
-                status: localT >= remoteT ? (local.status || remoteQ.status) : (remoteQ.status || local.status),
+                status: mergedStatus,
+                flagged_for_admin: Boolean(remoteQ.flagged_for_admin || local.flagged_for_admin),
+                reviewed_by: remoteQ.reviewed_by || local.reviewed_by,
+                review_note: remoteQ.review_note || local.review_note,
+                reviewed_at: remoteQ.reviewed_at || local.reviewed_at,
+                reviewer_name: remoteQ.reviewer_name || local.reviewer_name,
+                reviewer_role: remoteQ.reviewer_role || local.reviewer_role,
+                approved_by: remoteQ.approved_by || local.approved_by,
+                approved_at: remoteQ.approved_at || local.approved_at,
                 updated_at: localT >= remoteT ? local.updated_at : remoteQ.updated_at
               });
             }
@@ -3636,11 +3658,11 @@ class StorageService {
         })
         .on('broadcast', { event: 'question_update' }, (msg: any) => {
           if (msg?.payload?.eventId) {
-            const deletedQIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_QUESTION_IDS, []));
+            const deletedQIds = this.getAllDeletedQuestionIds();
             const localPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
             const pqMap = new Map<string, ProceedingsQuestion>();
             localPQs.forEach(q => {
-              if (!deletedQIds.has(q.id)) {
+              if (!deletedQIds.has(q.id) && (q.status as any) !== 'Deleted' && !(q as any).deleted) {
                 pqMap.set(q.id, q);
               }
             });
@@ -3648,16 +3670,27 @@ class StorageService {
               ? msg.payload.questions
               : (msg.payload.question ? [msg.payload.question] : []);
             incoming.forEach((remoteQ: ProceedingsQuestion) => {
-              if (deletedQIds.has(remoteQ.id)) return;
+              if (deletedQIds.has(remoteQ.id) || (remoteQ.status as any) === 'Deleted' || (remoteQ as any).deleted) return;
               const local = pqMap.get(remoteQ.id);
               if (!local) {
-                pqMap.set(remoteQ.id, remoteQ);
+                pqMap.set(remoteQ.id, {
+                  ...remoteQ,
+                  status: getCanonicalQuestionStatus(remoteQ)
+                });
               } else {
                 const localT = new Date(local.updated_at || local.created_at || 0).getTime();
                 const remoteT = new Date(remoteQ.updated_at || remoteQ.created_at || 0).getTime();
-                const mergedStatus = (remoteQ.status === 'Approved' || remoteQ.status === 'Starred' || remoteQ.status === 'Rejected' || remoteQ.status === 'Under Review')
-                  ? remoteQ.status
-                  : (local.status || remoteQ.status);
+                const remoteCanonical = getCanonicalQuestionStatus(remoteQ);
+                const localCanonical = getCanonicalQuestionStatus(local);
+                const mergedStatus = (remoteCanonical === 'Approved' || localCanonical === 'Approved')
+                  ? 'Approved'
+                  : (remoteCanonical === 'Starred' || localCanonical === 'Starred')
+                  ? 'Starred'
+                  : (remoteCanonical === 'Rejected' || localCanonical === 'Rejected')
+                  ? 'Rejected'
+                  : (remoteCanonical === 'Under Review' || localCanonical === 'Under Review')
+                  ? 'Under Review'
+                  : (localT >= remoteT ? (localCanonical || local.status) : (remoteCanonical || remoteQ.status));
                 pqMap.set(remoteQ.id, {
                   ...(localT >= remoteT ? local : remoteQ),
                   status: mergedStatus,
@@ -4445,19 +4478,24 @@ class StorageService {
       localPQs.forEach(q => {
         const existing = pqMap.get(q.id);
         if (!existing) {
-          pqMap.set(q.id, q);
+          pqMap.set(q.id, {
+            ...q,
+            status: getCanonicalQuestionStatus(q)
+          });
         } else {
           const localT = new Date(q.updated_at || q.created_at || 0).getTime();
           const remoteT = new Date(existing.updated_at || existing.created_at || 0).getTime();
-          const mergedStatus = (existing.status === 'Approved' || q.status === 'Approved')
+          const remoteCanonical = getCanonicalQuestionStatus(existing);
+          const localCanonical = getCanonicalQuestionStatus(q);
+          const mergedStatus = (remoteCanonical === 'Approved' || localCanonical === 'Approved')
             ? 'Approved'
-            : (existing.status === 'Starred' || q.status === 'Starred')
+            : (remoteCanonical === 'Starred' || localCanonical === 'Starred')
             ? 'Starred'
-            : (existing.status === 'Rejected' || q.status === 'Rejected')
+            : (remoteCanonical === 'Rejected' || localCanonical === 'Rejected')
             ? 'Rejected'
-            : (existing.status === 'Under Review' || q.status === 'Under Review')
+            : (remoteCanonical === 'Under Review' || localCanonical === 'Under Review')
             ? 'Under Review'
-            : (localT >= remoteT ? (q.status || existing.status) : (existing.status || q.status));
+            : (localT >= remoteT ? (localCanonical || q.status) : (remoteCanonical || existing.status));
           pqMap.set(q.id, {
             ...(localT >= remoteT ? q : existing),
             status: mergedStatus,
@@ -13918,12 +13956,20 @@ class StorageService {
   public getProceedingsQuestions(eventKey?: string): ProceedingsQuestion[] {
     // Always filter out tombstoned (deleted) questions first
     const deletedQIds = this.getAllDeletedQuestionIds();
-    const rawList: ProceedingsQuestion[] = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
-    const list: ProceedingsQuestion[] = rawList.filter(
-      (q: ProceedingsQuestion) => !deletedQIds.has(q.id) && (q.status as any) !== 'Deleted' && !(q as any).deleted
-    );
-    // If local storage had deleted questions, prune them immediately
-    if (list.length < rawList.length) {
+    const rawList = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+    const list: ProceedingsQuestion[] = rawList
+      .filter(
+        (q: ProceedingsQuestion) => !deletedQIds.has(q.id) && (q.status as any) !== 'Deleted' && !(q as any).deleted
+      )
+      .map(q => {
+        const canonical = getCanonicalQuestionStatus(q);
+        if (q.status !== canonical) {
+          return { ...q, status: canonical };
+        }
+        return q;
+      });
+    // If local storage had deleted questions or unnormalized statuses, update them
+    if (list.length < rawList.length || list.some((q, i) => q.status !== rawList[i]?.status)) {
       this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, list);
     }
 
@@ -14092,15 +14138,17 @@ class StorageService {
             const remote = pqMap.get(lq.id)!;
             const localT = new Date(lq.updated_at || lq.created_at || 0).getTime();
             const remoteT = new Date(remote.updated_at || remote.created_at || 0).getTime();
-            const mergedStatus = (remote.status === 'Approved' || lq.status === 'Approved')
+            const remoteCanonical = getCanonicalQuestionStatus(remote);
+            const localCanonical = getCanonicalQuestionStatus(lq);
+            const mergedStatus = (remoteCanonical === 'Approved' || localCanonical === 'Approved')
               ? 'Approved'
-              : (remote.status === 'Starred' || lq.status === 'Starred')
+              : (remoteCanonical === 'Starred' || localCanonical === 'Starred')
               ? 'Starred'
-              : (remote.status === 'Rejected' || lq.status === 'Rejected')
+              : (remoteCanonical === 'Rejected' || localCanonical === 'Rejected')
               ? 'Rejected'
-              : (remote.status === 'Under Review' || lq.status === 'Under Review')
+              : (remoteCanonical === 'Under Review' || localCanonical === 'Under Review')
               ? 'Under Review'
-              : (localT >= remoteT ? (lq.status || remote.status) : (remote.status || lq.status));
+              : (localT >= remoteT ? (localCanonical || lq.status) : (remoteCanonical || remote.status));
             pqMap.set(lq.id, {
               ...remote,
               ...lq,
@@ -14289,7 +14337,7 @@ class StorageService {
       const allEvs = this.getEvents();
       const matched = findEventBySlug(allEvs, targetEventId) || allEvs.find(e => e.id === targetEventId);
       const syncId = matched?.id || targetEventId;
-      this.syncEventStateToSupabase(syncId).catch(err => {
+      this.syncEventStateToSupabase(syncId, true).catch(err => {
         console.warn('[Supabase] updateProceedingsQuestionStatus sync error:', err);
       });
     }
@@ -14359,7 +14407,7 @@ class StorageService {
       const allEvs = this.getEvents();
       const matched = findEventBySlug(allEvs, targetEventId) || allEvs.find(e => e.id === targetEventId);
       const syncId = matched?.id || targetEventId;
-      this.syncEventStateToSupabase(syncId).catch(err => {
+      this.syncEventStateToSupabase(syncId, true).catch(err => {
         console.warn('[Supabase] reviewAndApproachMainAdmin sync error:', err);
       });
     }
@@ -14429,9 +14477,9 @@ class StorageService {
       console.warn('[Supabase] broadcast question_deleted error:', err);
     });
 
-    // Authoritative persistence to Supabase college_events
+    // Authoritative persistence to Supabase college_events (forceImmediate = true ensures no loss on refresh)
     if (syncId) {
-      this.syncEventStateToSupabase(syncId).catch(err => {
+      this.syncEventStateToSupabase(syncId, true).catch(err => {
         console.warn('[Supabase] deleteProceedingsQuestion sync error:', err);
       });
     }
