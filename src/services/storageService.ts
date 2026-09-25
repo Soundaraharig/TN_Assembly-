@@ -8574,6 +8574,28 @@ class StorageService {
     return all.filter(t => (!eventId || t.event_id === eventId) && (!sessionId || t.session_id === sessionId));
   }
 
+  public getSpeakingTurnCounts(eventId: string, currentSessionId?: string): {
+    sessionCounts: Record<string, number>;
+    totalCounts: Record<string, number>;
+  } {
+    const sessionCounts: Record<string, number> = {};
+    const totalCounts: Record<string, number> = {};
+    const turns = this.getSpeakingTurns(eventId);
+
+    for (const t of turns) {
+      if (t.status === 'CANCELLED') continue;
+      // Total count across all sessions of this specific event
+      totalCounts[t.learner_id] = (totalCounts[t.learner_id] || 0) + 1;
+
+      // Session count for current session of this specific event
+      if (currentSessionId && t.session_id === currentSessionId) {
+        sessionCounts[t.learner_id] = (sessionCounts[t.learner_id] || 0) + 1;
+      }
+    }
+
+    return { sessionCounts, totalCounts };
+  }
+
   public async fetchActiveSpeakingRequests(eventId: string, sessionId?: string): Promise<SpeakingRequest[]> {
     if (!eventId) return [];
     if (supabase && isSupabaseEnabled) {
@@ -8776,6 +8798,13 @@ class StorageService {
     const { requestId, eventId, sessionId, sessionName, learnerId, learnerName, calledBy = 'Speaker' } = params;
     const now = new Date().toISOString();
 
+    // Check if turn already exists for this request (prevent duplicate counts on double-click / rapid call)
+    const allTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+    const existingTurn = allTurns.find(t => t.request_id === requestId && t.status !== 'CANCELLED');
+    if (existingTurn) {
+      return { success: true, turn: existingTurn };
+    }
+
     // 1. Update request to CALLED
     const allReqs = this.getItem<SpeakingRequest[]>(STORAGE_KEYS.SPEAKING_REQUESTS, []);
     let updatedReq: SpeakingRequest | undefined;
@@ -8789,7 +8818,6 @@ class StorageService {
     this.setItem(STORAGE_KEYS.SPEAKING_REQUESTS, nextReqs);
 
     // 2. Compute sequence number from existing session turns
-    const allTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
     const sessionTurns = allTurns.filter(t => t.event_id === eventId && t.session_id === sessionId);
     const nextSeq = sessionTurns.length + 1;
 

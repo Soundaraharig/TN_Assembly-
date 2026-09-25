@@ -259,26 +259,42 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const speakerSessionTurnCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const t of speakingTurns) {
-      if (t.session_id === activeSession.id && t.status === 'SPOKEN') {
+      if (t.event_id === resolvedEventId && t.session_id === activeSession.id && t.status !== 'CANCELLED') {
         counts[t.learner_id] = (counts[t.learner_id] || 0) + 1;
       }
     }
     return counts;
-  }, [speakingTurns, activeSession.id]);
+  }, [speakingTurns, resolvedEventId, activeSession.id]);
+
+  const speakerTotalTurnCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const t of speakingTurns) {
+      if (t.event_id === resolvedEventId && t.status !== 'CANCELLED') {
+        counts[t.learner_id] = (counts[t.learner_id] || 0) + 1;
+      }
+    }
+    return counts;
+  }, [speakingTurns, resolvedEventId]);
 
   const speakerWaitingRequests = useMemo(() => {
     return allSpeakingRequests
-      .filter(r => r.session_id === activeSession.id && r.status === 'WAITING')
+      .filter(r => r.event_id === resolvedEventId && r.session_id === activeSession.id && r.status === 'WAITING')
       .sort((a, b) => {
-        const countA = speakerSessionTurnCounts[a.learner_id] || 0;
-        const countB = speakerSessionTurnCounts[b.learner_id] || 0;
-        if (countA !== countB) return countA - countB;
+        const totalA = speakerTotalTurnCounts[a.learner_id] || 0;
+        const totalB = speakerTotalTurnCounts[b.learner_id] || 0;
+        if (totalA !== totalB) return totalA - totalB;
+
+        const sessionA = speakerSessionTurnCounts[a.learner_id] || 0;
+        const sessionB = speakerSessionTurnCounts[b.learner_id] || 0;
+        if (sessionA !== sessionB) return sessionA - sessionB;
+
         const timeA = new Date(a.requested_at).getTime();
         const timeB = new Date(b.requested_at).getTime();
         if (timeA !== timeB) return timeA - timeB;
+
         return a.learner_name.localeCompare(b.learner_name);
       });
-  }, [allSpeakingRequests, speakerSessionTurnCounts, activeSession.id]);
+  }, [allSpeakingRequests, resolvedEventId, speakerTotalTurnCounts, speakerSessionTurnCounts, activeSession.id]);
 
   const speakerActiveTurn = useMemo(() => {
     return speakingTurns.find(t => t.session_id === activeSession.id && t.status === 'SPEAKING');
@@ -1624,7 +1640,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
               <div className="flex items-center justify-between text-xs text-slate-500">
                 <span>Live session: <strong className="text-slate-800 dark:text-slate-200">{activeSession.title}</strong></span>
-                <span className="text-[11px] text-slate-400">Priority: Lowest Turns → Earliest Hand</span>
+                <span className="text-[11px] text-slate-400">Priority: Lowest Total Turns → Lowest Session Turns → Earliest Hand</span>
               </div>
 
               {/* Active Speaker Card */}
@@ -1662,40 +1678,51 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   </div>
                 ) : (
                   <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
-                    {speakerWaitingRequests.map((req, idx) => (
-                      <div
-                        key={req.id}
-                        className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/60 flex items-center justify-between gap-2"
-                      >
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <span className="w-6 h-6 rounded-md bg-slate-200 dark:bg-slate-700 text-[10px] font-mono font-bold text-slate-700 dark:text-slate-300 flex items-center justify-center shrink-0">
-                            #{idx + 1}
-                          </span>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                                {req.learner_name}
-                              </span>
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400">
-                                {speakerSessionTurnCounts[req.learner_id] || 0} turns
-                              </span>
-                            </div>
-                            <div className="text-[10px] text-slate-400 truncate">
-                              Raised {new Date(req.requested_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    {speakerWaitingRequests.map((req, idx) => {
+                      const sessionTurns = speakerSessionTurnCounts[req.learner_id] || 0;
+                      const totalTurns = speakerTotalTurnCounts[req.learner_id] || 0;
+                      return (
+                        <div
+                          key={req.id}
+                          className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/60 flex items-center justify-between gap-2"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <span className="w-6 h-6 rounded-md bg-slate-200 dark:bg-slate-700 text-[10px] font-mono font-bold text-slate-700 dark:text-slate-300 flex items-center justify-center shrink-0">
+                              #{idx + 1}
+                            </span>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                                  {req.learner_name}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1.5 flex-wrap text-[10px] mt-0.5">
+                                <span className="font-semibold text-slate-600 dark:text-slate-300">
+                                  Session: {sessionTurns} {sessionTurns === 1 ? 'turn' : 'turns'}
+                                </span>
+                                <span className="text-slate-300 dark:text-slate-600">·</span>
+                                <span className="font-semibold text-indigo-600 dark:text-indigo-400">
+                                  Total: {totalTurns} {totalTurns === 1 ? 'turn' : 'turns'}
+                                </span>
+                                <span className="text-slate-300 dark:text-slate-600">·</span>
+                                <span className="text-slate-400 font-mono">
+                                  Raised: {new Date(req.requested_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                </span>
+                              </div>
                             </div>
                           </div>
+                          <button
+                            type="button"
+                            onClick={() => handleSpeakerCall(req)}
+                            disabled={callingSpeakerId === req.id}
+                            className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50 shrink-0"
+                          >
+                            <Mic className="w-3 h-3" />
+                            <span>{callingSpeakerId === req.id ? 'Calling...' : 'CALL'}</span>
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => handleSpeakerCall(req)}
-                          disabled={callingSpeakerId === req.id}
-                          className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50 shrink-0"
-                        >
-                          <Mic className="w-3 h-3" />
-                          <span>{callingSpeakerId === req.id ? 'Calling...' : 'CALL'}</span>
-                        </button>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>

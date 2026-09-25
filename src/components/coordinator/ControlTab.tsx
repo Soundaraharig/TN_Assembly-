@@ -275,24 +275,40 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   const sessionTurnCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     speakingTurns
-      .filter(t => t.session_id === activeAgendaItem.id && t.status === 'SPOKEN')
+      .filter(t => t.event_id === currentEvent?.id && t.session_id === activeAgendaItem.id && t.status !== 'CANCELLED')
       .forEach(t => {
         counts[t.learner_id] = (counts[t.learner_id] || 0) + 1;
       });
     return counts;
-  }, [speakingTurns, activeAgendaItem.id]);
+  }, [speakingTurns, currentEvent?.id, activeAgendaItem.id]);
+
+  // Total turn counts for each learner across ALL sessions of the CURRENT EVENT
+  const totalTurnCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    speakingTurns
+      .filter(t => t.event_id === currentEvent?.id && t.status !== 'CANCELLED')
+      .forEach(t => {
+        counts[t.learner_id] = (counts[t.learner_id] || 0) + 1;
+      });
+    return counts;
+  }, [speakingTurns, currentEvent?.id]);
 
   // Speaking priority queue for CURRENT session:
-  // 1. Lowest speaking count in current session first
-  // 2. Earliest hand-raise/request time first
-  // 3. Stable deterministic tie-breaker
+  // 1. Lowest total speaking turns across the event first
+  // 2. Lowest speaking count in current session first
+  // 3. Earliest hand-raise/request time first
+  // 4. Stable deterministic tie-breaker
   const waitingRequests = useMemo(() => {
     return speakingRequests
-      .filter(r => r.session_id === activeAgendaItem.id && r.status === 'WAITING')
+      .filter(r => r.event_id === currentEvent?.id && r.session_id === activeAgendaItem.id && r.status === 'WAITING')
       .sort((a, b) => {
-        const countA = sessionTurnCounts[a.learner_id] || 0;
-        const countB = sessionTurnCounts[b.learner_id] || 0;
-        if (countA !== countB) return countA - countB;
+        const totalA = totalTurnCounts[a.learner_id] || 0;
+        const totalB = totalTurnCounts[b.learner_id] || 0;
+        if (totalA !== totalB) return totalA - totalB;
+
+        const sessionA = sessionTurnCounts[a.learner_id] || 0;
+        const sessionB = sessionTurnCounts[b.learner_id] || 0;
+        if (sessionA !== sessionB) return sessionA - sessionB;
 
         const timeA = new Date(a.requested_at).getTime();
         const timeB = new Date(b.requested_at).getTime();
@@ -300,21 +316,21 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
         return a.learner_name.localeCompare(b.learner_name);
       });
-  }, [speakingRequests, sessionTurnCounts, activeAgendaItem.id]);
+  }, [speakingRequests, currentEvent?.id, activeAgendaItem.id, totalTurnCounts, sessionTurnCounts]);
 
   // Currently active speaker turn for this session (status === 'SPEAKING')
   const activeSpeakerTurn = useMemo(() => {
-    return speakingTurns.find(t => t.session_id === activeAgendaItem.id && t.status === 'SPEAKING');
-  }, [speakingTurns, activeAgendaItem.id]);
+    return speakingTurns.find(t => t.event_id === currentEvent?.id && t.session_id === activeAgendaItem.id && t.status === 'SPEAKING');
+  }, [speakingTurns, currentEvent?.id, activeAgendaItem.id]);
 
   // Unique learners who have spoken in this session
   const spokenLearnerIds = useMemo(() => {
     const ids = new Set<string>();
     speakingTurns
-      .filter(t => t.session_id === activeAgendaItem.id && t.status === 'SPOKEN')
+      .filter(t => t.event_id === currentEvent?.id && t.session_id === activeAgendaItem.id && t.status !== 'CANCELLED')
       .forEach(t => ids.add(t.learner_id));
     return ids;
-  }, [speakingTurns, activeAgendaItem.id]);
+  }, [speakingTurns, currentEvent?.id, activeAgendaItem.id]);
 
   const spokenLearnersCount = spokenLearnerIds.size;
 
@@ -754,7 +770,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                 Live session: <strong className="text-slate-800 dark:text-slate-200">{activeAgendaItem.title}</strong>
               </div>
               <span className="text-[11px] text-slate-400">
-                Priority: Lowest Turns → Earliest Hand
+                Priority: Lowest Total Turns → Lowest Session Turns → Earliest Hand
               </span>
             </div>
 
@@ -821,7 +837,8 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                 <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
                   {waitingRequests.map((req, idx) => {
                     const learner = learners.find(l => l.id === req.learner_id);
-                    const turnCount = sessionTurnCounts[req.learner_id] || 0;
+                    const sessionTurns = sessionTurnCounts[req.learner_id] || 0;
+                    const totalTurns = totalTurnCounts[req.learner_id] || 0;
                     const isCalling = callingSpeakerId === req.id;
 
                     return (
@@ -849,17 +866,22 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                                   {learner.bench}
                                 </span>
                               )}
-                              <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
-                                turnCount === 0
-                                  ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
-                                  : 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300'
-                              }`}>
-                                {turnCount === 0 ? '0 turns in session' : `${turnCount} turn${turnCount > 1 ? 's' : ''}`}
-                              </span>
                             </div>
-                            <div className="text-[10px] text-slate-400 truncate">
-                              {learner?.constituency_number ? `#${learner.constituency_number} ${learner?.constituency_name || ''} · ` : (learner?.constituency_name ? `${learner.constituency_name} · ` : '')}
-                              Raised {new Date(req.requested_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                            <div className="text-[10px] text-slate-500 dark:text-slate-400 font-medium truncate">
+                              {learner?.constituency_number ? `#${learner.constituency_number} ` : ''}{learner?.constituency_name || ''}
+                            </div>
+                            <div className="flex items-center gap-1.5 flex-wrap text-[10px] mt-0.5">
+                              <span className="font-semibold text-slate-600 dark:text-slate-300">
+                                Session: {sessionTurns} {sessionTurns === 1 ? 'turn' : 'turns'}
+                              </span>
+                              <span className="text-slate-300 dark:text-slate-600">·</span>
+                              <span className="font-semibold text-indigo-600 dark:text-indigo-400">
+                                Total: {totalTurns} {totalTurns === 1 ? 'turn' : 'turns'}
+                              </span>
+                              <span className="text-slate-300 dark:text-slate-600">·</span>
+                              <span className="text-slate-400 font-mono">
+                                Raised: {new Date(req.requested_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                              </span>
                             </div>
                           </div>
                         </div>
@@ -1530,7 +1552,8 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   const learner = learners.find(l => l.id === learnerId);
                   const sortedTurns = [...turns].sort((a, b) => new Date(b.called_at).getTime() - new Date(a.called_at).getTime());
                   const latestTurn = sortedTurns[0];
-                  const currentSessionTurns = turns.filter(t => t.session_id === activeAgendaItem.id).length;
+                  const currentSessionTurns = sessionTurnCounts[learnerId] || 0;
+                  const eventTotalTurns = totalTurnCounts[learnerId] || turns.length;
 
                   return {
                     learnerId,
@@ -1541,6 +1564,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                     bench: learner?.bench || 'Independent',
                     turns: sortedTurns,
                     totalTurns: turns.length,
+                    eventTotalTurns,
                     currentSessionTurns,
                     latestTurnAt: latestTurn?.called_at
                   };
@@ -1619,10 +1643,10 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                         <div className="flex items-center gap-3 shrink-0 self-end sm:self-center">
                           <div className="text-right">
                             <div className="text-xs font-black text-slate-900 dark:text-white">
-                              {p.totalTurns} Turn{p.totalTurns > 1 ? 's' : ''} Recorded
+                              Event Total: {p.eventTotalTurns} {p.eventTotalTurns === 1 ? 'Turn' : 'Turns'}
                             </div>
                             <div className="text-[10px] text-slate-400">
-                              ({p.currentSessionTurns} in this session)
+                              Session: {p.currentSessionTurns} {p.currentSessionTurns === 1 ? 'turn' : 'turns'}
                             </div>
                           </div>
                           <button
@@ -1655,7 +1679,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                                       {turn.session_name || 'Assembly Session'}
                                     </span>
                                     <div className="text-[10px] text-slate-400">
-                                      Called by {turn.called_by || 'Speaker'}
+                                      Speaking turn #{turn.sequence_number || tIdx + 1} · Called by {turn.called_by || 'Speaker'}
                                     </div>
                                   </div>
                                 </div>
