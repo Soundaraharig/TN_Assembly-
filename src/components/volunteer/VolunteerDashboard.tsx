@@ -421,10 +421,16 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
       try {
         if (eventId) {
           await storageService.fetchVolunteerPortalData(eventId, volunteer?.id || '');
+          if (hasQuestionReviewAccess) {
+            await storageService.fetchProceedingsQuestionsOnDemand(eventId);
+          }
         }
         if (isMounted && currentVersion === fetchVersionRef.current) {
           const updated = storageService.getYuvaAssignments(eventId);
           setYuvaAssignments(updated);
+          const freshQs = storageService.getProceedingsQuestions(eventId);
+          setQuestions(freshQs);
+          setSelectedQuestionForReview(prev => (prev && !freshQs.some(q => q.id === prev.id) ? null : prev));
           setIsInitialLoading(false);
         }
       } catch (err) {
@@ -445,7 +451,9 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     const unsubscribe = storageService.subscribe(() => {
       if (isMounted) {
         setYuvaAssignments(storageService.getYuvaAssignments(eventId));
-        setQuestions(storageService.getProceedingsQuestions(eventId));
+        const freshQs = storageService.getProceedingsQuestions(eventId);
+        setQuestions(freshQs);
+        setSelectedQuestionForReview(prev => (prev && !freshQs.some(q => q.id === prev.id) ? null : prev));
         setAttendanceRefreshKey(k => k + 1);
         setIsInitialLoading(false);
       }
@@ -463,14 +471,16 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
       unsubscribe();
       clearTimeout(safetyTimeout);
     };
-  }, [eventId, volunteer?.id]);
+  }, [eventId, volunteer?.id, hasQuestionReviewAccess]);
 
-  // Real-time listener for question notifications
+  // Real-time listener for question notifications and question deletions/updates
   useEffect(() => {
     const handleQuestionNotification = (e: any) => {
       const detail = e.detail;
       if (detail && (!detail.event_id || detail.event_id === eventId)) {
-        setQuestions(storageService.getProceedingsQuestions(eventId));
+        const freshQs = storageService.getProceedingsQuestions(eventId);
+        setQuestions(freshQs);
+        setSelectedQuestionForReview(prev => (prev && !freshQs.some(q => q.id === prev.id) ? null : prev));
         if (detail.isNewSubmission && hasQuestionReviewAccess) {
           onShowToast(
             'New Question Submitted',
@@ -480,9 +490,29 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
         }
       }
     };
+
+    const handleQuestionUpdate = (e: any) => {
+      const detail = e.detail;
+      if (!detail || !detail.eventId || detail.eventId === eventId) {
+        const freshQs = storageService.getProceedingsQuestions(eventId);
+        setQuestions(freshQs);
+        setSelectedQuestionForReview(prev => (prev && !freshQs.some(q => q.id === prev.id) ? null : prev));
+      }
+    };
+
+    const handleStorageChange = () => {
+      const freshQs = storageService.getProceedingsQuestions(eventId);
+      setQuestions(freshQs);
+      setSelectedQuestionForReview(prev => (prev && !freshQs.some(q => q.id === prev.id) ? null : prev));
+    };
+
     window.addEventListener('tn_question_notification', handleQuestionNotification as EventListener);
+    window.addEventListener('tn_assembly_proceedings_question_update', handleQuestionUpdate as EventListener);
+    window.addEventListener('storage', handleStorageChange);
     return () => {
       window.removeEventListener('tn_question_notification', handleQuestionNotification as EventListener);
+      window.removeEventListener('tn_assembly_proceedings_question_update', handleQuestionUpdate as EventListener);
+      window.removeEventListener('storage', handleStorageChange);
     };
   }, [eventId, hasQuestionReviewAccess, onShowToast]);
 
