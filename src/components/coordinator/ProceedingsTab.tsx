@@ -110,9 +110,34 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
 
     const unsub = storageService.subscribe(() => {
       refreshData();
+      setSelectedQuestion(prev => {
+        if (!prev) return null;
+        const fresh = storageService.getProceedingsQuestions(authoritativeEventId || eventSlug || '').find(q => q.id === prev.id);
+        return fresh || null;
+      });
     });
-    return () => unsub();
-  }, [authoritativeEventId, eventSlug]);
+
+    const handleQuestionUpdate = (e: any) => {
+      const detail = e.detail;
+      if (!detail || !detail.eventId || detail.eventId === authoritativeEventId || detail.eventId === eventId) {
+        refreshData();
+        setSelectedQuestion(prev => {
+          if (!prev) return null;
+          const fresh = storageService.getProceedingsQuestions(authoritativeEventId || eventSlug || '').find(q => q.id === prev.id);
+          return fresh || null;
+        });
+      }
+    };
+
+    window.addEventListener('tn_assembly_proceedings_question_update', handleQuestionUpdate as EventListener);
+    window.addEventListener('storage', refreshData);
+
+    return () => {
+      unsub();
+      window.removeEventListener('tn_assembly_proceedings_question_update', handleQuestionUpdate as EventListener);
+      window.removeEventListener('storage', refreshData);
+    };
+  }, [authoritativeEventId, eventSlug, eventId]);
 
   const setTab = (tab: 'questions' | 'motions' | 'bills') => {
     setSearchParams({ tab });
@@ -701,24 +726,40 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                         </td>
                         <td className="p-3.5 font-semibold text-slate-500">{q.question_type}</td>
                         <td className="p-3.5">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                            q.status === 'Approved'
-                              ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
-                              : q.status === 'Starred'
-                              ? 'bg-amber-500/10 text-amber-500 border-amber-500/30'
-                              : q.status === 'Rejected'
-                              ? 'bg-rose-500/10 text-rose-600 border-rose-500/30'
-                              : q.status === 'Under Review'
-                              ? 'bg-blue-500/10 text-blue-600 border-blue-500/30'
-                              : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30'
-                          }`}>
-                            {q.status === 'Submitted' ? 'Pending Approval' : q.status}
-                          </span>
-                          {q.flagged_for_admin && (
-                            <span className="block text-[9px] text-blue-600 dark:text-blue-400 font-semibold mt-0.5">
-                              ★ Flagged by {q.reviewed_by || 'Volunteer'}
-                            </span>
-                          )}
+                          {(() => {
+                            const canonicalStatus = normalizeStatus(q.status);
+                            const isUnderReview = canonicalStatus === 'Under Review';
+                            const isApproved = canonicalStatus === 'Approved';
+                            const isStarred = canonicalStatus === 'Starred';
+                            const isRejected = canonicalStatus === 'Rejected';
+
+                            return (
+                              <>
+                                <span className={`px-2.5 py-1 rounded-full text-[10px] font-black tracking-wide border shadow-xs inline-flex items-center gap-1.5 ${
+                                  isApproved
+                                    ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30'
+                                    : isStarred
+                                    ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30'
+                                    : isRejected
+                                    ? 'bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/30'
+                                    : isUnderReview
+                                    ? 'bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/40 font-black ring-1 ring-blue-400/30'
+                                    : 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30 font-bold'
+                                }`}>
+                                  {isUnderReview && <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />}
+                                  {canonicalStatus === 'Submitted' ? 'Pending Approval' : canonicalStatus}
+                                </span>
+                                {(() => {
+                                  const reviewerDisplay = q.reviewed_by || (q.reviewer_name ? `${q.reviewer_name} (${q.reviewer_role || 'Reviewer'})` : null);
+                                  return (q.flagged_for_admin || isUnderReview || reviewerDisplay) && reviewerDisplay ? (
+                                    <span className="block text-[10px] text-blue-700 dark:text-blue-400 font-bold mt-1">
+                                      ★ Flagged by {reviewerDisplay}
+                                    </span>
+                                  ) : null;
+                                })()}
+                              </>
+                            );
+                          })()}
                         </td>
                         <td className="p-3.5 font-mono text-slate-400">#{q.queue_order || idx + 1}</td>
                         <td className="p-3.5 text-right">
@@ -733,7 +774,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                                 <button
                                   type="button"
                                   onClick={() => setSelectedQuestion(q)}
-                                  title="View Full Question Details"
+                                  title="View / Review Question Details"
                                   className="p-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500 hover:text-white text-blue-600 dark:text-blue-400 transition-all duration-200 cursor-pointer flex items-center justify-center"
                                 >
                                   <Eye className="w-3.5 h-3.5 stroke-2" />
@@ -804,9 +845,14 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
               l => l.id === selectedQuestion.student_id || l.full_name?.toLowerCase() === selectedQuestion.student_name?.toLowerCase()
             );
             const currentCanonical = normalizeStatus(selectedQuestion.status);
+            const isUnderReview = currentCanonical === 'Under Review' || selectedQuestion.status === 'Under Review';
             const isApproved = currentCanonical === 'Approved';
             const isStarred = currentCanonical === 'Starred';
             const isRejected = currentCanonical === 'Rejected';
+
+            const reviewerName = selectedQuestion.reviewer_name || (selectedQuestion.reviewed_by ? selectedQuestion.reviewed_by.replace(/\s*\([^)]*\)$/, '') : 'Reviewer');
+            const reviewerRole = selectedQuestion.reviewer_role || (selectedQuestion.reviewed_by?.includes('Journalist') ? 'Journalist' : 'Administrator');
+            const reviewerFullDisplay = selectedQuestion.reviewed_by || `${reviewerName} (${reviewerRole})`;
 
             return (
               <div
@@ -827,7 +873,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                       <div>
                         <div className="flex items-center gap-2">
                           <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
-                            Question Details
+                            Question Details &amp; Review
                           </h3>
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                             Queue #{selectedQuestion.queue_order || '—'}
@@ -851,13 +897,22 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                   {/* Modal Body */}
                   <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
                     {/* Metadata Grid */}
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 text-xs">
                       <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
                         <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
                           Student Member
                         </span>
-                        <p className="font-bold text-slate-900 dark:text-white">
+                        <p className="font-bold text-slate-900 dark:text-white truncate">
                           {selectedQuestion.student_name}
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
+                          Member / Seat No.
+                        </span>
+                        <p className="font-bold text-slate-800 dark:text-slate-200 font-mono">
+                          {submitter?.constituency_number !== undefined ? `#${submitter.constituency_number}` : (selectedQuestion.seat_number ? `#${selectedQuestion.seat_number}` : '—')}
                         </p>
                       </div>
 
@@ -878,8 +933,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                         <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
                           Constituency
                         </span>
-                        <p className="font-bold text-slate-800 dark:text-slate-200 font-mono">
-                          {submitter?.constituency_number !== undefined ? `#${submitter.constituency_number} ` : ''}
+                        <p className="font-bold text-slate-800 dark:text-slate-200 font-mono truncate">
                           {submitter?.constituency_name || selectedQuestion.constituency || 'Assembly Delegate'}
                         </p>
                       </div>
@@ -888,17 +942,8 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                         <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
                           Party
                         </span>
-                        <p className="font-semibold text-slate-800 dark:text-slate-200">
-                          {submitter?.party_name || 'Assembly Delegate'}
-                        </p>
-                      </div>
-
-                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
-                          Committee
-                        </span>
                         <p className="font-semibold text-slate-800 dark:text-slate-200 truncate">
-                          {submitter?.committee_name || 'Standing Committee'}
+                          {submitter?.party_name || 'Assembly Delegate'}
                         </p>
                       </div>
 
@@ -906,7 +951,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                         <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
                           Target Ministry
                         </span>
-                        <p className="font-bold text-amber-600 dark:text-amber-400">
+                        <p className="font-bold text-amber-600 dark:text-amber-400 truncate">
                           {selectedQuestion.ministry}
                         </p>
                       </div>
@@ -924,22 +969,26 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                         <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
                           Status
                         </span>
-                        <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold border ${
+                        <span className={`inline-block px-2.5 py-1 rounded-md text-[11px] font-black border shadow-xs ${
                           isApproved
-                            ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
+                            ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30'
                             : isStarred
-                            ? 'bg-amber-500/10 text-amber-500 border-amber-500/30'
+                            ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30'
                             : isRejected
-                            ? 'bg-rose-500/10 text-rose-600 border-rose-500/30'
-                            : selectedQuestion.status === 'Under Review'
-                            ? 'bg-blue-500/10 text-blue-600 border-blue-500/30'
-                            : 'bg-amber-500/10 text-amber-600 border-amber-500/30'
+                            ? 'bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/30'
+                            : isUnderReview
+                            ? 'bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/40 ring-1 ring-blue-400/30'
+                            : 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30 font-bold'
                         }`}>
-                          {selectedQuestion.status === 'Submitted' ? 'Pending Approval' : selectedQuestion.status}
+                          {isUnderReview
+                            ? 'Under Review'
+                            : selectedQuestion.status === 'Submitted'
+                            ? 'Pending Approval'
+                            : selectedQuestion.status}
                         </span>
                       </div>
 
-                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 col-span-2 sm:col-span-1">
                         <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
                           Submitted At
                         </span>
@@ -950,33 +999,67 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                     </div>
 
                     {/* Review Details if Forwarded / Under Review */}
-                    {(selectedQuestion.reviewed_by || selectedQuestion.flagged_for_admin) && (
-                      <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs text-blue-800 dark:text-blue-300 space-y-1">
-                        <div className="flex items-center justify-between font-bold">
-                          <span>Forwarded to Main Admin by: <strong>{selectedQuestion.reviewed_by || 'Reviewer'}</strong></span>
+                    {(selectedQuestion.reviewed_by || selectedQuestion.flagged_for_admin || isUnderReview) && (
+                      <div className="p-4 rounded-2xl bg-blue-500/10 border border-blue-500/30 text-xs text-blue-900 dark:text-blue-200 space-y-2.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 font-bold text-sm">
+                            <span className="text-blue-600 dark:text-blue-400 font-black">★</span>
+                            <span>Flagged for Main Admin Review</span>
+                          </div>
                           {selectedQuestion.reviewed_at && (
-                            <span className="font-mono text-[11px] font-normal">{new Date(selectedQuestion.reviewed_at).toLocaleString()}</span>
+                            <span className="font-mono text-[11px] text-blue-700/80 dark:text-blue-300/80">
+                              {new Date(selectedQuestion.reviewed_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                            </span>
                           )}
                         </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-blue-500/20 text-xs">
+                          <div>
+                            <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500 dark:text-slate-400 block mb-0.5">
+                              Flagged By
+                            </span>
+                            <div className="flex items-center gap-1.5 font-extrabold text-blue-950 dark:text-blue-100">
+                              <span>{reviewerName}</span>
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-blue-500/20 text-blue-800 dark:text-blue-300 border border-blue-500/30">
+                                {reviewerRole}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div>
+                            <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500 dark:text-slate-400 block mb-0.5">
+                              Attribution
+                            </span>
+                            <p className="font-semibold text-slate-700 dark:text-slate-300">
+                              ★ Flagged by {reviewerFullDisplay}
+                            </p>
+                          </div>
+                        </div>
+
                         {selectedQuestion.review_note && (
-                          <p className="text-slate-700 dark:text-slate-300 italic font-normal">
-                            &ldquo;{selectedQuestion.review_note}&rdquo;
-                          </p>
+                          <div className="pt-2 border-t border-blue-500/20">
+                            <span className="text-[10px] uppercase font-bold text-blue-700 dark:text-blue-400 tracking-wider block mb-1">
+                              Reviewer Recommendation Note
+                            </span>
+                            <p className="p-3 rounded-xl bg-white/60 dark:bg-slate-900/60 border border-blue-500/20 text-slate-800 dark:text-slate-200 text-xs italic font-medium leading-relaxed">
+                              &ldquo;{selectedQuestion.review_note}&rdquo;
+                            </p>
+                          </div>
                         )}
                       </div>
                     )}
 
-                    {/* Full Question Text */}
+                    {/* Complete Original Question Text */}
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                          Full Question
+                          Complete Original Question
                         </span>
                         <span className="text-[11px] text-slate-400 font-medium">
                           {selectedQuestion.question_text.length} characters
                         </span>
                       </div>
-                      <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 font-sans text-sm leading-relaxed text-slate-900 dark:text-slate-100 whitespace-pre-wrap break-words select-text">
+                      <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 font-sans text-sm sm:text-base leading-relaxed text-slate-900 dark:text-slate-100 whitespace-pre-wrap break-words select-text max-h-[40vh] overflow-y-auto">
                         {selectedQuestion.question_text}
                       </div>
                     </div>

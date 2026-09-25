@@ -1659,12 +1659,26 @@ class StorageService {
           const remote = pqMap.get(local.id)!;
           const localT = new Date(local.updated_at || local.created_at || 0).getTime();
           const remoteT = new Date(remote.updated_at || remote.created_at || 0).getTime();
-          const mergedStatus = (remote.status === 'Approved' || remote.status === 'Starred' || remote.status === 'Rejected')
-            ? remote.status
+          const mergedStatus = (remote.status === 'Approved' || local.status === 'Approved')
+            ? 'Approved'
+            : (remote.status === 'Starred' || local.status === 'Starred')
+            ? 'Starred'
+            : (remote.status === 'Rejected' || local.status === 'Rejected')
+            ? 'Rejected'
+            : (remote.status === 'Under Review' || local.status === 'Under Review')
+            ? 'Under Review'
             : (local.status || remote.status);
           pqMap.set(local.id, {
             ...(localT >= remoteT ? local : remote),
-            status: mergedStatus
+            status: mergedStatus,
+            reviewed_by: remote.reviewed_by || local.reviewed_by,
+            flagged_for_admin: Boolean(remote.flagged_for_admin || local.flagged_for_admin),
+            review_note: remote.review_note || local.review_note,
+            reviewed_at: remote.reviewed_at || local.reviewed_at,
+            reviewer_name: remote.reviewer_name || local.reviewer_name,
+            reviewer_role: remote.reviewer_role || local.reviewer_role,
+            approved_by: remote.approved_by || local.approved_by,
+            approved_at: remote.approved_at || local.approved_at
           });
         } else if (!local.event_id || !touchedEventIds.has(local.event_id)) {
           // Belongs to another event not in this batch, keep it
@@ -3641,7 +3655,15 @@ class StorageService {
                   : (local.status || remoteQ.status);
                 pqMap.set(remoteQ.id, {
                   ...(localT >= remoteT ? local : remoteQ),
-                  status: mergedStatus
+                  status: mergedStatus,
+                  reviewed_by: remoteQ.reviewed_by || local.reviewed_by,
+                  flagged_for_admin: Boolean(remoteQ.flagged_for_admin || local.flagged_for_admin),
+                  review_note: remoteQ.review_note || local.review_note,
+                  reviewed_at: remoteQ.reviewed_at || local.reviewed_at,
+                  reviewer_name: remoteQ.reviewer_name || local.reviewer_name,
+                  reviewer_role: remoteQ.reviewer_role || local.reviewer_role,
+                  approved_by: remoteQ.approved_by || local.approved_by,
+                  approved_at: remoteQ.approved_at || local.approved_at
                 });
               }
             });
@@ -3650,6 +3672,9 @@ class StorageService {
             this.notify();
             if (typeof window !== 'undefined') {
               window.dispatchEvent(new CustomEvent('tn_question_notification', { detail: msg.payload }));
+              window.dispatchEvent(new CustomEvent('tn_assembly_proceedings_question_update', {
+                detail: { type: 'update', eventId: msg.payload.eventId, question: msg.payload.question }
+              }));
               window.dispatchEvent(new Event('storage'));
             }
           }
@@ -4396,12 +4421,26 @@ class StorageService {
         } else {
           const localT = new Date(q.updated_at || q.created_at || 0).getTime();
           const remoteT = new Date(existing.updated_at || existing.created_at || 0).getTime();
-          const mergedStatus = localT >= remoteT
-            ? (q.status || existing.status)
-            : (existing.status || q.status);
+          const mergedStatus = (existing.status === 'Approved' || q.status === 'Approved')
+            ? 'Approved'
+            : (existing.status === 'Starred' || q.status === 'Starred')
+            ? 'Starred'
+            : (existing.status === 'Rejected' || q.status === 'Rejected')
+            ? 'Rejected'
+            : (existing.status === 'Under Review' || q.status === 'Under Review')
+            ? 'Under Review'
+            : (localT >= remoteT ? (q.status || existing.status) : (existing.status || q.status));
           pqMap.set(q.id, {
             ...(localT >= remoteT ? q : existing),
-            status: mergedStatus
+            status: mergedStatus,
+            reviewed_by: q.reviewed_by || existing.reviewed_by,
+            flagged_for_admin: Boolean(q.flagged_for_admin || existing.flagged_for_admin),
+            review_note: q.review_note || existing.review_note,
+            reviewed_at: q.reviewed_at || existing.reviewed_at,
+            reviewer_name: q.reviewer_name || existing.reviewer_name,
+            reviewer_role: q.reviewer_role || existing.reviewer_role,
+            approved_by: q.approved_by || existing.approved_by,
+            approved_at: q.approved_at || existing.approved_at
           });
         }
       });
@@ -13765,10 +13804,27 @@ class StorageService {
             const remote = pqMap.get(lq.id)!;
             const localT = new Date(lq.updated_at || lq.created_at || 0).getTime();
             const remoteT = new Date(remote.updated_at || remote.created_at || 0).getTime();
+            const mergedStatus = (remote.status === 'Approved' || lq.status === 'Approved')
+              ? 'Approved'
+              : (remote.status === 'Starred' || lq.status === 'Starred')
+              ? 'Starred'
+              : (remote.status === 'Rejected' || lq.status === 'Rejected')
+              ? 'Rejected'
+              : (remote.status === 'Under Review' || lq.status === 'Under Review')
+              ? 'Under Review'
+              : (localT >= remoteT ? (lq.status || remote.status) : (remote.status || lq.status));
             pqMap.set(lq.id, {
               ...remote,
               ...lq,
-              status: localT >= remoteT ? (lq.status || remote.status) : (remote.status || lq.status),
+              status: mergedStatus,
+              reviewed_by: remote.reviewed_by || lq.reviewed_by,
+              flagged_for_admin: Boolean(remote.flagged_for_admin || lq.flagged_for_admin),
+              review_note: remote.review_note || lq.review_note,
+              reviewed_at: remote.reviewed_at || lq.reviewed_at,
+              reviewer_name: remote.reviewer_name || lq.reviewer_name,
+              reviewer_role: remote.reviewer_role || lq.reviewer_role,
+              approved_by: remote.approved_by || lq.approved_by,
+              approved_at: remote.approved_at || lq.approved_at,
               updated_at: localT >= remoteT ? lq.updated_at : remote.updated_at
             });
           } else {
@@ -13965,8 +14021,12 @@ class StorageService {
     }
 
     // Role check: Only Administrator or Journalist volunteer types (or admins) can review and approach Main Admin
-    const vRole = (volunteer.role || volunteer.volunteer_type || '').toLowerCase().trim();
-    const canReview = vRole === 'administrator' || vRole === 'journalist' || vRole === 'super_admin' || vRole === 'coordinator';
+    const vType = (volunteer.volunteer_type || '').toLowerCase().trim();
+    const vRole = (volunteer.role || '').toLowerCase().trim();
+    const canReview =
+      vType === 'administrator' || vType === 'journalist' ||
+      vRole === 'administrator' || vRole === 'journalist' ||
+      vRole === 'super_admin' || vRole === 'coordinator';
     if (!canReview) {
       return { success: false, error: 'Unauthorized: Volunteer does not have question review privileges.' };
     }
@@ -13976,11 +14036,18 @@ class StorageService {
       return { success: false, error: 'Event isolation violation: Volunteer cannot review questions from another event.' };
     }
 
+    const reviewerRole = 
+      (volunteer.volunteer_type === 'Administrator' || volunteer.role === 'Administrator') ? 'Administrator' :
+      (volunteer.volunteer_type === 'Journalist' || volunteer.role === 'Journalist') ? 'Journalist' :
+      (volunteer.volunteer_type || (volunteer.role && volunteer.role !== 'volunteer' ? volunteer.role : 'Administrator'));
+
     const updatedQ: ProceedingsQuestion = {
       ...targetQ,
       status: 'Under Review',
       flagged_for_admin: true,
-      reviewed_by: `${volunteer.name} (${volunteer.role || 'Reviewer'})`,
+      reviewed_by: `${volunteer.name} (${reviewerRole})`,
+      reviewer_name: volunteer.name,
+      reviewer_role: reviewerRole,
       reviewed_at: new Date().toISOString(),
       review_note: note || targetQ.review_note,
       updated_at: new Date().toISOString()
@@ -13995,9 +14062,9 @@ class StorageService {
       this.logAudit({
         event_id: targetEventId,
         action: 'QUESTION_REVIEWED_APPROACHED_ADMIN',
-        actor_role: volunteer.role || 'volunteer',
+        actor_role: reviewerRole,
         actor_name: volunteer.name,
-        details: `Question #${questionId} reviewed and flagged for Main Admin attention by ${volunteer.name} (${volunteer.role || 'Volunteer'})`
+        details: `Question #${questionId} reviewed and flagged for Main Admin attention by ${volunteer.name} (${reviewerRole})`
       });
 
       this.broadcast('question_update', { eventId: targetEventId, question: updatedQ, approachedAdmin: true }).catch(() => {});
@@ -14007,6 +14074,13 @@ class StorageService {
       this.syncEventStateToSupabase(syncId).catch(err => {
         console.warn('[Supabase] reviewAndApproachMainAdmin sync error:', err);
       });
+    }
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('storage'));
+      window.dispatchEvent(new CustomEvent('tn_assembly_proceedings_question_update', {
+        detail: { type: 'update', questionId, eventId: targetEventId, question: updatedQ }
+      }));
     }
 
     return { success: true, question: updatedQ };

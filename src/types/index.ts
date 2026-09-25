@@ -519,6 +519,9 @@ export interface ProceedingsQuestion {
   reviewed_at?: string;
   flagged_for_admin?: boolean;
   review_note?: string;
+  reviewer_name?: string;
+  reviewer_role?: string;
+  seat_number?: string;
 }
 
 export interface ProceedingsMotion {
