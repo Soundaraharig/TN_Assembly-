@@ -793,7 +793,8 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           elections={currentElections}
           flashVotes={currentFlashVotes}
           currentEvent={activeEvent}
-          eventName={activeEvent.college_name}
+          isSuperAdmin={Boolean(isSuperAdmin)}
+          userSession={props.userSession}
           onShowToast={props.addToast}
           onSetCurrentAgendaItem={props.handleSetCurrentAgendaItem}
           onUpdatePartyBench={(partyId, bench) => {

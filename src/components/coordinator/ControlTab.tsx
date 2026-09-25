@@ -8,7 +8,8 @@ import type {
   LiveFlashVote,
   CollegeEvent,
   SpeakingRequest,
-  SpeakingTurn
+  SpeakingTurn,
+  UserSession
 } from '../../types';
 import {
   Clock,
@@ -47,6 +48,8 @@ interface ControlTabProps {
   flashVotes?: LiveFlashVote[];
   currentEvent?: CollegeEvent | null;
   eventName?: string;
+  isSuperAdmin?: boolean;
+  userSession?: UserSession | null;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
   onSetCurrentAgendaItem?: (eventId: string, itemId: string) => void;
   onUpdatePartyBench?: (partyId: string, bench: 'Ruling' | 'Opposition' | 'Independent') => void;
@@ -63,6 +66,8 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   flashVotes: _flashVotes = [],
   currentEvent,
   eventName: _eventName = 'TN Youth Assembly',
+  isSuperAdmin = false,
+  userSession = null,
   onShowToast,
   onSetCurrentAgendaItem,
   onUpdatePartyBench,
@@ -229,6 +234,47 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   const [historySearchQuery, setHistorySearchQuery] = useState('');
   const [historySessionFilter, setHistorySessionFilter] = useState<string>('all');
   const [selectedHistoryLearnerId, setSelectedHistoryLearnerId] = useState<string | null>(null);
+  const [showResetSpeakingCountsModal, setShowResetSpeakingCountsModal] = useState(false);
+  const [isResettingSpeakingCounts, setIsResettingSpeakingCounts] = useState(false);
+  const isResettingSpeakingRef = useRef(false);
+
+  const canResetSpeakingCounts = Boolean(
+    isSuperAdmin ||
+    (userSession?.email && (
+      userSession.email.toLowerCase().includes('admin') ||
+      userSession.email.toLowerCase().includes('superadmin') ||
+      userSession.email.toLowerCase().includes('organiser')
+    ))
+  );
+
+  const handleConfirmResetSpeakingCounts = async () => {
+    if (!currentEvent?.id || isResettingSpeakingRef.current) return;
+    isResettingSpeakingRef.current = true;
+    setIsResettingSpeakingCounts(true);
+
+    try {
+      const res = await storageService.resetSpeakingCounts(currentEvent.id, userSession);
+      if (res.success) {
+        const reqs = storageService.getSpeakingRequests(currentEvent.id);
+        const turns = storageService.getSpeakingTurns(currentEvent.id);
+        setSpeakingRequests([...reqs]);
+        setSpeakingTurns([...turns]);
+        setShowResetSpeakingCountsModal(false);
+        onShowToast(
+          'Speaking Counts Reset',
+          `Speaking count statistics have been reset to zero (${res.resetCount || 0} turn${res.resetCount === 1 ? '' : 's'} archived).`,
+          'success'
+        );
+      } else {
+        onShowToast('Reset Failed', res.error || 'Failed to reset speaking counts', 'error');
+      }
+    } catch (err: any) {
+      onShowToast('Reset Error', err?.message || 'Unexpected error resetting speaking counts', 'error');
+    } finally {
+      isResettingSpeakingRef.current = false;
+      setIsResettingSpeakingCounts(false);
+    }
+  };
 
   // Sync active session and speaking floor data with persistent storage & realtime
   useEffect(() => {
@@ -789,6 +835,18 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   <Hand className="w-3.5 h-3.5 rotate-180" />
                   <span>HANDS DOWN</span>
                 </button>
+
+                {canResetSpeakingCounts && (
+                  <button
+                    type="button"
+                    onClick={() => setShowResetSpeakingCountsModal(true)}
+                    className="px-2.5 py-1 rounded-lg border border-amber-300 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-[11px] font-black uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer shadow-xs"
+                    title="Reset speaking counts and priority baseline for this event"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>RESET SPEAKING COUNTS</span>
+                  </button>
+                )}
 
                 <button
                   type="button"
@@ -1630,8 +1688,8 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   const learner = learners.find(l => l.id === learnerId);
                   const sortedTurns = [...turns].sort((a, b) => new Date(b.called_at).getTime() - new Date(a.called_at).getTime());
                   const latestTurn = sortedTurns[0];
-                  const currentSessionTurns = sessionTurnCounts[learnerId] || 0;
-                  const eventTotalTurns = totalTurnCounts[learnerId] || turns.length;
+                  const currentSessionTurns = sessionTurnCounts[learnerId] ?? 0;
+                  const eventTotalTurns = totalTurnCounts[learnerId] ?? turns.filter(t => t.status !== 'CANCELLED').length;
 
                   return {
                     learnerId,
@@ -1838,6 +1896,101 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                 className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black shadow-md shadow-rose-900/20 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
               >
                 {isLoweringHands ? 'Lowering...' : 'Lower All Hands'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Admin Reset Speaking Counts Confirmation Modal */}
+      {showResetSpeakingCountsModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200"
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !isResettingSpeakingCounts) {
+              setShowResetSpeakingCountsModal(false);
+            }
+          }}
+        >
+          <div
+            className="relative w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-6 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+              }
+              if (e.key === 'Escape' && !isResettingSpeakingCounts) {
+                setShowResetSpeakingCountsModal(false);
+              }
+            }}
+          >
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 flex items-center justify-center shrink-0 mt-0.5">
+                <RotateCcw className="w-5 h-5 text-amber-500" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-black text-slate-900 dark:text-white">
+                  RESET SPEAKING COUNTS?
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  This will reset the speaking-count statistics for <strong className="text-slate-700 dark:text-slate-300">{currentEvent?.college_name || 'this event'}</strong>.
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-xl bg-slate-50 dark:bg-slate-800/60 p-3.5 space-y-2.5 text-xs border border-slate-100 dark:border-slate-800">
+              <div>
+                <span className="font-bold text-slate-700 dark:text-slate-300">It will reset:</span>
+                <ul className="list-disc list-inside text-slate-600 dark:text-slate-400 mt-1 space-y-0.5 text-[11px]">
+                  <li>Total speaking count (all delegates &rarr; 0 turns)</li>
+                  <li>Session speaking count (current session &rarr; 0 turns)</li>
+                  <li>Speaking priority history / turns baseline</li>
+                </ul>
+              </div>
+
+              <div className="pt-2 border-t border-slate-200/60 dark:border-slate-700/60">
+                <span className="font-bold text-slate-700 dark:text-slate-300">It will NOT reset:</span>
+                <ul className="list-disc list-inside text-slate-500 dark:text-slate-400 mt-1 space-y-0.5 text-[11px]">
+                  <li>Participant allocations & attendance</li>
+                  <li>Votes, Agenda, Ministries & Cabinet assignments</li>
+                  <li>Questions, Bills, Elections & Jury scores</li>
+                  <li>Active raised hands in queue (waiting hands preserved)</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-300 text-[11px] leading-relaxed">
+              <strong>WARNING:</strong> This action cannot be undone unless the existing speaking history is restored from the application's data/history system.
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowResetSpeakingCountsModal(false)}
+                disabled={isResettingSpeakingCounts}
+                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                CANCEL
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmResetSpeakingCounts}
+                disabled={isResettingSpeakingCounts}
+                className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-black shadow-md shadow-amber-900/20 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isResettingSpeakingCounts ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Resetting...</span>
+                  </>
+                ) : (
+                  <>
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>RESET SPEAKING COUNTS</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

@@ -4074,6 +4074,29 @@ class StorageService {
             }
           }
         })
+        .on('broadcast', { event: 'speaking_reset' }, (msg: any) => {
+          const p = msg?.payload;
+          if (p?.eventId) {
+            const all = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+            const now = p.resetAt || new Date().toISOString();
+            const next = all.map(t => (t.event_id === p.eventId && t.status !== 'CANCELLED')
+              ? { ...t, status: 'CANCELLED' as SpeakingTurnStatus, completed_at: now }
+              : t
+            );
+            this.setItem(STORAGE_KEYS.SPEAKING_TURNS, next);
+            if (typeof localStorage !== 'undefined') {
+              try {
+                localStorage.setItem(`tn_assembly_speaking_reset_${p.eventId}`, now);
+              } catch {}
+            }
+            this.notify();
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_speaking_turn_update', { detail: p }));
+              window.dispatchEvent(new CustomEvent('tn_assembly_speaking_update', { detail: p }));
+              window.dispatchEvent(new Event('storage'));
+            }
+          }
+        })
         .on('broadcast', { event: 'hand_raise_setting_changed' }, (msg: any) => {
           const p = msg?.payload;
           if (p?.eventId && typeof p?.enabled === 'boolean') {
@@ -9296,6 +9319,121 @@ class StorageService {
     }
 
     return { success: true, count };
+  }
+
+  public async resetSpeakingCounts(
+    eventId: string,
+    userSession?: { role?: string; email?: string; name?: string } | null
+  ): Promise<{ success: boolean; error?: string; resetCount?: number }> {
+    if (!eventId) {
+      return { success: false, error: 'Event ID is required to reset speaking counts.' };
+    }
+
+    // Authoritative role / permission verification
+    const role = userSession?.role;
+    const email = (userSession?.email || '').toLowerCase().trim();
+    const isAdmin = role === 'super_admin' || role === 'organiser' ||
+      email.includes('admin') || email.includes('superadmin') || email.includes('organiser');
+
+    if (!isAdmin) {
+      this.logAudit({
+        event_id: eventId,
+        action: 'UNAUTHORIZED_RESET_SPEAKING_COUNTS_ATTEMPT',
+        actor_name: userSession?.name || email || 'Unknown',
+        actor_role: role || 'unauthorized',
+        details: `Rejected unauthorized attempt to reset speaking counts by role "${role}" (${email}) for event ${eventId}`
+      });
+      return { success: false, error: 'Unauthorized: Only Admin or Super Admin can reset speaking counts.' };
+    }
+
+    const now = new Date().toISOString();
+    const allTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+    let resetCount = 0;
+
+    // 1. Mark existing turns for this event as CANCELLED to preserve Hansard history while resetting counts
+    const nextTurns = allTurns.map(t => {
+      if (t.event_id === eventId && t.status !== 'CANCELLED') {
+        resetCount++;
+        return { ...t, status: 'CANCELLED' as SpeakingTurnStatus, completed_at: now };
+      }
+      return t;
+    });
+
+    this.setItem(STORAGE_KEYS.SPEAKING_TURNS, nextTurns);
+
+    // 2. Set event-scoped speaking reset epoch timestamp in localStorage
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem(`tn_assembly_speaking_reset_${eventId}`, now);
+      } catch {}
+    }
+
+    // 3. Persist to Supabase speaking_turns table and fallback social_coverage
+    if (supabase && isSupabaseEnabled) {
+      try {
+        await supabase
+          .from('speaking_turns')
+          .update({ status: 'CANCELLED', completed_at: now })
+          .eq('event_id', eventId);
+      } catch (err) {
+        console.warn('[resetSpeakingCounts] Supabase speaking_turns update warning:', err);
+      }
+
+      // Fallback: social_coverage.speaking_turns
+      (async () => {
+        const sb = supabase;
+        if (!sb) return;
+        try {
+          const { data: evData } = await sb
+            .from('college_events')
+            .select('social_coverage')
+            .eq('id', eventId)
+            .maybeSingle();
+          const sc = (evData?.social_coverage || {}) as Record<string, any>;
+          const curTurns = Array.isArray(sc.speaking_turns) ? sc.speaking_turns : [];
+          await sb
+            .from('college_events')
+            .update({
+              social_coverage: {
+                ...sc,
+                speaking_turns: curTurns.map((t: any) => t.event_id === eventId ? { ...t, status: 'CANCELLED', completed_at: now } : t),
+                speaking_counts_reset_at: now,
+                updated_at: now
+              }
+            })
+            .eq('id', eventId);
+        } catch (err) {
+          console.warn('[resetSpeakingCounts] Fallback update warning:', err);
+        }
+      })().catch(() => {});
+    }
+
+    // 4. Record in security audit log
+    this.logAudit({
+      event_id: eventId,
+      action: 'RESET_SPEAKING_COUNTS',
+      actor_name: userSession?.name || email || 'Admin',
+      actor_role: role || 'super_admin',
+      details: `Admin reset speaking counts for event ${eventId}. Reset ${resetCount} active speaking turn records. Priority baseline cleared to 0.`
+    });
+
+    this.notify();
+
+    // 5. Broadcast to realtime channel (event-scoped micro payload)
+    this.broadcast('speaking_reset', {
+      eventId,
+      resetAt: now,
+      adminName: userSession?.name || 'Admin'
+    }).catch(() => {});
+
+    // 6. Dispatch custom events for all open views / components
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_speaking_turn_update', { detail: { action: 'reset', eventId, resetAt: now } }));
+      window.dispatchEvent(new CustomEvent('tn_assembly_speaking_update', { detail: { action: 'reset', eventId, resetAt: now } }));
+      window.dispatchEvent(new Event('storage'));
+    }
+
+    return { success: true, resetCount };
   }
 
   // ── JURY ──────────────────────────────────────────────────────────────────
