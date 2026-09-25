@@ -21,7 +21,12 @@ import {
   Flame,
   AlertCircle,
   Loader2,
-  Sparkles
+  Sparkles,
+  HelpCircle,
+  Send,
+  Eye,
+  Clock,
+  ArrowUpRight
 } from 'lucide-react';
 import type {
   Volunteer,
@@ -34,12 +39,14 @@ import type {
   LiveFlashVote,
   EventDay,
   DayAttendanceRecord,
-  DayAttendanceStatus
+  DayAttendanceStatus,
+  ProceedingsQuestion
 } from '../../types';
 import { getRecordSessionStatuses, formatMarkedBy } from '../../types';
 import { useTheme } from '../../lib/theme';
 import { storageService, getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
 import { presenceService } from '../../services/presenceService';
+import { canReviewQuestions } from '../../utils/permissions';
 
 export interface YuvaAssignment {
   id: string;
@@ -134,11 +141,31 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   onShowToast
 }) => {
   const { theme, toggleTheme } = useTheme();
+  // Authoritative event for this volunteer: strictly prioritize volunteer.event_id
+  const eventId = volunteer?.event_id || propEvent?.id || 'ev_tn_assembly_2026';
+  const volunteerType = (volunteer?.volunteer_type || volunteer?.role || 'Volunteer') as string;
+  const isAdministrator = volunteerType === 'Administrator';
+  const isJournalist = volunteerType === 'Journalist';
+  const hasQuestionReviewAccess = isAdministrator || isJournalist || canReviewQuestions('volunteer', volunteerType);
+
   const [selectedDay] = useState<1 | 2>(1);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PRESENT' | 'ABSENT'>('ALL');
   const [isOnDuty, setIsOnDuty] = useState(volunteer?.has_arrived ?? true);
-  const [activeTab, setActiveTab] = useState<'attendance' | 'yuvadesk' | 'checkin' | 'walkin' | 'checklist'>('attendance');
+  const [activeTab, setActiveTab] = useState<'questions' | 'attendance' | 'yuvadesk' | 'checkin' | 'walkin' | 'checklist'>(
+    hasQuestionReviewAccess ? 'questions' : 'attendance'
+  );
+
+  // Question review queue state (for Administrator / Journalist / review-authorized volunteers)
+  const [questions, setQuestions] = useState<ProceedingsQuestion[]>(() => {
+    return storageService.getProceedingsQuestions(eventId);
+  });
+  const [questionSearch, setQuestionSearch] = useState('');
+  const [questionStatusFilter, setQuestionStatusFilter] = useState<'All' | 'Submitted' | 'Under Review' | 'Approved' | 'Rejected'>('All');
+  const [questionMinistryFilter, setQuestionMinistryFilter] = useState<string>('All');
+  const [selectedQuestionForReview, setSelectedQuestionForReview] = useState<ProceedingsQuestion | null>(null);
+  const [reviewNote, setReviewNote] = useState('');
+  const [isApproachingAdmin, setIsApproachingAdmin] = useState(false);
 
   // Attendance tab search & filter
   const [attendanceSearch, setAttendanceSearch] = useState('');
@@ -191,9 +218,6 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
       setIsResetAllLoading(false);
     }, 450);
   };
-
-  // Authoritative event for this volunteer: strictly prioritize volunteer.event_id
-  const eventId = volunteer?.event_id || propEvent?.id || 'ev_tn_assembly_2026';
 
   const event = useMemo(() => {
     if (propEvent && propEvent.id === eventId) return propEvent;
@@ -421,6 +445,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     const unsubscribe = storageService.subscribe(() => {
       if (isMounted) {
         setYuvaAssignments(storageService.getYuvaAssignments(eventId));
+        setQuestions(storageService.getProceedingsQuestions(eventId));
         setAttendanceRefreshKey(k => k + 1);
         setIsInitialLoading(false);
       }
@@ -439,6 +464,90 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
       clearTimeout(safetyTimeout);
     };
   }, [eventId, volunteer?.id]);
+
+  // Real-time listener for question notifications
+  useEffect(() => {
+    const handleQuestionNotification = (e: any) => {
+      const detail = e.detail;
+      if (detail && (!detail.event_id || detail.event_id === eventId)) {
+        setQuestions(storageService.getProceedingsQuestions(eventId));
+        if (detail.isNewSubmission && hasQuestionReviewAccess) {
+          onShowToast(
+            'New Question Submitted',
+            `${detail.student_name || 'A student'} submitted a question for ${detail.ministry || 'Ministry'}`,
+            'info'
+          );
+        }
+      }
+    };
+    window.addEventListener('tn_question_notification', handleQuestionNotification as EventListener);
+    return () => {
+      window.removeEventListener('tn_question_notification', handleQuestionNotification as EventListener);
+    };
+  }, [eventId, hasQuestionReviewAccess, onShowToast]);
+
+  // Canonical question status normalizer
+  const normalizeQStatus = (status?: string): 'Submitted' | 'Under Review' | 'Approved' | 'Starred' | 'Rejected' => {
+    if (!status) return 'Submitted';
+    const s = status.toLowerCase().trim();
+    if (s === 'approved') return 'Approved';
+    if (s === 'starred') return 'Starred';
+    if (s === 'rejected') return 'Rejected';
+    if (s === 'under review' || s === 'under_review') return 'Under Review';
+    return 'Submitted';
+  };
+
+  const totalQuestionsCount = questions.length;
+  const pendingQuestionsCount = questions.filter(q => normalizeQStatus(q.status) === 'Submitted').length;
+  const underReviewQuestionsCount = questions.filter(q => normalizeQStatus(q.status) === 'Under Review').length;
+  const approvedQuestionsCount = questions.filter(q => normalizeQStatus(q.status) === 'Approved' || normalizeQStatus(q.status) === 'Starred').length;
+  const rejectedQuestionsCount = questions.filter(q => normalizeQStatus(q.status) === 'Rejected').length;
+
+  const availableMinistries = useMemo(() => {
+    const qMinistries = questions.map(q => q.ministry).filter(Boolean);
+    const evMinistries = event?.cabinet_ministries || [];
+    return Array.from(new Set([...evMinistries, ...qMinistries])).filter(Boolean);
+  }, [event?.cabinet_ministries, questions]);
+
+  const filteredQuestions = useMemo(() => {
+    return questions.filter(q => {
+      const canonical = normalizeQStatus(q.status);
+      if (questionStatusFilter !== 'All' && canonical !== questionStatusFilter) return false;
+      if (questionMinistryFilter !== 'All' && q.ministry !== questionMinistryFilter) return false;
+      if (questionSearch.trim()) {
+        const query = questionSearch.toLowerCase().trim();
+        const matchesStudent = (q.student_name || '').toLowerCase().includes(query);
+        const matchesText = (q.question_text || '').toLowerCase().includes(query);
+        const matchesConst = (q.constituency || '').toLowerCase().includes(query);
+        const matchesMin = (q.ministry || '').toLowerCase().includes(query);
+        if (!matchesStudent && !matchesText && !matchesConst && !matchesMin) return false;
+      }
+      return true;
+    });
+  }, [questions, questionStatusFilter, questionMinistryFilter, questionSearch]);
+
+  const handleApproachMainAdmin = async (question: ProceedingsQuestion) => {
+    if (!volunteer) {
+      onShowToast('Error', 'Volunteer identity not found', 'error');
+      return;
+    }
+    setIsApproachingAdmin(true);
+    try {
+      const res = await storageService.reviewAndApproachMainAdmin(question.id, volunteer, reviewNote);
+      if (res.success) {
+        onShowToast('Forwarded to Main Admin', 'Question has been marked Under Review and brought to the Main Admin attention.', 'success');
+        setQuestions(storageService.getProceedingsQuestions(eventId));
+        setSelectedQuestionForReview(null);
+        setReviewNote('');
+      } else {
+        onShowToast('Error', res.error || 'Failed to forward to Main Admin', 'error');
+      }
+    } catch (err: any) {
+      onShowToast('Error', err?.message || 'Failed to forward question', 'error');
+    } finally {
+      setIsApproachingAdmin(false);
+    }
+  };
 
   // Find assignments for logged in volunteer
   const userAssignments = useMemo(() => {
@@ -856,6 +965,16 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
             </div>
             <p className="text-xs flex items-center gap-2 mt-0.5" style={{ color: 'var(--text-muted)' }}>
               <span>Official: <strong style={{ color: 'var(--text-primary)' }}>{volunteer?.name || 'Floor Volunteer'}</strong></span>
+              {isAdministrator && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase bg-purple-500/15 text-purple-600 dark:text-purple-400 border border-purple-500/30">
+                  Administrator
+                </span>
+              )}
+              {isJournalist && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30">
+                  Journalist
+                </span>
+              )}
               <span>•</span>
               <span className="flex items-center gap-1">
                 <MapPin className="w-3 h-3 text-emerald-500" /> {volunteer?.station || 'Main Assembly Floor'}
@@ -977,6 +1096,27 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
         {/* View Tabs */}
         <div className="flex items-center justify-between flex-wrap gap-3 border-b pb-3" style={{ borderColor: 'var(--border)' }}>
           <div className="flex rounded-xl p-1 border flex-wrap gap-1" style={{ background: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+            {hasQuestionReviewAccess && (
+              <button
+                onClick={() => setActiveTab('questions')}
+                className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                  activeTab === 'questions' ? 'shadow-sm' : 'opacity-70 hover:opacity-100'
+                }`}
+                style={{
+                  background: activeTab === 'questions' ? 'var(--accent)' : 'transparent',
+                  color: activeTab === 'questions' ? '#fff' : 'var(--text-primary)'
+                }}
+              >
+                <HelpCircle className="w-3.5 h-3.5" />
+                <span>Question Approval Queue</span>
+                {pendingQuestionsCount > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-rose-500 text-white font-extrabold animate-pulse">
+                    {pendingQuestionsCount}
+                  </span>
+                )}
+              </button>
+            )}
+
             <button
               onClick={() => setActiveTab('attendance')}
               className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
@@ -1086,6 +1226,242 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
             </div>
           )}
         </div>
+
+        {/* ───────────────────────────────────────────────────────────── */}
+        {/* TAB: QUESTION APPROVAL & REVIEW QUEUE                         */}
+        {/* ───────────────────────────────────────────────────────────── */}
+        {activeTab === 'questions' && (
+          <div className="space-y-6 animate-fade-in">
+            {/* Header Banner */}
+            <div
+              className="rounded-2xl p-6 border shadow-sm space-y-4"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+            >
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-4" style={{ borderColor: 'var(--border)' }}>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-500">
+                      PARLIAMENTARY QUESTION REVIEW WORKFLOW
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-purple-500/15 text-purple-600 dark:text-purple-400 border border-purple-500/30">
+                      {volunteerType} Queue
+                    </span>
+                  </div>
+                  <h2 className="text-xl sm:text-2xl font-black tracking-tight mt-1" style={{ color: 'var(--text-primary)' }}>
+                    Submitted Question Review Queue
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Review incoming student questions, inspect details, and approach the Main Admin for final review.
+                    <strong className="text-amber-500 ml-1">Final Approval is strictly reserved for the Main Admin.</strong>
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="px-3 py-1.5 rounded-xl text-xs font-bold border bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30 flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>{pendingQuestionsCount} Pending Review</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* Metric Badges */}
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-1">
+                <div className="p-3.5 rounded-xl border bg-slate-500/5" style={{ borderColor: 'var(--border)' }}>
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block">Total Questions</span>
+                  <strong className="text-xl font-black" style={{ color: 'var(--text-primary)' }}>{totalQuestionsCount}</strong>
+                </div>
+
+                <div className="p-3.5 rounded-xl border bg-amber-500/5 border-amber-500/30">
+                  <span className="text-[10px] font-bold uppercase text-amber-600 dark:text-amber-400 block">Pending Review</span>
+                  <strong className="text-xl font-black text-amber-500">{pendingQuestionsCount}</strong>
+                </div>
+
+                <div className="p-3.5 rounded-xl border bg-blue-500/5 border-blue-500/30">
+                  <span className="text-[10px] font-bold uppercase text-blue-600 dark:text-blue-400 block">Under Review / Sent</span>
+                  <strong className="text-xl font-black text-blue-500">{underReviewQuestionsCount}</strong>
+                </div>
+
+                <div className="p-3.5 rounded-xl border bg-emerald-500/5 border-emerald-500/30">
+                  <span className="text-[10px] font-bold uppercase text-emerald-600 dark:text-emerald-400 block">Approved</span>
+                  <strong className="text-xl font-black text-emerald-500">{approvedQuestionsCount}</strong>
+                </div>
+
+                <div className="p-3.5 rounded-xl border bg-rose-500/5 border-rose-500/30">
+                  <span className="text-[10px] font-bold uppercase text-rose-600 dark:text-rose-400 block">Rejected</span>
+                  <strong className="text-xl font-black text-rose-500">{rejectedQuestionsCount}</strong>
+                </div>
+              </div>
+
+              {/* Filters & Search */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-2">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {(['All', 'Submitted', 'Under Review', 'Approved', 'Rejected'] as const).map(st => {
+                    const label = st === 'Submitted'
+                      ? `Pending (${pendingQuestionsCount})`
+                      : st === 'Under Review'
+                      ? `Under Review (${underReviewQuestionsCount})`
+                      : st === 'Approved'
+                      ? `Approved (${approvedQuestionsCount})`
+                      : st === 'Rejected'
+                      ? `Rejected (${rejectedQuestionsCount})`
+                      : `All (${totalQuestionsCount})`;
+                    const isSelected = questionStatusFilter === st;
+                    return (
+                      <button
+                        key={st}
+                        onClick={() => setQuestionStatusFilter(st)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                          isSelected
+                            ? 'bg-amber-500 text-white shadow-xs'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {/* Ministry Filter */}
+                  {availableMinistries.length > 0 && (
+                    <select
+                      value={questionMinistryFilter}
+                      onChange={(e) => setQuestionMinistryFilter(e.target.value)}
+                      className="px-3 py-1.5 rounded-xl text-xs font-bold border bg-transparent"
+                      style={{ borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                    >
+                      <option value="All">All Ministries</option>
+                      {availableMinistries.map(m => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  )}
+
+                  {/* Search input */}
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Search questions..."
+                      value={questionSearch}
+                      onChange={(e) => setQuestionSearch(e.target.value)}
+                      className="pl-8 pr-3 py-1.5 rounded-xl text-xs border bg-transparent focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                      style={{ borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Questions Table */}
+            <div
+              className="rounded-2xl border shadow-sm overflow-hidden"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+            >
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-500/5 uppercase font-bold text-[10px] tracking-wider border-b" style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
+                    <tr>
+                      <th className="p-3.5">#</th>
+                      <th className="p-3.5">Student Member</th>
+                      <th className="p-3.5">Bench</th>
+                      <th className="p-3.5">Constituency</th>
+                      <th className="p-3.5">Target Ministry</th>
+                      <th className="p-3.5">Question Preview</th>
+                      <th className="p-3.5">Submitted</th>
+                      <th className="p-3.5">Status</th>
+                      <th className="p-3.5 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-500/10">
+                    {filteredQuestions.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="p-8 text-center italic text-slate-400">
+                          No questions found matching your filter criteria.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredQuestions.map((q, idx) => {
+                        const canonical = normalizeQStatus(q.status);
+                        const isUnderReview = canonical === 'Under Review';
+                        const isApproved = canonical === 'Approved' || canonical === 'Starred';
+                        const isRejected = canonical === 'Rejected';
+
+                        return (
+                          <tr key={q.id} className="hover:bg-slate-500/5 transition-colors">
+                            <td className="p-3.5 font-mono text-slate-400">{idx + 1}</td>
+                            <td className="p-3.5 font-bold" style={{ color: 'var(--text-primary)' }}>
+                              {q.student_name}
+                            </td>
+                            <td className="p-3.5">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                q.bench === 'Ruling' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'
+                              }`}>
+                                {q.bench || 'Delegate'}
+                              </span>
+                            </td>
+                            <td className="p-3.5 font-mono text-slate-500">
+                              {q.constituency || 'Assembly Member'}
+                            </td>
+                            <td className="p-3.5 font-bold text-amber-500">
+                              {q.ministry}
+                            </td>
+                            <td
+                              className="p-3.5 max-w-xs cursor-pointer group"
+                              onClick={() => {
+                                setSelectedQuestionForReview(q);
+                                setReviewNote(q.review_note || '');
+                              }}
+                            >
+                              <p className="truncate font-medium group-hover:text-amber-500 transition-colors" style={{ color: 'var(--text-primary)' }}>
+                                {q.question_text}
+                              </p>
+                            </td>
+                            <td className="p-3.5 font-mono text-[11px] text-slate-400 whitespace-nowrap">
+                              {q.created_at ? new Date(q.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                            </td>
+                            <td className="p-3.5">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                                isApproved
+                                  ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
+                                  : isRejected
+                                  ? 'bg-rose-500/10 text-rose-600 border-rose-500/30'
+                                  : isUnderReview
+                                  ? 'bg-blue-500/10 text-blue-600 border-blue-500/30'
+                                  : 'bg-amber-500/10 text-amber-600 border-amber-500/30'
+                              }`}>
+                                {canonical === 'Submitted' ? 'Pending Review' : canonical}
+                              </span>
+                              {q.flagged_for_admin && (
+                                <span className="block text-[9px] text-blue-600 dark:text-blue-400 font-semibold mt-0.5">
+                                  ★ Forwarded to Admin
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-3.5 text-right whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedQuestionForReview(q);
+                                  setReviewNote(q.review_note || '');
+                                }}
+                                className="px-3 py-1.5 rounded-lg text-xs font-bold border bg-amber-500/10 hover:bg-amber-500 hover:text-white text-amber-600 dark:text-amber-400 border-amber-500/30 transition-all flex items-center gap-1.5 cursor-pointer ml-auto"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>View / Review</span>
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ───────────────────────────────────────────────────────────── */}
         {/* TAB: VOLUNTEER ATTENDANCE TERMINAL                            */}
@@ -2253,6 +2629,214 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
           </div>
         </div>
       )}
+
+      {/* ───────────────────────────────────────────────────────────── */}
+      {/* MODAL: QUESTION REVIEW & APPROACH MAIN ADMIN                   */}
+      {/* ───────────────────────────────────────────────────────────── */}
+      {selectedQuestionForReview && (() => {
+        const q = selectedQuestionForReview;
+        const canonical = normalizeQStatus(q.status);
+        const isApproved = canonical === 'Approved' || canonical === 'Starred';
+        const isUnderReview = canonical === 'Under Review' || q.flagged_for_admin;
+
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-fade-in"
+            onClick={() => setSelectedQuestionForReview(null)}
+          >
+            <div
+              className="w-full max-w-2xl rounded-3xl border shadow-2xl overflow-hidden animate-scale-in"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-800">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                    <HelpCircle className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
+                        Review Parliamentary Question
+                      </h3>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                        Queue #{q.queue_order || '—'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      {volunteerType} Inspection Desk
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedQuestionForReview(null)}
+                  className="p-2 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+                {/* Status Notice Banner */}
+                {isApproved && (
+                  <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-xs flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle className="w-4 h-4 text-emerald-500" />
+                      <span><strong>Approved by Main Admin:</strong> This question has received final approval and is published to the Minister dashboard.</span>
+                    </div>
+                  </div>
+                )}
+
+                {isUnderReview && !isApproved && (
+                  <div className="p-3.5 rounded-2xl bg-blue-500/10 border border-blue-500/30 text-blue-800 dark:text-blue-300 text-xs space-y-1">
+                    <div className="flex items-center justify-between font-bold">
+                      <span className="flex items-center gap-1.5">
+                        <ArrowUpRight className="w-4 h-4 text-blue-500" />
+                        <span>Forwarded to Main Admin for Review</span>
+                      </span>
+                      {q.reviewed_at && (
+                        <span className="font-mono text-[11px] font-normal">{new Date(q.reviewed_at).toLocaleString()}</span>
+                      )}
+                    </div>
+                    {q.reviewed_by && (
+                      <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                        Reviewer: <strong>{q.reviewed_by}</strong>
+                      </p>
+                    )}
+                    {q.review_note && (
+                      <p className="text-slate-700 dark:text-slate-300 italic pt-1 border-t border-blue-500/20">
+                        &ldquo;{q.review_note}&rdquo;
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Submitter Info Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
+                      Student Delegate
+                    </span>
+                    <p className="font-bold text-slate-900 dark:text-white">
+                      {q.student_name}
+                    </p>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
+                      Bench Position
+                    </span>
+                    <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${
+                      q.bench === 'Ruling'
+                        ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/30'
+                        : 'bg-rose-500/10 text-rose-600 border border-rose-500/30'
+                    }`}>
+                      {q.bench || 'Delegate'}
+                    </span>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
+                      Constituency
+                    </span>
+                    <p className="font-bold text-slate-800 dark:text-slate-200 font-mono">
+                      {q.constituency || 'Assembly Member'}
+                    </p>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
+                      Target Ministry
+                    </span>
+                    <p className="font-bold text-amber-600 dark:text-amber-400">
+                      {q.ministry}
+                    </p>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
+                      Question Type
+                    </span>
+                    <p className="font-semibold text-slate-700 dark:text-slate-300">
+                      {q.question_type || 'Starred'}
+                    </p>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
+                      Submitted At
+                    </span>
+                    <p className="font-mono text-slate-600 dark:text-slate-400 text-[11px]">
+                      {q.created_at ? new Date(q.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : '—'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Full Question Text */}
+                <div className="space-y-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 block">
+                    Full Question Text
+                  </span>
+                  <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 font-sans text-sm leading-relaxed text-slate-900 dark:text-slate-100 whitespace-pre-wrap break-words select-text">
+                    {q.question_text}
+                  </div>
+                </div>
+
+                {/* Reviewer Note Input */}
+                <div className="space-y-2 pt-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                    <span>Note for Main Admin (Optional)</span>
+                    <span className="text-[11px] text-slate-400 font-normal">Add context or recommendation</span>
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={reviewNote}
+                    onChange={(e) => setReviewNote(e.target.value)}
+                    disabled={isApproved || isApproachingAdmin}
+                    placeholder="e.g. Verified constituency relevance, recommended for priority response by Minister of Health..."
+                    className="w-full p-3 rounded-xl text-xs border bg-slate-50 dark:bg-slate-900 focus:outline-hidden focus:ring-1 focus:ring-amber-500 disabled:opacity-50"
+                    style={{ borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                  />
+                  <p className="text-[11px] text-slate-400">
+                    ★ Clicking <strong>Approach Main Admin</strong> notifies the Main Admin and flags this question for final decision.
+                  </p>
+                </div>
+              </div>
+
+              {/* Modal Footer Actions */}
+              <div className="flex items-center justify-between p-5 border-t border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/50">
+                <button
+                  type="button"
+                  onClick={() => setSelectedQuestionForReview(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleApproachMainAdmin(q)}
+                    disabled={isApproved || isApproachingAdmin}
+                    className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-sm flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isApproachingAdmin ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Send className="w-4 h-4" />
+                    )}
+                    <span>{isUnderReview ? 'Update / Re-Notify Main Admin' : 'Approach Main Admin'}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

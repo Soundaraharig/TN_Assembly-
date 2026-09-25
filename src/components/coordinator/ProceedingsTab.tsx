@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import type { BillProceeding, Learner, EventDeadline, ProceedingsQuestion, ProceedingsMotion } from '../../types';
+import type { BillProceeding, Learner, EventDeadline, ProceedingsQuestion, ProceedingsMotion, UserRole } from '../../types';
 import { storageService } from '../../services/storageService';
 import { getEventSlug } from '../../utils/slug';
 import {
@@ -29,6 +29,7 @@ interface ProceedingsTabProps {
   learners: Learner[];
   eventId: string;
   eventSlug?: string;
+  userRole?: UserRole;
   onAddBill: (bill: Partial<BillProceeding>) => void;
   onUpdateBillStatus: (id: string, status: BillProceeding['status'], ayes?: number, noes?: number) => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
@@ -39,6 +40,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   learners,
   eventId,
   eventSlug,
+  userRole,
   onAddBill,
   onUpdateBillStatus,
   onShowToast
@@ -57,7 +59,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   const [selectedQuestion, setSelectedQuestion] = useState<ProceedingsQuestion | null>(null);
 
   // Filters
-  const [statusFilter, setStatusFilter] = useState<'All' | 'Submitted' | 'Approved' | 'Starred' | 'Rejected'>('All');
+  const [statusFilter, setStatusFilter] = useState<'All' | 'Submitted' | 'Under Review' | 'Approved' | 'Starred' | 'Rejected'>('All');
   const [benchFilter, setBenchFilter] = useState<'All' | 'Ruling' | 'Opposition'>('All');
   const [ministryFilter, setMinistryFilter] = useState<string>('All');
 
@@ -137,14 +139,26 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   };
 
   // Question Actions with toggle support
-  const handleUpdateQuestionStatus = (id: string, actionStatus: 'Submitted' | 'Approved' | 'Starred' | 'Rejected') => {
+  const handleUpdateQuestionStatus = (id: string, actionStatus: 'Submitted' | 'Under Review' | 'Approved' | 'Starred' | 'Rejected') => {
     const targetQ = questions.find(q => q.id === id);
     const currentStatus = normalizeStatus(targetQ?.status);
 
     // Toggle: if already in this state, clicking it reverts back to Submitted (Pending)
     const nextStatus = currentStatus === actionStatus ? 'Submitted' : actionStatus;
+    const actorName = 'Speaker / Admin';
 
-    storageService.updateProceedingsQuestionStatus(id, nextStatus, 'Speaker / Admin', eventId || targetSlug);
+    const res = storageService.updateProceedingsQuestionStatus(
+      id,
+      nextStatus,
+      actorName,
+      eventId || targetSlug,
+      { role: userRole || 'super_admin', name: actorName }
+    );
+
+    if (!res.success) {
+      onShowToast('Action Blocked', res.error || 'Unauthorized action.', 'error');
+      return;
+    }
 
     // Keep modal state in sync if open
     setSelectedQuestion(prev => {
@@ -152,7 +166,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
       return {
         ...prev,
         status: nextStatus,
-        approved_by: nextStatus === 'Approved' ? 'Speaker / Admin' : prev.approved_by,
+        approved_by: nextStatus === 'Approved' ? actorName : prev.approved_by,
         approved_at: nextStatus === 'Approved' ? new Date().toISOString() : prev.approved_at
       };
     });
@@ -260,12 +274,13 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   };
 
   // Canonical status normalizer
-  const normalizeStatus = (status?: string): 'Submitted' | 'Approved' | 'Starred' | 'Rejected' => {
+  const normalizeStatus = (status?: string): 'Submitted' | 'Under Review' | 'Approved' | 'Starred' | 'Rejected' => {
     if (!status) return 'Submitted';
     const s = status.toLowerCase().trim();
     if (s === 'approved') return 'Approved';
     if (s === 'starred') return 'Starred';
     if (s === 'rejected') return 'Rejected';
+    if (s === 'under review' || s === 'under_review') return 'Under Review';
     return 'Submitted';
   };
 
@@ -276,6 +291,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
 
   const totalSubmitted = questions.length;
   const pendingCount = questions.filter(q => normalizeStatus(q.status) === 'Submitted').length;
+  const underReviewCount = questions.filter(q => normalizeStatus(q.status) === 'Under Review').length;
   const approvedCount = questions.filter(q => normalizeStatus(q.status) === 'Approved').length;
   const starredCount = questions.filter(q => normalizeStatus(q.status) === 'Starred').length;
   const rejectedCount = questions.filter(q => normalizeStatus(q.status) === 'Rejected').length;
@@ -484,7 +500,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
           </div>
 
           {/* Metric Badges Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
             <div className="p-4 rounded-2xl border shadow-sm" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
               <span className="text-[10px] uppercase font-bold text-slate-400 block">Total Submitted</span>
               <strong className="text-2xl font-black text-slate-900 dark:text-white">{totalSubmitted}</strong>
@@ -493,6 +509,11 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
             <div className="p-4 rounded-2xl border shadow-sm bg-amber-500/5 border-amber-500/30">
               <span className="text-[10px] uppercase font-bold text-amber-600 dark:text-amber-400 block">Pending</span>
               <strong className="text-2xl font-black text-amber-500">{pendingCount}</strong>
+            </div>
+
+            <div className="p-4 rounded-2xl border shadow-sm bg-blue-500/5 border-blue-500/30">
+              <span className="text-[10px] uppercase font-bold text-blue-600 dark:text-blue-400 block">Under Review</span>
+              <strong className="text-2xl font-black text-blue-500">{underReviewCount}</strong>
             </div>
 
             <div className="p-4 rounded-2xl border shadow-sm bg-emerald-500/5 border-emerald-500/30">
@@ -505,9 +526,9 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
               <strong className="text-2xl font-black text-amber-500">{starredCount}</strong>
             </div>
 
-            <div className="p-4 rounded-2xl border shadow-sm bg-blue-500/5 border-blue-500/30">
-              <span className="text-[10px] uppercase font-bold text-blue-600 dark:text-blue-400 block">Ready to Put</span>
-              <strong className="text-2xl font-black text-blue-600 dark:text-blue-400">{readyToPutCount}</strong>
+            <div className="p-4 rounded-2xl border shadow-sm bg-purple-500/5 border-purple-500/30">
+              <span className="text-[10px] uppercase font-bold text-purple-600 dark:text-purple-400 block">Ready to Put</span>
+              <strong className="text-2xl font-black text-purple-600 dark:text-purple-400">{readyToPutCount}</strong>
             </div>
           </div>
 
@@ -518,9 +539,11 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
             <div className="flex items-center gap-3 flex-wrap">
               {/* Status Filter */}
               <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
-                {(['All', 'Submitted', 'Approved', 'Starred', 'Rejected'] as const).map(st => {
+                {(['All', 'Submitted', 'Under Review', 'Approved', 'Starred', 'Rejected'] as const).map(st => {
                   const countLabel = st === 'Submitted'
                     ? `Pending (${pendingCount})`
+                    : st === 'Under Review'
+                    ? `Under Review (${underReviewCount})`
                     : st === 'Approved'
                     ? `Approved (${approvedCount})`
                     : st === 'Starred'
@@ -685,10 +708,17 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                               ? 'bg-amber-500/10 text-amber-500 border-amber-500/30'
                               : q.status === 'Rejected'
                               ? 'bg-rose-500/10 text-rose-600 border-rose-500/30'
+                              : q.status === 'Under Review'
+                              ? 'bg-blue-500/10 text-blue-600 border-blue-500/30'
                               : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30'
                           }`}>
                             {q.status === 'Submitted' ? 'Pending Approval' : q.status}
                           </span>
+                          {q.flagged_for_admin && (
+                            <span className="block text-[9px] text-blue-600 dark:text-blue-400 font-semibold mt-0.5">
+                              ★ Flagged by {q.reviewed_by || 'Volunteer'}
+                            </span>
+                          )}
                         </td>
                         <td className="p-3.5 font-mono text-slate-400">#{q.queue_order || idx + 1}</td>
                         <td className="p-3.5 text-right">
@@ -901,6 +931,8 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                             ? 'bg-amber-500/10 text-amber-500 border-amber-500/30'
                             : isRejected
                             ? 'bg-rose-500/10 text-rose-600 border-rose-500/30'
+                            : selectedQuestion.status === 'Under Review'
+                            ? 'bg-blue-500/10 text-blue-600 border-blue-500/30'
                             : 'bg-amber-500/10 text-amber-600 border-amber-500/30'
                         }`}>
                           {selectedQuestion.status === 'Submitted' ? 'Pending Approval' : selectedQuestion.status}
@@ -916,6 +948,23 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                         </p>
                       </div>
                     </div>
+
+                    {/* Review Details if Forwarded / Under Review */}
+                    {(selectedQuestion.reviewed_by || selectedQuestion.flagged_for_admin) && (
+                      <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs text-blue-800 dark:text-blue-300 space-y-1">
+                        <div className="flex items-center justify-between font-bold">
+                          <span>Forwarded to Main Admin by: <strong>{selectedQuestion.reviewed_by || 'Reviewer'}</strong></span>
+                          {selectedQuestion.reviewed_at && (
+                            <span className="font-mono text-[11px] font-normal">{new Date(selectedQuestion.reviewed_at).toLocaleString()}</span>
+                          )}
+                        </div>
+                        {selectedQuestion.review_note && (
+                          <p className="text-slate-700 dark:text-slate-300 italic font-normal">
+                            &ldquo;{selectedQuestion.review_note}&rdquo;
+                          </p>
+                        )}
+                      </div>
+                    )}
 
                     {/* Full Question Text */}
                     <div className="space-y-2">
@@ -958,11 +1007,11 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                         className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
                           isApproved
                             ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 ring-2 ring-emerald-400'
-                            : 'bg-emerald-500/10 hover:bg-emerald-500 hover:text-white text-emerald-600'
+                            : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm'
                         }`}
                       >
                         <Check className="w-4 h-4 stroke-2" />
-                        <span>{isApproved ? 'Approved ✓' : 'Approve'}</span>
+                        <span>{isApproved ? 'Approved ✓' : 'FINAL APPROVE'}</span>
                       </button>
 
                       <button

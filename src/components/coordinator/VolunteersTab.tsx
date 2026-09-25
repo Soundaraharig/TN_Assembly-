@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import type { Volunteer, UserRole, Party, Committee } from '../../types';
+import type { Volunteer, VolunteerType, UserRole, Party, Committee } from '../../types';
 import { storageService } from '../../services/storageService';
 import { canDelete } from '../../utils/permissions';
 import {
@@ -16,7 +16,8 @@ import {
   UserX,
   X,
   FileText,
-  Phone
+  Phone,
+  Pencil
 } from 'lucide-react';
 import Papa from 'papaparse';
 
@@ -27,6 +28,7 @@ interface VolunteersTabProps {
   parties?: Party[];
   committees?: Committee[];
   onAddVolunteer: (v: Partial<Volunteer>) => void;
+  onUpdateVolunteer?: (id: string, updates: Partial<Volunteer>) => void;
   onToggleArrival?: (id: string) => void;
   onBulkImportVolunteers?: (volunteers: Partial<Volunteer>[]) => void;
   onDeleteVolunteer: (id: string) => void;
@@ -65,6 +67,7 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
   parties = [],
   committees = [],
   onAddVolunteer,
+  onUpdateVolunteer,
   onToggleArrival,
   onBulkImportVolunteers,
   onDeleteVolunteer,
@@ -82,11 +85,22 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
 
   // Form State
   const [name, setName] = useState('');
+  const [volunteerType, setVolunteerType] = useState<VolunteerType>('Volunteer');
   const [station, setStation] = useState('Floating');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [shift, setShift] = useState('Both days');
   const [isYuva, setIsYuva] = useState(true);
+
+  // Edit Volunteer Modal State
+  const [editingVolunteer, setEditingVolunteer] = useState<Volunteer | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editVolunteerType, setEditVolunteerType] = useState<VolunteerType>('Volunteer');
+  const [editStation, setEditStation] = useState('Floating');
+  const [editPhone, setEditPhone] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [editShift, setEditShift] = useState('Both days');
+  const [editIsYuva, setEditIsYuva] = useState(true);
 
   // Import State
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -166,6 +180,8 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
     e.preventDefault();
     if (!name.trim()) return;
 
+    const assignedRole = volunteerType === 'Volunteer' ? (isYuva ? 'YUVA Volunteer' : 'Volunteer') : volunteerType;
+
     onAddVolunteer({
       event_id: eventId,
       name: name.trim(),
@@ -173,16 +189,59 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
       phone: phone.trim(),
       email: email.trim(),
       shift,
-      is_yuva: isYuva,
+      is_yuva: volunteerType === 'Volunteer' ? isYuva : false,
       has_arrived: false,
-      role: isYuva ? 'YUVA Volunteer' : 'Volunteer'
+      role: assignedRole,
+      volunteer_type: volunteerType
     });
 
     setName('');
     setPhone('');
     setEmail('');
+    setVolunteerType('Volunteer');
     setIsAddFormOpen(false);
-    onShowToast('Volunteer Added', `Added ${name} to ${station}`, 'success');
+    onShowToast('Volunteer Added', `Added ${name} as ${volunteerType}`, 'success');
+  };
+
+  const handleStartEdit = (v: Volunteer) => {
+    setEditingVolunteer(v);
+    setEditName(v.name || '');
+    const currentType: VolunteerType = (v.role === 'Administrator' || v.volunteer_type === 'Administrator')
+      ? 'Administrator'
+      : (v.role === 'Journalist' || v.volunteer_type === 'Journalist')
+      ? 'Journalist'
+      : 'Volunteer';
+    setEditVolunteerType(currentType);
+    setEditStation(v.station || 'Floating');
+    setEditPhone(v.phone || '');
+    setEditEmail(v.email || '');
+    setEditShift(v.shift || 'Both days');
+    setEditIsYuva(v.is_yuva !== false);
+  };
+
+  const handleEditSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingVolunteer || !editName.trim()) return;
+
+    const assignedRole = editVolunteerType === 'Volunteer' ? (editIsYuva ? 'YUVA Volunteer' : 'Volunteer') : editVolunteerType;
+    const updates: Partial<Volunteer> = {
+      name: editName.trim(),
+      station: editStation,
+      phone: editPhone.trim(),
+      email: editEmail.trim(),
+      shift: editShift,
+      is_yuva: editVolunteerType === 'Volunteer' ? editIsYuva : false,
+      role: assignedRole,
+      volunteer_type: editVolunteerType
+    };
+
+    if (onUpdateVolunteer) {
+      onUpdateVolunteer(editingVolunteer.id, updates);
+    } else {
+      storageService.updateVolunteer(editingVolunteer.id, updates);
+    }
+    setEditingVolunteer(null);
+    onShowToast('Volunteer Updated', `Updated ${editName}'s details and role`, 'success');
   };
 
   const handleAssignYuva = (e: React.FormEvent) => {
@@ -683,20 +742,42 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
                       ))}
                     </select>
                   </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Volunteer Type *
+                    </label>
+                    <select
+                      value={volunteerType}
+                      onChange={(e) => setVolunteerType(e.target.value as VolunteerType)}
+                      className="w-full bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-amber-500 font-bold"
+                    >
+                      <option value="Volunteer">Volunteer</option>
+                      <option value="Administrator">Administrator</option>
+                      <option value="Journalist">Journalist</option>
+                    </select>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
+                      {volunteerType === 'Administrator' && 'Administrator has question review queue access and can approach Main Admin.'}
+                      {volunteerType === 'Journalist' && 'Journalist has press review access to submitted questions.'}
+                      {volunteerType === 'Volunteer' && 'Floor operations, attendance & kiosk support volunteer.'}
+                    </p>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-2 pt-1">
-                  <input
-                    type="checkbox"
-                    id="yuva-checkbox"
-                    checked={isYuva}
-                    onChange={(e) => setIsYuva(e.target.checked)}
-                    className="w-4 h-4 rounded text-amber-500 focus:ring-amber-400"
-                  />
-                  <label htmlFor="yuva-checkbox" className="text-xs font-semibold text-slate-800 dark:text-slate-200 cursor-pointer">
-                    YUVA volunteer
-                  </label>
-                </div>
+                {volunteerType === 'Volunteer' && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <input
+                      type="checkbox"
+                      id="yuva-checkbox"
+                      checked={isYuva}
+                      onChange={(e) => setIsYuva(e.target.checked)}
+                      className="w-4 h-4 rounded text-amber-500 focus:ring-amber-400"
+                    />
+                    <label htmlFor="yuva-checkbox" className="text-xs font-semibold text-slate-800 dark:text-slate-200 cursor-pointer">
+                      YUVA volunteer
+                    </label>
+                  </div>
+                )}
 
                 <div className="flex items-center justify-end gap-2 pt-2">
                   <button
@@ -753,6 +834,23 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
                             <span className="font-extrabold text-sm text-slate-900 dark:text-white">
                               {v.name}
                             </span>
+
+                            {/* Volunteer Type / Role Badge */}
+                            {(v.role === 'Administrator' || v.volunteer_type === 'Administrator') ? (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/30 flex items-center gap-1 shadow-xs">
+                                <Shield className="w-3 h-3 text-purple-500" />
+                                Administrator
+                              </span>
+                            ) : (v.role === 'Journalist' || v.volunteer_type === 'Journalist') ? (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/30 flex items-center gap-1 shadow-xs">
+                                <FileText className="w-3 h-3 text-sky-500" />
+                                Journalist
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20">
+                                Volunteer
+                              </span>
+                            )}
 
                             {v.is_yuva && (
                               <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/40">
@@ -815,6 +913,15 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
 
                         {/* Action buttons */}
                         <div className="flex flex-col items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleStartEdit(v)}
+                            className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                            title="Edit Volunteer Details and Role"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+
                           <button
                             type="button"
                             onClick={() => onToggleArrival && onToggleArrival(v.id)}
@@ -903,6 +1010,129 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
                 Import {importPreview.length} Volunteers
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Volunteer Modal */}
+      {editingVolunteer && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 animate-scale-in">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Pencil className="w-4 h-4 text-amber-500" /> Edit Volunteer
+              </h3>
+              <button onClick={() => setEditingVolunteer(null)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditSubmit} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Volunteer Type *
+                  </label>
+                  <select
+                    value={editVolunteerType}
+                    onChange={(e) => setEditVolunteerType(e.target.value as VolunteerType)}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-amber-500 font-bold"
+                  >
+                    <option value="Volunteer">Volunteer</option>
+                    <option value="Administrator">Administrator</option>
+                    <option value="Journalist">Journalist</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Station</label>
+                  <select
+                    value={editStation}
+                    onChange={(e) => setEditStation(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none"
+                  >
+                    {STATIONS.map((st) => (
+                      <option key={st} value={st}>{st}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Shift</label>
+                  <select
+                    value={editShift}
+                    onChange={(e) => setEditShift(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none"
+                  >
+                    {SHIFTS.map((sh) => (
+                      <option key={sh} value={sh}>{sh}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Phone</label>
+                  <input
+                    type="tel"
+                    value={editPhone}
+                    onChange={(e) => setEditPhone(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Email</label>
+                  <input
+                    type="email"
+                    value={editEmail}
+                    onChange={(e) => setEditEmail(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {editVolunteerType === 'Volunteer' && (
+                <div className="flex items-center gap-2 pt-1">
+                  <input
+                    type="checkbox"
+                    id="edit-yuva-checkbox"
+                    checked={editIsYuva}
+                    onChange={(e) => setEditIsYuva(e.target.checked)}
+                    className="w-4 h-4 rounded text-amber-500 focus:ring-amber-400"
+                  />
+                  <label htmlFor="edit-yuva-checkbox" className="text-xs font-semibold text-slate-800 dark:text-slate-200 cursor-pointer">
+                    YUVA volunteer
+                  </label>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setEditingVolunteer(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-500 hover:text-slate-800 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-sm cursor-pointer"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

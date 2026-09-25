@@ -171,6 +171,8 @@ export interface JuryMember {
   status?: 'Active' | 'Inactive';
 }
 
+export type VolunteerType = 'Volunteer' | 'Administrator' | 'Journalist';
+
 export interface Volunteer {
   id: string;
   event_id: string;
@@ -183,8 +185,10 @@ export interface Volunteer {
   is_yuva?: boolean;
   has_arrived?: boolean;
   role?: string;
+  volunteer_type?: VolunteerType | string;
   created_at?: string;
 }
+
 
 // ── NEW MODULE INTERFACES ──────────────────────────────────────────
 
@@ -457,7 +461,7 @@ export interface SecurityAuditLog {
   id: string;
   timestamp: string;
   event_id?: string;
-  action: 'JURY_CODE_COPIED' | 'JURY_LINK_COPIED' | 'ACCESS_CODE_LOGIN_SUCCESS' | 'ACCESS_CODE_LOGIN_FAILED' | 'LOCKOUT_TRIGGERED' | 'ALLOCATION_CONFIRMED';
+  action: 'JURY_CODE_COPIED' | 'JURY_LINK_COPIED' | 'ACCESS_CODE_LOGIN_SUCCESS' | 'ACCESS_CODE_LOGIN_FAILED' | 'LOCKOUT_TRIGGERED' | 'ALLOCATION_CONFIRMED' | 'QUESTION_SUBMITTED' | 'QUESTION_FINAL_APPROVED' | 'QUESTION_REJECTED' | 'QUESTION_STATUS_UPDATED' | 'QUESTION_REVIEWED_APPROACHED_ADMIN' | string;
   actor_role?: string;
   actor_name?: string;
   details?: string;
@@ -505,12 +509,16 @@ export interface ProceedingsQuestion {
   target_ministry_name?: string;
   question_text: string;
   question_type: 'Standard' | 'Starred' | 'Unstarred' | 'Zero Hour' | 'Calling Attention';
-  status: 'Submitted' | 'Approved' | 'Starred' | 'Rejected';
+  status: 'Submitted' | 'Under Review' | 'Approved' | 'Starred' | 'Rejected';
   queue_order?: number;
   created_at: string;
   updated_at?: string;
   approved_by?: string;
   approved_at?: string;
+  reviewed_by?: string;
+  reviewed_at?: string;
+  flagged_for_admin?: boolean;
+  review_note?: string;
 }
 
 export interface ProceedingsMotion {

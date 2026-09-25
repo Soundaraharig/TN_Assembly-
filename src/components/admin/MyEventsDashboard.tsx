@@ -50,7 +50,13 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
     setIsLoading(true);
     setFetchError(null);
     try {
-      await storageService.fetchAllEvents(force);
+      if (isSuperAdmin) {
+        await storageService.fetchAllEvents(force);
+      } else if (userEmail) {
+        await storageService.fetchEventsForCoordinator(userEmail, force);
+      } else {
+        await storageService.fetchAllEvents(force);
+      }
       setFetchError(storageService.getLastEventsError());
     } catch (err: any) {
       setFetchError(err?.message || 'Failed to communicate with database server.');
@@ -73,20 +79,16 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
       userEmail.toLowerCase().includes('organiser')
     ));
 
-  // Filter events for non-superadmin coordinators if userEmail is set
+  // Filter events for non-superadmin coordinators: strictly assigned events only
   const displayedEvents = isSuperAdmin
     ? events
     : events.filter(e => {
-        if (!userEmail) return true;
+        if (!userEmail) return false;
         const normEmail = userEmail.trim().toLowerCase();
         // 1. Direct match on assigned coordinator email
         if (e.assigned_coordinator_email?.toLowerCase() === normEmail) return true;
         // 2. Match via coordinators table by email and event_id
         if (coordinators.some(c => c.email?.toLowerCase() === normEmail && c.event_id === e.id)) return true;
-        // 3. Known authoritative mapping for Soundarahari to JKKNCET TN ASSEMBLY 2026
-        if (normEmail === 'soundaraharigece2025@jkkn.ac.in' && (e.id === '200fdd74-4d21-44d5-9f63-9a07bf267824' || e.college_name?.toLowerCase().includes('jkkncet') || e.slug?.includes('jkkncet'))) return true;
-        // 4. All active college rounds
-        if ((e as any).is_active || (e.status as string) === 'Active' || (e.status as string) === 'College Round' || e.event_stage === 'College Round') return true;
         return false;
       });
 

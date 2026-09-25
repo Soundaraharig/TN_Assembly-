@@ -32,6 +32,7 @@ import { Sidebar, type ActiveNavTab } from './components/common/Sidebar';
 import { ToastContainer, type ToastMessage } from './components/common/Toast';
 import { StandaloneProjectorDisplay } from './components/common/StandaloneProjectorDisplay';
 import { useTheme } from './lib/theme';
+import { ShieldAlert } from 'lucide-react';
 
 import { UnifiedLoginPage } from './components/auth/UnifiedLoginPage';
 import { MyEventsDashboard } from './components/admin/MyEventsDashboard';
@@ -270,13 +271,17 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
         props.navigate('/dashboard', { replace: true });
         return;
       }
+      if (props.role === 'coordinator') {
+        // Do NOT redirect unassigned coordinator; stay on page to show "Event Not Assigned" state
+        return;
+      }
       props.navigate('/events', { replace: true });
       return;
     }
     if (matchedEvent && props.currentEvent?.id !== matchedEvent.id) {
       props.onEventChange(matchedEvent);
     }
-  }, [eventSlug, matchedEvent?.id, props.currentEvent?.id, props.events.length]);
+  }, [eventSlug, matchedEvent?.id, props.currentEvent?.id, props.events.length, props.role]);
 
   const activeTabFromPath = pathToTab(tab);
 
@@ -287,18 +292,35 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
     }
   }, [activeTabFromPath, props.activeNavTab]);
 
-  // SAFE fallback: only use matchedEvent or strictly matching currentEvent; NEVER blindly pick events[0]
-  // to prevent cross-event contamination (e.g. showing JKKN ARTS data in JKKNCET view)
-  const activeEvent = matchedEvent || props.events.find(e => e.id === activeEventId) || storageService.getEvents().find(e => e.id === activeEventId) || (props.currentEvent && (!eventSlug || props.currentEvent.id === activeEventId || getEventSlug(props.currentEvent).toLowerCase() === eventSlug.toLowerCase()) ? props.currentEvent : undefined);
+  // SAFE fallback: when eventSlug is provided in the route, only accept a strictly matching event.
+  // NEVER fall back to currentEvent of a different event (prevents showing JKKN ARTS data on JKKNCET URL).
+  const activeEvent = matchedEvent || (!eventSlug ? (props.events.find(e => e.id === activeEventId) || storageService.getEvents().find(e => e.id === activeEventId) || props.currentEvent || undefined) : undefined);
+
+  const isSuperAdmin = props.role === 'super_admin' || props.role === 'organiser' || !props.role ||
+    (props.userSession?.email && (
+      props.userSession.email.toLowerCase().includes('admin') ||
+      props.userSession.email.toLowerCase().includes('superadmin') ||
+      props.userSession.email.toLowerCase().includes('organiser')
+    ));
+
+  const isAuthorizedCoordinator = isSuperAdmin || (
+    props.role === 'coordinator' && activeEvent && (
+      (props.userSession?.assigned_event_ids && props.userSession.assigned_event_ids.includes(activeEvent.id)) ||
+      (activeEvent.assigned_coordinator_email && props.userSession?.email &&
+       activeEvent.assigned_coordinator_email.trim().toLowerCase() === props.userSession.email.trim().toLowerCase()) ||
+      (props.coordinators && props.userSession?.email &&
+       props.coordinators.some(c => c.event_id === activeEvent.id && c.email?.trim().toLowerCase() === props.userSession?.email?.trim().toLowerCase()))
+    )
+  );
 
   useEffect(() => {
-    if (activeEventId && isSupabaseEnabled) {
+    if (activeEventId && isSupabaseEnabled && (isSuperAdmin || isAuthorizedCoordinator)) {
       const currentDelegates = storageService.getLearners(activeEventId);
       if (currentDelegates.length === 0 || !storageService.isEventHydrated(activeEventId)) {
         storageService.hydrateFullEventData(activeEventId);
       }
     }
-  }, [activeEventId]);
+  }, [activeEventId, isSuperAdmin, isAuthorizedCoordinator]);
 
   // Strictly event-scoped records computed synchronously so child views and tabs NEVER cross-bleed data across events
   const currentLearners = useMemo(() => {
@@ -369,7 +391,30 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
     return activeEvent?.id ? storageService.getVolunteers(activeEvent.id) : props.volunteers;
   }, [activeEvent?.id, props.volunteers]);
 
-  if (!activeEvent) {
+  if (!activeEvent || (props.role === 'coordinator' && !isSuperAdmin && !isAuthorizedCoordinator)) {
+    if (props.role === 'coordinator' && !isSuperAdmin) {
+      return (
+        <div className="min-h-screen flex items-center justify-center p-6 text-center" style={{ backgroundColor: 'var(--bg-app)' }}>
+          <div className="max-w-md w-full p-8 rounded-2xl border shadow-xl flex flex-col items-center gap-4 animate-scale-in" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+            <div className="w-14 h-14 rounded-full flex items-center justify-center bg-red-500/10 text-red-500 border border-red-500/20">
+              <ShieldAlert className="w-7 h-7" />
+            </div>
+            <h2 className="text-xl font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
+              Event Not Assigned
+            </h2>
+            <p className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              Your coordinator account ({props.userSession?.email}) does not have permission to manage this event. Coordinators may only view and manage events assigned to them.
+            </p>
+            <button
+              onClick={() => props.navigate('/events')}
+              className="mt-2 px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-black font-semibold text-xs transition-all shadow-md cursor-pointer"
+            >
+              Return to My Assigned Events
+            </button>
+          </div>
+        </div>
+      );
+    }
     if (props.events.length > 0) {
       if (props.role === 'student') {
         return <Navigate to="/dashboard" replace />;
@@ -438,6 +483,30 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
     ) : (
       <div className="p-8 text-center" style={{ color: 'var(--text-muted)' }}>
         No student delegate details found. Please sign in with your access code.
+      </div>
+    );
+  }
+
+  if (props.role === 'coordinator' && !isSuperAdmin && !isAuthorizedCoordinator) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6 text-center" style={{ backgroundColor: 'var(--bg-app)' }}>
+        <div className="max-w-md w-full p-8 rounded-2xl border shadow-xl flex flex-col items-center gap-4 animate-scale-in" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+          <div className="w-14 h-14 rounded-full flex items-center justify-center bg-red-500/10 text-red-500 border border-red-500/20">
+            <ShieldAlert className="w-7 h-7" />
+          </div>
+          <h2 className="text-xl font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
+            Event Not Assigned
+          </h2>
+          <p className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+            Your coordinator account ({props.userSession?.email}) does not have permission to manage <strong>{activeEvent?.college_name || 'this event'}</strong>. Coordinators may only view and manage events assigned to them.
+          </p>
+          <button
+            onClick={() => props.navigate('/events')}
+            className="mt-2 px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-black font-semibold text-xs transition-all shadow-md cursor-pointer"
+          >
+            Return to My Assigned Events
+          </button>
+        </div>
       </div>
     );
   }
@@ -697,6 +766,12 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           parties={currentParties}
           committees={currentCommittees}
           onAddVolunteer={props.handleAddVolunteer}
+          onUpdateVolunteer={async (id, updates) => {
+            await storageService.updateVolunteer(id, updates);
+            if (props.setVolunteers) {
+              props.setVolunteers(storageService.getVolunteers(activeEvent.id));
+            }
+          }}
           onToggleArrival={(id) => storageService.toggleVolunteerArrival(id)}
           onBulkImportVolunteers={(vols) => {
             storageService.bulkImportVolunteers(vols, activeEvent.id);
@@ -817,6 +892,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           learners={currentLearners}
           eventId={activeEvent.id}
           eventSlug={getEventSlug(activeEvent)}
+          userRole={props.userSession?.role || props.role}
           onAddBill={(bill) => storageService.addBill(bill)}
           onUpdateBillStatus={(id, status, ayes, noes) => storageService.updateBillStatus(id, status, ayes, noes)}
           onShowToast={props.addToast}
@@ -1037,6 +1113,9 @@ export function App() {
       setCurrentStudent(null);
       setCurrentVolunteer(null);
       setCurrentJury(null);
+      setEvents([]);
+      setCurrentEvent(null);
+      currentEventRef.current = null;
       storageService.invalidateCache();
       presenceService.leave().catch(() => {});
     } catch (e) {
@@ -1048,8 +1127,23 @@ export function App() {
 
   // Load and subscribe to storage service state updates
   const loadState = (targetEventId?: string) => {
-    const evs = storageService.getEvents();
+    let evs = storageService.getEvents();
     const coords = storageService.getCoordinators();
+
+    // If role is coordinator, ensure evs is strictly scoped to assigned events
+    const isCoordinatorRole = role === 'coordinator' && userSession?.email &&
+      !userSession.email.toLowerCase().includes('admin') &&
+      !userSession.email.toLowerCase().includes('superadmin') &&
+      !userSession.email.toLowerCase().includes('organiser');
+
+    if (isCoordinatorRole) {
+      const normEmail = userSession.email!.trim().toLowerCase();
+      evs = evs.filter(e =>
+        e.assigned_coordinator_email?.trim().toLowerCase() === normEmail ||
+        coords.some(c => c.email?.trim().toLowerCase() === normEmail && c.event_id === e.id) ||
+        (userSession.assigned_event_ids && userSession.assigned_event_ids.includes(e.id))
+      );
+    }
 
     setEvents(evs);
     setCoordinators(coords);
@@ -1181,11 +1275,22 @@ export function App() {
     // Display screens only fetch their active event via fetchDisplayPortalData
     if (!isDisplay && isSupabaseEnabled && !hasMountedEventsRef.current) {
       hasMountedEventsRef.current = true;
-      storageService.fetchAllEvents().then(() => {
-        loadState();
-      }).catch(err => {
-        console.warn('[App] Initial Supabase events sync warning:', err);
-      });
+      const saved = localStorage.getItem(SESSION_KEY);
+      const sess: SavedAuthSession | null = saved ? JSON.parse(saved) : null;
+      if (sess && sess.role === 'coordinator' && sess.email && !sess.email.includes('admin') && !sess.email.includes('superadmin') && !sess.email.includes('organiser')) {
+        storageService.fetchEventsForCoordinator(sess.email).then(coordEvs => {
+          setEvents(coordEvs);
+          loadState();
+        }).catch(err => {
+          console.warn('[App] Coordinator events sync warning:', err);
+        });
+      } else {
+        storageService.fetchAllEvents().then(() => {
+          loadState();
+        }).catch(err => {
+          console.warn('[App] Initial Supabase events sync warning:', err);
+        });
+      }
     }
 
     storageService.setWriteErrorHandler((table, action, error) => {
@@ -1398,6 +1503,18 @@ export function App() {
             name: sess.name || (sess.role === 'organiser' ? 'Event Organiser' : 'Event Coordinator'),
             assigned_event_ids: sess.assigned_event_ids
           });
+          if (sess.role === 'coordinator' && sess.email && !sess.email.includes('admin') && !sess.email.includes('superadmin') && !sess.email.includes('organiser')) {
+            storageService.fetchEventsForCoordinator(sess.email).then(coordEvents => {
+              setEvents(coordEvents);
+              if (sess.currentEventId) {
+                const target = coordEvents.find(e => e.id === sess.currentEventId);
+                if (target) {
+                  setCurrentEvent(target);
+                  currentEventRef.current = target;
+                }
+              }
+            }).catch(err => console.warn('[App] Coordinator restore events error:', err));
+          }
           return;
         }
 
@@ -1556,6 +1673,24 @@ export function App() {
 
   // Handlers for App interactions
   const handleEventChange = (ev: CollegeEvent) => {
+    const isSuper = role === 'super_admin' || role === 'organiser' || !role ||
+      (userSession?.email && (
+        userSession.email.toLowerCase().includes('admin') ||
+        userSession.email.toLowerCase().includes('superadmin') ||
+        userSession.email.toLowerCase().includes('organiser')
+      ));
+
+    if (role === 'coordinator' && !isSuper && userSession?.email) {
+      const normEmail = userSession.email.trim().toLowerCase();
+      const isAssigned = (userSession.assigned_event_ids && userSession.assigned_event_ids.includes(ev.id)) ||
+        (ev.assigned_coordinator_email && ev.assigned_coordinator_email.trim().toLowerCase() === normEmail) ||
+        coordinators.some(c => c.event_id === ev.id && c.email?.trim().toLowerCase() === normEmail);
+      if (!isAssigned) {
+        addToast('Access Denied', `You are not assigned to ${ev.college_name}`, 'error');
+        return;
+      }
+    }
+
     setCurrentEvent(ev);
     currentEventRef.current = ev;
     if (isSupabaseEnabled) {
@@ -2255,30 +2390,22 @@ export function App() {
             }
 
             // 2. Check Event Coordinators strictly with authoritative credentials
-            const allCoords = storageService.getCoordinators();
-            const coordAccount = allCoords.find(c => c.email.trim().toLowerCase() === emailLower);
+            let sess = storageService.authenticateCoordinator(emailInput, passTrim);
+            if (!sess) {
+              sess = await storageService.authenticateCoordinatorAsync(emailInput, passTrim);
+            }
 
-            if (coordAccount) {
-              const sess = storageService.authenticateCoordinator(emailInput, passTrim);
-              if (!sess) {
-                // Coordinator account exists but entered password does not match authoritative password
-                return null;
-              }
+            if (sess) {
+              // Fetch ONLY assigned events for this coordinator from Supabase
+              const assignedEvents = await storageService.fetchEventsForCoordinator(emailInput, true);
+              setEvents(assignedEvents);
 
               setUserSession(sess);
               setIsAuthenticated(true);
               setRole('coordinator');
               setActiveNavTab('overview');
 
-              const allEvents = storageService.getEvents();
-              let targetEv = allEvents.find(e => e.id === coordAccount.event_id);
-              if (!targetEv && coordAccount.email) {
-                targetEv = allEvents.find(e => e.assigned_coordinator_email?.toLowerCase() === coordAccount.email.toLowerCase());
-              }
-              if (!targetEv && allEvents.length > 0) {
-                targetEv = allEvents[0];
-              }
-
+              const targetEv = assignedEvents[0];
               if (targetEv) {
                 setCurrentEvent(targetEv);
                 currentEventRef.current = targetEv;
@@ -2289,43 +2416,22 @@ export function App() {
 
               saveSession({
                 role: 'coordinator',
-                email: coordAccount.email,
-                name: coordAccount.name,
-                assigned_event_ids: [coordAccount.event_id],
-                currentEventId: targetEv?.id || coordAccount.event_id,
+                email: sess.email,
+                name: sess.name,
+                assigned_event_ids: sess.assigned_event_ids,
+                currentEventId: targetEv?.id || (sess.assigned_event_ids ? sess.assigned_event_ids[0] : ''),
                 activeNavTab: 'overview'
               });
-              const eventSlugToUse = targetEv ? getEventSlug(targetEv) : 'jkkncet-tn-assembly-2026';
-              navigate(`/events/${eventSlugToUse}/overview`);
-              return sess;
-            } else {
-              // Remote fallback for coordinator authentication
-              const remoteSess = await storageService.authenticateCoordinatorAsync(emailInput, passTrim);
-              if (remoteSess) {
-                setUserSession(remoteSess);
-                setIsAuthenticated(true);
-                setRole('coordinator');
-                setActiveNavTab('overview');
 
-                const allEvents = storageService.getEvents();
-                const targetEv = allEvents.find(e => remoteSess.assigned_event_ids?.includes(e.id)) || allEvents[0];
-                if (targetEv) {
-                  setCurrentEvent(targetEv);
-                  currentEventRef.current = targetEv;
-                }
-
-                saveSession({
-                  role: 'coordinator',
-                  email: remoteSess.email,
-                  name: remoteSess.name,
-                  assigned_event_ids: remoteSess.assigned_event_ids,
-                  currentEventId: targetEv?.id || (remoteSess.assigned_event_ids ? remoteSess.assigned_event_ids[0] : ''),
-                  activeNavTab: 'overview'
-                });
-                const eventSlugToUse = targetEv ? getEventSlug(targetEv) : 'jkkncet-tn-assembly-2026';
+              if (assignedEvents.length > 1) {
+                navigate('/events');
+              } else if (targetEv) {
+                const eventSlugToUse = getEventSlug(targetEv);
                 navigate(`/events/${eventSlugToUse}/overview`);
-                return remoteSess;
+              } else {
+                navigate('/events');
               }
+              return sess;
             }
 
             // 3. Check Other Team Members (e.g. Organiser)

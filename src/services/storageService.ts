@@ -520,6 +520,7 @@ class StorageService {
   private lastEventsError: string | null = null;
   private realtimeCleanupPromise: Promise<void> | null = null;
   private attendanceCleanupPromise: Promise<void> | null = null;
+  private coordinatorEventsCache = new Map<string, CollegeEvent[]>();
 
   public getLastEventsError(): string | null {
     return this.lastEventsError;
@@ -857,11 +858,12 @@ class StorageService {
 
   public clearUserCache() {
     try {
+      this.coordinatorEventsCache.clear();
       if (typeof window !== 'undefined') {
         const keysToRemove: string[] = [];
         for (let i = 0; i < localStorage.length; i++) {
           const k = localStorage.key(i);
-          if (k && (k.includes('auth_session') || k.includes('user_session'))) {
+          if (k && (k.includes('auth_session') || k.includes('user_session') || k.includes('coord_events') || k.includes('assigned_event'))) {
             keysToRemove.push(k);
           }
         }
@@ -2601,6 +2603,86 @@ class StorageService {
   }
 
   /**
+   * Fetches ONLY events assigned to a specific coordinator from Supabase.
+   * Scopes the database query to the coordinator's assigned event IDs and email.
+   * Caches results under a coordinator-scoped cache key to prevent cross-session leakage.
+   */
+  public async fetchEventsForCoordinator(coordinatorEmail: string, force = false): Promise<CollegeEvent[]> {
+    const sb = supabase;
+    const normEmail = (coordinatorEmail || '').trim().toLowerCase();
+    if (!normEmail) return [];
+    if (!sb) {
+      return this.getEvents().filter(e =>
+        e.assigned_coordinator_email?.trim().toLowerCase() === normEmail ||
+        this.getCoordinators().some(c => c.email?.trim().toLowerCase() === normEmail && c.event_id === e.id)
+      );
+    }
+
+    const cacheKey = `fetch_events_coord_${normEmail}`;
+    return this.fetchCached<CollegeEvent[]>(cacheKey, async () => {
+      try {
+        // Step 1: Query coordinators table to get all event IDs explicitly assigned to this coordinator
+        const { data: coordRows, error: coordErr } = await sb
+          .from('coordinators')
+          .select('event_id')
+          .ilike('email', normEmail);
+
+        if (coordErr) {
+          console.warn('[StorageService] fetchEventsForCoordinator coordinators lookup warning:', coordErr);
+        }
+
+        const assignedEventIds = Array.from(new Set(
+          (coordRows || []).map(r => r.event_id).filter((id): id is string => Boolean(id) && isValidUuid(id))
+        ));
+
+        // Step 2: Query college_events strictly scoped to assigned event IDs or assigned coordinator email
+        let query = sb
+          .from('college_events')
+          .select(SUPABASE_COLUMNS.COLLEGE_EVENTS_LIST);
+
+        if (assignedEventIds.length > 0) {
+          query = query.or(`assigned_coordinator_email.ilike.${normEmail},id.in.(${assignedEventIds.join(',')})`);
+        } else {
+          query = query.ilike('assigned_coordinator_email', normEmail);
+        }
+
+        query = query.order('created_at', { ascending: false });
+
+        const { data, error } = await query;
+
+        if (!error && data && Array.isArray(data)) {
+          this.lastEventsError = null;
+          const evs = (data as unknown as CollegeEvent[]).map(e => this.normalizeEvent(e));
+          // Store coordinator-scoped events in dedicated cache
+          try {
+            localStorage.setItem(`tn_assembly_coord_events_${normEmail}`, JSON.stringify(evs));
+          } catch {}
+          this.coordinatorEventsCache.set(normEmail, evs);
+          this.setItem(STORAGE_KEYS.EVENTS, evs);
+          this.eventsFetched = true;
+          this.notify();
+          return evs;
+        } else if (error) {
+          console.error('[StorageService] fetchEventsForCoordinator query error:', error);
+          this.lastEventsError = `PostgreSQL error: ${error.message} (code: ${error.code || 'unknown'})`;
+          this.notify();
+          const cached = this.coordinatorEventsCache.get(normEmail);
+          if (cached && cached.length > 0) return cached;
+          return [];
+        }
+      } catch (err: any) {
+        console.error('[StorageService] fetchEventsForCoordinator fatal error:', err);
+        this.lastEventsError = err?.message || 'Network error fetching coordinator events';
+        this.notify();
+        const cached = this.coordinatorEventsCache.get(normEmail);
+        if (cached && cached.length > 0) return cached;
+        return [];
+      }
+      return [];
+    }, { force });
+  }
+
+  /**
    * Directly fetches learners for an event from Supabase, including legacy/unassigned delegates.
    * Commits them to reactive storage (STORAGE_KEYS.LEARNERS) and notifies subscribers.
    */
@@ -2675,6 +2757,28 @@ class StorageService {
   public async hydrateFullEventData(eventId: string, force = false): Promise<boolean> {
     const sb = supabase;
     if (!sb || !eventId) return false;
+
+    // Enforce coordinator event isolation: If coordinator session is active, verify event assignment
+    try {
+      const saved = localStorage.getItem('tn_assembly_auth_session');
+      if (saved) {
+        const sess = JSON.parse(saved);
+        if (sess && sess.role === 'coordinator' && sess.email) {
+          const normEmail = sess.email.trim().toLowerCase();
+          const isSuper = normEmail.includes('admin') || normEmail.includes('superadmin') || normEmail.includes('organiser');
+          if (!isSuper) {
+            const assignedIds = Array.isArray(sess.assigned_event_ids) ? sess.assigned_event_ids : [];
+            const isAssigned = assignedIds.includes(eventId) ||
+              this.getEvents().some(e => e.id === eventId && e.assigned_coordinator_email?.trim().toLowerCase() === normEmail) ||
+              this.getCoordinators().some(c => c.event_id === eventId && c.email?.trim().toLowerCase() === normEmail);
+            if (!isAssigned) {
+              console.warn(`[StorageService] Access denied: Coordinator ${normEmail} is not authorized to hydrate event ${eventId}`);
+              return false;
+            }
+          }
+        }
+      }
+    } catch {}
 
     const existingLearners = this.getLearners(eventId);
     if (!force && this.hydratedEventIds.has(eventId) && existingLearners.length > 0) {
@@ -3485,7 +3589,7 @@ class StorageService {
               } else {
                 const localT = new Date(local.updated_at || local.created_at || 0).getTime();
                 const remoteT = new Date(remoteQ.updated_at || remoteQ.created_at || 0).getTime();
-                const mergedStatus = (remoteQ.status === 'Approved' || remoteQ.status === 'Starred' || remoteQ.status === 'Rejected')
+                const mergedStatus = (remoteQ.status === 'Approved' || remoteQ.status === 'Starred' || remoteQ.status === 'Rejected' || remoteQ.status === 'Under Review')
                   ? remoteQ.status
                   : (local.status || remoteQ.status);
                 pqMap.set(remoteQ.id, {
@@ -3497,7 +3601,10 @@ class StorageService {
             this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, Array.from(pqMap.values()));
             this.invalidateCache('portal_');
             this.notify();
-            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_question_notification', { detail: msg.payload }));
+              window.dispatchEvent(new Event('storage'));
+            }
           }
         })
         .on('broadcast', { event: 'event_deadline_update' }, (msg: any) => {
@@ -4887,20 +4994,30 @@ class StorageService {
     const emailLower = email.trim().toLowerCase();
     const passTrim = pass.trim();
 
-    // 1. Locate the single authoritative coordinator record for this email
-    const coord = coords.find(c => c.email.trim().toLowerCase() === emailLower);
+    // 1. Locate all coordinator records for this email
+    const matchingCoords = coords.filter(c => c.email.trim().toLowerCase() === emailLower);
+    const coord = matchingCoords[0];
     if (!coord) return null;
 
-    // 2. Validate password strictly against the authoritative record (invalidates old passwords)
-    const isValid = (coord.password_hash && coord.password_hash === passTrim) ||
-      (coord.raw_temp_password && coord.raw_temp_password === passTrim);
+    // 2. Validate password strictly against authoritative records
+    const isValid = matchingCoords.some(c =>
+      (c.password_hash && c.password_hash === passTrim) ||
+      (c.raw_temp_password && c.raw_temp_password === passTrim)
+    );
     if (!isValid) return null;
+
+    // 3. Collect ALL assigned event IDs across coordinators and college_events tables
+    const matchingEvents = this.getEvents().filter(e => e.assigned_coordinator_email?.trim().toLowerCase() === emailLower);
+    const assignedIds = Array.from(new Set([
+      ...matchingCoords.map(c => c.event_id).filter(Boolean),
+      ...matchingEvents.map(e => e.id).filter(Boolean)
+    ]));
 
     return {
       role: 'coordinator',
       email: coord.email,
       name: coord.name,
-      assigned_event_ids: [coord.event_id]
+      assigned_event_ids: assignedIds
     };
   }
 
@@ -5064,29 +5181,33 @@ class StorageService {
   }
 
   public async authenticateCoordinatorAsync(email: string, pass: string): Promise<UserSession | null> {
-    const local = this.authenticateCoordinator(email, pass);
-    if (local) return local;
-
-    if (!supabase) return null;
+    if (!supabase) return this.authenticateCoordinator(email, pass);
     try {
-      const { data } = await supabase
+      const emailLower = email.trim().toLowerCase();
+      // Fetch ALL matching coordinator rows for this email (supporting multiple assigned events)
+      const { data: coordData } = await supabase
         .from('coordinators')
         .select(SUPABASE_COLUMNS.COORDINATORS)
-        .ilike('email', email.trim().toLowerCase())
-        .limit(1);
+        .ilike('email', emailLower);
 
-      if (data && data.length > 0) {
-        const coord = data[0] as unknown as Coordinator;
+      if (coordData && coordData.length > 0) {
+        const coords = coordData as unknown as Coordinator[];
         const allCoords = this.getCoordinators();
-        if (!allCoords.some(c => c.id === coord.id)) {
-          this.setItem(STORAGE_KEYS.COORDINATORS, [...allCoords, coord]);
+        const existingIds = new Set(allCoords.map(c => c.id));
+        const newCoords = coords.filter(c => !existingIds.has(c.id));
+        if (newCoords.length > 0) {
+          this.setItem(STORAGE_KEYS.COORDINATORS, [...allCoords, ...newCoords]);
         }
-        return this.authenticateCoordinator(email, pass);
       }
+
+      // Also ensure events assigned to this coordinator are fetched from Supabase
+      await this.fetchEventsForCoordinator(emailLower, true);
+
+      return this.authenticateCoordinator(email, pass);
     } catch (e) {
       console.warn('[StorageService] authenticateCoordinatorAsync error:', e);
     }
-    return null;
+    return this.authenticateCoordinator(email, pass);
   }
 
   /**
@@ -9074,6 +9195,8 @@ class StorageService {
     const codeNum = volunteer.phone ? volunteer.phone.replace(/\D/g, '').slice(-4) : Math.floor(100 + Math.random() * 900).toString();
     const defaultCode = `VOL${codeNum}`;
     const realId = (volunteer.id && isValidUuid(volunteer.id)) ? volunteer.id : genUuid();
+    const determinedRole = volunteer.role || volunteer.volunteer_type || (volunteer.is_yuva ? 'YUVA Volunteer' : 'Volunteer');
+    const determinedType = volunteer.volunteer_type || (volunteer.role === 'Administrator' ? 'Administrator' : volunteer.role === 'Journalist' ? 'Journalist' : 'Volunteer');
     const newVol: Volunteer = {
       id: realId,
       event_id: volunteer.event_id || '',
@@ -9085,7 +9208,8 @@ class StorageService {
       shift: volunteer.shift || 'Both days',
       is_yuva: volunteer.is_yuva !== undefined ? volunteer.is_yuva : true,
       has_arrived: volunteer.has_arrived !== undefined ? volunteer.has_arrived : false,
-      role: volunteer.role || (volunteer.is_yuva ? 'YUVA Volunteer' : 'Volunteer'),
+      role: determinedRole,
+      volunteer_type: determinedType,
       created_at: new Date().toISOString()
     };
     if (supabase) {
@@ -9103,6 +9227,39 @@ class StorageService {
     }
     return newVol;
   }
+
+  public async updateVolunteer(id: string, updates: Partial<Volunteer>): Promise<Volunteer | undefined> {
+    let updatedVol: Volunteer | undefined;
+    const all = this.getVolunteers().map(v => {
+      if (v.id === id) {
+        const nextRole = updates.role || updates.volunteer_type || v.role;
+        const nextType = updates.volunteer_type || (nextRole === 'Administrator' ? 'Administrator' : nextRole === 'Journalist' ? 'Journalist' : (v.volunteer_type || 'Volunteer'));
+        updatedVol = {
+          ...v,
+          ...updates,
+          id: v.id,
+          event_id: updates.event_id || v.event_id,
+          role: nextRole,
+          volunteer_type: nextType
+        };
+        return updatedVol;
+      }
+      return v;
+    });
+
+    if (updatedVol) {
+      this.setItem(STORAGE_KEYS.VOLUNTEERS, all);
+      this.notify();
+      if (supabase) {
+        await this.sbUpsert('volunteers', updatedVol as unknown as Record<string, unknown>);
+      }
+      if (updatedVol.event_id) {
+        this.invalidateCache(updatedVol.event_id);
+      }
+    }
+    return updatedVol;
+  }
+
 
   public toggleVolunteerArrival(volunteerId: string) {
     let updatedVol: Volunteer | undefined;
@@ -13530,8 +13687,15 @@ class StorageService {
 
     list.unshift(newQuestion);
     this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, list);
-    this.broadcast('question_update', { eventId, question: newQuestion }).catch(() => {});
+    this.broadcast('question_update', { eventId, question: newQuestion, isNewSubmission: true }).catch(() => {});
     this.notify();
+    this.logAudit({
+      event_id: eventId,
+      action: 'QUESTION_SUBMITTED',
+      actor_role: 'student',
+      actor_name: newQuestion.student_name,
+      details: `Question submitted by ${newQuestion.student_name} (${newQuestion.bench}) for ${newQuestion.ministry}`
+    });
 
     try {
       await this.syncEventStateToSupabase(eventId);
@@ -13569,7 +13733,7 @@ class StorageService {
 
     list.unshift(newQuestion);
     this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, list);
-    this.broadcast('question_update', { eventId, question: newQuestion }).catch(() => {});
+    this.broadcast('question_update', { eventId, question: newQuestion, isNewSubmission: true }).catch(() => {});
     this.notify();
     this.syncEventStateToSupabase(eventId).catch(err => {
       console.warn('[Supabase] addProceedingsQuestion sync error:', err);
@@ -13579,10 +13743,24 @@ class StorageService {
 
   public updateProceedingsQuestionStatus(
     questionId: string,
-    status: 'Submitted' | 'Approved' | 'Starred' | 'Rejected',
+    status: 'Submitted' | 'Under Review' | 'Approved' | 'Starred' | 'Rejected',
     approvedBy?: string,
-    fallbackEventId?: string
-  ): void {
+    fallbackEventId?: string,
+    userContext?: { role?: string; volunteer?: Volunteer; name?: string }
+  ): { success: boolean; question?: ProceedingsQuestion; error?: string } {
+    // Backend security enforcement: Only Super Admin and Coordinator (Main Admin) can final approve or star
+    if (status === 'Approved' || status === 'Starred') {
+      const callerRole = (userContext?.role || '').toLowerCase().trim();
+      const isAuthorized = callerRole === 'super_admin' || callerRole === 'coordinator';
+      if (!isAuthorized) {
+        console.error(`[Security Check Failed] Role "${callerRole || 'unknown'}" is prohibited from giving final question approval.`);
+        return {
+          success: false,
+          error: 'Unauthorized: Only Main Admin / Super Admin can perform final approval.'
+        };
+      }
+    }
+
     const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
     let targetEventId: string | undefined = fallbackEventId;
     let updatedQ: ProceedingsQuestion | undefined;
@@ -13593,19 +13771,33 @@ class StorageService {
           ...q,
           status,
           updated_at: new Date().toISOString(),
-          approved_by: status === 'Approved' ? (approvedBy || 'Admin') : q.approved_by,
+          approved_by: status === 'Approved' ? (approvedBy || userContext?.name || 'Main Admin') : q.approved_by,
           approved_at: status === 'Approved' ? new Date().toISOString() : q.approved_at
         };
         return updatedQ;
       }
       return q;
     });
+
+    if (!updatedQ) {
+      return { success: false, error: 'Question not found.' };
+    }
+
     this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, updated);
     this.notify();
+
     if (targetEventId) {
-      if (updatedQ) {
-        this.broadcast('question_update', { eventId: targetEventId, question: updatedQ }).catch(() => {});
-      }
+      const actorName = approvedBy || userContext?.name || 'Main Admin';
+      const actorRole = userContext?.role || 'super_admin';
+      this.logAudit({
+        event_id: targetEventId,
+        action: status === 'Approved' ? 'QUESTION_FINAL_APPROVED' : status === 'Rejected' ? 'QUESTION_REJECTED' : 'QUESTION_STATUS_UPDATED',
+        actor_role: actorRole,
+        actor_name: actorName,
+        details: `Question #${questionId} transitioned to ${status} by ${actorName} (${actorRole})`
+      });
+
+      this.broadcast('question_update', { eventId: targetEventId, question: updatedQ, finalApproved: status === 'Approved' }).catch(() => {});
       const allEvs = this.getEvents();
       const matched = findEventBySlug(allEvs, targetEventId) || allEvs.find(e => e.id === targetEventId);
       const syncId = matched?.id || targetEventId;
@@ -13613,7 +13805,69 @@ class StorageService {
         console.warn('[Supabase] updateProceedingsQuestionStatus sync error:', err);
       });
     }
+
+    return { success: true, question: updatedQ };
   }
+
+  public async reviewAndApproachMainAdmin(
+    questionId: string,
+    volunteer: Volunteer,
+    note?: string
+  ): Promise<{ success: boolean; question?: ProceedingsQuestion; error?: string }> {
+    const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+    const targetQ = list.find(q => q.id === questionId);
+    if (!targetQ) {
+      return { success: false, error: 'Question not found.' };
+    }
+
+    // Role check: Only Administrator or Journalist volunteer types (or admins) can review and approach Main Admin
+    const vRole = (volunteer.role || volunteer.volunteer_type || '').toLowerCase().trim();
+    const canReview = vRole === 'administrator' || vRole === 'journalist' || vRole === 'super_admin' || vRole === 'coordinator';
+    if (!canReview) {
+      return { success: false, error: 'Unauthorized: Volunteer does not have question review privileges.' };
+    }
+
+    // Event isolation check: Volunteer can only review questions in their assigned event
+    if (volunteer.event_id && targetQ.event_id && volunteer.event_id !== targetQ.event_id) {
+      return { success: false, error: 'Event isolation violation: Volunteer cannot review questions from another event.' };
+    }
+
+    const updatedQ: ProceedingsQuestion = {
+      ...targetQ,
+      status: 'Under Review',
+      flagged_for_admin: true,
+      reviewed_by: `${volunteer.name} (${volunteer.role || 'Reviewer'})`,
+      reviewed_at: new Date().toISOString(),
+      review_note: note || targetQ.review_note,
+      updated_at: new Date().toISOString()
+    };
+
+    const updated = list.map(q => q.id === questionId ? updatedQ : q);
+    this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, updated);
+    this.notify();
+
+    const targetEventId = targetQ.event_id || volunteer.event_id;
+    if (targetEventId) {
+      this.logAudit({
+        event_id: targetEventId,
+        action: 'QUESTION_REVIEWED_APPROACHED_ADMIN',
+        actor_role: volunteer.role || 'volunteer',
+        actor_name: volunteer.name,
+        details: `Question #${questionId} reviewed and flagged for Main Admin attention by ${volunteer.name} (${volunteer.role || 'Volunteer'})`
+      });
+
+      this.broadcast('question_update', { eventId: targetEventId, question: updatedQ, approachedAdmin: true }).catch(() => {});
+      const allEvs = this.getEvents();
+      const matched = findEventBySlug(allEvs, targetEventId) || allEvs.find(e => e.id === targetEventId);
+      const syncId = matched?.id || targetEventId;
+      this.syncEventStateToSupabase(syncId).catch(err => {
+        console.warn('[Supabase] reviewAndApproachMainAdmin sync error:', err);
+      });
+    }
+
+    return { success: true, question: updatedQ };
+  }
+
 
   public deleteProceedingsQuestion(questionId: string, fallbackEventId?: string): void {
     // Record persistent deletion tombstone — stored in STORAGE_KEYS.DELETED_QUESTION_IDS so it

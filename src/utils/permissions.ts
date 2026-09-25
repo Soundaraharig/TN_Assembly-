@@ -60,3 +60,39 @@ export function canManageSessionAttendance(role?: UserRole | string): boolean {
   const normalized = role.toLowerCase();
   return normalized === 'super_admin' || normalized === 'admin' || normalized === 'coordinator';
 }
+
+/**
+ * Checks if the user role can perform FINAL APPROVAL on student parliamentary questions.
+ * Restricted strictly to Main Admin (Super Admin) and authorized Coordinators.
+ * Volunteers (including Administrator and Journalist volunteer types), Students, Jury,
+ * and Organisers are prohibited from giving final approval.
+ */
+export function canFinalApproveQuestions(role?: UserRole | string, _volunteerType?: string): boolean {
+  if (!role) return false;
+  const normalizedRole = role.toLowerCase();
+  if (normalizedRole === 'super_admin' || normalizedRole === 'coordinator') {
+    return true;
+  }
+  // Even if a volunteer has type 'Administrator' or 'Journalist', they cannot final approve
+  return false;
+}
+
+/**
+ * Checks if the user has access to review student parliamentary questions in the approval queue.
+ * Authorized roles:
+ * - Super Admin and Coordinator (Main Admin)
+ * - Volunteer with type 'Administrator' or 'Journalist'
+ */
+export function canReviewQuestions(role?: UserRole | string, volunteerType?: string): boolean {
+  if (!role) return false;
+  const normalizedRole = role.toLowerCase();
+  if (normalizedRole === 'super_admin' || normalizedRole === 'coordinator') {
+    return true;
+  }
+  if (normalizedRole === 'volunteer') {
+    const normType = (volunteerType || '').toLowerCase().trim();
+    return normType === 'administrator' || normType === 'journalist';
+  }
+  return false;
+}
+
