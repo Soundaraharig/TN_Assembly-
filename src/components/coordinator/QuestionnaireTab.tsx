@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import type { ParliamentQuestion, Learner } from '../../types';
 import { storageService } from '../../services/storageService';
 import {
@@ -26,7 +26,7 @@ export const QuestionnaireTab: React.FC<QuestionnaireTabProps> = ({
   onShowToast
 }) => {
   const configuredMinistries = useMemo(() => {
-    return storageService.getCabinetMinistries(eventId);
+    return eventId ? storageService.getCabinetMinistries(eventId) : [];
   }, [eventId]);
 
   const [selectedType, setSelectedType] = useState<string>('ALL');
@@ -37,11 +37,19 @@ export const QuestionnaireTab: React.FC<QuestionnaireTabProps> = ({
   // Form State
   const [qType, setQType] = useState<ParliamentQuestion['type']>('Starred');
   const [qMinistry, setQMinistry] = useState(() => {
-    const mins = storageService.getCabinetMinistries(eventId);
+    const mins = eventId ? storageService.getCabinetMinistries(eventId) : [];
     return mins.length > 0 ? mins[0] : '';
   });
   const [qSubmitterId, setQSubmitterId] = useState('');
   const [qText, setQText] = useState('');
+
+  useEffect(() => {
+    if (configuredMinistries.length > 0 && (!qMinistry || !configuredMinistries.includes(qMinistry))) {
+      setQMinistry(configuredMinistries[0]);
+    } else if (configuredMinistries.length === 0) {
+      setQMinistry('');
+    }
+  }, [configuredMinistries, eventId]);
 
   const filteredQuestions = questions.filter(q => {
     if (selectedType !== 'ALL' && q.type !== selectedType) return false;

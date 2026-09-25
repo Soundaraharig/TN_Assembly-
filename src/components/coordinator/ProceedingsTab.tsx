@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { BillProceeding, Learner, EventDeadline, ProceedingsQuestion, ProceedingsMotion } from '../../types';
 import { storageService } from '../../services/storageService';
+import { getEventSlug } from '../../utils/slug';
 import {
   FileText,
   Plus,
@@ -37,7 +38,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   proceedings,
   learners,
   eventId,
-  eventSlug = 'jkkncet-tn-assembly-2026',
+  eventSlug,
   onAddBill,
   onUpdateBillStatus,
   onShowToast
@@ -45,12 +46,13 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   const [searchParams, setSearchParams] = useSearchParams();
   const currentTab = (searchParams.get('tab') as 'questions' | 'motions' | 'bills') || 'questions';
 
-  const targetSlug = eventSlug || eventId || 'jkkncet-tn-assembly-2026';
+  const authoritativeEventId = eventId || (eventSlug ? storageService.getEvents().find(e => (e.slug && e.slug.toLowerCase() === eventSlug.toLowerCase()) || getEventSlug(e).toLowerCase() === eventSlug.toLowerCase())?.id : undefined) || '';
+  const targetSlug = authoritativeEventId || eventSlug || '';
 
   // Deadlines & Data State
-  const [deadline, setDeadline] = useState<EventDeadline>(() => storageService.getEventDeadline(eventId || targetSlug));
-  const [questions, setQuestions] = useState<ProceedingsQuestion[]>(() => storageService.getProceedingsQuestions(targetSlug));
-  const [motions, setMotions] = useState<ProceedingsMotion[]>(() => storageService.getProceedingsMotions(targetSlug));
+  const [deadline, setDeadline] = useState<EventDeadline>(() => storageService.getEventDeadline(authoritativeEventId || eventSlug || ''));
+  const [questions, setQuestions] = useState<ProceedingsQuestion[]>(() => storageService.getProceedingsQuestions(authoritativeEventId || eventSlug || ''));
+  const [motions, setMotions] = useState<ProceedingsMotion[]>(() => storageService.getProceedingsMotions(authoritativeEventId || eventSlug || ''));
   const [isTogglingDeadline, setIsTogglingDeadline] = useState(false);
   const [selectedQuestion, setSelectedQuestion] = useState<ProceedingsQuestion | null>(null);
 
@@ -61,10 +63,10 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
 
   // Dynamic ministries from Cabinet configuration and submitted questions
   const availableMinistries = useMemo(() => {
-    const fromConfig = storageService.getCabinetMinistries(eventId || targetSlug);
+    const fromConfig = authoritativeEventId ? storageService.getCabinetMinistries(authoritativeEventId) : [];
     const fromQuestions = questions.map(q => q.ministry).filter(Boolean);
     return Array.from(new Set([...fromConfig, ...fromQuestions]));
-  }, [eventId, targetSlug, questions]);
+  }, [authoritativeEventId, questions]);
 
   // Modals & Inputs
   const [isAddBillOpen, setIsAddBillOpen] = useState(false);
@@ -84,24 +86,20 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
 
   // Sync data on tab or storage updates
   const refreshData = () => {
-    setDeadline(storageService.getEventDeadline(eventId || targetSlug));
-    const allQ = [
-      ...storageService.getProceedingsQuestions(targetSlug),
-      ...(eventId && eventId !== targetSlug ? storageService.getProceedingsQuestions(eventId) : [])
-    ];
-    const uniqueQ = Array.from(new Map(allQ.map(q => [q.id, q])).values());
-    setQuestions(uniqueQ);
-    setMotions(storageService.getProceedingsMotions(targetSlug));
+    const key = authoritativeEventId || eventSlug || '';
+    setDeadline(storageService.getEventDeadline(key));
+    setQuestions(storageService.getProceedingsQuestions(key));
+    setMotions(storageService.getProceedingsMotions(key));
   };
 
   useEffect(() => {
     refreshData();
 
     // On-demand authoritative fetch from Supabase
-    const fetchTarget = eventId || targetSlug;
+    const fetchTarget = authoritativeEventId || eventSlug;
     if (fetchTarget) {
       storageService.fetchProceedingsQuestionsOnDemand(fetchTarget).then(fetchedQs => {
-        console.log('[Proceedings] eventId =', eventId, 'targetSlug =', targetSlug, 'returned questions =', fetchedQs.length);
+        console.log('[Proceedings] eventId =', authoritativeEventId, 'returned questions =', fetchedQs.length);
         refreshData();
       }).catch(err => {
         console.warn('[Proceedings] fetch error:', err);
@@ -112,7 +110,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
       refreshData();
     });
     return () => unsub();
-  }, [targetSlug, eventId]);
+  }, [authoritativeEventId, eventSlug]);
 
   const setTab = (tab: 'questions' | 'motions' | 'bills') => {
     setSearchParams({ tab });

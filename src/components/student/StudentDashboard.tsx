@@ -292,19 +292,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [approvedHouseQuestions, setApprovedHouseQuestions] = useState<ProceedingsQuestion[]>([]);
   const [ministerQuestions, setMinisterQuestions] = useState<ProceedingsQuestion[]>([]);
   const [eventMinistries, setEventMinistries] = useState<string[]>(() => {
-    const fromId = storageService.getCabinetMinistries(resolvedEventId);
-    if (fromId.length > 0) return fromId;
-    return storageService.getCabinetMinistries(eventSlug);
+    return resolvedEventId ? storageService.getCabinetMinistries(resolvedEventId) : [];
   });
-  const [isMinistriesLoading, setIsMinistriesLoading] = useState<boolean>(() => {
-    const fromId = storageService.getCabinetMinistries(resolvedEventId);
-    const fromSlug = storageService.getCabinetMinistries(eventSlug);
-    return fromId.length === 0 && fromSlug.length === 0;
-  });
+  const [isMinistriesLoading, setIsMinistriesLoading] = useState<boolean>(() => false);
   const [questionMinistry, setQuestionMinistry] = useState<string>(() => {
-    const mins = storageService.getCabinetMinistries(resolvedEventId);
-    const resolved = mins.length > 0 ? mins : storageService.getCabinetMinistries(eventSlug);
-    return resolved.length > 0 ? resolved[0] : '';
+    const mins = resolvedEventId ? storageService.getCabinetMinistries(resolvedEventId) : [];
+    return mins.length > 0 ? mins[0] : '';
   });
   const [questionType, setQuestionType] = useState<ProceedingsQuestion['question_type']>('Standard');
   const [questionText, setQuestionText] = useState<string>('');
@@ -366,8 +359,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         }
 
         // Refresh configured ministries from Cabinet & Shadow Ministry system
-        const fromId = storageService.getCabinetMinistries(activeId);
-        const activeMins = fromId.length > 0 ? fromId : storageService.getCabinetMinistries(eventSlug);
+        const activeMins = activeId ? storageService.getCabinetMinistries(activeId) : [];
         setEventMinistries(activeMins);
         setIsMinistriesLoading(false);
         setQuestionMinistry(prev => {

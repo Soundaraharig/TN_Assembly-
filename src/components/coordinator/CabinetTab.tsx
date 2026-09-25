@@ -242,7 +242,7 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
 }) => {
   // Ministries come ONLY from Supabase via savedMinistries prop — NO defaults
   const [ministries, setMinistries] = useState<string[]>(() => {
-    if (Array.isArray(savedMinistries) && savedMinistries.length > 0) {
+    if (Array.isArray(savedMinistries)) {
       return savedMinistries;
     }
     if (eventId && typeof localStorage !== 'undefined') {
@@ -250,11 +250,11 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
         const stored = localStorage.getItem(`tn_assembly_cabinet_${eventId}`);
         if (stored) {
           const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          if (Array.isArray(parsed)) return parsed;
         }
       } catch {}
     }
-    return Array.isArray(savedMinistries) ? savedMinistries : [];
+    return [];
   });
   const [newMinistryInput, setNewMinistryInput] = useState('');
   const [viewMode, setViewMode] = useState<'roster' | 'config'>('roster');
@@ -265,7 +265,6 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
 
   // Sync ministries from savedMinistries prop (Supabase source of truth)
   useEffect(() => {
-    console.log("Question Hour event ID:", eventId);
     if (Array.isArray(savedMinistries)) {
       setMinistries(savedMinistries);
     } else if (eventId && typeof localStorage !== 'undefined') {
@@ -279,6 +278,9 @@ export const CabinetTab: React.FC<CabinetTabProps> = ({
           }
         }
       } catch {}
+      setMinistries([]);
+    } else {
+      setMinistries([]);
     }
   }, [savedMinistries, eventId]);
 

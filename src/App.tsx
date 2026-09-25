@@ -287,9 +287,9 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
     }
   }, [activeTabFromPath, props.activeNavTab]);
 
-  // SAFE fallback: only use matchedEvent or currentEvent; NEVER blindly pick events[0]
+  // SAFE fallback: only use matchedEvent or strictly matching currentEvent; NEVER blindly pick events[0]
   // to prevent cross-event contamination (e.g. showing JKKN ARTS data in JKKNCET view)
-  const activeEvent = matchedEvent || props.events.find(e => e.id === activeEventId) || props.currentEvent || storageService.getEvents().find(e => e.id === activeEventId);
+  const activeEvent = matchedEvent || props.events.find(e => e.id === activeEventId) || storageService.getEvents().find(e => e.id === activeEventId) || (props.currentEvent && (!eventSlug || props.currentEvent.id === activeEventId || getEventSlug(props.currentEvent).toLowerCase() === eventSlug.toLowerCase()) ? props.currentEvent : undefined);
 
   useEffect(() => {
     if (activeEventId && isSupabaseEnabled) {
@@ -656,12 +656,13 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           learners={currentLearners}
           parties={currentParties}
           eventId={activeEvent.id}
-          savedMinistries={activeEvent.cabinet_ministries || (activeEvent.social_coverage as any)?.cabinet_ministries || storageService.getCabinetMinistries(activeEvent.id)}
+          savedMinistries={Array.isArray(activeEvent.cabinet_ministries) ? activeEvent.cabinet_ministries : (Array.isArray((activeEvent.social_coverage as any)?.cabinet_ministries) ? (activeEvent.social_coverage as any).cabinet_ministries : storageService.getCabinetMinistries(activeEvent.id))}
           isLocked={activeEvent.is_locked}
           onSaveCabinet={async (ministries) => {
-            const result = await storageService.saveCabinetMinistries(activeEvent.id, ministries);
+            const targetId = activeEvent.id;
+            const result = await storageService.saveCabinetMinistries(targetId, ministries);
             if (result.success) {
-              props.setCurrentEvent(prev => prev ? { ...prev, cabinet_ministries: ministries } : prev);
+              props.setCurrentEvent(prev => (prev && prev.id === targetId) ? { ...prev, cabinet_ministries: ministries } : prev);
               props.setEvents?.(storageService.getEvents());
             }
             return result;

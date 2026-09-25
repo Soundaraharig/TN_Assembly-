@@ -1377,8 +1377,6 @@ class StorageService {
         if (typeof localStorage !== 'undefined' && ev.id) {
           try {
             localStorage.setItem(`tn_assembly_cabinet_${ev.id}`, JSON.stringify(sc.cabinet_ministries));
-            const evSlug = getEventSlug(ev);
-            if (evSlug) localStorage.setItem(`tn_assembly_cabinet_${evSlug}`, JSON.stringify(sc.cabinet_ministries));
           } catch {}
         }
       }
@@ -2405,23 +2403,23 @@ class StorageService {
     if (!ev) return ev;
     const sc = (ev.social_coverage as Record<string, any>) || {};
     let ministries: string[] | undefined = undefined;
-    if (Array.isArray(ev.cabinet_ministries) && ev.cabinet_ministries.length > 0) {
+    if (Array.isArray(ev.cabinet_ministries)) {
       ministries = ev.cabinet_ministries;
-    } else if (Array.isArray(sc.cabinet_ministries) && sc.cabinet_ministries.length > 0) {
+    } else if (Array.isArray(sc.cabinet_ministries)) {
       ministries = sc.cabinet_ministries;
     } else if (typeof localStorage !== 'undefined' && ev.id) {
       try {
         const stored = localStorage.getItem(`tn_assembly_cabinet_${ev.id}`);
         if (stored) {
           const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) {
+          if (Array.isArray(parsed)) {
             ministries = parsed;
           }
         }
       } catch {}
     }
 
-    if (ministries) {
+    if (ministries !== undefined) {
       return {
         ...ev,
         cabinet_ministries: ministries,
@@ -2431,7 +2429,14 @@ class StorageService {
         }
       };
     }
-    return ev;
+    return {
+      ...ev,
+      cabinet_ministries: [],
+      social_coverage: {
+        ...sc,
+        cabinet_ministries: []
+      }
+    };
   }
 
   public getCabinetMinistries(eventId: string): string[] {
@@ -2439,46 +2444,30 @@ class StorageService {
     const cleanKey = eventId.toLowerCase().trim();
     const ev = this.getEvents().find(e => 
       e.id === eventId || 
-      getEventSlug(e).toLowerCase() === cleanKey || 
-      (e.slug && e.slug.toLowerCase() === cleanKey)
+      (e.slug && e.slug.toLowerCase() === cleanKey) ||
+      getEventSlug(e).toLowerCase() === cleanKey
     );
 
-    // Prefer explicit event-level cabinet_ministries if defined
+    // 1. Authoritative event-level cabinet_ministries
     if (ev && Array.isArray(ev.cabinet_ministries)) {
       return ev.cabinet_ministries;
     }
+    // 2. Event social_coverage.cabinet_ministries
     const sc = ev?.social_coverage as Record<string, any> | undefined;
     if (sc && Array.isArray(sc.cabinet_ministries)) {
       return sc.cabinet_ministries;
     }
 
+    // 3. Dedicated event-specific localStorage backup (strict by UUID)
     if (typeof localStorage !== 'undefined') {
       try {
-        const stored = localStorage.getItem(`tn_assembly_cabinet_${eventId}`);
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed)) {
-            return parsed;
-          }
-        }
-        if (ev) {
-          if (ev.id && ev.id !== eventId) {
-            const stored2 = localStorage.getItem(`tn_assembly_cabinet_${ev.id}`);
-            if (stored2) {
-              const parsed2 = JSON.parse(stored2);
-              if (Array.isArray(parsed2)) {
-                return parsed2;
-              }
-            }
-          }
-          const evSlug = getEventSlug(ev);
-          if (evSlug && evSlug !== eventId) {
-            const stored3 = localStorage.getItem(`tn_assembly_cabinet_${evSlug}`);
-            if (stored3) {
-              const parsed3 = JSON.parse(stored3);
-              if (Array.isArray(parsed3)) {
-                return parsed3;
-              }
+        const targetId = ev?.id || (isValidUuid(eventId) ? eventId : undefined);
+        if (targetId) {
+          const stored = localStorage.getItem(`tn_assembly_cabinet_${targetId}`);
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            if (Array.isArray(parsed)) {
+              return parsed;
             }
           }
         }
@@ -2514,8 +2503,10 @@ class StorageService {
       let query = sb.from('college_events').select('id, slug, college_name, social_coverage');
       if (targetEventId) {
         query = query.eq('id', targetEventId);
+      } else if (isUuid) {
+        query = query.eq('id', cleanKey);
       } else {
-        query = query.or(`slug.eq.${cleanKey},college_name.ilike.%${cleanKey.split('-')[0]}%`);
+        query = query.eq('slug', cleanKey);
       }
 
       const { data, error } = await query.limit(1);
@@ -2534,12 +2525,9 @@ class StorageService {
         const sc = (ev.social_coverage || {}) as Record<string, any>;
         const ministries: string[] = Array.isArray(sc.cabinet_ministries) ? sc.cabinet_ministries : [];
 
-        if (typeof localStorage !== 'undefined') {
+        if (typeof localStorage !== 'undefined' && ev.id) {
           try {
             localStorage.setItem(`tn_assembly_cabinet_${ev.id}`, JSON.stringify(ministries));
-            if (ev.slug) {
-              localStorage.setItem(`tn_assembly_cabinet_${ev.slug}`, JSON.stringify(ministries));
-            }
           } catch {}
         }
 
@@ -3224,7 +3212,7 @@ class StorageService {
           evQuery = evQuery.eq('id', slugOrId);
         } else {
           const clean = slugOrId.trim();
-          evQuery = evQuery.or(`slug.eq.${clean},college_name.ilike.%${clean.split('-')[0]}%`);
+          evQuery = evQuery.eq('slug', clean);
         }
         const { data: evData, error: evErr } = await evQuery.limit(1);
         if (!evErr && evData && evData.length > 0) {
@@ -3593,17 +3581,10 @@ class StorageService {
             if (typeof localStorage !== 'undefined') {
               try {
                 localStorage.setItem(`tn_assembly_cabinet_${evId}`, JSON.stringify(nextMins));
-                if (msg.payload.eventSlug) {
-                  localStorage.setItem(`tn_assembly_cabinet_${msg.payload.eventSlug}`, JSON.stringify(nextMins));
-                }
               } catch {}
             }
             const allEvs = this.getEvents();
-            const targetEv = allEvs.find(e => 
-              e.id === evId || 
-              (msg.payload.eventSlug && getEventSlug(e).toLowerCase() === msg.payload.eventSlug.toLowerCase()) ||
-              getEventSlug(e).toLowerCase() === evId.toLowerCase()
-            );
+            const targetEv = allEvs.find(e => e.id === evId);
             if (targetEv) {
               targetEv.cabinet_ministries = nextMins;
               const sc = (targetEv.social_coverage || {}) as Record<string, any>;
@@ -4395,9 +4376,9 @@ class StorageService {
         scores: finalMergedScores,
         vote_audit_log: voteAudit,
         yuva_assignments: yuvaAssignments,
-        cabinet_ministries: (Array.isArray(currentEv?.cabinet_ministries) && currentEv!.cabinet_ministries.length > 0)
-          ? currentEv!.cabinet_ministries
-          : (Array.isArray(existingSC.cabinet_ministries) ? existingSC.cabinet_ministries : this.getCabinetMinistries(eventId)),
+        cabinet_ministries: Array.isArray(existingSC.cabinet_ministries)
+          ? existingSC.cabinet_ministries
+          : (Array.isArray(currentEv?.cabinet_ministries) ? currentEv!.cabinet_ministries : []),
         checklist: this.getChecklist(eventId),
         team: this.getTeam(eventId),
         extended_learners: this.getLearners(eventId).map(l => ({
@@ -4444,6 +4425,9 @@ class StorageService {
             .single();
           if (conflictData?.social_coverage) {
             const freshSC = conflictData.social_coverage as Record<string, any>;
+            if (Array.isArray(freshSC.cabinet_ministries)) {
+              payload.cabinet_ministries = freshSC.cabinet_ministries;
+            }
             const freshProcs = Array.isArray(freshSC.proceedings) ? (freshSC.proceedings as BillProceeding[]) : [];
             const freshProcMap = new Map<string, BillProceeding>();
             freshProcs.forEach(b => freshProcMap.set(b.id, b));
@@ -5812,8 +5796,18 @@ class StorageService {
       elections_count: event.elections_count || 3,
       is_locked: false,
       slug: event.slug || computedSlug,
+      cabinet_ministries: Array.isArray(event.cabinet_ministries) ? event.cabinet_ministries : [],
+      social_coverage: {
+        ...(event.social_coverage || {}),
+        cabinet_ministries: Array.isArray(event.cabinet_ministries) ? event.cabinet_ministries : []
+      },
       created_at: new Date().toISOString()
     };
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem(`tn_assembly_cabinet_${eventId}`, JSON.stringify(newEvent.cabinet_ministries));
+      } catch {}
+    }
     all.unshift(newEvent);
     this.setItem(STORAGE_KEYS.EVENTS, all);
     this.sbUpsert('college_events', newEvent as unknown as Record<string, unknown>);
@@ -5904,6 +5898,7 @@ class StorageService {
         localStorage.removeItem(`tn_assembly_projector_studio_${eventId}`);
         localStorage.removeItem(`tn_assembly_last_bell_${eventId}`);
         localStorage.removeItem(`${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${eventId}`);
+        localStorage.removeItem(`tn_assembly_cabinet_${eventId}`);
       }
     } catch { }
 
@@ -9178,27 +9173,26 @@ class StorageService {
 
   public async saveCabinetMinistries(eventId: string, ministries: string[]): Promise<{ success: boolean; error?: any }> {
     const allEvs = this.getEvents();
-    const target = allEvs.find(e => e.id === eventId || getEventSlug(e) === eventId);
+    const cleanKey = (eventId || '').toLowerCase().trim();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(eventId);
+    const target = allEvs.find(e => e.id === eventId || (e.slug && e.slug.toLowerCase() === cleanKey) || getEventSlug(e).toLowerCase() === cleanKey);
+    const dbTargetId = target?.id || (isUuid ? eventId : undefined);
+    if (!dbTargetId) {
+      return { success: false, error: new Error('Cannot resolve authoritative event ID for saving ministries') };
+    }
     const resolvedSlug = target ? getEventSlug(target) : eventId;
-    const resolvedEventId = target?.id || (eventId.length === 36 ? eventId : undefined);
 
-    if (typeof localStorage !== 'undefined' && eventId) {
+    if (typeof localStorage !== 'undefined') {
       try {
-        localStorage.setItem(`tn_assembly_cabinet_${eventId}`, JSON.stringify(ministries));
-        if (resolvedSlug) {
-          localStorage.setItem(`tn_assembly_cabinet_${resolvedSlug}`, JSON.stringify(ministries));
-        }
-        if (resolvedEventId && resolvedEventId !== eventId) {
-          localStorage.setItem(`tn_assembly_cabinet_${resolvedEventId}`, JSON.stringify(ministries));
-        }
+        localStorage.setItem(`tn_assembly_cabinet_${dbTargetId}`, JSON.stringify(ministries));
       } catch (err) {
         console.warn('Failed to cache cabinet ministries to localStorage:', err);
       }
     }
 
-    // Update in-memory events state with both top-level and social_coverage cabinet_ministries
+    // Update in-memory events state with both top-level and social_coverage cabinet_ministries strictly for dbTargetId
     const events = allEvs.map(e => {
-      if (e.id === eventId || e.id === target?.id) {
+      if (e.id === dbTargetId) {
         const sc = { ...((e.social_coverage as Record<string, unknown>) || {}) };
         sc.cabinet_ministries = ministries;
         return { ...e, cabinet_ministries: ministries, social_coverage: sc };
@@ -9206,9 +9200,6 @@ class StorageService {
       return e;
     });
     this.setItem(STORAGE_KEYS.EVENTS, events);
-
-    const syncTarget = events.find(e => e.id === eventId || e.id === target?.id);
-    const dbTargetId = syncTarget?.id || resolvedEventId || eventId;
 
     if (supabase) {
       try {
@@ -9219,11 +9210,12 @@ class StorageService {
           .eq('id', dbTargetId)
           .maybeSingle();
 
-        const baseSc = (currentRemote?.social_coverage || syncTarget?.social_coverage || {}) as Record<string, any>;
+        const baseSc = (currentRemote?.social_coverage || target?.social_coverage || {}) as Record<string, any>;
         const updatedSc = { ...baseSc, cabinet_ministries: ministries };
 
         const { error } = await supabase.from('college_events').update({
-          social_coverage: updatedSc
+          social_coverage: updatedSc,
+          updated_at: new Date().toISOString()
         }).eq('id', dbTargetId);
 
         if (error) {
@@ -9259,6 +9251,11 @@ class StorageService {
     }).catch(err => {
       console.warn('[Supabase] broadcast ministries_update error:', err);
     });
+
+    this.invalidateCache(dbTargetId);
+    this.invalidateCache('events');
+    this.invalidateCache('fetch_all_events');
+    this.eventsFetched = false;
 
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
@@ -13357,8 +13354,10 @@ class StorageService {
       let query = sb.from('college_events').select('id, college_name, slug, social_coverage');
       if (targetEventId) {
         query = query.eq('id', targetEventId);
+      } else if (isUuid) {
+        query = query.eq('id', cleanKey);
       } else if (cleanKey) {
-        query = query.or(`slug.eq.${cleanKey},college_name.ilike.%${cleanKey.split('-')[0]}%`);
+        query = query.eq('slug', cleanKey);
       }
 
       const { data, error } = await query.limit(1);
@@ -13372,12 +13371,9 @@ class StorageService {
         const remoteMinistries: string[] = Array.isArray(sc.cabinet_ministries)
           ? sc.cabinet_ministries
           : (Array.isArray((ev as any).cabinet_ministries) ? (ev as any).cabinet_ministries : []);
-        if (typeof localStorage !== 'undefined') {
+        if (typeof localStorage !== 'undefined' && ev.id) {
           try {
             localStorage.setItem(`tn_assembly_cabinet_${ev.id}`, JSON.stringify(remoteMinistries));
-            if (ev.slug) {
-              localStorage.setItem(`tn_assembly_cabinet_${ev.slug}`, JSON.stringify(remoteMinistries));
-            }
           } catch {}
         }
         const targetEv = allEvs.find(e => e.id === ev.id);
