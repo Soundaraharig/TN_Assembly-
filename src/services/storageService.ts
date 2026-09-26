@@ -1701,12 +1701,16 @@ class StorageService {
       this.setItem(STORAGE_KEYS.DELETED_QUESTION_IDS, Array.from(deletedQIds));
       this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, Array.from(pqMap.values()));
     }
-    if (allScores && allScores.length > 0) {
+    if (allScores) {
       const localScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
       const scoreMap = new Map<string, ScoreRecord>();
+      const touchedEventIds = new Set(events.map(e => e.id));
       localScores.forEach(s => {
-        const key = this.getScoreCompositeKey(s, targetEventId);
-        scoreMap.set(key, s);
+        // Only retain local scores for events NOT in this unpacked batch
+        if (!s.event_id || !touchedEventIds.has(s.event_id)) {
+          const key = this.getScoreCompositeKey(s, targetEventId);
+          scoreMap.set(key, s);
+        }
       });
       allScores.forEach(remoteS => {
         const key = this.getScoreCompositeKey(remoteS, targetEventId);
@@ -4159,6 +4163,38 @@ class StorageService {
             this.notify();
             if (typeof window !== 'undefined') {
               window.dispatchEvent(new CustomEvent('tn_assembly_attendance_update', { detail: p }));
+              window.dispatchEvent(new Event('storage'));
+            }
+          }
+        })
+        .on('broadcast', { event: 'scores_reset' }, (msg: any) => {
+          if (msg?.payload?.eventId) {
+            const evId = msg.payload.eventId;
+            const timer = this.scoreSyncTimers.get(evId);
+            if (timer) {
+              clearTimeout(timer);
+              this.scoreSyncTimers.delete(evId);
+            }
+            const curScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
+            this.setItem(STORAGE_KEYS.SCORES, curScores.filter(s => s.event_id !== evId));
+            if (typeof localStorage !== 'undefined') {
+              try {
+                localStorage.removeItem(`tn_assembly_scores_${evId}`);
+              } catch {}
+            }
+            const allEvs = this.getEvents();
+            this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => {
+              if (e.id === evId) {
+                const sc = (e.social_coverage || {}) as Record<string, any>;
+                return { ...e, social_coverage: { ...sc, scores: [] } };
+              }
+              return e;
+            }));
+            this.invalidateCache(evId);
+            this.invalidateCache('events');
+            this.invalidateCache('portal_');
+            this.notify();
+            if (typeof window !== 'undefined') {
               window.dispatchEvent(new Event('storage'));
             }
           }
@@ -12594,21 +12630,161 @@ class StorageService {
     });
   }
 
+  public isAuthorizedToResetScores(): boolean {
+    if (typeof localStorage === 'undefined') return true;
+    try {
+      const raw = localStorage.getItem('tn_assembly_auth_session');
+      if (!raw) return true;
+      const sess = JSON.parse(raw);
+      const role = (sess.role || '').toLowerCase();
+      const email = (sess.email || '').toLowerCase();
+      // Explicitly reject non-privileged roles: student, volunteer, jury
+      if (role === 'student' || role === 'volunteer' || role === 'jury') {
+        return false;
+      }
+      if (
+        role === 'super_admin' ||
+        role === 'admin' ||
+        role === 'organiser' ||
+        role === 'coordinator' ||
+        email.includes('admin') ||
+        email.includes('superadmin') ||
+        email.includes('organiser')
+      ) {
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Permanently resets all jury scores ONLY for the specified eventId in Supabase and local storage.
+   * Strictly scopes database update to WHERE id = eventId.
+   * Preserves all other social_coverage fields (elections, flash_votes, proceedings, questions, etc.).
+   * Never affects any other event or any non-score data.
+   */
+  public async resetTestScores(eventId: string): Promise<{ success: boolean; deletedCount: number; remainingRealCount: number }> {
+    if (!eventId || typeof eventId !== 'string') {
+      throw new Error('Valid event ID is required to reset test scores.');
+    }
+
+    if (!this.isAuthorizedToResetScores()) {
+      throw new Error('Unauthorized: Only administrators are authorized to reset jury scores.');
+    }
+
+    // Cancel any pending debounced sync timers for this event
+    const pendingTimer = this.scoreSyncTimers.get(eventId);
+    if (pendingTimer) {
+      clearTimeout(pendingTimer);
+      this.scoreSyncTimers.delete(eventId);
+    }
+
+    let deletedCount = 0;
+
+    // 1. Supabase update (Authoritative database)
+    if (supabase) {
+      const { data: evData, error: fetchErr } = await supabase
+        .from('college_events')
+        .select('id, college_name, social_coverage')
+        .eq('id', eventId)
+        .single();
+
+      if (fetchErr) {
+        throw new Error(`Failed to fetch event for score reset: ${fetchErr.message}`);
+      }
+
+      const remoteSC = (evData?.social_coverage || {}) as Record<string, any>;
+      const remoteScores = Array.isArray(remoteSC.scores) ? (remoteSC.scores as ScoreRecord[]) : [];
+      deletedCount = remoteScores.length;
+
+      const updatedSC = {
+        ...remoteSC,
+        scores: [],
+        updated_at: new Date().toISOString()
+      };
+
+      const { error: updateErr } = await supabase
+        .from('college_events')
+        .update({
+          social_coverage: updatedSC,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', eventId);
+
+      if (updateErr) {
+        throw new Error(`Database error resetting test scores: ${updateErr.message}`);
+      }
+    }
+
+    // 2. Clear Local Storage scores strictly for this event
+    const all = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
+    const localEventScores = all.filter(s => s.event_id === eventId);
+    if (deletedCount === 0) {
+      deletedCount = localEventScores.length;
+    }
+    const remainingOtherScores = all.filter(s => s.event_id && s.event_id !== eventId);
+    this.setItem(STORAGE_KEYS.SCORES, remainingOtherScores);
+
+    // 3. Remove dedicated event backup
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.removeItem(`tn_assembly_scores_${eventId}`);
+      } catch {}
+    }
+
+    // 4. Update cached event in STORAGE_KEYS.EVENTS so social_coverage.scores is empty
+    const allEvs = this.getEvents();
+    const updatedEvs = allEvs.map(ev => {
+      if (ev.id === eventId) {
+        const sc = (ev.social_coverage || {}) as Record<string, any>;
+        return {
+          ...ev,
+          social_coverage: {
+            ...sc,
+            scores: []
+          }
+        };
+      }
+      return ev;
+    });
+    this.setItem(STORAGE_KEYS.EVENTS, updatedEvs);
+
+    // 5. Invalidate caches
+    this.invalidateCache(eventId);
+    this.invalidateCache('events');
+    this.invalidateCache('portal_');
+
+    // 6. Broadcast reset over existing realtime channel if active
+    if (this.realtimeChannel) {
+      try {
+        await this.realtimeChannel.send({
+          type: 'broadcast',
+          event: 'scores_reset',
+          payload: { eventId }
+        });
+      } catch {}
+    }
+
+    this.notify();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('storage'));
+    }
+
+    return { success: true, deletedCount, remainingRealCount: 0 };
+  }
+
   public resetScores(eventId?: string) {
     if (eventId) {
-      const all = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, INITIAL_SCORES);
-      const remaining = all.filter(s => s.event_id && s.event_id !== eventId);
-      this.setItem(STORAGE_KEYS.SCORES, remaining);
-      this.syncEventStateToSupabase(eventId);
+      this.resetTestScores(eventId).catch(err => {
+        console.warn('[StorageService] Error resetting scores:', err);
+      });
     } else {
       this.setItem(STORAGE_KEYS.SCORES, []);
     }
   }
 
-  /**
-   * Evaluates whether a score record is a test entry based on explicit test flags and markers.
-   * NEVER marks production delegate scores as test entries.
-   */
   public isTestScore(score: Partial<ScoreRecord>): boolean {
     if (score.is_test === true) return true;
     if (typeof score.id === 'string' && (score.id.toLowerCase().startsWith('test_') || score.id.toLowerCase().includes('_test_'))) return true;
@@ -12621,65 +12797,8 @@ class StorageService {
     return false;
   }
 
-  /**
-   * Safely deletes ONLY verified test score entries for an event.
-   * Strictly asserts that real participant scores are preserved and never deleted.
-   */
   public async deleteTestScores(eventId: string): Promise<{ deletedCount: number; remainingRealCount: number }> {
-    if (!eventId) return { deletedCount: 0, remainingRealCount: 0 };
-
-    const all = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, INITIAL_SCORES);
-    const eventScores = all.filter(s => s.event_id === eventId);
-    
-    const testScores = eventScores.filter(s => this.isTestScore(s));
-    const realScores = eventScores.filter(s => !this.isTestScore(s));
-
-    if (testScores.length === 0) {
-      return { deletedCount: 0, remainingRealCount: realScores.length };
-    }
-
-    // Retain all scores for other events + real scores for this event
-    const otherEventScores = all.filter(s => s.event_id !== eventId);
-    const newAllScores = [...otherEventScores, ...realScores];
-    this.setItem(STORAGE_KEYS.SCORES, newAllScores);
-
-    if (typeof localStorage !== 'undefined') {
-      try {
-        localStorage.setItem(`tn_assembly_scores_${eventId}`, JSON.stringify(realScores));
-      } catch {}
-    }
-
-    if (supabase) {
-      try {
-        const { data: evData } = await supabase
-          .from('college_events')
-          .select('social_coverage')
-          .eq('id', eventId)
-          .single();
-
-        const remoteSC = (evData?.social_coverage || {}) as Record<string, any>;
-        const remoteScores = Array.isArray(remoteSC.scores) ? (remoteSC.scores as ScoreRecord[]) : [];
-        const remoteRealScores = remoteScores.filter(s => !this.isTestScore(s));
-
-        await supabase
-          .from('college_events')
-          .update({
-            social_coverage: {
-              ...remoteSC,
-              scores: remoteRealScores,
-              updated_at: new Date().toISOString()
-            }
-          })
-          .eq('id', eventId);
-
-        this.invalidateCache(eventId);
-      } catch (err) {
-        console.warn('[StorageService] Error removing test scores from Supabase:', err);
-      }
-    }
-
-    this.notify();
-    return { deletedCount: testScores.length, remainingRealCount: realScores.length };
+    return this.resetTestScores(eventId);
   }
 
   // ── PROJECTOR DISPLAY STUDIO ──────────────────────────────────────────────

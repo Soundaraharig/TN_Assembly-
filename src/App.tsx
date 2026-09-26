@@ -914,12 +914,26 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           scores={currentScores}
           learners={currentLearners}
           eventId={activeEvent.id}
+          eventName={activeEvent.college_name}
+          userRole={props.userSession?.role || props.role}
+          isSuperAdmin={Boolean(isSuperAdmin)}
           onSaveScore={(sc) => {
             storageService.saveScoreRecord(sc);
             props.setScores(storageService.getScores(activeEvent.id));
           }}
           onResetScores={() => {
             props.setScores(storageService.getScores(activeEvent.id));
+            props.setCurrentEvent(prev => {
+              if (!prev || prev.id !== activeEvent.id) return prev;
+              const sc = (prev.social_coverage || {}) as Record<string, any>;
+              return {
+                ...prev,
+                social_coverage: {
+                  ...sc,
+                  scores: []
+                }
+              };
+            });
           }}
           onShowToast={props.addToast}
         />

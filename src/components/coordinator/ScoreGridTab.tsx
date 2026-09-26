@@ -20,6 +20,9 @@ interface ScoreGridTabProps {
   scores: ScoreRecord[];
   learners: Learner[];
   eventId: string;
+  eventName?: string;
+  userRole?: string;
+  isSuperAdmin?: boolean;
   onSaveScore: (score: ScoreRecord) => void;
   onResetScores?: () => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
@@ -105,6 +108,9 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   scores,
   learners,
   eventId,
+  eventName,
+  userRole,
+  isSuperAdmin,
   onSaveScore,
   onResetScores,
   onShowToast
@@ -145,10 +151,15 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
     return scores.filter(s => !s.event_id || !eventId || s.event_id === eventId);
   }, [scores, eventId]);
 
-  // Count verified test scores for the active event
-  const testScoresCount = useMemo(() => {
-    return eventScores.filter(s => storageService.isTestScore(s)).length;
-  }, [eventScores]);
+  // Authorization check for administrative score reset
+  const isAuthorized = Boolean(
+    isSuperAdmin ||
+    userRole === 'super_admin' ||
+    userRole === 'admin' ||
+    userRole === 'organiser' ||
+    !userRole ||
+    userRole === 'coordinator'
+  );
 
   // ──────────────────────────────────────────────────────────────────────────
   // VIEW 1 DATA: Delegate Matrix Table (Primary Admin Result View)
@@ -534,10 +545,14 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   // Test Scores Reset Controls
   // ──────────────────────────────────────────────────────────────────────────
   const handleOpenResetTestModal = () => {
-    if (testScoresCount === 0) {
+    if (!isAuthorized) {
+      onShowToast('Unauthorized', 'Only administrators are authorized to reset jury scores.', 'error');
+      return;
+    }
+    if (eventScores.length === 0) {
       onShowToast(
-        'No Test Entries Found',
-        `No test score records exist for this event. All ${eventScores.length} production delegate scores are protected.`,
+        'No Scores Found',
+        'There are no jury score records to reset for this event.',
         'info'
       );
       return;
@@ -546,20 +561,28 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   };
 
   const handleConfirmDeleteTestScores = async () => {
+    if (!eventId) {
+      onShowToast('Unable to reset test scores. No score data was changed.', 'Missing event identifier.', 'error');
+      return;
+    }
     setIsDeletingTestScores(true);
     try {
-      const res = await storageService.deleteTestScores(eventId);
+      const res = await storageService.resetTestScores(eventId);
       setIsResetTestModalOpen(false);
       onShowToast(
-        'Test Scores Deleted',
-        `Deleted ${res.deletedCount} verified test score record(s). ${res.remainingRealCount} real delegate scores remain protected.`,
+        'Test scores reset successfully.',
+        `${res.deletedCount} test scores were reset.`,
         'success'
       );
       if (onResetScores) {
         onResetScores();
       }
     } catch (err: any) {
-      onShowToast('Reset Failed', err?.message || 'Failed to delete test scores.', 'error');
+      onShowToast(
+        'Unable to reset test scores. No score data was changed.',
+        err?.message || 'Database error occurred.',
+        'error'
+      );
     } finally {
       setIsDeletingTestScores(false);
     }
@@ -673,13 +696,13 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
             type="button"
             onClick={handleOpenResetTestModal}
             className="px-3.5 py-2 rounded-xl font-bold text-xs border flex items-center gap-1.5 transition cursor-pointer hover:bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-900/50"
-            title="Safely scan and delete verified test score entries without affecting real delegate scores"
+            title="Permanently remove all test/demo jury score records for this event"
           >
             <Trash2 className="w-4 h-4 text-rose-500" />
             <span>Reset Test Scores</span>
-            {testScoresCount > 0 && (
+            {eventScores.length > 0 && (
               <span className="font-mono text-[10px] px-1.5 py-0.2 rounded-full bg-rose-500 text-white">
-                {testScoresCount}
+                {eventScores.length}
               </span>
             )}
           </button>
@@ -1157,30 +1180,33 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
                 <AlertTriangle className="w-6 h-6" />
               </div>
               <div>
-                <h4 className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>
-                  Reset Test Scores
+                <h4 className="text-base font-black tracking-tight" style={{ color: 'var(--text-primary)' }}>
+                  RESET TEST SCORES?
                 </h4>
-                <p className="text-xs text-slate-400">
-                  Targeted cleanup of verified test entries only
+                <p className="text-xs text-rose-500/90 font-medium">
+                  This will permanently remove all jury score records for this event.
                 </p>
               </div>
             </div>
 
-            <div className="p-4 rounded-xl border bg-slate-50 dark:bg-slate-900/60 space-y-2.5" style={{ borderColor: 'var(--border)' }}>
-              <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                Delete only test score entries? Real participant scores will not be affected.
-              </p>
+            <div className="p-4 rounded-xl border bg-slate-50 dark:bg-slate-900/60 space-y-3" style={{ borderColor: 'var(--border)' }}>
+              <div>
+                <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400">Event:</span>
+                <p className="text-sm font-black truncate mt-0.5" style={{ color: 'var(--text-primary)' }}>
+                  {eventName || 'Current Event'}
+                </p>
+              </div>
+
               <div className="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-800 text-xs font-semibold">
-                <span className="text-slate-400">Test entries found:</span>
-                <span className="font-mono font-black text-rose-500 text-sm px-2 py-0.5 rounded bg-rose-500/10">
-                  {testScoresCount}
+                <span className="text-slate-400">Scores to be removed:</span>
+                <span className="font-mono font-black text-rose-500 text-sm px-2.5 py-0.5 rounded-md bg-rose-500/10 border border-rose-500/20">
+                  {eventScores.length}
                 </span>
               </div>
-              <div className="flex items-center justify-between text-xs font-semibold">
-                <span className="text-slate-400">Protected production scores:</span>
-                <span className="font-mono font-black text-emerald-500 text-sm px-2 py-0.5 rounded bg-emerald-500/10">
-                  {eventScores.length - testScoresCount}
-                </span>
+
+              <div className="p-2.5 rounded-lg bg-rose-500/5 border border-rose-500/20 text-[11px] font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>This action cannot be undone.</span>
               </div>
             </div>
 
@@ -1188,7 +1214,7 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
               <button
                 type="button"
                 onClick={() => setIsResetTestModalOpen(false)}
-                className="px-4 py-2 rounded-xl border font-semibold text-xs cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800"
+                className="px-4 py-2.5 rounded-xl border font-semibold text-xs cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition"
                 style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
                 disabled={isDeletingTestScores}
               >
@@ -1197,11 +1223,11 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
               <button
                 type="button"
                 onClick={handleConfirmDeleteTestScores}
-                disabled={isDeletingTestScores || testScoresCount === 0}
-                className="px-4 py-2 rounded-xl font-bold text-xs text-white bg-rose-600 hover:bg-rose-700 shadow-md cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                disabled={isDeletingTestScores || eventScores.length === 0}
+                className="px-4 py-2.5 rounded-xl font-bold text-xs text-white bg-rose-600 hover:bg-rose-700 shadow-md cursor-pointer flex items-center gap-1.5 transition disabled:opacity-50"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>{isDeletingTestScores ? 'Deleting...' : 'Delete Test Entries'}</span>
+                <span>{isDeletingTestScores ? 'Resetting...' : 'Reset Test Scores'}</span>
               </button>
             </div>
           </div>
