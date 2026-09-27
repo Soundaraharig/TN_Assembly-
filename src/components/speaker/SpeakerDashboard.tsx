@@ -36,7 +36,11 @@ import {
   Star,
   X,
   MessageSquare,
-  Play
+  Play,
+  History,
+  Search,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import {
   formatMemberConstituency,
@@ -46,6 +50,7 @@ import {
 export interface SpeakerDashboardProps {
   speaker: Learner;
   event: CollegeEvent | null;
+  learners?: Learner[];
   agenda?: AgendaItem[];
   elections?: Election[];
   flashVotes?: LiveFlashVote[];
@@ -56,6 +61,7 @@ export interface SpeakerDashboardProps {
 export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
   speaker,
   event,
+  learners: initialLearners = [],
   agenda: initialAgenda = [],
   elections: initialElections = [],
   flashVotes: initialFlashVotes = [],
@@ -95,15 +101,28 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
   const [flashVotes, setFlashVotes] = useState<LiveFlashVote[]>(() =>
     eventId ? storageService.getFlashVotes(eventId) : initialFlashVotes
   );
-  const [learners, setLearners] = useState<Learner[]>(() =>
-    eventId ? storageService.getLearners(eventId) : []
-  );
+  const [learners, setLearners] = useState<Learner[]>(() => {
+    if (initialLearners && initialLearners.length > 0) return initialLearners;
+    return eventId ? storageService.getLearners(eventId) : [];
+  });
+
+  useEffect(() => {
+    if (initialLearners && initialLearners.length > 0) {
+      setLearners(initialLearners);
+    }
+  }, [initialLearners]);
 
   // Modal & Action states
   const [showHandsDownModal, setShowHandsDownModal] = useState<boolean>(false);
   const [isLoweringHands, setIsLoweringHands] = useState<boolean>(false);
   const [callingRequestId, setCallingRequestId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+
+  // Hansard Speaking Record Modal State
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState<boolean>(false);
+  const [historySearchQuery, setHistorySearchQuery] = useState<string>('');
+  const [historySessionFilter, setHistorySessionFilter] = useState<string>('all');
+  const [selectedHistoryLearnerId, setSelectedHistoryLearnerId] = useState<string | null>(null);
 
   // ── Question Hour State (read-only, same source as Main Admin ControlTab) ──
   const [questionsList, setQuestionsList] = useState<ProceedingsQuestion[]>(() =>
@@ -140,7 +159,10 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
     setBills(storageService.getBills(eventId));
     setElections(storageService.getElections(eventId));
     setFlashVotes(storageService.getFlashVotes(eventId));
-    setLearners(storageService.getLearners(eventId));
+    const allLearners = storageService.getLearners(eventId);
+    if (allLearners.length > 0) {
+      setLearners(allLearners);
+    }
     setTurnCounts(storageService.getSpeakingTurnCounts(eventId, currentSession.id));
     // Sync Question Hour data (same source as Main Admin ControlTab)
     const qs = storageService.getProceedingsQuestions(eventId).filter(
@@ -154,11 +176,14 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
   useEffect(() => {
     syncFloorData();
 
-    // Fetch cloud speaking requests on mount without blocking
+    // Fetch cloud speaking requests, turns, questions, and hydrate event data
     if (eventId) {
-      storageService.fetchActiveSpeakingRequests(eventId).then(() => {
-        syncFloorData();
-      }).catch(() => {});
+      storageService.fetchActiveSpeakingRequests(eventId).then(() => syncFloorData()).catch(() => {});
+      storageService.fetchSpeakingTurns(eventId).then(() => syncFloorData()).catch(() => {});
+      storageService.fetchProceedingsQuestionsOnDemand(eventId).then(() => syncFloorData()).catch(() => {});
+      if (storageService.getLearners(eventId).length === 0 || !storageService.isEventHydrated(eventId)) {
+        storageService.hydrateFullEventData(eventId).then(() => syncFloorData()).catch(() => {});
+      }
     }
 
     const unsub = storageService.subscribe(syncFloorData);
@@ -199,10 +224,15 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
     setIsRefreshing(true);
     try {
       if (eventId) {
-        await storageService.fetchActiveSpeakingRequests(eventId);
+        await Promise.allSettled([
+          storageService.fetchActiveSpeakingRequests(eventId),
+          storageService.fetchSpeakingTurns(eventId),
+          storageService.fetchProceedingsQuestionsOnDemand(eventId),
+          storageService.hydrateFullEventData(eventId, true)
+        ]);
       }
       syncFloorData();
-      onShowToast('Floor Refreshed', 'Speaking queue and voting status synchronized.', 'info');
+      onShowToast('Floor Refreshed', 'Speaking queue, non-spoken delegates, and question order synchronized.', 'info');
     } catch {
       syncFloorData();
     } finally {
@@ -427,12 +457,30 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
     }
   };
 
-  // Total Eligible Delegates in Event (dynamic denominator, NEVER hardcoded)
-  const totalEligibleDelegates = useMemo(() => {
-    const eventLearners = learners.filter(l => !eventId || l.event_id === eventId);
-    const active = eventLearners.filter(l => l.is_active !== false && l.status !== 'Inactive');
-    return active.length > 0 ? active.length : eventLearners.length;
-  }, [learners, eventId]);
+  // ── Authoritative Speaking Floor Delegate Counting (Matching ControlTab Exactly) ──
+  // Unique learners who have spoken in this session
+  const spokenLearnerIds = useMemo(() => {
+    const ids = new Set<string>();
+    speakingTurns
+      .filter(t => t.event_id === eventId && t.session_id === activeSession.id && t.status !== 'CANCELLED')
+      .forEach(t => ids.add(t.learner_id));
+    return ids;
+  }, [speakingTurns, eventId, activeSession.id]);
+
+  const spokenLearnersCount = spokenLearnerIds.size;
+
+  // Presiding officers (Speaker / Deputy Speaker) are strictly excluded from speaking counts
+  const totalEligibleDelegatesCount = useMemo(() => {
+    return learners.filter(l => !isPresidingOfficer(l)).length;
+  }, [learners]);
+
+  const totalEligibleDelegates = totalEligibleDelegatesCount;
+
+  // Actual event participants who have NOT yet spoken in the current session
+  // Presiding officers are strictly excluded from ordinary Speaking Floor participation
+  const yetToSpeakLearners = useMemo(() => {
+    return learners.filter(l => !isPresidingOfficer(l) && !spokenLearnerIds.has(l.id));
+  }, [learners, spokenLearnerIds]);
 
   // Projector Settings for Floor Awareness
   const projectorSettings = useMemo(() => {
@@ -472,7 +520,7 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
     return 'Assembly Debate & Floor Open';
   }, [liveBill, liveFlashVote, liveElection, projectorSettings?.displayScene, activeSpeakingTurn]);
 
-  // Agenda items: Current, Next, Completed
+  // Agenda items: Current, Next, Upcoming, Completed
   const currentAgendaItem = useMemo(() => {
     const cur = agenda.find(a => a.is_current);
     if (cur) return cur;
@@ -489,6 +537,13 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
       return agenda[currentIndex + 1];
     }
     return null;
+  }, [agenda, currentIndex]);
+
+  const upcomingAgendaItems = useMemo(() => {
+    if (currentIndex >= 0 && currentIndex < agenda.length - 2) {
+      return agenda.slice(currentIndex + 2);
+    }
+    return [];
   }, [agenda, currentIndex]);
 
   const completedAgendaItems = useMemo(() => {
@@ -508,34 +563,33 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
     return t.includes('question hour') || t.includes('question');
   }, [activeSession.title]);
 
-  const relevantQuestions = useMemo(() => {
-    if (isUrgentDiscussion) {
-      const urgent = questionsList.filter(q => q.question_type === 'Zero Hour' || q.question_type === 'Calling Attention');
-      return urgent.length > 0 ? urgent : questionsList;
-    }
-    return questionsList;
-  }, [isUrgentDiscussion, questionsList]);
+  // ── Authoritative Question Calling Order State (Exact Same Source & Ordering as Main Admin ControlTab) ──
+  const activeQuestion = useMemo(() => {
+    return questionsList.find(q => q.id === activeQuestionId) || questionsList.find(q => q.called_status === 'calling') || null;
+  }, [questionsList, activeQuestionId]);
 
-  // ── Question Hour / Urgent Discussion Computed Values ──
-  const qhActiveQuestion = useMemo(() => {
-    return relevantQuestions.find(q => q.id === activeQuestionId) || relevantQuestions.find(q => q.called_status === 'calling') || null;
-  }, [relevantQuestions, activeQuestionId]);
+  const uncalledQuestions = useMemo(() => {
+    return questionsList.filter(q => q.called_status !== 'completed' && q.id !== activeQuestion?.id);
+  }, [questionsList, activeQuestion]);
 
-  const qhCompletedQuestions = useMemo(() => {
-    return relevantQuestions.filter(q => q.called_status === 'completed');
-  }, [relevantQuestions]);
+  const nextQuestionToCall = useMemo(() => {
+    return uncalledQuestions[0] || null;
+  }, [uncalledQuestions]);
 
-  const qhUncalledQuestions = useMemo(() => {
-    return relevantQuestions.filter(q => q.called_status !== 'completed' && q.id !== qhActiveQuestion?.id);
-  }, [relevantQuestions, qhActiveQuestion]);
+  const completedQuestionsList = useMemo(() => {
+    return questionsList.filter(q => q.called_status === 'completed');
+  }, [questionsList]);
 
-  const qhNextQuestion = useMemo(() => {
-    return qhUncalledQuestions[0] || null;
-  }, [qhUncalledQuestions]);
+  const upcomingQuestions = useMemo(() => {
+    return activeQuestion ? uncalledQuestions : uncalledQuestions.slice(1);
+  }, [activeQuestion, uncalledQuestions]);
 
-  const qhUpcomingQuestions = useMemo(() => {
-    return qhActiveQuestion ? qhUncalledQuestions : qhUncalledQuestions.slice(1);
-  }, [qhActiveQuestion, qhUncalledQuestions]);
+  // Aliases for compatibility
+  const relevantQuestions = questionsList;
+  const qhActiveQuestion = activeQuestion;
+  const qhCompletedQuestions = completedQuestionsList;
+  const qhNextQuestion = nextQuestionToCall;
+  const qhUpcomingQuestions = upcomingQuestions;
 
   const qhIsActive = useMemo(() => {
     return Boolean(qhActiveQuestion) || qhCompletedQuestions.length > 0 || isQuestionHourSession || isUrgentDiscussion;
@@ -810,11 +864,11 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                           </span>
                           <div className="min-w-0 space-y-0.5">
                             <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-2">
-                              <span className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                              <span className="text-sm font-bold text-slate-900 dark:text-white break-words">
                                 {req.learner_name}
                               </span>
                               {constituencyDisplay && (
-                                <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">
+                                <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400 break-words">
                                   {constituencyDisplay}
                                 </span>
                               )}
@@ -904,6 +958,67 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                   })}
                 </div>
               )}
+            </div>
+
+            {/* Speaking Progress Bar & Yet to Speak (Authoritative Shared State matching Control Panel) */}
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm dark:shadow-xl p-5 space-y-4">
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400 font-medium">
+                  <span>{spokenLearnersCount} of {totalEligibleDelegatesCount || 1} delegates have spoken</span>
+                  <span>{Math.round((spokenLearnersCount / Math.max(totalEligibleDelegatesCount, 1)) * 100)}%</span>
+                </div>
+                <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
+                  <div
+                    className="bg-emerald-500 h-full transition-all duration-300"
+                    style={{ width: `${Math.round((spokenLearnersCount / Math.max(totalEligibleDelegatesCount, 1)) * 100)}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Yet to speak list */}
+              <div className="space-y-2 pt-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    YET TO SPEAK — {yetToSpeakLearners.length}
+                  </span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                    Zero turns in this session
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1.5 max-h-48 overflow-y-auto pr-1">
+                  {yetToSpeakLearners.length > 0 ? (
+                    yetToSpeakLearners.map((s, idx) => (
+                      <span
+                        key={s.id || idx}
+                        className="px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-800/60 shadow-sm flex items-center gap-1.5"
+                      >
+                        <span className="font-bold">{s.full_name}</span>
+                        {formatMemberConstituency(s, learnersMap) && (
+                          <span className="font-mono text-[10px] text-amber-600 dark:text-amber-400 font-bold">
+                            ({formatMemberConstituency(s, learnersMap)})
+                          </span>
+                        )}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-xs text-slate-400 italic">
+                      All delegates in the roster have spoken in this session.
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed pt-1">
+                Turns are counted from the Now Speaking desk — call on someone above when hands go up to keep the floor fair.
+              </p>
+              <button
+                type="button"
+                onClick={() => setIsHistoryModalOpen(true)}
+                className="text-xs text-amber-600 dark:text-amber-400 font-bold hover:underline inline-flex items-center gap-1 cursor-pointer"
+              >
+                <History className="w-3.5 h-3.5" />
+                <span>See the full speaking record →</span>
+              </button>
             </div>
           </div>
 
@@ -1156,9 +1271,9 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                           <div className="flex items-center gap-2 min-w-0">
                             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
                             <span className="w-5 h-5 rounded-md bg-emerald-950/80 text-emerald-400 font-mono font-bold text-[10px] flex items-center justify-center shrink-0">#{q.calling_order || q.queue_order || '?'}</span>
-                            <span className="font-bold text-slate-700 dark:text-slate-300 truncate">{q.student_name}</span>
+                            <span className="font-bold text-slate-700 dark:text-slate-300 break-words">{q.student_name}</span>
                             {formatMemberConstituency(q, learnersMap) && (
-                              <span className="text-amber-600 dark:text-amber-400 font-mono font-bold text-[10px] truncate hidden sm:inline">
+                              <span className="text-amber-600 dark:text-amber-400 font-mono font-bold text-[10px] break-words hidden sm:inline">
                                 ({formatMemberConstituency(q, learnersMap)})
                               </span>
                             )}
@@ -1196,11 +1311,11 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                               #{q.calling_order || q.queue_order || '?'}
                             </span>
                             <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 min-w-0">
-                              <span className="font-bold text-slate-800 dark:text-slate-200 truncate">
+                              <span className="font-bold text-slate-800 dark:text-slate-200 break-words">
                                 {q.student_name}
                               </span>
                               {formatMemberConstituency(q, learnersMap) && (
-                                <span className="text-amber-600 dark:text-amber-400 font-mono font-bold text-[10px] truncate">
+                                <span className="text-amber-600 dark:text-amber-400 font-mono font-bold text-[10px] break-words">
                                   {formatMemberConstituency(q, learnersMap)}
                                 </span>
                               )}
@@ -1556,6 +1671,28 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                     </div>
                   )}
 
+                  {/* Upcoming Agenda Items */}
+                  {upcomingAgendaItems.length > 0 && (
+                    <div className="space-y-1.5 pt-1">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                        UPCOMING ITEMS ({upcomingAgendaItems.length})
+                      </div>
+                      <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
+                        {upcomingAgendaItems.map((item, idx) => (
+                          <div
+                            key={item.id || idx}
+                            className="p-2 rounded-lg border border-slate-200/80 dark:border-slate-800/60 bg-slate-50 dark:bg-slate-950/30 text-[11px] text-slate-700 dark:text-slate-300 flex items-center justify-between"
+                          >
+                            <span className="truncate">{item.title}</span>
+                            <span className="text-slate-400 text-[10px] shrink-0 font-mono">
+                              {item.time || `${item.duration_minutes || 15}m`}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Completed Agenda Items */}
                   {completedAgendaItems.length > 0 && (
                     <div className="space-y-1.5 pt-1">
@@ -1855,6 +1992,264 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                 className="px-5 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-white cursor-pointer transition-colors"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          ASSEMBLY HANSARD — SPEAKING HISTORY MODAL
+          Matches ControlTab exact audit record & details
+          ═══════════════════════════════════════════════════════════════════ */}
+      {isHistoryModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-4xl w-full max-h-[88vh] flex flex-col shadow-2xl overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/30">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 flex items-center justify-center font-bold">
+                  <History className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 dark:text-white">
+                    Assembly Hansard — Speaking History
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Official audit log of delegate speaking turns across assembly sessions
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsHistoryModalOpen(false)}
+                className="p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Filter & Search Bar */}
+            <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col sm:flex-row gap-3 items-center justify-between">
+              <div className="relative w-full sm:w-80">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Filter by delegate, constituency, party..."
+                  value={historySearchQuery}
+                  onChange={(e) => setHistorySearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                <select
+                  value={historySessionFilter}
+                  onChange={(e) => setHistorySessionFilter(e.target.value)}
+                  className="px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+                >
+                  <option value="all">All Assembly Sessions</option>
+                  <option value={activeSession.title}>Current: {activeSession.title}</option>
+                  {Array.from(new Set(speakingTurns.map(t => t.session_name || t.session_id)))
+                    .filter(s => s && s !== activeSession.title)
+                    .map(sess => (
+                      <option key={sess} value={sess}>{sess}</option>
+                    ))}
+                </select>
+
+                <div className="px-3 py-1.5 rounded-xl bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20 text-xs font-bold whitespace-nowrap">
+                  {speakingTurns.length} Total Turns
+                </div>
+              </div>
+            </div>
+
+            {/* Speaking Records List */}
+            <div className="p-6 overflow-y-auto space-y-3 flex-1">
+              {(() => {
+                // Filter turns by session if selected
+                const filteredTurns = speakingTurns.filter(turn => {
+                  if (historySessionFilter === 'all') return true;
+                  return turn.session_id === historySessionFilter || turn.session_name === historySessionFilter;
+                });
+
+                // Group turns by learner
+                const turnsByLearner = new Map<string, SpeakingTurn[]>();
+                filteredTurns.forEach(turn => {
+                  const list = turnsByLearner.get(turn.learner_id) || [];
+                  list.push(turn);
+                  turnsByLearner.set(turn.learner_id, list);
+                });
+
+                // Convert to participant summaries
+                const participantSummaries = Array.from(turnsByLearner.entries()).map(([learnerId, turns]) => {
+                  const learner = learners.find(l => l.id === learnerId);
+                  const sortedTurns = [...turns].sort((a, b) => new Date(b.called_at).getTime() - new Date(a.called_at).getTime());
+                  const latestTurn = sortedTurns[0];
+                  const currentSessionTurns = turnCounts.sessionCounts[learnerId] ?? 0;
+                  const eventTotalTurns = turnCounts.totalCounts[learnerId] ?? turns.filter(t => t.status !== 'CANCELLED').length;
+
+                  return {
+                    learnerId,
+                    name: learner?.full_name || turns[0]?.learner_name || 'Delegate',
+                    constituency: learner?.constituency_name || 'Tamil Nadu',
+                    constituencyNo: learner?.constituency_number || '',
+                    party: learner?.party_name || 'Independent',
+                    bench: learner?.bench || 'Independent',
+                    turns: sortedTurns,
+                    totalTurns: turns.length,
+                    eventTotalTurns,
+                    currentSessionTurns,
+                    latestTurnAt: latestTurn?.called_at
+                  };
+                });
+
+                // Search query filter
+                const searchedSummaries = participantSummaries.filter(p => {
+                  if (!historySearchQuery.trim()) return true;
+                  const q = historySearchQuery.toLowerCase();
+                  return (
+                    p.name.toLowerCase().includes(q) ||
+                    p.constituency.toLowerCase().includes(q) ||
+                    p.party.toLowerCase().includes(q) ||
+                    p.bench.toLowerCase().includes(q)
+                  );
+                });
+
+                if (searchedSummaries.length === 0) {
+                  return (
+                    <div className="py-16 text-center space-y-2">
+                      <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-400 mx-auto flex items-center justify-center">
+                        <History className="w-6 h-6 opacity-40" />
+                      </div>
+                      <p className="text-sm font-bold text-slate-700 dark:text-slate-300">
+                        {speakingTurns.length === 0 ? 'No speaking records recorded yet' : 'No delegates match your search'}
+                      </p>
+                      <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                        {speakingTurns.length === 0
+                          ? 'When the Speaker calls delegates from the Speaking Floor, every speaking turn is permanently recorded here with timestamps.'
+                          : 'Try searching with a different name or clear the filter.'}
+                      </p>
+                    </div>
+                  );
+                }
+
+                return searchedSummaries.map(p => {
+                  const isExpanded = selectedHistoryLearnerId === p.learnerId;
+
+                  return (
+                    <div
+                      key={p.learnerId}
+                      className="border border-slate-200 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900/80 shadow-sm overflow-hidden transition-all"
+                    >
+                      <div
+                        onClick={() => setSelectedHistoryLearnerId(isExpanded ? null : p.learnerId)}
+                        className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center justify-center font-bold text-xs shrink-0">
+                            #{p.constituencyNo || p.turns[0]?.sequence_number || '•'}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                                {p.name}
+                              </h4>
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                p.bench === 'Ruling'
+                                  ? 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
+                                  : p.bench === 'Opposition'
+                                  ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300'
+                                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                              }`}>
+                                {p.bench}
+                              </span>
+                              <span className="text-xs text-slate-400">
+                                {p.party} · {p.constituency}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-slate-500 mt-0.5">
+                              Latest speech: {p.latestTurnAt ? new Date(p.latestTurnAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'N/A'}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-3 shrink-0 self-end sm:self-center">
+                          <div className="text-right">
+                            <div className="text-xs font-black text-slate-900 dark:text-white">
+                              Event Total: {p.eventTotalTurns} {p.eventTotalTurns === 1 ? 'Turn' : 'Turns'}
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                              Session: {p.currentSessionTurns} {p.currentSessionTurns === 1 ? 'turn' : 'turns'}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                          >
+                            {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Expanded Turns Breakdown */}
+                      {isExpanded && (
+                        <div className="px-4 pb-4 pt-1 border-t border-slate-100 dark:border-slate-800/80 bg-slate-50/50 dark:bg-slate-950/30">
+                          <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2">
+                            Speaking Turn Timeline ({p.turns.length})
+                          </div>
+                          <div className="space-y-1.5">
+                            {p.turns.map((turn, tIdx) => (
+                              <div
+                                key={turn.id || tIdx}
+                                className="p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between text-xs"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <span className="w-5 h-5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[10px] font-bold flex items-center justify-center shrink-0">
+                                    {turn.sequence_number || tIdx + 1}
+                                  </span>
+                                  <div>
+                                    <span className="font-semibold text-slate-800 dark:text-slate-200">
+                                      {turn.session_name || 'Assembly Session'}
+                                    </span>
+                                    <div className="text-[10px] text-slate-400">
+                                      Speaking turn #{turn.sequence_number || tIdx + 1} · Called by {turn.called_by || 'Speaker'}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="text-right">
+                                  <div className="font-mono text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                                    {new Date(turn.called_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                  </div>
+                                  <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.2 rounded ${
+                                    turn.status === 'SPEAKING'
+                                      ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300'
+                                      : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+                                  }`}>
+                                    {turn.status}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 flex items-center justify-between">
+              <span className="text-[11px] text-slate-400">
+                Data persisted server-side • Hansard records cannot be overwritten
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsHistoryModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-xs font-bold hover:opacity-90 transition-all cursor-pointer"
+              >
+                Close Record
               </button>
             </div>
           </div>

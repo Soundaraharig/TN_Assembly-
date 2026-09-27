@@ -1413,11 +1413,11 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                           #{q.calling_order || (idx + (activeQuestion ? 1 : 2))}
                         </span>
                         <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 min-w-0">
-                          <span className="font-bold text-slate-800 dark:text-slate-200 truncate">
+                          <span className="font-bold text-slate-800 dark:text-slate-200 break-words">
                             {q.student_name}
                           </span>
                           {formatMemberConstituency(q, learnersMap) && (
-                            <span className="text-amber-600 dark:text-amber-400 font-mono text-[10px] font-bold truncate">
+                            <span className="text-amber-600 dark:text-amber-400 font-mono text-[10px] font-bold break-words">
                               {formatMemberConstituency(q, learnersMap)}
                             </span>
                           )}

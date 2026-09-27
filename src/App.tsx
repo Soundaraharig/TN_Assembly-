@@ -316,13 +316,19 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
   );
 
   useEffect(() => {
-    if (activeEventId && isSupabaseEnabled && (isSuperAdmin || isAuthorizedCoordinator)) {
+    const isPresidingStudent = Boolean(
+      props.currentStudent && (
+        isSpeakerRole(props.currentStudent.role) ||
+        isDeputySpeakerRole(props.currentStudent.role)
+      )
+    );
+    if (activeEventId && isSupabaseEnabled && (isSuperAdmin || isAuthorizedCoordinator || isPresidingStudent)) {
       const currentDelegates = storageService.getLearners(activeEventId);
       if (currentDelegates.length === 0 || !storageService.isEventHydrated(activeEventId)) {
         storageService.hydrateFullEventData(activeEventId);
       }
     }
-  }, [activeEventId, isSuperAdmin, isAuthorizedCoordinator]);
+  }, [activeEventId, isSuperAdmin, isAuthorizedCoordinator, props.currentStudent]);
 
   // Strictly event-scoped records computed synchronously so child views and tabs NEVER cross-bleed data across events
   const currentLearners = useMemo(() => {
@@ -451,6 +457,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
         <SpeakerDashboard
           speaker={props.currentStudent}
           event={activeEvent}
+          learners={currentLearners}
           agenda={currentAgenda}
           elections={studentElections}
           flashVotes={studentFlashVotes}
@@ -2813,6 +2820,7 @@ export function App() {
                     <SpeakerDashboard
                       speaker={currentStudent}
                       event={currentEvent || events[0] || null}
+                      learners={storageService.getLearners(currentEvent?.id || events[0]?.id)}
                       agenda={agenda}
                       elections={storageService.getElections(currentEvent?.id || events[0]?.id, 'student', currentStudent.id)}
                       flashVotes={storageService.getFlashVotes(currentEvent?.id || events[0]?.id, 'student', currentStudent.id)}

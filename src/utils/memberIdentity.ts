@@ -58,12 +58,23 @@ export function resolveConstituency(
 
   // If learner_id or student_id is available, check learners source for authoritative allocation
   const lookupId = item.learner_id || item.student_id;
-  if (lookupId && learnersSource) {
+  const lookupName = (item as any).student_name || (item as any).learner_name || (item as any).full_name;
+  if (learnersSource) {
     let matchedLearner: Learner | undefined;
-    if (learnersSource instanceof Map) {
-      matchedLearner = learnersSource.get(lookupId);
-    } else if (Array.isArray(learnersSource)) {
-      matchedLearner = learnersSource.find(l => l.id === lookupId);
+    if (lookupId) {
+      if (learnersSource instanceof Map) {
+        matchedLearner = learnersSource.get(lookupId);
+      } else if (Array.isArray(learnersSource)) {
+        matchedLearner = learnersSource.find(l => l.id === lookupId);
+      }
+    }
+    if (!matchedLearner && lookupName) {
+      const cleanLookup = String(lookupName).trim().toLowerCase();
+      const allLearners = learnersSource instanceof Map ? Array.from(learnersSource.values()) : learnersSource;
+      matchedLearner = allLearners.find(l => {
+        const ln = (l.full_name || '').trim().toLowerCase();
+        return ln === cleanLookup || cleanLookup.includes(ln) || ln.includes(cleanLookup);
+      });
     }
     if (matchedLearner) {
       if (rawNum === undefined || rawNum === null || rawNum === '') {
@@ -85,9 +96,9 @@ export function resolveConstituency(
 
   let parsedName: string | undefined = rawName ? String(rawName).trim() : undefined;
 
-  // If rawName contains combined string like "#16 — Egmore" or "16 - Egmore" or "16. Egmore"
+  // If rawName contains combined string like "#16 — Egmore" or "16 - Egmore" or "16. Egmore" or "161 – Pattukkottai"
   if (parsedName) {
-    const matchCombined = parsedName.match(/^#?\s*(\d{1,3})\s*[-—.:]\s*(.+)$/);
+    const matchCombined = parsedName.match(/^#?\s*(\d{1,3})\s*[-\u2013\u2014.:]\s*(.+)$/);
     if (matchCombined) {
       const extractedNum = Number(matchCombined[1]);
       const extractedName = matchCombined[2].trim();
@@ -98,6 +109,11 @@ export function resolveConstituency(
     }
   }
 
+  // Strip duplicate prefix if parsedName still starts with a constituency number pattern
+  if (parsedName) {
+    parsedName = parsedName.replace(/^#?\d{1,3}\s*[-\u2013\u2014.:]\s*/, '').trim();
+  }
+
   // Cross-reference with TN_CONSTITUENCIES master data
   if (parsedNum && (!parsedName || parsedName.toLowerCase().startsWith('constituency #') || parsedName === 'MLA' || parsedName === 'Tamil Nadu')) {
     const master = byNumber.get(parsedNum);
@@ -105,7 +121,17 @@ export function resolveConstituency(
       parsedName = master.name;
     }
   } else if (!parsedNum && parsedName) {
-    const master = byNormName.get(normalizeConstStr(parsedName));
+    const norm = normalizeConstStr(parsedName);
+    let master = byNormName.get(norm);
+    if (!master) {
+      // Substring/prefix matching against master constituencies (e.g. "Pattukkottai (Thanjavur)" matches "Pattukkottai")
+      for (const [normKey, c] of byNormName.entries()) {
+        if (norm.startsWith(normKey) || normKey.startsWith(norm)) {
+          master = c;
+          break;
+        }
+      }
+    }
     if (master) {
       parsedNum = master.number;
       parsedName = master.name;
