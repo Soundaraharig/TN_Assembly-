@@ -3,6 +3,7 @@ import type { UserRole, CollegeEvent, Coordinator, Learner, UserSession } from '
 import { LogOut, Landmark, Sun, Moon, Menu, X, Copy, Check, Cloud, CloudOff } from 'lucide-react';
 import type { Theme } from '../../lib/theme';
 import { isSupabaseEnabled } from '../../lib/supabase';
+import { isSpeakerRole, isDeputySpeakerRole } from '../../services/storageService';
 
 interface HeaderProps {
   role: UserRole;
@@ -47,10 +48,18 @@ export const Header: React.FC<HeaderProps> = ({
     }
   };
 
+  // Check for Speaker or Deputy Speaker presiding role
+  const isSpeaker = role === 'student' && currentStudent && isSpeakerRole(currentStudent.role);
+  const isDeputy = role === 'student' && currentStudent && isDeputySpeakerRole(currentStudent.role);
+
   // Determine user display name dynamically
   const displayName =
     role === 'student' && currentStudent
-      ? `${currentStudent.full_name} (${currentStudent.party_name || 'MLA'})`
+      ? (isSpeaker
+          ? `${currentStudent.full_name} (Speaker)`
+          : isDeputy
+          ? `${currentStudent.full_name} (Deputy Speaker)`
+          : `${currentStudent.full_name} (${currentStudent.party_name || 'MLA'})`)
       : userSession?.name
       ? userSession.name
       : currentCoordinator?.name
@@ -98,7 +107,15 @@ export const Header: React.FC<HeaderProps> = ({
                 TN Assembly
               </h1>
               <span className="text-[10px] font-semibold block" style={{ color: 'var(--text-muted)' }}>
-                {role === 'super_admin' ? (currentEvent ? 'Super Admin • Event Active' : 'Super Admin') : role === 'coordinator' ? 'Coordinator Portal' : 'Delegate Portal'}
+                {role === 'super_admin'
+                  ? (currentEvent ? 'Super Admin • Event Active' : 'Super Admin')
+                  : role === 'coordinator'
+                  ? 'Coordinator Portal'
+                  : isSpeaker
+                  ? 'Presiding Officer • Speaker Desk'
+                  : isDeputy
+                  ? 'Presiding Officer • Deputy Speaker Desk'
+                  : 'Delegate Portal'}
               </span>
             </div>
           </button>

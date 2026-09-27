@@ -26,7 +26,7 @@ import type {
   DayAttendanceRecord,
   DayAttendanceStatus
 } from './types';
-import { storageService } from './services/storageService';
+import { storageService, isSpeakerRole, isDeputySpeakerRole } from './services/storageService';
 import { Header } from './components/common/Header';
 import { Sidebar, type ActiveNavTab } from './components/common/Sidebar';
 import { ToastContainer, type ToastMessage } from './components/common/Toast';
@@ -68,6 +68,7 @@ import { CsvImportModal } from './components/coordinator/CsvImportModal';
 import { AllocationModal } from './components/coordinator/AllocationModal';
 
 import { StudentDashboard } from './components/student/StudentDashboard';
+import { SpeakerDashboard } from './components/speaker/SpeakerDashboard';
 import { StudentJoinView } from './components/student/StudentJoinModal';
 import { JuryDashboard } from './components/jury/JuryDashboard';
 import { VolunteerDashboard } from './components/volunteer/VolunteerDashboard';
@@ -255,6 +256,7 @@ interface EventTabRouteHandlerProps {
   handleSetActiveEventDay: (dayId: string) => Promise<void>;
   handleSetStudentDayAttendance: (dayId: string, studentId: string, status: DayAttendanceStatus, markedBy?: string, session?: 'FN' | 'AN') => Promise<DayAttendanceRecord>;
   handleBatchSetDayAttendance: (dayId: string, studentIds: string[], status: DayAttendanceStatus, markedBy?: string, session?: 'FN' | 'AN') => Promise<void>;
+  onLogout?: () => void;
 }
 
 function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
@@ -435,6 +437,28 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
     const studentElections = storageService.getElections(activeEvent.id, 'student', props.currentStudent?.id);
     const studentFlashVotes = storageService.getFlashVotes(activeEvent.id, 'student', props.currentStudent?.id);
     const studentNominations = storageService.getNominations(activeEvent.id, 'student', props.currentStudent?.id);
+
+    // Dedicated Speaker / Deputy Speaker Presiding Officer Desk
+    const isPresiding = Boolean(
+      props.currentStudent && (
+        isSpeakerRole(props.currentStudent.role) ||
+        isDeputySpeakerRole(props.currentStudent.role)
+      )
+    );
+
+    if (props.currentStudent && isPresiding) {
+      return (
+        <SpeakerDashboard
+          speaker={props.currentStudent}
+          event={activeEvent}
+          agenda={currentAgenda}
+          elections={studentElections}
+          flashVotes={studentFlashVotes}
+          onShowToast={props.addToast}
+          onLogout={props.onLogout}
+        />
+      );
+    }
 
     return props.currentStudent ? (
       <StudentDashboard
@@ -2781,8 +2805,25 @@ export function App() {
               path="/dashboard"
               element={
                 currentStudent ? (
-                  <StudentDashboard
-                    student={currentStudent}
+                  (isSpeakerRole(currentStudent.role) || isDeputySpeakerRole(currentStudent.role)) ? (
+                    <SpeakerDashboard
+                      speaker={currentStudent}
+                      event={currentEvent || events[0] || null}
+                      agenda={agenda}
+                      elections={storageService.getElections(currentEvent?.id || events[0]?.id, 'student', currentStudent.id)}
+                      flashVotes={storageService.getFlashVotes(currentEvent?.id || events[0]?.id, 'student', currentStudent.id)}
+                      onShowToast={addToast}
+                      onLogout={() => {
+                        clearSession();
+                        setIsAuthenticated(false);
+                        setRole('coordinator');
+                        navigate('/');
+                        addToast('Signed Out', 'You have been signed out', 'info');
+                      }}
+                    />
+                  ) : (
+                    <StudentDashboard
+                      student={currentStudent}
                     event={currentEvent || events[0] || null}
                     agenda={agenda}
                     party={activeParty || null}
@@ -2827,9 +2868,10 @@ export function App() {
                     }}
                     onShowToast={addToast}
                   />
-                ) : (
-                  <Navigate to="/join" replace />
                 )
+              ) : (
+                <Navigate to="/join" replace />
+              )
               }
             />
 
@@ -3001,6 +3043,13 @@ export function App() {
                   role={role}
                   userSession={userSession}
                   addToast={addToast}
+                  onLogout={() => {
+                    clearSession();
+                    setIsAuthenticated(false);
+                    setRole('coordinator');
+                    navigate('/');
+                    addToast('Signed Out', 'You have been signed out', 'info');
+                  }}
                   handleToggleCheckIn={handleToggleCheckIn}
                   handleCheckInAll={handleCheckInAll}
                   handleUpdateLearner={handleUpdateLearner}
