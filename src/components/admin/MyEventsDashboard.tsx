@@ -143,13 +143,13 @@ export const MyEventsDashboard: React.FC<MyEventsDashboardProps> = ({
             {isSuperAdmin ? 'All Assembly Events' : 'My Assigned Events'}
           </h2>
           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            {isSuperAdmin ? 'Manage your TN Assembly events' : 'Select your assigned event to manage session details'}
+            {isSuperAdmin ? 'Manage your Youth TN Assembly events' : 'Select your assigned event to manage session details'}
           </p>
         </div>
 
         <div className="flex items-center gap-3">
           <button
-            onClick={() => onShowToast('Onboarding Started', 'Welcome to TN Assembly Organiser onboarding', 'info')}
+            onClick={() => onShowToast('Onboarding Started', 'Welcome to Youth TN Assembly Organiser onboarding', 'info')}
             className="px-4 py-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 border border-amber-500/30 font-semibold text-xs flex items-center gap-1.5 transition-all cursor-pointer"
           >
             <span>Start onboarding</span>

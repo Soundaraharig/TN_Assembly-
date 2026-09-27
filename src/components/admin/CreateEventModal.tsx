@@ -23,7 +23,7 @@ export const CreateEventModal: React.FC<CreateEventModalProps> = ({ isOpen, onCl
   };
 
   const handleCopyCredentials = () => {
-    const text = `TN Assembly Credentials\nEvent: ${collegeName}\nCoordinator: ${coordName}\nEmail: ${coordEmail}\nPassword: ${tempPassword}`;
+    const text = `Youth TN Assembly Credentials\nEvent: ${collegeName}\nCoordinator: ${coordName}\nEmail: ${coordEmail}\nPassword: ${tempPassword}`;
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);

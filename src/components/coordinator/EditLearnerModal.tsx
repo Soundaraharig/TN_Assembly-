@@ -223,7 +223,7 @@ export const EditLearnerModal: React.FC<EditLearnerModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">TN Assembly Constituency</label>
+            <label className="block text-xs font-bold text-slate-700 mb-1">Youth TN Assembly Constituency</label>
             <select
               value={selectedConstNo}
               onChange={(e) => setSelectedConstNo(Number(e.target.value))}

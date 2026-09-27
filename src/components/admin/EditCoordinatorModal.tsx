@@ -46,7 +46,7 @@ export const EditCoordinatorModal: React.FC<EditCoordinatorModalProps> = ({
 
   const handleCopyCredentials = () => {
     const passToCopy = password.trim() || coordinator.raw_temp_password || coordinator.password_hash || '(hidden existing password)';
-    const text = `TN Assembly Coordinator Credentials\nEvent: ${eventName || 'College Event'}\nName: ${name}\nEmail: ${email}\nPassword: ${passToCopy}`;
+    const text = `Youth TN Assembly Coordinator Credentials\nEvent: ${eventName || 'College Event'}\nName: ${name}\nEmail: ${email}\nPassword: ${passToCopy}`;
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);

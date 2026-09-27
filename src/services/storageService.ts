@@ -128,6 +128,7 @@ const STORAGE_KEYS = {
   PROCEEDINGS_MOTIONS: 'tn_assembly_proceedings_motions_v6',
   DELETED_IDS: 'tn_assembly_deleted_ids_v6',
   DELETED_QUESTION_IDS: 'tn_assembly_deleted_question_ids_v6',
+  DELETED_AGENDA_IDS: 'tn_assembly_deleted_agenda_ids_v6',
   AUDIT_LOGS: 'tn_assembly_audit_logs_v1',
   EVENT_DAYS: 'tn_assembly_event_days_v1',
   DAY_ATTENDANCE: 'tn_assembly_day_attendance_v1',
@@ -1208,6 +1209,31 @@ class StorageService {
 
   private removeDeletedId(_id: string) {
     // No-op
+  }
+
+  public getDeletedAgendaIds(): Set<string> {
+    try {
+      const stored = this.getItem<string[]>(STORAGE_KEYS.DELETED_AGENDA_IDS, []);
+      return new Set(Array.isArray(stored) ? stored : []);
+    } catch {
+      return new Set<string>();
+    }
+  }
+
+  public addDeletedAgendaIds(ids: string[]): void {
+    if (!ids || ids.length === 0) return;
+    try {
+      const existing = this.getItem<string[]>(STORAGE_KEYS.DELETED_AGENDA_IDS, []);
+      const merged = Array.from(new Set([...existing, ...ids]));
+      this.setItem(STORAGE_KEYS.DELETED_AGENDA_IDS, merged);
+    } catch {}
+  }
+
+  public removeDeletedAgendaId(id: string): void {
+    try {
+      const existing = this.getItem<string[]>(STORAGE_KEYS.DELETED_AGENDA_IDS, []);
+      this.setItem(STORAGE_KEYS.DELETED_AGENDA_IDS, existing.filter(x => x !== id));
+    } catch {}
   }
 
   /**
@@ -2384,13 +2410,14 @@ class StorageService {
         hasQueryError = true;
       } else if (agenda !== null) {
         // Event-scoped merge of agenda to preserve local order/status and prevent cross-event is_current stomping
-        const localAgenda = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, []);
+        const deletedAgendaIds = this.getDeletedAgendaIds();
+        const localAgenda = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, []).filter(a => !deletedAgendaIds.has(a.id));
         const localMap = new Map<string, AgendaItem>();
         localAgenda.forEach(a => localMap.set(a.id, a));
 
         const agendaByEvent = new Map<string, AgendaItem[]>();
         agenda.forEach(r => {
-          if (deletedIds.has(r.id)) return;
+          if (deletedAgendaIds.has(r.id)) return;
           const evId = r.event_id || 'default';
           if (!agendaByEvent.has(evId)) agendaByEvent.set(evId, []);
           const local = localMap.get(r.id);
@@ -2964,9 +2991,9 @@ class StorageService {
 
         // 3. Commit agenda schedule
         if (agendaData && Array.isArray(agendaData)) {
-          const deletedIds = this.getDeletedIds();
-          const validAgenda = (agendaData as unknown as AgendaItem[]).filter(a => !deletedIds.has(a.id));
-          const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== eventId && !deletedIds.has(a.id));
+          const deletedAgendaIds = this.getDeletedAgendaIds();
+          const validAgenda = (agendaData as unknown as AgendaItem[]).filter(a => !deletedAgendaIds.has(a.id));
+          const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== eventId && !deletedAgendaIds.has(a.id));
           const sortedAgenda = validAgenda.sort((a: any, b: any) => {
             if (a.order_number !== undefined && b.order_number !== undefined) return a.order_number - b.order_number;
             if (a.time && b.time) return String(a.time).localeCompare(String(b.time));
@@ -3093,10 +3120,10 @@ class StorageService {
         .eq('event_id', eventId)
         .order('time', { ascending: true });
       if (!error && data) {
-        const deletedIds = this.getDeletedIds();
-        const items = (data as unknown as AgendaItem[]).filter(a => !deletedIds.has(a.id));
+        const deletedAgendaIds = this.getDeletedAgendaIds();
+        const items = (data as unknown as AgendaItem[]).filter(a => !deletedAgendaIds.has(a.id));
         this.sessionAgendaCache.set(eventId, items);
-        const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== eventId && !deletedIds.has(a.id));
+        const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== eventId && !deletedAgendaIds.has(a.id));
         this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...items]);
         this.notify();
         return items;
@@ -3433,9 +3460,9 @@ class StorageService {
       ]);
 
       if (!agendaErr && agendaData) {
-        const deletedIds = this.getDeletedIds();
-        const validAgenda = (agendaData as unknown as AgendaItem[]).filter(a => !deletedIds.has(a.id));
-        const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== activeEventId && !deletedIds.has(a.id));
+        const deletedAgendaIds = this.getDeletedAgendaIds();
+        const validAgenda = (agendaData as unknown as AgendaItem[]).filter(a => !deletedAgendaIds.has(a.id));
+        const otherAgenda = this.getAgenda().filter(a => a.event_id && a.event_id !== activeEventId && !deletedAgendaIds.has(a.id));
         const sortedAgenda = validAgenda.sort((a: any, b: any) => {
           const orderA = a.order ?? a.order_number;
           const orderB = b.order ?? b.order_number;
@@ -8438,8 +8465,8 @@ class StorageService {
   }
 
   public getAgenda(eventId?: string): AgendaItem[] {
-    const deletedIds = this.getDeletedIds();
-    const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA).filter(a => !deletedIds.has(a.id));
+    const deletedAgendaIds = this.getDeletedAgendaIds();
+    const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA).filter(a => !deletedAgendaIds.has(a.id));
     const sortFn = (a: AgendaItem, b: AgendaItem) => {
       const orderA = a.order ?? (a as any).order_number;
       const orderB = b.order ?? (b as any).order_number;
@@ -8463,7 +8490,7 @@ class StorageService {
     const eventItems = all.filter(a => a.event_id === eventId);
     const eventItemIds = eventItems.map(a => a.id);
     if (eventItemIds.length > 0) {
-      this.addDeletedIds(eventItemIds);
+      this.addDeletedAgendaIds(eventItemIds);
     }
     this.sessionAgendaCache.delete(eventId);
     // 1. Remove from local storage
@@ -8639,6 +8666,7 @@ class StorageService {
     };
 
     all.push(newItem);
+    this.removeDeletedAgendaId(newItem.id);
     this.setItem(STORAGE_KEYS.AGENDA, all);
     this.sbUpsert('session_agenda', newItem as unknown as Record<string, unknown>);
     this.notify();
@@ -8664,18 +8692,33 @@ class StorageService {
     return updatedItem;
   }
 
-  public deleteAgendaItem(itemId: string) {
-    this.addDeletedIds([itemId]);
+  public async deleteAgendaItem(itemId: string): Promise<boolean> {
+    this.addDeletedAgendaIds([itemId]);
     const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA);
     const targetItem = all.find(a => a.id === itemId);
-    if (targetItem?.event_id) {
-      this.sessionAgendaCache.delete(targetItem.event_id);
+    const eventId = targetItem?.event_id;
+    if (eventId) {
+      this.sessionAgendaCache.delete(eventId);
     }
     const filtered = all.filter(a => a.id !== itemId);
     this.setItem(STORAGE_KEYS.AGENDA, filtered);
-    this.sbDelete('session_agenda', itemId);
+    
+    // Explicitly await deletion in Supabase database
+    await this.sbDelete('session_agenda', itemId);
+    
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+
+    if (supabase && this.realtimeChannel && eventId) {
+      const eventAgenda = filtered.filter(a => a.event_id === eventId);
+      this.realtimeChannel.send({
+        type: 'broadcast',
+        event: 'agenda_update',
+        payload: { eventId, agenda: eventAgenda }
+      }).catch(() => {});
+    }
+
+    return true;
   }
 
   public resetIndividualAgendaItem(eventId: string, itemId: string): { success: boolean; item?: AgendaItem; error?: string } {
@@ -10793,10 +10836,17 @@ class StorageService {
     this.setItem(STORAGE_KEYS.ELECTIONS, all);
 
     if (targetEventId) {
-      const proj = this.getProjectorSettings(targetEventId);
-      proj.revealedElectionId = undefined;
-      proj.displayScene = 'election';
-      this.saveProjectorSettings(targetEventId, proj);
+      const targetElec = all.find(e => e.id === electionId);
+      const isStillOpen = targetElec && (targetElec.status === 'Live' || targetElec.status === 'live');
+      if (isStillOpen) {
+        const proj = this.getProjectorSettings(targetEventId);
+        proj.revealedElectionId = undefined;
+        proj.displayScene = 'election';
+        this.saveProjectorSettings(targetEventId, proj);
+      } else {
+        const proj = this.restoreReturnAgendaContext(targetEventId);
+        this.saveProjectorSettings(targetEventId, proj);
+      }
 
       this.broadcast('election_update', { eventId: targetEventId, elections: this.getElections(targetEventId) }).catch(() => {});
       this.syncEventStateToSupabase(targetEventId, true).catch(() => {});
@@ -11155,7 +11205,7 @@ class StorageService {
 
     // 1. JSON Export
     const backupJson = {
-      app: 'TN Assembly Simulation Portal',
+      app: 'Youth TN Assembly Simulation Portal',
       event_id: eventId,
       event_metadata: event || null,
       exported_at: nowIso,

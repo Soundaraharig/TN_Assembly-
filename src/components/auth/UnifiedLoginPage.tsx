@@ -231,7 +231,7 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
             className="text-3xl font-black tracking-tight"
             style={{ color: 'var(--text-primary)' }}
           >
-            TN <span style={{ color: 'var(--accent)' }}>Assembly</span>
+            Youth TN <span style={{ color: 'var(--accent)' }}>Assembly</span>
           </h1>
           <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
             State Event Governance &amp; Delegation Portal
@@ -429,7 +429,7 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
         </div>
 
         <p className="text-center text-[11px] mt-6 animate-fade-in" style={{ color: 'var(--text-muted)' }}>
-          TN Legislative Assembly System • Assembly Portal
+          Youth TN Legislative Assembly System • Assembly Portal
         </p>
       </div>
     </div>

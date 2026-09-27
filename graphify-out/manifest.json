@@ -24,9 +24,9 @@
     "semantic_hash": ""
   },
   "src/App.tsx": {
-    "mtime": 1790512283.6359537,
-    "seen": 1790512442.507966,
-    "ast_hash": "b123a27a694f69176ef99a895f7d4b94",
+    "mtime": 1790514519.7145536,
+    "seen": 1790514766.3954635,
+    "ast_hash": "7e00ef4d9342aadfd1272220bb470908",
     "semantic_hash": ""
   },
   "src/components/admin/CreateEventModal.tsx": {
@@ -102,9 +102,9 @@
     "semantic_hash": ""
   },
   "src/components/common/StandaloneProjectorDisplay.tsx": {
-    "mtime": 1790507592.0113482,
-    "seen": 1790507947.8156111,
-    "ast_hash": "1b47ae9d48a663b5efd6323ad3b07eaf",
+    "mtime": 1790514658.5348597,
+    "seen": 1790514766.3966997,
+    "ast_hash": "7b24ed2701aa61064980ddac80554890",
     "semantic_hash": ""
   },
   "src/components/common/Toast.tsx": {
@@ -120,9 +120,9 @@
     "semantic_hash": "f79a303696e1d1ac776fd7b483e8698f"
   },
   "src/components/coordinator/AgendaTab.tsx": {
-    "mtime": 1789445602.70724,
-    "seen": 1789445875.357616,
-    "ast_hash": "80fd15b0eb9d219be502dabdb2786ac3",
+    "mtime": 1790514536.3590596,
+    "seen": 1790514766.3968897,
+    "ast_hash": "21de44de0ae78ed442fc9c0ab0bf280d",
     "semantic_hash": ""
   },
   "src/components/coordinator/AllocationModal.tsx": {
@@ -180,9 +180,9 @@
     "semantic_hash": "3d1db61d896d7a7ddbe19b109b93c6bc"
   },
   "src/components/coordinator/ControlTab.tsx": {
-    "mtime": 1790507637.0474398,
-    "seen": 1790507947.8166144,
-    "ast_hash": "359ce0cf5d0815eab114a2e4a0f0ff2d",
+    "mtime": 1790514637.1117725,
+    "seen": 1790514766.3977942,
+    "ast_hash": "1f00e10e13a20f6fb3643e99d2cc5a7d",
     "semantic_hash": ""
   },
   "src/components/coordinator/CoordinatorDashboard.tsx": {
@@ -354,9 +354,9 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1790507677.0846982,
-    "seen": 1790507947.8188148,
-    "ast_hash": "72490075faf9d5235d6bb4d134913f49",
+    "mtime": 1790514500.2931762,
+    "seen": 1790514766.4004378,
+    "ast_hash": "f266b3107f2aefd29cbc94166e0efd30",
     "semantic_hash": ""
   },
   "src/types/index.ts": {
@@ -606,9 +606,9 @@
     "semantic_hash": ""
   },
   "src/components/speaker/SpeakerDashboard.tsx": {
-    "mtime": 1790512403.0986133,
-    "seen": 1790512442.5119977,
-    "ast_hash": "24603b89af79dc7e524ece45bec2b989",
+    "mtime": 1790514255.581632,
+    "seen": 1790514766.3994315,
+    "ast_hash": "58b07fa1c678e6da0b6a433a06836632",
     "semantic_hash": ""
   }
 }

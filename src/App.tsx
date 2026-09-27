@@ -2010,8 +2010,12 @@ export function App() {
     storageService.updateAgendaItem(a);
   };
 
-  const handleDeleteAgendaItem = (id: string) => {
-    storageService.deleteAgendaItem(id);
+  const handleDeleteAgendaItem = async (id: string) => {
+    await storageService.deleteAgendaItem(id);
+    const activeEv = extractEventFromUrl(events) || currentEvent;
+    if (activeEv) {
+      setAgenda(storageService.getAgenda(activeEv.id));
+    }
   };
 
   const handleDuplicateAgendaItem = (id: string) => {

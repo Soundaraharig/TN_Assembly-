@@ -608,7 +608,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
                   Days &amp; Activities
                 </h2>
                 <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-                  Event: <strong style={{ color: 'var(--text-primary)' }}>{event.college_name}</strong> • Define session days, assign dynamic TN Assembly activities, switch active floor day, and track day-wise attendance.
+                  Event: <strong style={{ color: 'var(--text-primary)' }}>{event.college_name}</strong> • Define session days, assign dynamic Youth TN Assembly activities, switch active floor day, and track day-wise attendance.
                 </p>
               </div>
 

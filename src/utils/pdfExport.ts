@@ -4,7 +4,7 @@ import { getResolvedPartyName } from '../services/storageService';
 
 export function generateDelegateBadgesPDF(
   learners: Learner[],
-  eventName: string = 'TN Assembly',
+  eventName: string = 'Youth TN Assembly',
   parties?: Party[]
 ) {
   const doc = new jsPDF({
@@ -39,15 +39,15 @@ export function generateDelegateBadgesPDF(
     doc.setFillColor(252, 252, 254);
     doc.roundedRect(x, y, badgeWidth, badgeHeight, 3, 3, 'FD');
 
-    // Header Banner (TN Assembly Green)
+    // Header Banner (Youth TN Assembly Green)
     doc.setFillColor(15, 81, 50); // Deep Emerald
     doc.rect(x, y, badgeWidth, 12, 'F');
 
     // Header Text
     doc.setTextColor(255, 255, 255);
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9);
-    doc.text('TN LEGISLATIVE ASSEMBLY', x + badgeWidth / 2, y + 5, { align: 'center' });
+    doc.setFontSize(8.5);
+    doc.text('YOUTH TN LEGISLATIVE ASSEMBLY', x + badgeWidth / 2, y + 5, { align: 'center' });
     doc.setFontSize(7);
     doc.setFont('helvetica', 'normal');
     doc.text(eventName.toUpperCase(), x + badgeWidth / 2, y + 9.5, { align: 'center' });

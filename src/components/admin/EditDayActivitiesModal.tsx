@@ -335,12 +335,12 @@ export const EditDayActivitiesModal: React.FC<EditDayActivitiesModalProps> = ({
             </p>
           </div>
 
-          {/* Activity Selector: Standard TN Assembly Activities */}
+          {/* Activity Selector: Standard Youth TN Assembly Activities */}
           <div className="pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}>
                 <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                <span>TN Assembly Activities (Click to Assign)</span>
+                <span>Youth TN Assembly Activities (Click to Assign)</span>
               </label>
               <span className="text-[11px] font-semibold text-amber-500">
                 {assignedActivities.length} assigned
@@ -413,7 +413,7 @@ export const EditDayActivitiesModal: React.FC<EditDayActivitiesModalProps> = ({
                 className="p-4 rounded-xl border text-center text-xs italic"
                 style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-muted)' }}
               >
-                No activities assigned yet. Select from standard TN Assembly activities above or type a custom one.
+                No activities assigned yet. Select from standard Youth TN Assembly activities above or type a custom one.
               </div>
             ) : (
               <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">

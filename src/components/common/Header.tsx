@@ -104,7 +104,7 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
             <div>
               <h1 className="text-sm font-black tracking-tight leading-none group-hover:text-emerald-500 transition-colors" style={{ color: 'var(--text-primary)' }}>
-                TN Assembly
+                Youth TN Assembly
               </h1>
               <span className="text-[10px] font-semibold block" style={{ color: 'var(--text-muted)' }}>
                 {role === 'super_admin'

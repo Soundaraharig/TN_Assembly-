@@ -1570,7 +1570,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   {/* TN Constituency */}
                   <div className="p-3.5 bg-slate-50 dark:bg-slate-950/80 rounded-xl border border-slate-200 dark:border-slate-800 space-y-1">
                     <span className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 flex items-center gap-1">
-                      <MapPin className="w-3 h-3 text-amber-500" /> TN Assembly Constituency
+                      <MapPin className="w-3 h-3 text-amber-500" /> Youth TN Assembly Constituency
                     </span>
                     <p className="text-xs font-bold text-slate-900 dark:text-white font-mono">
                       {student.constituency_number !== undefined ? `#${student.constituency_number} ` : ''}

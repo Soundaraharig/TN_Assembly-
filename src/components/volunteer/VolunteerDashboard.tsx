@@ -982,7 +982,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                 className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider border"
                 style={{ background: 'var(--accent-soft)', color: 'var(--accent)', borderColor: 'var(--accent)' }}
               >
-                {event?.college_name || 'TN Assembly Platform'}
+                {event?.college_name || 'Youth TN Assembly Platform'}
               </span>
             </div>
             <p className="text-xs flex items-center gap-2 mt-0.5" style={{ color: 'var(--text-muted)' }}>
@@ -1502,7 +1502,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                   </span>
                   <div className="flex items-center gap-3 mt-1">
                     <h2 className="text-xl sm:text-2xl font-black tracking-tight" style={{ color: 'var(--text-primary)' }}>
-                      {event?.college_name || 'TN Assembly Event'} — {activeDay?.name || 'Day 1'}
+                      {event?.college_name || 'Youth TN Assembly Event'} — {activeDay?.name || 'Day 1'}
                     </h2>
                     <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-500 text-white animate-pulse">
                       ACTIVE DAY

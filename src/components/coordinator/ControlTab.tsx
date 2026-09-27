@@ -600,12 +600,27 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     try {
       const res = storageService.resetIndividualAgendaItem(currentEvent.id, resetConfirmItem.id);
       if (res.success) {
-        onShowToast('Agenda Item Reset', `"${resetConfirmItem.title}" marked as Upcoming and can now be activated.`, 'success');
+        // Activate it so it becomes current, session state resets, current agenda changes to that item, projector follows it
+        storageService.setCurrentAgendaItem(currentEvent.id, resetConfirmItem.id);
+        if (onSetCurrentAgendaItem) {
+          onSetCurrentAgendaItem(currentEvent.id, resetConfirmItem.id);
+        }
+        const dur = (resetConfirmItem.duration_minutes || 10) * 60;
+        setTimerDurationSec(dur);
+        setSecondsLeft(dur);
+        setIsTimerRunning(false);
+        storageService.saveLiveTimerState(currentEvent.id, {
+          durationSec: dur,
+          secondsLeft: dur,
+          isRunning: false,
+          updatedAt: Date.now()
+        });
+        onShowToast('Session Re-Opened', `"${resetConfirmItem.title}" is now active on floor and projector.`, 'success');
       } else {
-        onShowToast('Reset Failed', res.error || 'Could not reset agenda item.', 'error');
+        onShowToast('Reset Failed', res.error || 'Could not reset agenda session.', 'error');
       }
     } catch (e: any) {
-      onShowToast('Error', e.message || 'Failed to reset agenda item', 'error');
+      onShowToast('Error', e.message || 'Failed to reset agenda session', 'error');
     } finally {
       setIsResettingItem(false);
       setResetConfirmItem(null);
@@ -1606,7 +1621,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                     key={item.id}
                     onClick={() => {
                       if (isCompleted) {
-                        onShowToast('Item Completed', `"${item.title}" is already completed. Click Reset to re-open it.`, 'info');
+                        setResetConfirmItem(item);
                         return;
                       }
                       setCurrentAgendaIndex(idx);
@@ -2308,13 +2323,13 @@ export const ControlTab: React.FC<ControlTabProps> = ({
               </div>
               <div className="min-w-0 flex-1">
                 <h3 className="text-base font-black text-slate-900 dark:text-white">
-                  Reset this agenda item?
+                  Reset this agenda session?
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                  This will mark this agenda item as active again and allow it to be started again.
+                  Are you sure you want to reset and re-open this agenda session? This will make it active on the floor and projector, resetting its speaking queue for a fresh session.
                 </p>
                 <div className="mt-2.5 px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Item: <span className="font-bold text-slate-900 dark:text-white">{resetConfirmItem.title}</span> ({resetConfirmItem.day})
+                  Session: <span className="font-bold text-slate-900 dark:text-white">{resetConfirmItem.title}</span> ({resetConfirmItem.day})
                 </div>
               </div>
             </div>
@@ -2335,7 +2350,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                 className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-black shadow-md shadow-amber-950/20 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
-                <span>{isResettingItem ? 'Resetting...' : 'Reset Agenda Item'}</span>
+                <span>{isResettingItem ? 'Resetting...' : 'Reset & Re-open Session'}</span>
               </button>
             </div>
           </div>
@@ -2351,7 +2366,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
         }}
         eventId={currentEvent?.id || ''}
         eventSlug={currentEvent ? getEventSlug(currentEvent) : undefined}
-        eventName={currentEvent?.college_name || 'TN Assembly'}
+        eventName={currentEvent?.college_name || 'Youth TN Assembly'}
         userRole={userSession?.role || (isSuperAdmin ? 'super_admin' : 'coordinator')}
         userSession={userSession}
         onShowToast={onShowToast}

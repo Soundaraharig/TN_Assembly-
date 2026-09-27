@@ -380,7 +380,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                 className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider border"
                 style={{ background: 'var(--accent-soft)', color: 'var(--accent)', borderColor: 'var(--accent)' }}
               >
-                {event?.college_name || 'TN Assembly Platform'}
+                {event?.college_name || 'Youth TN Assembly Platform'}
               </span>
             </div>
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>

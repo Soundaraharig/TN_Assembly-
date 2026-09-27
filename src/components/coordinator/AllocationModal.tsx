@@ -66,7 +66,7 @@ export const AllocationModal: React.FC<AllocationModalProps> = ({
               <Zap className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">TN Assembly Allocation Engine</h3>
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">Youth TN Assembly Allocation Engine</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">Independent constituency, party & committee assignments</p>
             </div>
           </div>
@@ -226,7 +226,7 @@ export const AllocationModal: React.FC<AllocationModalProps> = ({
               </li>
               <li className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                <span>Maps official TN Assembly Constituency numbers (1-234) and names with zero duplicates.</span>
+                <span>Maps official Youth TN Assembly Constituency numbers (1-234) and names with zero duplicates.</span>
               </li>
               <li className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />

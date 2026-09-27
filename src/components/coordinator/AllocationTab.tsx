@@ -309,7 +309,7 @@ export const AllocationTab: React.FC<AllocationTabProps> = ({
               <Zap className="w-5 h-5" />
             </div>
             <h3 className="text-xl font-black tracking-tight" style={{ color: 'var(--text-primary)' }}>
-              Automated TN Assembly Allocation Engine
+              Automated Youth TN Assembly Allocation Engine
             </h3>
           </div>
           <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>

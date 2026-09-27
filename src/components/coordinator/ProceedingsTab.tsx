@@ -1927,7 +1927,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
         }}
         eventId={authoritativeEventId || eventId}
         eventSlug={eventSlug}
-        eventName={storageService.getEvents().find(e => e.id === (authoritativeEventId || eventId))?.college_name || 'TN Assembly'}
+        eventName={storageService.getEvents().find(e => e.id === (authoritativeEventId || eventId))?.college_name || 'Youth TN Assembly'}
         userRole={userRole}
         userSession={userSession}
         onShowToast={onShowToast}
@@ -1937,7 +1937,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
       <SubmissionListModal
         isOpen={isSubmissionModalOpen}
         onClose={() => setIsSubmissionModalOpen(false)}
-        eventName={storageService.getEvents().find(e => e.id === (authoritativeEventId || eventId))?.college_name || targetSlug || 'TN Assembly'}
+        eventName={storageService.getEvents().find(e => e.id === (authoritativeEventId || eventId))?.college_name || targetSlug || 'Youth TN Assembly'}
         benchFilter={benchFilter}
         onBenchFilterChange={(newBench) => setBenchFilter(newBench)}
         ministryFilter={ministryFilter}

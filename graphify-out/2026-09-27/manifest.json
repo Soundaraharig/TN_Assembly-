@@ -24,9 +24,9 @@
     "semantic_hash": ""
   },
   "src/App.tsx": {
-    "mtime": 1790507177.0782692,
-    "seen": 1790507947.814548,
-    "ast_hash": "f507dd3ed97fe0f5a127a9243ac2ad2e",
+    "mtime": 1790512283.6359537,
+    "seen": 1790512442.507966,
+    "ast_hash": "b123a27a694f69176ef99a895f7d4b94",
     "semantic_hash": ""
   },
   "src/components/admin/CreateEventModal.tsx": {
@@ -90,9 +90,9 @@
     "semantic_hash": ""
   },
   "src/components/common/Header.tsx": {
-    "mtime": 1789279388.335997,
-    "seen": 1789279470.3039784,
-    "ast_hash": "d163ca8d81fc6495ca7961f7e45f49f6",
+    "mtime": 1790512043.1397643,
+    "seen": 1790512442.5089855,
+    "ast_hash": "1ab11c541f744952ccfd60d9ea78f7b8",
     "semantic_hash": ""
   },
   "src/components/common/Sidebar.tsx": {
@@ -603,6 +603,12 @@
     "mtime": 1790508423.8451872,
     "seen": 1790508956.8902986,
     "ast_hash": "5a9232141ba2f02a5ce3031524c7755e",
+    "semantic_hash": ""
+  },
+  "src/components/speaker/SpeakerDashboard.tsx": {
+    "mtime": 1790512403.0986133,
+    "seen": 1790512442.5119977,
+    "ast_hash": "24603b89af79dc7e524ece45bec2b989",
     "semantic_hash": ""
   }
 }

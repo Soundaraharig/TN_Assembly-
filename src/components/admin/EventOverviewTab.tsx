@@ -262,12 +262,12 @@ export const EventOverviewTab: React.FC<EventOverviewTabProps> = ({
           style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
         >
           <h4 className="text-xs font-extrabold uppercase tracking-wider flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
-            <Shield className="w-4 h-4 text-emerald-500" /> TN Assembly Parliamentary Rules
+            <Shield className="w-4 h-4 text-emerald-500" /> Youth TN Assembly Parliamentary Rules
           </h4>
           <ul className="space-y-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
             <li className="flex items-start gap-2">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 mt-0.5 shrink-0" />
-              <span>Official 234 TN Assembly constituencies mapped with zero duplicates.</span>
+              <span>Official 234 Youth TN Assembly constituencies mapped with zero duplicates.</span>
             </li>
             <li className="flex items-start gap-2">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 mt-0.5 shrink-0" />

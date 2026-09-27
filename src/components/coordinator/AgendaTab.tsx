@@ -1096,14 +1096,16 @@ export const AgendaTab: React.FC<AgendaTabProps> = ({
                 Cancel
               </button>
               <button
-                onClick={() => {
-                  if (onDeleteAgendaItem) {
-                    onDeleteAgendaItem(deletingItem.id);
-                  } else {
-                    storageService.deleteAgendaItem(deletingItem.id);
-                  }
-                  onShowToast('Agenda Deleted', `Removed "${deletingItem.title}"`, 'error');
+                onClick={async () => {
+                  const targetId = deletingItem.id;
+                  const targetTitle = deletingItem.title;
                   setDeletingItem(null);
+                  if (onDeleteAgendaItem) {
+                    onDeleteAgendaItem(targetId);
+                  } else {
+                    await storageService.deleteAgendaItem(targetId);
+                  }
+                  onShowToast('Agenda Deleted', `Removed "${targetTitle}"`, 'error');
                 }}
                 className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-md cursor-pointer"
               >

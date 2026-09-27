@@ -787,22 +787,22 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
               </p>
             )}
 
-            {/* DOMINANT PROMINENT STAGE TIMER DISPLAY AREA */}
-            <div className="py-4 md:py-6 flex flex-col items-center justify-center">
+            {/* DOMINANT PROMINENT STAGE TIMER DISPLAY AREA (AUDITORIUM OPTIMIZED) */}
+            <div className="py-6 md:py-8 flex flex-col items-center justify-center">
               <div
-                className={`w-full max-w-xl p-6 md:p-8 rounded-3xl border-2 transition-all flex flex-col items-center justify-center shadow-2xl ${
+                className={`w-full max-w-3xl p-8 md:p-12 rounded-[2.5rem] border-4 transition-all flex flex-col items-center justify-center shadow-2xl ${
                   isTimerRunning
-                    ? 'bg-emerald-950/40 border-emerald-500/70 shadow-emerald-950/80 ring-8 ring-emerald-500/20'
+                    ? 'bg-emerald-950/60 border-emerald-400/90 shadow-emerald-950/90 ring-8 ring-emerald-500/30'
                     : isTimerPaused
-                      ? 'bg-amber-950/40 border-amber-500/70 shadow-amber-950/80 ring-8 ring-amber-500/20'
+                      ? 'bg-amber-950/60 border-amber-400/90 shadow-amber-950/90 ring-8 ring-amber-500/30'
                       : isTimerExpired
-                        ? 'bg-rose-950/50 border-rose-500/80 shadow-rose-950/80 ring-8 ring-rose-500/30'
-                        : 'bg-slate-900/70 border-slate-700/80 shadow-slate-950/60'
+                        ? 'bg-rose-950/70 border-rose-400/90 shadow-rose-950/90 ring-8 ring-rose-500/40'
+                        : 'bg-slate-900/90 border-slate-700 shadow-slate-950/80'
                 }`}
               >
-                <div className="flex items-center gap-2 mb-2">
+                <div className="flex items-center gap-3 mb-3">
                   <Clock
-                    className={`w-6 h-6 md:w-7 md:h-7 ${
+                    className={`w-7 h-7 md:w-9 md:h-9 ${
                       isTimerRunning
                         ? 'text-emerald-400 animate-pulse'
                         : isTimerPaused
@@ -812,7 +812,7 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
                             : 'text-slate-400'
                     }`}
                   />
-                  <span className="text-xs md:text-sm font-black uppercase tracking-widest text-slate-300">
+                  <span className="text-sm md:text-base font-black uppercase tracking-widest text-slate-200">
                     {isTimerRunning
                       ? 'SESSION TIME REMAINING'
                       : isTimerPaused
@@ -824,7 +824,7 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
                 </div>
 
                 <div
-                  className={`font-mono text-7xl md:text-9xl font-black tracking-tight drop-shadow-2xl select-none leading-none my-2 ${
+                  className={`font-mono text-8xl sm:text-9xl md:text-[10rem] lg:text-[12rem] font-black tracking-tight drop-shadow-[0_20px_40px_rgba(0,0,0,0.95)] select-none leading-none my-4 ${
                     isTimerRunning
                       ? 'text-emerald-400'
                       : isTimerPaused
@@ -837,12 +837,12 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
                   {formattedTimer}
                 </div>
 
-                <div className="flex items-center gap-3 mt-2 text-xs md:text-sm text-slate-400 font-semibold">
+                <div className="flex items-center gap-3 mt-3 text-sm md:text-base text-slate-300 font-bold">
                   <span>Planned: {selectedAgenda.duration_minutes ? `${selectedAgenda.duration_minutes} min` : (selectedAgenda.time || '10 min')}</span>
                   {selectedAgenda.category && (
                     <>
                       <span>•</span>
-                      <span className="text-slate-300">{selectedAgenda.category}</span>
+                      <span className="text-amber-400">{selectedAgenda.category}</span>
                     </>
                   )}
                 </div>

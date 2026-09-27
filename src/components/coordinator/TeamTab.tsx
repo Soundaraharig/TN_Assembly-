@@ -141,7 +141,7 @@ export const TeamTab: React.FC<TeamTabProps> = ({
 
   const handleCopyCredentials = () => {
     if (!createdCredential) return;
-    const textToCopy = `TN Assembly Portal Login Credentials\nName: ${createdCredential.name}\nEmail: ${createdCredential.email}\nRole: ${createdCredential.role}\nPassword: ${createdCredential.password}`;
+    const textToCopy = `Youth TN Assembly Portal Login Credentials\nName: ${createdCredential.name}\nEmail: ${createdCredential.email}\nRole: ${createdCredential.role}\nPassword: ${createdCredential.password}`;
     navigator.clipboard.writeText(textToCopy);
     setCopiedPass(true);
     onShowToast('Credentials Copied', 'Login password copied to clipboard', 'info');
@@ -212,7 +212,7 @@ export const TeamTab: React.FC<TeamTabProps> = ({
                 TEAM
               </h2>
               <p className="text-xs sm:text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
-                Manage the members who help organize and administer this TN Assembly election.
+                Manage the members who help organize and administer this Youth TN Assembly election.
               </p>
             </div>
           </div>
@@ -582,7 +582,7 @@ export const TeamTab: React.FC<TeamTabProps> = ({
                   Remove team member?
                 </h3>
                 <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
-                  This member will lose access to this TN Assembly election.
+                  This member will lose access to this Youth TN Assembly election.
                 </p>
               </div>
             </div>

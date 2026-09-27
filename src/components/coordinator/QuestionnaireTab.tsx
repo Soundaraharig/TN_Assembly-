@@ -61,7 +61,7 @@ export const QuestionnaireTab: React.FC<QuestionnaireTabProps> = ({
     if (!qText.trim()) return;
 
     const delegate = learners.find(l => l.id === qSubmitterId) || learners[0];
-    const submitterName = delegate ? `${delegate.full_name} (MLA - ${delegate.constituency_name || 'TN Assembly'})` : 'MLA';
+    const submitterName = delegate ? `${delegate.full_name} (MLA - ${delegate.constituency_name || 'Youth TN Assembly'})` : 'MLA';
     const submitterParty = delegate?.party_name || 'Assembly';
 
     onAddQuestion({

@@ -24,7 +24,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const handleCopy = (coord: Coordinator, collegeName: string) => {
-    const text = `TN Assembly Credentials\nEvent: ${collegeName}\nCoordinator: ${coord.name}\nEmail: ${coord.email}\nPassword: ${coord.password_hash}`;
+    const text = `Youth TN Assembly Credentials\nEvent: ${collegeName}\nCoordinator: ${coord.name}\nEmail: ${coord.email}\nPassword: ${coord.password_hash}`;
     navigator.clipboard.writeText(text);
     setCopiedId(coord.id);
     onShowToast('Credentials Copied', `Copied login info for ${coord.name}`, 'success');
