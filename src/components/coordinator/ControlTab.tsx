@@ -46,6 +46,7 @@ import {
 import { storageService } from '../../services/storageService';
 import { getEventSlug } from '../../utils/slug';
 import { ArrangeQuestionOrderModal } from './ArrangeQuestionOrderModal';
+import { formatMemberConstituency, isPresidingOfficer } from '../../utils/memberIdentity';
 
 interface ControlTabProps {
   learners: Learner[];
@@ -446,14 +447,30 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     return counts;
   }, [speakingTurns, currentEvent?.id]);
 
+  const learnersMap = useMemo(() => {
+    const map = new Map<string, Learner>();
+    learners.forEach(l => map.set(l.id, l));
+    return map;
+  }, [learners]);
+
   // Speaking priority queue for CURRENT session:
   // 1. Lowest total speaking turns across the event first
   // 2. Lowest speaking count in current session first
   // 3. Earliest hand-raise/request time first
   // 4. Stable deterministic tie-breaker
+  // Presiding officers (Speaker / Deputy Speaker) are strictly excluded from ordinary Speaking Floor queue
   const waitingRequests = useMemo(() => {
     return speakingRequests
-      .filter(r => r.event_id === currentEvent?.id && r.session_id === activeAgendaItem.id && r.status === 'WAITING')
+      .filter(r => {
+        if (r.event_id !== currentEvent?.id || r.session_id !== activeAgendaItem.id || r.status !== 'WAITING') {
+          return false;
+        }
+        const reqLearner = learnersMap.get(r.learner_id);
+        if (isPresidingOfficer(reqLearner) || isPresidingOfficer(r.bench)) {
+          return false;
+        }
+        return true;
+      })
       .sort((a, b) => {
         const totalA = totalTurnCounts[a.learner_id] || 0;
         const totalB = totalTurnCounts[b.learner_id] || 0;
@@ -463,13 +480,13 @@ export const ControlTab: React.FC<ControlTabProps> = ({
         const sessionB = sessionTurnCounts[b.learner_id] || 0;
         if (sessionA !== sessionB) return sessionA - sessionB;
 
-        const timeA = new Date(a.requested_at).getTime();
-        const timeB = new Date(b.requested_at).getTime();
+        const timeA = new Date(a.requested_at || a.created_at || 0).getTime();
+        const timeB = new Date(b.requested_at || b.created_at || 0).getTime();
         if (timeA !== timeB) return timeA - timeB;
 
-        return a.learner_name.localeCompare(b.learner_name);
+        return (a.learner_name || '').localeCompare(b.learner_name || '');
       });
-  }, [speakingRequests, currentEvent?.id, activeAgendaItem.id, totalTurnCounts, sessionTurnCounts]);
+  }, [speakingRequests, currentEvent?.id, activeAgendaItem.id, totalTurnCounts, sessionTurnCounts, learnersMap]);
 
   // Currently active speaker turn for this session (status === 'SPEAKING')
   const activeSpeakerTurn = useMemo(() => {
@@ -487,9 +504,14 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
   const spokenLearnersCount = spokenLearnerIds.size;
 
+  const totalEligibleDelegatesCount = useMemo(() => {
+    return learners.filter(l => !isPresidingOfficer(l)).length;
+  }, [learners]);
+
   // Actual event participants who have NOT yet spoken in the current session
+  // Presiding officers are strictly excluded from ordinary Speaking Floor participation
   const yetToSpeakLearners = useMemo(() => {
-    return learners.filter(l => !spokenLearnerIds.has(l.id));
+    return learners.filter(l => !isPresidingOfficer(l) && !spokenLearnerIds.has(l.id));
   }, [learners, spokenLearnerIds]);
 
   const handleCallSpeaker = async (req: SpeakingRequest) => {
@@ -1016,8 +1038,15 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                         Turn #{activeSpeakerTurn.sequence_number}
                       </span>
                     </div>
-                    <div className="text-sm font-bold text-slate-900 dark:text-white">
-                      {activeSpeakerTurn.learner_name}
+                    <div className="flex flex-wrap items-baseline gap-2">
+                      <span className="text-sm font-bold text-slate-900 dark:text-white">
+                        {activeSpeakerTurn.learner_name}
+                      </span>
+                      {formatMemberConstituency(learnersMap.get(activeSpeakerTurn.learner_id) || activeSpeakerTurn, learnersMap) && (
+                        <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">
+                          {formatMemberConstituency(learnersMap.get(activeSpeakerTurn.learner_id) || activeSpeakerTurn, learnersMap)}
+                        </span>
+                      )}
                     </div>
                     <div className="text-[11px] text-slate-500">
                       Called at {new Date(activeSpeakerTurn.called_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
@@ -1057,6 +1086,8 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                 <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
                   {waitingRequests.map((req, idx) => {
                     const learner = learners.find(l => l.id === req.learner_id);
+                    const reqLearner = learner || learnersMap.get(req.learner_id);
+                    const constDisplay = formatMemberConstituency(reqLearner || req, learnersMap);
                     const sessionTurns = sessionTurnCounts[req.learner_id] || 0;
                     const totalTurns = totalTurnCounts[req.learner_id] || 0;
                     const isCalling = callingSpeakerId === req.id;
@@ -1067,28 +1098,30 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                         className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/60 hover:border-slate-300 dark:hover:border-slate-700 transition-all flex items-center justify-between gap-2"
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
-                          <span className="w-6 h-6 rounded-md bg-slate-200 dark:bg-slate-700 text-[10px] font-mono font-bold text-slate-700 dark:text-slate-300 flex items-center justify-center shrink-0">
-                            #{learner?.constituency_number || (idx + 1)}
+                          <span className="w-6 h-6 rounded-md bg-slate-200 dark:bg-slate-700 text-[10px] font-mono font-bold text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                            #{reqLearner?.constituency_number || (idx + 1)}
                           </span>
                           <div className="min-w-0">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
                                 {req.learner_name}
                               </span>
-                              {learner?.bench && (
+                              {constDisplay && (
+                                <span className="text-amber-600 dark:text-amber-400 font-mono font-bold text-[10px] truncate">
+                                  ({constDisplay})
+                                </span>
+                              )}
+                              {reqLearner?.bench && (
                                 <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
-                                  learner.bench === 'Ruling'
+                                  reqLearner.bench === 'Ruling'
                                     ? 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
-                                    : learner.bench === 'Opposition'
+                                    : reqLearner.bench === 'Opposition'
                                     ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300'
                                     : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
                                 }`}>
-                                  {learner.bench}
+                                  {reqLearner.bench}
                                 </span>
                               )}
-                            </div>
-                            <div className="text-[10px] text-slate-500 dark:text-slate-400 font-medium truncate">
-                              {learner?.constituency_number ? `#${learner.constituency_number} ` : ''}{learner?.constituency_name || ''}
                             </div>
                             <div className="flex items-center gap-1.5 flex-wrap text-[10px] mt-0.5">
                               <span className="font-semibold text-slate-600 dark:text-slate-300">
@@ -1133,13 +1166,13 @@ export const ControlTab: React.FC<ControlTabProps> = ({
             {/* Speaking Progress Bar */}
             <div className="space-y-1.5 pt-1">
               <div className="flex justify-between text-xs text-slate-500 font-medium">
-                <span>{spokenLearnersCount} of {learners.length || 1} delegates have spoken</span>
-                <span>{Math.round((spokenLearnersCount / Math.max(learners.length, 1)) * 100)}%</span>
+                <span>{spokenLearnersCount} of {totalEligibleDelegatesCount || 1} delegates have spoken</span>
+                <span>{Math.round((spokenLearnersCount / Math.max(totalEligibleDelegatesCount, 1)) * 100)}%</span>
               </div>
               <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
                 <div
                   className="bg-emerald-500 h-full transition-all duration-300"
-                  style={{ width: `${Math.round((spokenLearnersCount / Math.max(learners.length, 1)) * 100)}%` }}
+                  style={{ width: `${Math.round((spokenLearnersCount / Math.max(totalEligibleDelegatesCount, 1)) * 100)}%` }}
                 />
               </div>
             </div>
@@ -1159,10 +1192,14 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   yetToSpeakLearners.map((s, idx) => (
                     <span
                       key={s.id || idx}
-                      className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-800/60 shadow-sm flex items-center gap-1"
+                      className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-800/60 shadow-sm flex items-center gap-1.5"
                     >
-                      <span className="font-mono text-[11px] opacity-75">#{s.constituency_number || (idx + 101)}</span>
-                      <span>{s.full_name}</span>
+                      <span className="font-bold">{s.full_name}</span>
+                      {formatMemberConstituency(s, learnersMap) && (
+                        <span className="font-mono text-[10px] text-amber-600 dark:text-amber-400 font-bold">
+                          ({formatMemberConstituency(s, learnersMap)})
+                        </span>
+                      )}
                     </span>
                   ))
                 ) : (
@@ -1268,16 +1305,16 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                     <span className="font-black text-base text-slate-900 dark:text-white">
                       {activeQuestion.student_name}
                     </span>
+                    {formatMemberConstituency(activeQuestion, learnersMap) && (
+                      <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">
+                        {formatMemberConstituency(activeQuestion, learnersMap)}
+                      </span>
+                    )}
                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                       activeQuestion.bench === 'Ruling' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
                     }`}>
                       {activeQuestion.bench}
                     </span>
-                    {activeQuestion.constituency && (
-                      <span className="text-xs text-slate-500 font-mono">
-                        {activeQuestion.constituency}
-                      </span>
-                    )}
                     <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300">
                       {activeQuestion.ministry}
                     </span>
@@ -1311,16 +1348,16 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                     <span className="font-black text-sm text-slate-900 dark:text-white">
                       {nextQuestionToCall.student_name}
                     </span>
+                    {formatMemberConstituency(nextQuestionToCall, learnersMap) && (
+                      <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">
+                        {formatMemberConstituency(nextQuestionToCall, learnersMap)}
+                      </span>
+                    )}
                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                       nextQuestionToCall.bench === 'Ruling' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
                     }`}>
                       {nextQuestionToCall.bench}
                     </span>
-                    {nextQuestionToCall.constituency && (
-                      <span className="text-xs text-slate-500 font-mono">
-                        {nextQuestionToCall.constituency}
-                      </span>
-                    )}
                     <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300">
                       {nextQuestionToCall.ministry}
                     </span>
@@ -1375,13 +1412,20 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                         <span className="w-6 h-6 rounded-md bg-slate-200 dark:bg-slate-800 font-mono font-bold text-[11px] text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
                           #{q.calling_order || (idx + (activeQuestion ? 1 : 2))}
                         </span>
-                        <span className="font-bold text-slate-800 dark:text-slate-200 truncate">
-                          {q.student_name}
+                        <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 min-w-0">
+                          <span className="font-bold text-slate-800 dark:text-slate-200 truncate">
+                            {q.student_name}
+                          </span>
+                          {formatMemberConstituency(q, learnersMap) && (
+                            <span className="text-amber-600 dark:text-amber-400 font-mono text-[10px] font-bold truncate">
+                              {formatMemberConstituency(q, learnersMap)}
+                            </span>
+                          )}
+                        </div>
+                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold shrink-0 ${q.bench === 'Ruling' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'}`}>
+                          {q.bench}
                         </span>
-                        <span className="text-slate-400 font-mono text-[11px] truncate">
-                          {q.constituency || 'General Assembly'}
-                        </span>
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 shrink-0">
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 shrink-0 hidden sm:inline">
                           {q.ministry}
                         </span>
                       </div>
@@ -2425,6 +2469,11 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                 <div>
                   <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Member Name</span>
                   <div className="font-bold text-slate-900 dark:text-white text-sm mt-0.5">{inspectQuestionCtrl.student_name}</div>
+                  {formatMemberConstituency(inspectQuestionCtrl, learnersMap) && (
+                    <div className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400 mt-0.5">
+                      {formatMemberConstituency(inspectQuestionCtrl, learnersMap)}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Bench</span>
@@ -2440,7 +2489,9 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Constituency</span>
-                  <div className="font-bold text-slate-700 dark:text-slate-200 text-sm mt-0.5">{inspectQuestionCtrl.constituency || 'General Assembly'}</div>
+                  <div className="font-bold text-amber-600 dark:text-amber-400 text-sm mt-0.5 font-mono">
+                    {formatMemberConstituency(inspectQuestionCtrl, learnersMap) || 'General Assembly'}
+                  </div>
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Target Ministry</span>

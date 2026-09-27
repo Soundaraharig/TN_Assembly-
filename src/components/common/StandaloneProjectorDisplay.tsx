@@ -4,6 +4,7 @@ import { Radio, Maximize2, Minimize2, Clock, Sparkles, Trophy, Crown, Shield, Fi
 import type { ProjectorStudioSettings } from '../../types';
 import { storageService } from '../../services/storageService';
 import { extractEventFromUrl, extractEventSlugCandidateFromUrl } from '../../utils/slug';
+import { formatMemberConstituency } from '../../utils/memberIdentity';
 
 interface StandaloneProjectorDisplayProps {
   currentEvent?: CollegeEvent | null;
@@ -359,11 +360,15 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
               <div className="px-4 py-2 rounded-2xl bg-slate-900/90 border border-slate-700/80 shadow-lg text-slate-300">
                 Hon. Member: <strong className="text-white text-base md:text-lg">{activeQuestion.student_name}</strong>
               </div>
-              {activeQuestion.constituency && (
+              {formatMemberConstituency(activeQuestion, learners) ? (
+                <div className="px-4 py-2 rounded-2xl bg-slate-900/90 border border-slate-700/80 shadow-lg text-slate-300">
+                  Constituency: <strong className="text-amber-400 font-mono font-bold">{formatMemberConstituency(activeQuestion, learners)}</strong>
+                </div>
+              ) : activeQuestion.constituency ? (
                 <div className="px-4 py-2 rounded-2xl bg-slate-900/90 border border-slate-700/80 shadow-lg text-slate-300">
                   Constituency: <strong className="text-white">{activeQuestion.constituency}</strong>
                 </div>
-              )}
+              ) : null}
               <div className="px-4 py-2 rounded-2xl bg-amber-950/50 border border-amber-500/40 shadow-lg text-amber-300">
                 Target Ministry: <strong className="text-white">{activeQuestion.ministry}</strong>
               </div>

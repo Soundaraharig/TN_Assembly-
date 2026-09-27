@@ -35,8 +35,13 @@ import {
   HelpCircle,
   Star,
   X,
-  MessageSquare
+  MessageSquare,
+  Play
 } from 'lucide-react';
+import {
+  formatMemberConstituency,
+  isPresidingOfficer
+} from '../../utils/memberIdentity';
 
 export interface SpeakerDashboardProps {
   speaker: Learner;
@@ -110,6 +115,8 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
     eventId ? storageService.getActiveQuestionId(eventId) : null
   );
   const [inspectQuestion, setInspectQuestion] = useState<ProceedingsQuestion | null>(null);
+  const [isCallingQuestion, setIsCallingQuestion] = useState<boolean>(false);
+  const [isCompletingQuestion, setIsCompletingQuestion] = useState<boolean>(false);
 
   // Map of learners by id for quick lookup of constituency / bench
   const learnersMap = useMemo(() => {
@@ -204,11 +211,21 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
   };
 
   // Currently waiting requests for current event and active session
+  // Presiding officers (Speaker / Deputy Speaker) are strictly excluded
   const waitingRequests = useMemo(() => {
     return speakingRequests
-      .filter(r => r.event_id === eventId && r.session_id === activeSession.id && r.status === 'WAITING')
+      .filter(r => {
+        if (r.event_id !== eventId || r.session_id !== activeSession.id || r.status !== 'WAITING') {
+          return false;
+        }
+        const reqLearner = learnersMap.get(r.learner_id);
+        if (isPresidingOfficer(reqLearner) || isPresidingOfficer(r.bench)) {
+          return false;
+        }
+        return true;
+      })
       .sort((a, b) => {
-        // Priority: Lowest Total Turns -> Lowest Session Turns -> Earliest Hand Raise
+        // Priority: Lowest Total Turns -> Lowest Session Turns -> Earliest Hand Raise -> Stable tie-breaker
         const totalA = turnCounts.totalCounts[a.learner_id] || 0;
         const totalB = turnCounts.totalCounts[b.learner_id] || 0;
         if (totalA !== totalB) return totalA - totalB;
@@ -217,11 +234,13 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
         const sessB = turnCounts.sessionCounts[b.learner_id] || 0;
         if (sessA !== sessB) return sessA - sessB;
 
-        const timeA = new Date(a.created_at || a.requested_at || 0).getTime();
-        const timeB = new Date(b.created_at || b.requested_at || 0).getTime();
-        return timeA - timeB;
+        const timeA = new Date(a.requested_at || a.created_at || 0).getTime();
+        const timeB = new Date(b.requested_at || b.created_at || 0).getTime();
+        if (timeA !== timeB) return timeA - timeB;
+
+        return (a.learner_name || '').localeCompare(b.learner_name || '');
       });
-  }, [speakingRequests, eventId, activeSession.id, turnCounts]);
+  }, [speakingRequests, eventId, activeSession.id, turnCounts, learnersMap]);
 
   // Current active speaker (CALLED or SPEAKING)
   const activeSpeakingTurn = useMemo(() => {
@@ -328,6 +347,67 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
     }
   };
 
+  // Parliamentary Question Calling Handlers (Question Hour / Urgent Discussion)
+  const handleCallQuestion = async (q: ProceedingsQuestion) => {
+    if (!eventId || isCallingQuestion) return;
+    setIsCallingQuestion(true);
+    try {
+      await storageService.setActiveQuestion(eventId, q.id, {
+        role: speaker?.role || 'Speaker',
+        name: speaker?.full_name || 'Speaker'
+      });
+      syncFloorData();
+      onShowToast(
+        'Question Called',
+        `Question #${q.calling_order || q.queue_order || 1} by ${q.student_name} called to floor and projected.`,
+        'success'
+      );
+    } catch (err: any) {
+      onShowToast('Error', err?.message || 'Failed to call question.', 'error');
+    } finally {
+      setIsCallingQuestion(false);
+    }
+  };
+
+  const handleCompleteQuestion = async (q: ProceedingsQuestion) => {
+    if (!eventId || isCompletingQuestion) return;
+    setIsCompletingQuestion(true);
+    try {
+      await storageService.completeActiveQuestion(eventId, q.id, {
+        role: speaker?.role || 'Speaker',
+        name: speaker?.full_name || 'Speaker'
+      });
+      syncFloorData();
+      onShowToast(
+        'Question Answered',
+        `Question #${q.calling_order || q.queue_order || 1} answered and completed. Ready for next question.`,
+        'info'
+      );
+    } catch (err: any) {
+      onShowToast('Error', err?.message || 'Failed to complete question.', 'error');
+    } finally {
+      setIsCompletingQuestion(false);
+    }
+  };
+
+  const handleSkipQuestion = async (q: ProceedingsQuestion) => {
+    if (!eventId) return;
+    try {
+      await storageService.skipActiveQuestion(eventId, q.id, {
+        role: speaker?.role || 'Speaker',
+        name: speaker?.full_name || 'Speaker'
+      });
+      syncFloorData();
+      onShowToast(
+        'Question Yielded',
+        `Question #${q.calling_order || q.queue_order || 1} yielded.`,
+        'info'
+      );
+    } catch (err: any) {
+      onShowToast('Error', err?.message || 'Failed to yield question.', 'error');
+    }
+  };
+
   // Hands Down action (clear waiting queue with confirmation)
   const handleConfirmHandsDown = async () => {
     setIsLoweringHands(true);
@@ -411,25 +491,43 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
     return null;
   }, [agenda, currentIndex]);
 
-  const previousAgendaItem = useMemo(() => {
+  const completedAgendaItems = useMemo(() => {
     if (currentIndex > 0) {
-      return agenda[currentIndex - 1];
+      return agenda.slice(0, currentIndex).reverse();
     }
-    return null;
+    return agenda.filter(a => a.status === 'Completed');
   }, [agenda, currentIndex]);
 
-  // ── Question Hour Computed Values (mirrors ControlTab logic) ──
+  const isUrgentDiscussion = useMemo(() => {
+    const t = (activeSession.title || '').toLowerCase();
+    return t.includes('urgent') || t.includes('public importance') || t.includes('zero hour');
+  }, [activeSession.title]);
+
+  const isQuestionHourSession = useMemo(() => {
+    const t = (activeSession.title || '').toLowerCase();
+    return t.includes('question hour') || t.includes('question');
+  }, [activeSession.title]);
+
+  const relevantQuestions = useMemo(() => {
+    if (isUrgentDiscussion) {
+      const urgent = questionsList.filter(q => q.question_type === 'Zero Hour' || q.question_type === 'Calling Attention');
+      return urgent.length > 0 ? urgent : questionsList;
+    }
+    return questionsList;
+  }, [isUrgentDiscussion, questionsList]);
+
+  // ── Question Hour / Urgent Discussion Computed Values ──
   const qhActiveQuestion = useMemo(() => {
-    return questionsList.find(q => q.id === activeQuestionId) || questionsList.find(q => q.called_status === 'calling') || null;
-  }, [questionsList, activeQuestionId]);
+    return relevantQuestions.find(q => q.id === activeQuestionId) || relevantQuestions.find(q => q.called_status === 'calling') || null;
+  }, [relevantQuestions, activeQuestionId]);
 
   const qhCompletedQuestions = useMemo(() => {
-    return questionsList.filter(q => q.called_status === 'completed');
-  }, [questionsList]);
+    return relevantQuestions.filter(q => q.called_status === 'completed');
+  }, [relevantQuestions]);
 
   const qhUncalledQuestions = useMemo(() => {
-    return questionsList.filter(q => q.called_status !== 'completed' && q.id !== qhActiveQuestion?.id);
-  }, [questionsList, qhActiveQuestion]);
+    return relevantQuestions.filter(q => q.called_status !== 'completed' && q.id !== qhActiveQuestion?.id);
+  }, [relevantQuestions, qhActiveQuestion]);
 
   const qhNextQuestion = useMemo(() => {
     return qhUncalledQuestions[0] || null;
@@ -440,8 +538,8 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
   }, [qhActiveQuestion, qhUncalledQuestions]);
 
   const qhIsActive = useMemo(() => {
-    return Boolean(qhActiveQuestion) || qhCompletedQuestions.length > 0;
-  }, [qhActiveQuestion, qhCompletedQuestions]);
+    return Boolean(qhActiveQuestion) || qhCompletedQuestions.length > 0 || isQuestionHourSession || isUrgentDiscussion;
+  }, [qhActiveQuestion, qhCompletedQuestions, isQuestionHourSession, isUrgentDiscussion]);
 
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans selection:bg-amber-500 selection:text-slate-950 transition-colors">
@@ -466,12 +564,18 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                   Floor Active
                 </span>
               </div>
-              <div className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+              <div className="text-xs text-slate-600 dark:text-slate-400 mt-0.5 flex items-center gap-1.5 flex-wrap">
                 <strong className="text-slate-900 dark:text-slate-200">{speaker.full_name}</strong>
-                <span className="mx-1 text-slate-400 dark:text-slate-600">·</span>
-                <span className="text-amber-600 dark:text-amber-400 font-medium">
-                  {speaker.constituency_name ? `${speaker.constituency_name} · ` : ''}Neutral / Presiding
-                </span>
+                {formatMemberConstituency(speaker) && (
+                  <>
+                    <span className="text-slate-400 dark:text-slate-600">·</span>
+                    <span className="text-amber-600 dark:text-amber-400 font-mono font-bold">
+                      {formatMemberConstituency(speaker)}
+                    </span>
+                  </>
+                )}
+                <span className="text-slate-400 dark:text-slate-600">·</span>
+                <span className="text-slate-500 dark:text-slate-400 font-medium">Neutral / Presiding</span>
               </div>
             </div>
           </div>
@@ -514,12 +618,12 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
         </div>
       </section>
 
-      {/* Mobile Tab Navigation */}
-      <div className="md:hidden border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/90 px-4 py-2 flex items-center justify-around gap-1.5">
+      {/* Mobile / Tablet Tab Navigation */}
+      <div className="lg:hidden border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/90 px-3 py-2 flex items-center justify-around gap-1 sticky top-0 z-20 backdrop-blur-sm">
         <button
           type="button"
           onClick={() => setActiveTab('floor')}
-          className={`flex-1 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
+          className={`flex-1 py-2 px-1 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
             activeTab === 'floor'
               ? 'bg-amber-500 text-slate-950 shadow-md'
               : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800/40'
@@ -531,31 +635,19 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
         <button
           type="button"
           onClick={() => setActiveTab('questions')}
-          className={`flex-1 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
+          className={`flex-1 py-2 px-1 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
             activeTab === 'questions'
               ? 'bg-amber-500 text-slate-950 shadow-md'
               : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800/40'
           }`}
         >
           <HelpCircle className="w-3.5 h-3.5" />
-          <span>Questions{questionsList.length > 0 ? ` (${questionsList.length})` : ''}</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('voting')}
-          className={`flex-1 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
-            activeTab === 'voting'
-              ? 'bg-amber-500 text-slate-950 shadow-md'
-              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800/40'
-          }`}
-        >
-          <Vote className="w-3.5 h-3.5" />
-          <span>Votes</span>
+          <span>Questions{relevantQuestions.length > 0 ? ` (${relevantQuestions.length})` : ''}</span>
         </button>
         <button
           type="button"
           onClick={() => setActiveTab('agenda')}
-          className={`flex-1 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
+          className={`flex-1 py-2 px-1 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
             activeTab === 'agenda'
               ? 'bg-amber-500 text-slate-950 shadow-md'
               : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800/40'
@@ -563,6 +655,18 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
         >
           <Layers className="w-3.5 h-3.5" />
           <span>Agenda</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('voting')}
+          className={`flex-1 py-2 px-1 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
+            activeTab === 'voting'
+              ? 'bg-amber-500 text-slate-950 shadow-md'
+              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800/40'
+          }`}
+        >
+          <Vote className="w-3.5 h-3.5" />
+          <span>Votes</span>
         </button>
       </div>
 
@@ -572,7 +676,7 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
           {/* ========================================================
               LEFT COLUMN: SPEAKING FLOOR CONTROLS (7 Columns on Desktop)
               ======================================================== */}
-          <div className={`lg:col-span-7 space-y-6 ${activeTab === 'floor' ? 'block' : 'hidden md:block'}`}>
+          <div className={`lg:col-span-7 space-y-6 ${activeTab === 'floor' ? 'block' : 'hidden lg:block'}`}>
             {/* Active Floor Speaker Card */}
             <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm dark:shadow-xl overflow-hidden transition-all">
               <div className="px-5 py-3.5 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
@@ -593,10 +697,15 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                 {activeSpeakingTurn ? (
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl border border-emerald-500/40 bg-emerald-50/80 dark:bg-emerald-950/20">
                     <div className="space-y-1">
-                      <div className="flex items-center gap-2 flex-wrap">
+                      <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-2">
                         <span className="text-base font-black text-slate-900 dark:text-white">
                           {activeSpeakingTurn.learner_name}
                         </span>
+                        {formatMemberConstituency(activeSpeakerLearner || activeSpeakingTurn, learnersMap) && (
+                          <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">
+                            {formatMemberConstituency(activeSpeakerLearner || activeSpeakingTurn, learnersMap)}
+                          </span>
+                        )}
                         {activeSpeakerLearner?.bench && (
                           <span
                             className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase ${
@@ -610,7 +719,6 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                         )}
                       </div>
                       <div className="text-xs text-slate-600 dark:text-slate-400">
-                        {activeSpeakerLearner?.constituency_name ? `Constituency: ${activeSpeakerLearner.constituency_name}` : 'House Delegate'} ·
                         Called by <strong className="text-amber-700 dark:text-amber-400">{activeSpeakingTurn.called_by || presidingTitle}</strong> at{' '}
                         {new Date(activeSpeakingTurn.called_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </div>
@@ -689,7 +797,7 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                       ? new Date(rawTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                       : 'Just now';
                     const bench = req.bench || reqLearner?.bench;
-                    const constituency = reqLearner?.constituency_name || (req.constituency_number ? `Constituency #${req.constituency_number}` : 'MLA');
+                    const constituencyDisplay = formatMemberConstituency(reqLearner || req, learnersMap);
 
                     return (
                       <div
@@ -701,10 +809,15 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                             #{idx + 1}
                           </span>
                           <div className="min-w-0 space-y-0.5">
-                            <div className="flex items-center gap-2 flex-wrap">
+                            <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-2">
                               <span className="text-sm font-bold text-slate-900 dark:text-white truncate">
                                 {req.learner_name}
                               </span>
+                              {constituencyDisplay && (
+                                <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">
+                                  {constituencyDisplay}
+                                </span>
+                              )}
                               {bench && (
                                 <span
                                   className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
@@ -716,9 +829,6 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                                   {bench}
                                 </span>
                               )}
-                              <span className="text-slate-500 dark:text-slate-400 text-xs">
-                                · {constituency}
-                              </span>
                             </div>
                             <div className="flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400 flex-wrap">
                               <span>Speaking turns: <strong className="text-slate-800 dark:text-slate-200">{totalTurns}</strong> (Session: {sessionTurns})</span>
@@ -766,7 +876,7 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                     const timeStr = spk.completed_at || spk.called_at
                       ? new Date(spk.completed_at || spk.called_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                       : '';
-                    const constituency = spkLearner?.constituency_name || (spkLearner?.constituency_number ? `Constituency #${spkLearner.constituency_number}` : '');
+                    const constituencyDisplay = formatMemberConstituency(spkLearner || spk, learnersMap);
 
                     return (
                       <div
@@ -774,12 +884,12 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                         className="p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-800/80 bg-slate-50 dark:bg-slate-950/40 flex items-center justify-between gap-3 text-xs"
                       >
                         <div className="flex items-center gap-2 min-w-0">
-                          <CheckCircle2 className="w-4 h-4 text-slate-400 dark:text-slate-500 shrink-0" />
+                          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
                           <div className="min-w-0">
                             <span className="font-bold text-slate-800 dark:text-slate-200">{spk.learner_name}</span>
-                            {constituency && (
-                              <span className="text-slate-500 dark:text-slate-400 ml-1.5 text-[11px]">
-                                ({constituency})
+                            {constituencyDisplay && (
+                              <span className="text-amber-600 dark:text-amber-400 font-mono font-bold ml-1.5 text-[11px]">
+                                ({constituencyDisplay})
                               </span>
                             )}
                           </div>
@@ -798,14 +908,14 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
           </div>
 
           {/* ========================================================
-              RIGHT COLUMN: LIVE VOTING & AGENDA (5 Columns on Desktop)
+              RIGHT COLUMN: LIVE VOTING & AGENDA & QUESTIONS (5 Columns on Desktop)
               ======================================================== */}
-          <div className={`lg:col-span-5 space-y-6 ${activeTab === 'floor' ? 'hidden md:block' : 'block'}`}>
+          <div className={`lg:col-span-5 space-y-6 ${activeTab !== 'floor' ? 'block' : 'hidden lg:block'}`}>
             {/* ════════════════════════════════════════════════════════════════
-                QUESTION HOUR — Official Calling Order (Read-Only)
+                QUESTION HOUR / URGENT DISCUSSION — Presiding Floor Control
                 Uses exact same data source as Main Admin ControlTab.
                 ════════════════════════════════════════════════════════════════ */}
-            <div className={`rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm dark:shadow-xl overflow-hidden ${activeTab !== 'questions' && activeTab !== 'floor' ? 'hidden md:block' : ''}`}>
+            <div className={`rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm dark:shadow-xl overflow-hidden ${activeTab === 'questions' ? 'block' : 'hidden lg:block'}`}>
               <div className="p-4 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5">
                   <div className="p-2 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
@@ -813,9 +923,9 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                   </div>
                   <div>
                     <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-2">
-                      QUESTION HOUR
+                      {isUrgentDiscussion ? 'URGENT PUBLIC IMPORTANCE DISCUSSION' : 'QUESTION HOUR'}
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/15 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-500/30">
-                        {questionsList.length} tabled
+                        {relevantQuestions.length} tabled
                       </span>
                       {qhCompletedQuestions.length > 0 && (
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
@@ -824,12 +934,14 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                       )}
                     </h2>
                     <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-                      Official calling order set by Main Admin · Read-Only
+                      {isUrgentDiscussion
+                        ? 'Urgent public interest motions & queries · Presiding Floor Control'
+                        : 'Official calling order set by Main Admin · Presiding Floor Control'}
                     </p>
                   </div>
                 </div>
                 {qhIsActive && (
-                  <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-amber-500 text-slate-950 animate-pulse flex items-center gap-1">
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-amber-500 text-slate-950 animate-pulse flex items-center gap-1 shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-slate-950" />
                     IN SESSION
                   </span>
@@ -844,115 +956,187 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                       <div className="flex items-center gap-2">
                         <span className="px-2.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-amber-500 text-slate-950 flex items-center gap-1.5 animate-pulse">
                           <span className="w-1.5 h-1.5 rounded-full bg-slate-950" />
-                          CURRENT QUESTION
+                          {isUrgentDiscussion ? 'CURRENT ITEM' : 'CURRENT QUESTION'}
                         </span>
                         <span className="font-mono text-sm font-black text-amber-600 dark:text-amber-400">
                           #{qhActiveQuestion.calling_order || qhActiveQuestion.queue_order || 1}
                         </span>
                       </div>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
+                        CALLED / CURRENT
+                      </span>
                     </div>
                     <div className="space-y-1.5">
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-2">
                         <span className="font-black text-base text-slate-900 dark:text-white">
                           {qhActiveQuestion.student_name}
                         </span>
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                          qhActiveQuestion.bench === 'Ruling'
-                            ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20'
-                            : 'bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-500/20'
-                        }`}>
-                          {qhActiveQuestion.bench}
-                        </span>
-                        {qhActiveQuestion.constituency && (
-                          <span className="text-xs text-slate-500 dark:text-slate-400 font-mono">
-                            {qhActiveQuestion.constituency}
+                        {formatMemberConstituency(qhActiveQuestion, learnersMap) && (
+                          <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">
+                            {formatMemberConstituency(qhActiveQuestion, learnersMap)}
                           </span>
                         )}
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/20">
-                          {qhActiveQuestion.ministry}
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            qhActiveQuestion.bench === 'Ruling'
+                              ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20'
+                              : 'bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-500/20'
+                          }`}>
+                            {qhActiveQuestion.bench}
+                          </span>
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/20">
+                            {qhActiveQuestion.ministry}
+                          </span>
+                        </div>
                       </div>
                       <p className="text-xs text-slate-700 dark:text-slate-300 font-serif italic line-clamp-2">
                         "{qhActiveQuestion.question_text}"
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setInspectQuestion(qhActiveQuestion)}
-                      className="px-3 py-1.5 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 bg-white/80 dark:bg-slate-800 hover:bg-white dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 cursor-pointer transition-colors"
-                    >
-                      <Eye className="w-3.5 h-3.5 text-amber-500" />
-                      <span>VIEW FULL QUESTION</span>
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setInspectQuestion(qhActiveQuestion)}
+                        className="px-3 py-1.5 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 bg-white/80 dark:bg-slate-800 hover:bg-white dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 cursor-pointer transition-colors"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-amber-500" />
+                        <span>VIEW FULL QUESTION</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isCompletingQuestion}
+                        onClick={() => handleCompleteQuestion(qhActiveQuestion)}
+                        className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>{isCompletingQuestion ? 'Completing...' : 'MARK ANSWERED & NEXT'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSkipQuestion(qhActiveQuestion)}
+                        className="px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 cursor-pointer"
+                      >
+                        Yield
+                      </button>
+                    </div>
                   </div>
-                ) : questionsList.length === 0 ? (
+                ) : relevantQuestions.length === 0 ? (
                   <div className="py-8 text-center space-y-2">
                     <HelpCircle className="w-8 h-8 text-slate-300 dark:text-slate-700 mx-auto" />
                     <div className="text-sm font-bold text-slate-600 dark:text-slate-400">No questions tabled</div>
                     <p className="text-xs text-slate-500 max-w-xs mx-auto">
-                      When Main Admin approves parliamentary questions, the official calling order will appear here.
+                      When questions are tabled, the official calling queue will appear here.
                     </p>
                   </div>
-                ) : qhCompletedQuestions.length === questionsList.length ? (
+                ) : qhCompletedQuestions.length === relevantQuestions.length ? (
                   <div className="py-6 text-center text-xs text-emerald-600 dark:text-emerald-400 font-bold rounded-xl border border-emerald-500/30 bg-emerald-500/5">
                     <CheckCircle2 className="w-6 h-6 mx-auto mb-1.5 text-emerald-500" />
-                    All approved questions have been called and answered!
+                    All tabled questions have been called and answered!
                   </div>
                 ) : null}
 
-                {/* Next Question Preview */}
-                {qhNextQuestion && !qhActiveQuestion && questionsList.length > 0 && qhCompletedQuestions.length < questionsList.length && (
-                  <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/40 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
-                        NEXT QUESTION
-                      </span>
-                      <span className="font-mono text-sm font-black text-amber-600 dark:text-amber-400">
-                        #{qhNextQuestion.calling_order || qhNextQuestion.queue_order || 1}
+                {/* Next Question to Call (When no question is actively on floor) */}
+                {qhNextQuestion && !qhActiveQuestion && relevantQuestions.length > 0 && qhCompletedQuestions.length < relevantQuestions.length && (
+                  <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/40 space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                          {isUrgentDiscussion ? 'NEXT ITEM' : 'NEXT QUESTION'}
+                        </span>
+                        <span className="font-mono text-sm font-black text-amber-600 dark:text-amber-400">
+                          #{qhNextQuestion.calling_order || qhNextQuestion.queue_order || 1}
+                        </span>
+                      </div>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
+                        QUEUED
                       </span>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-bold text-sm text-slate-900 dark:text-white">{qhNextQuestion.student_name}</span>
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${qhNextQuestion.bench === 'Ruling' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-rose-500/10 text-rose-700 dark:text-rose-400'}`}>{qhNextQuestion.bench}</span>
-                      {qhNextQuestion.constituency && <span className="text-xs text-slate-500 font-mono">{qhNextQuestion.constituency}</span>}
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400">{qhNextQuestion.ministry}</span>
+                    <div className="space-y-1">
+                      <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-2">
+                        <span className="font-bold text-sm text-slate-900 dark:text-white">{qhNextQuestion.student_name}</span>
+                        {formatMemberConstituency(qhNextQuestion, learnersMap) && (
+                          <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">
+                            {formatMemberConstituency(qhNextQuestion, learnersMap)}
+                          </span>
+                        )}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${qhNextQuestion.bench === 'Ruling' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-rose-500/10 text-rose-700 dark:text-rose-400'}`}>{qhNextQuestion.bench}</span>
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400">{qhNextQuestion.ministry}</span>
+                        </div>
+                      </div>
+                      <p className="text-xs text-slate-600 dark:text-slate-400 italic line-clamp-1">
+                        "{qhNextQuestion.question_text}"
+                      </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setInspectQuestion(qhNextQuestion)}
-                      className="px-2.5 py-1 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 flex items-center gap-1 cursor-pointer transition-colors"
-                    >
-                      <Eye className="w-3 h-3 text-amber-500" />
-                      <span>VIEW FULL QUESTION</span>
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        disabled={isCallingQuestion}
+                        onClick={() => handleCallQuestion(qhNextQuestion)}
+                        className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-md shadow-amber-500/20 cursor-pointer transition-all shrink-0 disabled:opacity-50"
+                      >
+                        <Play className="w-3.5 h-3.5 fill-slate-950" />
+                        <span>{isCallingQuestion ? 'CALLING...' : 'CALL'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setInspectQuestion(qhNextQuestion)}
+                        className="px-3 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 cursor-pointer transition-colors shrink-0"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-amber-500" />
+                        <span>VIEW FULL QUESTION</span>
+                      </button>
+                    </div>
                   </div>
                 )}
 
-                {/* Next Question (when there IS a current question) */}
+                {/* Up Next Preview (When a question is ALREADY active on floor) */}
                 {qhNextQuestion && qhActiveQuestion && (
                   <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/40 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-sky-100 dark:bg-sky-500/20 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-500/30">
-                        UP NEXT
-                      </span>
-                      <span className="font-mono text-sm font-black text-amber-600 dark:text-amber-400">
-                        #{qhNextQuestion.calling_order || qhNextQuestion.queue_order || 1}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-sky-100 dark:bg-sky-500/20 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-500/30">
+                          UP NEXT
+                        </span>
+                        <span className="font-mono text-sm font-black text-amber-600 dark:text-amber-400">
+                          #{qhNextQuestion.calling_order || qhNextQuestion.queue_order || 1}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+                        QUEUED
                       </span>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-2">
                       <span className="font-bold text-sm text-slate-900 dark:text-white">{qhNextQuestion.student_name}</span>
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${qhNextQuestion.bench === 'Ruling' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-rose-500/10 text-rose-700 dark:text-rose-400'}`}>{qhNextQuestion.bench}</span>
-                      {qhNextQuestion.constituency && <span className="text-xs text-slate-500 font-mono">{qhNextQuestion.constituency}</span>}
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400">{qhNextQuestion.ministry}</span>
+                      {formatMemberConstituency(qhNextQuestion, learnersMap) && (
+                        <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">
+                          {formatMemberConstituency(qhNextQuestion, learnersMap)}
+                        </span>
+                      )}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${qhNextQuestion.bench === 'Ruling' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-rose-500/10 text-rose-700 dark:text-rose-400'}`}>{qhNextQuestion.bench}</span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400">{qhNextQuestion.ministry}</span>
+                      </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setInspectQuestion(qhNextQuestion)}
-                      className="px-2.5 py-1 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 flex items-center gap-1 cursor-pointer transition-colors"
-                    >
-                      <Eye className="w-3 h-3 text-amber-500" />
-                      <span>VIEW FULL QUESTION</span>
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        disabled={isCallingQuestion}
+                        onClick={() => handleCallQuestion(qhNextQuestion)}
+                        className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs uppercase tracking-wider flex items-center gap-1 shadow-sm cursor-pointer transition-all disabled:opacity-50"
+                      >
+                        <Play className="w-3 h-3 fill-slate-950" />
+                        <span>CALL NEXT</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setInspectQuestion(qhNextQuestion)}
+                        className="px-2.5 py-1 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 flex items-center gap-1 cursor-pointer transition-colors"
+                      >
+                        <Eye className="w-3 h-3 text-amber-500" />
+                        <span>VIEW FULL</span>
+                      </button>
+                    </div>
                   </div>
                 )}
 
@@ -973,6 +1157,11 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
                             <span className="w-5 h-5 rounded-md bg-emerald-950/80 text-emerald-400 font-mono font-bold text-[10px] flex items-center justify-center shrink-0">#{q.calling_order || q.queue_order || '?'}</span>
                             <span className="font-bold text-slate-700 dark:text-slate-300 truncate">{q.student_name}</span>
+                            {formatMemberConstituency(q, learnersMap) && (
+                              <span className="text-amber-600 dark:text-amber-400 font-mono font-bold text-[10px] truncate hidden sm:inline">
+                                ({formatMemberConstituency(q, learnersMap)})
+                              </span>
+                            )}
                             <span className="text-slate-400 text-[11px] truncate hidden sm:inline">{q.ministry}</span>
                           </div>
                           <button
@@ -1006,18 +1195,20 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                             <span className="w-6 h-6 rounded-md bg-slate-200 dark:bg-slate-800 font-mono font-bold text-[11px] text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
                               #{q.calling_order || q.queue_order || '?'}
                             </span>
-                            <span className="font-bold text-slate-800 dark:text-slate-200 truncate">
-                              {q.student_name}
-                            </span>
-                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${q.bench === 'Ruling' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'}`}>
+                            <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 min-w-0">
+                              <span className="font-bold text-slate-800 dark:text-slate-200 truncate">
+                                {q.student_name}
+                              </span>
+                              {formatMemberConstituency(q, learnersMap) && (
+                                <span className="text-amber-600 dark:text-amber-400 font-mono font-bold text-[10px] truncate">
+                                  {formatMemberConstituency(q, learnersMap)}
+                                </span>
+                              )}
+                            </div>
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold shrink-0 ${q.bench === 'Ruling' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'}`}>
                               {q.bench}
                             </span>
-                            {q.constituency && (
-                              <span className="text-slate-400 font-mono text-[11px] truncate hidden sm:inline">
-                                {q.constituency}
-                              </span>
-                            )}
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 shrink-0">
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 shrink-0 hidden sm:inline">
                               {q.ministry}
                             </span>
                             {q.status === 'Starred' && (
@@ -1027,15 +1218,21 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                           <div className="flex items-center gap-1.5 shrink-0">
                             <button
                               type="button"
+                              disabled={isCallingQuestion}
+                              onClick={() => handleCallQuestion(q)}
+                              className="px-2.5 py-1 rounded-lg text-[10px] font-black uppercase text-slate-950 bg-amber-500 hover:bg-amber-400 cursor-pointer flex items-center gap-1 transition-colors shrink-0 disabled:opacity-50"
+                            >
+                              <Play className="w-2.5 h-2.5 fill-slate-950" />
+                              <span>CALL</span>
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => setInspectQuestion(q)}
                               className="px-2 py-1 rounded-lg text-[10px] font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 cursor-pointer flex items-center gap-1 transition-colors"
                             >
                               <Eye className="w-3 h-3 text-amber-500" />
-                              <span className="hidden sm:inline">View Full</span>
+                              <span className="hidden sm:inline">View</span>
                             </button>
-                            <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
-                              Queued
-                            </span>
                           </div>
                         </div>
                       ))}
@@ -1046,7 +1243,7 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
             </div>
 
             {/* Live Voting & Participation Card */}
-            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm dark:shadow-xl overflow-hidden space-y-0">
+            <div className={`rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm dark:shadow-xl overflow-hidden space-y-0 ${activeTab === 'voting' ? 'block' : 'hidden lg:block'}`}>
               <div className="p-4 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Vote className="w-4 h-4 text-amber-500" />
@@ -1310,7 +1507,7 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
             </div>
 
             {/* Authoritative Agenda State */}
-            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm dark:shadow-xl p-5 space-y-4">
+            <div className={`rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm dark:shadow-xl p-5 space-y-4 ${activeTab === 'agenda' ? 'block' : 'hidden lg:block'}`}>
               <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
                 <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-2">
                   <Layers className="w-4 h-4 text-amber-500" />
@@ -1327,9 +1524,14 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                   <div className="p-3.5 rounded-xl border border-amber-300 dark:border-amber-500/40 bg-amber-50/80 dark:bg-amber-500/10 space-y-1">
                     <div className="flex items-center justify-between text-[10px] font-bold text-amber-700 dark:text-amber-400 uppercase">
                       <span>CURRENT AGENDA ITEM</span>
-                      {currentAgendaItem.duration_minutes && (
-                        <span>{currentAgendaItem.duration_minutes} mins</span>
-                      )}
+                      <div className="flex items-center gap-1.5">
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-500/30">
+                          {currentAgendaItem.status || 'Active'}
+                        </span>
+                        {currentAgendaItem.duration_minutes && (
+                          <span>{currentAgendaItem.duration_minutes} mins</span>
+                        )}
+                      </div>
                     </div>
                     <div className="text-sm font-bold text-slate-900 dark:text-white">
                       {currentAgendaItem.title}
@@ -1354,11 +1556,25 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                     </div>
                   )}
 
-                  {/* Previous Item */}
-                  {previousAgendaItem && (
-                    <div className="p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-800/60 bg-slate-50 dark:bg-slate-950/30 text-[11px] text-slate-500 dark:text-slate-400 flex items-center justify-between">
-                      <span className="truncate">Prev: {previousAgendaItem.title}</span>
-                      <span className="text-emerald-600 dark:text-emerald-400 font-bold uppercase text-[9px]">Completed</span>
+                  {/* Completed Agenda Items */}
+                  {completedAgendaItems.length > 0 && (
+                    <div className="space-y-1.5 pt-1">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                        COMPLETED ITEMS ({completedAgendaItems.length})
+                      </div>
+                      <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
+                        {completedAgendaItems.map((item, idx) => (
+                          <div
+                            key={item.id || idx}
+                            className="p-2 rounded-lg border border-slate-200/80 dark:border-slate-800/60 bg-slate-50 dark:bg-slate-950/30 text-[11px] text-slate-600 dark:text-slate-400 flex items-center justify-between"
+                          >
+                            <span className="truncate">{item.title}</span>
+                            <span className="text-emerald-600 dark:text-emerald-400 font-bold uppercase text-[9px] shrink-0">
+                              Completed
+                            </span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1370,7 +1586,7 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
             </div>
 
             {/* Elections & Ballots Section */}
-            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm dark:shadow-xl p-5 space-y-3">
+            <div className={`rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm dark:shadow-xl p-5 space-y-3 ${activeTab === 'voting' ? 'block' : 'hidden lg:block'}`}>
               <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
                 <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-2">
                   <Award className="w-4 h-4 text-amber-500" />
@@ -1542,6 +1758,11 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                 <div>
                   <span className="text-[10px] text-slate-500 dark:text-slate-500 uppercase font-bold tracking-wider">Member Name</span>
                   <div className="font-bold text-slate-900 dark:text-white text-sm mt-0.5">{inspectQuestion.student_name}</div>
+                  {formatMemberConstituency(inspectQuestion, learnersMap) && (
+                    <div className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400 mt-0.5">
+                      {formatMemberConstituency(inspectQuestion, learnersMap)}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 dark:text-slate-500 uppercase font-bold tracking-wider">Bench</span>
@@ -1557,7 +1778,9 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 dark:text-slate-500 uppercase font-bold tracking-wider">Constituency</span>
-                  <div className="font-bold text-slate-700 dark:text-slate-200 text-sm mt-0.5">{inspectQuestion.constituency || 'General Assembly'}</div>
+                  <div className="font-bold text-amber-600 dark:text-amber-400 text-sm mt-0.5 font-mono">
+                    {formatMemberConstituency(inspectQuestion, learnersMap) || 'General Assembly'}
+                  </div>
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 dark:text-slate-500 uppercase font-bold tracking-wider">Target Ministry</span>

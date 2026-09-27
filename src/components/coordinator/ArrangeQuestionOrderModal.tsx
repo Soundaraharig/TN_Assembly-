@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import type { ProceedingsQuestion, UserRole, UserSession } from '../../types';
 import { getCanonicalQuestionStatus } from '../../types';
 import { storageService } from '../../services/storageService';
+import { formatMemberConstituency } from '../../utils/memberIdentity';
 import {
   GripVertical,
   ArrowUp,
@@ -368,11 +369,15 @@ export const ArrangeQuestionOrderModal: React.FC<ArrangeQuestionOrderModalProps>
                         {q.bench}
                       </span>
 
-                      {q.constituency && (
+                      {formatMemberConstituency(q) ? (
+                        <span className="text-xs text-amber-400 font-mono font-bold">
+                          {formatMemberConstituency(q)}
+                        </span>
+                      ) : q.constituency ? (
                         <span className="text-xs text-slate-400 font-mono">
                           {q.constituency}
                         </span>
-                      )}
+                      ) : null}
 
                       <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/20">
                         {q.ministry}
@@ -584,11 +589,16 @@ export const ArrangeQuestionOrderModal: React.FC<ArrangeQuestionOrderModalProps>
                 <div>
                   <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Member Name</span>
                   <div className="font-bold text-white text-sm mt-0.5">{inspectQuestion.student_name}</div>
+                  {formatMemberConstituency(inspectQuestion) && (
+                    <div className="text-xs font-mono font-bold text-amber-400 mt-0.5">
+                      {formatMemberConstituency(inspectQuestion)}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Bench & Constituency</span>
                   <div className="font-bold text-slate-200 mt-0.5">
-                    {inspectQuestion.bench} • {inspectQuestion.constituency || 'General Assembly'}
+                    {inspectQuestion.bench} • {formatMemberConstituency(inspectQuestion) || inspectQuestion.constituency || 'General Assembly'}
                   </div>
                 </div>
                 <div>

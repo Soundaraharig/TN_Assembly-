@@ -9097,6 +9097,11 @@ class StorageService {
       return { success: false, error: 'Hand raise is currently closed by the Speaker.' };
     }
 
+    // Backend enforcement: Presiding officers (Speaker / Deputy Speaker) cannot submit speaking requests
+    if (isSpeakerRole(learner.role) || isDeputySpeakerRole(learner.role) || learner.role?.toLowerCase().includes('speaker')) {
+      return { success: false, error: 'Presiding officers (Speaker / Deputy Speaker) cannot submit ordinary speaking requests.' };
+    }
+
     // Check duplicate active request in this session
     const currentReqs = this.getSpeakingRequests(eventId, sessionId);
     const hasActive = currentReqs.some(
@@ -15277,6 +15282,12 @@ export function isDeputySpeakerRole(role?: string): boolean {
   if (!role) return false;
   const r = role.trim().toLowerCase();
   return r === 'deputy speaker' || r.includes('deputy speaker');
+}
+
+export function isPresidingOfficerRole(role?: string): boolean {
+  if (!role) return false;
+  const r = role.trim().toLowerCase();
+  return isSpeakerRole(role) || isDeputySpeakerRole(role) || r.includes('speaker');
 }
 
 export function isLeaderOfOppositionRole(role?: string): boolean {

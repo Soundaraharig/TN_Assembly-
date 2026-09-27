@@ -24,7 +24,9 @@ import {
   isQuestionForMinister,
   getMinisterAssignedMinistry,
   getAllocationCheckStatus,
-  computeAllocationHash
+  computeAllocationHash,
+  isSpeakerRole,
+  isDeputySpeakerRole
 } from '../../services/storageService';
 import { AllocationVerificationModal } from './AllocationVerificationModal';
 import { getEventSlug } from '../../utils/slug';
@@ -693,6 +695,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const handleRequestFloor = async () => {
     if (!student || !resolvedEventId) return;
     if (isSubmittingFloorRequest) return;
+
+    if (isAssignedSpeakerOrDeputySpeaker || isSpeakerRole(student.role) || isDeputySpeakerRole(student.role)) {
+      onShowToast(
+        'Action Not Allowed',
+        'Presiding officers (Speaker / Deputy Speaker) cannot submit ordinary speaking requests.',
+        'error'
+      );
+      return;
+    }
 
     // Toggle: State B -> State A (Lower Hand)
     if (activeSpeakingRequest?.status === 'WAITING') {
