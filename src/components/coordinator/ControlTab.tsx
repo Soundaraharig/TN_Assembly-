@@ -37,7 +37,10 @@ import {
   Search,
   Hand,
   ArrowUpDown,
-  Tv
+  Tv,
+  Eye,
+  MessageSquare,
+  Star
 } from 'lucide-react';
 
 import { storageService } from '../../services/storageService';
@@ -165,6 +168,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   );
   const [isArrangeOrderModalOpen, setIsArrangeOrderModalOpen] = useState(false);
   const [isCallingNextQ, setIsCallingNextQ] = useState(false);
+  const [inspectQuestionCtrl, setInspectQuestionCtrl] = useState<ProceedingsQuestion | null>(null);
 
   const syncQuestionsData = () => {
     if (currentEvent?.id) {
@@ -1282,6 +1286,14 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                     "{activeQuestion.question_text}"
                   </p>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setInspectQuestionCtrl(activeQuestion)}
+                  className="px-3 py-1.5 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 bg-white/80 dark:bg-slate-800 hover:bg-white dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <Eye className="w-3.5 h-3.5 text-amber-500" />
+                  <span>VIEW FULL QUESTION</span>
+                </button>
               </div>
             ) : nextQuestionToCall ? (
               /* Next Question to Call Card */
@@ -1326,6 +1338,14 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                 >
                   <Play className="w-3.5 h-3.5 fill-slate-950" />
                   <span>CALL QUESTION</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInspectQuestionCtrl(nextQuestionToCall)}
+                  className="px-3 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 cursor-pointer transition-colors self-stretch sm:self-auto shrink-0"
+                >
+                  <Eye className="w-3.5 h-3.5 text-amber-500" />
+                  <span>VIEW FULL</span>
                 </button>
               </div>
             ) : questionsList.length === 0 ? (
@@ -2371,6 +2391,129 @@ export const ControlTab: React.FC<ControlTabProps> = ({
         userSession={userSession}
         onShowToast={onShowToast}
       />
+
+      {/* Full Question Inspection Modal (consistent with Speaker Dashboard) */}
+      {inspectQuestionCtrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/50 dark:bg-slate-950/80 backdrop-blur-sm animate-fade-in" onClick={() => setInspectQuestionCtrl(null)}>
+          <div
+            className="w-full max-w-lg max-h-[90vh] flex flex-col rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-2xl overflow-hidden text-slate-900 dark:text-slate-100"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/30">
+                  <MessageSquare className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 dark:text-white">Full Parliamentary Question</h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Order Position #{questionsList.findIndex(q => q.id === inspectQuestionCtrl.id) + 1} of {questionsList.length}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInspectQuestionCtrl(null)}
+                className="p-2 rounded-xl text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 space-y-5">
+              <div className="grid grid-cols-2 gap-3 p-4 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800">
+                <div>
+                  <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Member Name</span>
+                  <div className="font-bold text-slate-900 dark:text-white text-sm mt-0.5">{inspectQuestionCtrl.student_name}</div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Bench</span>
+                  <div className="mt-0.5">
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      inspectQuestionCtrl.bench === 'Ruling'
+                        ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20'
+                        : 'bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-500/20'
+                    }`}>
+                      {inspectQuestionCtrl.bench}
+                    </span>
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Constituency</span>
+                  <div className="font-bold text-slate-700 dark:text-slate-200 text-sm mt-0.5">{inspectQuestionCtrl.constituency || 'General Assembly'}</div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Target Ministry</span>
+                  <div className="font-bold text-amber-600 dark:text-amber-400 text-sm mt-0.5">{inspectQuestionCtrl.ministry}</div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Question Type</span>
+                  <div className="font-bold text-slate-700 dark:text-slate-200 text-sm mt-0.5 flex items-center gap-1.5">
+                    {inspectQuestionCtrl.question_type || 'Standard'}
+                    {inspectQuestionCtrl.status === 'Starred' && <Star className="w-3 h-3 text-yellow-400 fill-yellow-400" />}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Calling Status</span>
+                  <div className="mt-0.5">
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase tracking-wider ${
+                      inspectQuestionCtrl.called_status === 'calling'
+                        ? 'bg-amber-500 text-slate-950 animate-pulse'
+                        : inspectQuestionCtrl.called_status === 'completed'
+                          ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                          : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                    }`}>
+                      {inspectQuestionCtrl.called_status === 'calling' ? 'CURRENT' : inspectQuestionCtrl.called_status === 'completed' ? 'ANSWERED' : 'QUEUED'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Full Question Text</span>
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 font-serif text-sm leading-relaxed whitespace-pre-wrap break-words">
+                  "{inspectQuestionCtrl.question_text}"
+                </div>
+              </div>
+
+              <div className="space-y-2 text-[11px] text-slate-500 dark:text-slate-400 border-t border-slate-200 dark:border-slate-800 pt-3">
+                <div className="flex items-center justify-between">
+                  <span>Approval Status: <strong className="text-emerald-600 dark:text-emerald-400">{inspectQuestionCtrl.status}</strong></span>
+                  {inspectQuestionCtrl.approved_by && (
+                    <span>Approved by: <strong className="text-slate-700 dark:text-white">{inspectQuestionCtrl.approved_by}</strong></span>
+                  )}
+                </div>
+                {inspectQuestionCtrl.created_at && (
+                  <div className="flex items-center justify-between">
+                    <span>Submitted: <strong className="text-slate-700 dark:text-slate-300">{new Date(inspectQuestionCtrl.created_at).toLocaleString()}</strong></span>
+                    {inspectQuestionCtrl.approved_at && (
+                      <span>Approved: <strong className="text-slate-700 dark:text-slate-300">{new Date(inspectQuestionCtrl.approved_at).toLocaleString()}</strong></span>
+                    )}
+                  </div>
+                )}
+                {inspectQuestionCtrl.reviewed_by && (
+                  <div>
+                    <span>Reviewed by: <strong className="text-slate-700 dark:text-slate-300">{inspectQuestionCtrl.reviewed_by}</strong></span>
+                    {inspectQuestionCtrl.review_note && (
+                      <span className="ml-2 italic text-slate-400">— "{inspectQuestionCtrl.review_note}"</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex justify-end shrink-0">
+              <button
+                type="button"
+                onClick={() => setInspectQuestionCtrl(null)}
+                className="px-5 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-white cursor-pointer transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
