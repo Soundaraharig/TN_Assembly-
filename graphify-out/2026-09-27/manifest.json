@@ -24,9 +24,9 @@
     "semantic_hash": ""
   },
   "src/App.tsx": {
-    "mtime": 1790507177.0782692,
-    "seen": 1790507947.814548,
-    "ast_hash": "f507dd3ed97fe0f5a127a9243ac2ad2e",
+    "mtime": 1790423843.5166972,
+    "seen": 1790424117.66753,
+    "ast_hash": "ff47856300a73781f9e0ca0d303826f3",
     "semantic_hash": ""
   },
   "src/components/admin/CreateEventModal.tsx": {
@@ -102,9 +102,9 @@
     "semantic_hash": ""
   },
   "src/components/common/StandaloneProjectorDisplay.tsx": {
-    "mtime": 1790507592.0113482,
-    "seen": 1790507947.8156111,
-    "ast_hash": "1b47ae9d48a663b5efd6323ad3b07eaf",
+    "mtime": 1790350830.8238945,
+    "seen": 1790353911.8998258,
+    "ast_hash": "bb9d665b8f3aefeab29075a10e8272f6",
     "semantic_hash": ""
   },
   "src/components/common/Toast.tsx": {
@@ -180,9 +180,9 @@
     "semantic_hash": "3d1db61d896d7a7ddbe19b109b93c6bc"
   },
   "src/components/coordinator/ControlTab.tsx": {
-    "mtime": 1790507637.0474398,
-    "seen": 1790507947.8166144,
-    "ast_hash": "359ce0cf5d0815eab114a2e4a0f0ff2d",
+    "mtime": 1790354623.181002,
+    "seen": 1790355010.6103325,
+    "ast_hash": "94fa140901c671f0b735a4ee9bd37271",
     "semantic_hash": ""
   },
   "src/components/coordinator/CoordinatorDashboard.tsx": {
@@ -252,15 +252,15 @@
     "semantic_hash": "9f604ed936e84741cd889d4e8b44a48c"
   },
   "src/components/coordinator/ProceedingsTab.tsx": {
-    "mtime": 1790507644.601323,
-    "seen": 1790507947.8174555,
-    "ast_hash": "281bbf5502907c2893a6562a78a07811",
+    "mtime": 1790356086.8458693,
+    "seen": 1790356848.8894186,
+    "ast_hash": "30d08491bdc8c36a907bd8ce332f55fa",
     "semantic_hash": ""
   },
   "src/components/coordinator/ProjectorTab.tsx": {
-    "mtime": 1790507422.4980476,
-    "seen": 1790507947.817457,
-    "ast_hash": "b90f39ab49fd021bded7e0df7512baeb",
+    "mtime": 1789279240.8676054,
+    "seen": 1789279470.3061469,
+    "ast_hash": "1de094924d80a055c7c133e0e04a9812",
     "semantic_hash": ""
   },
   "src/components/coordinator/QuestionnaireTab.tsx": {
@@ -300,9 +300,9 @@
     "semantic_hash": ""
   },
   "src/components/student/StudentDashboard.tsx": {
-    "mtime": 1790507508.4652176,
-    "seen": 1790507947.8181078,
-    "ast_hash": "8076fec03ce0e9b21de69b4ec45f18d8",
+    "mtime": 1790353712.945898,
+    "seen": 1790353911.902404,
+    "ast_hash": "dce9788dcb533417005aa62b056643e8",
     "semantic_hash": ""
   },
   "src/components/student/StudentJoinModal.tsx": {
@@ -318,9 +318,9 @@
     "semantic_hash": ""
   },
   "src/components/volunteer/VolunteerDashboard.tsx": {
-    "mtime": 1790507565.6242666,
-    "seen": 1790507947.8182743,
-    "ast_hash": "37e30e0f4e3f3057ab267f275b66111b",
+    "mtime": 1790356224.471884,
+    "seen": 1790356848.8984716,
+    "ast_hash": "f785b2cb843f0144a67bdb2e66cbfc2d",
     "semantic_hash": ""
   },
   "src/data/initialMockData.ts": {
@@ -354,15 +354,15 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1790507677.0846982,
-    "seen": 1790507947.8188148,
-    "ast_hash": "72490075faf9d5235d6bb4d134913f49",
+    "mtime": 1790423795.756884,
+    "seen": 1790424117.678934,
+    "ast_hash": "715ac617989d160eeefa2378d3a96bf3",
     "semantic_hash": ""
   },
   "src/types/index.ts": {
-    "mtime": 1790506826.9050555,
-    "seen": 1790507947.818816,
-    "ast_hash": "70f8684061fa53ef4cf84e4d35fa2a5b",
+    "mtime": 1790355730.247211,
+    "seen": 1790356848.9011085,
+    "ast_hash": "e9e921f9b3cf4dbea480971aa43485bb",
     "semantic_hash": ""
   },
   "src/utils/accessCodeGenerator.ts": {
@@ -591,12 +591,6 @@
     "mtime": 1790234132.7922177,
     "seen": 1790330118.4144402,
     "ast_hash": "45f5ed5f1bcc1a474b379b5b8e6f5aa6",
-    "semantic_hash": ""
-  },
-  "src/components/coordinator/ArrangeQuestionOrderModal.tsx": {
-    "mtime": 1790507617.7437954,
-    "seen": 1790507947.8161547,
-    "ast_hash": "ff71cc559a357aa71fd4d1e89ac5b371",
     "semantic_hash": ""
   }
 }

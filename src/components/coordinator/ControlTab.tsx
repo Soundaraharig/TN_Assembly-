@@ -9,7 +9,8 @@ import type {
   CollegeEvent,
   SpeakingRequest,
   SpeakingTurn,
-  UserSession
+  UserSession,
+  ProceedingsQuestion
 } from '../../types';
 import {
   Clock,
@@ -34,10 +35,14 @@ import {
   X,
   Mic,
   Search,
-  Hand
+  Hand,
+  ArrowUpDown,
+  Tv
 } from 'lucide-react';
 
 import { storageService } from '../../services/storageService';
+import { getEventSlug } from '../../utils/slug';
+import { ArrangeQuestionOrderModal } from './ArrangeQuestionOrderModal';
 
 interface ControlTabProps {
   learners: Learner[];
@@ -148,6 +153,104 @@ export const ControlTab: React.FC<ControlTabProps> = ({
       window.removeEventListener('tn_assembly_timer_update', handleTimerSync);
     };
   }, [currentEvent?.id]);
+
+  // ── Parliamentary Question Hour Calling Order State ─────────────────────
+  const [questionsList, setQuestionsList] = useState<ProceedingsQuestion[]>(() =>
+    currentEvent?.id
+      ? storageService.getProceedingsQuestions(currentEvent.id).filter(q => q.status === 'Approved' || q.status === 'Starred')
+      : []
+  );
+  const [activeQuestionId, setActiveQuestionId] = useState<string | null>(() =>
+    currentEvent?.id ? storageService.getActiveQuestionId(currentEvent.id) : null
+  );
+  const [isArrangeOrderModalOpen, setIsArrangeOrderModalOpen] = useState(false);
+  const [isCallingNextQ, setIsCallingNextQ] = useState(false);
+
+  const syncQuestionsData = () => {
+    if (currentEvent?.id) {
+      const qs = storageService.getProceedingsQuestions(currentEvent.id).filter(
+        q => q.status === 'Approved' || q.status === 'Starred'
+      );
+      setQuestionsList(qs);
+      setActiveQuestionId(storageService.getActiveQuestionId(currentEvent.id));
+    }
+  };
+
+  useEffect(() => {
+    syncQuestionsData();
+    const unsub = storageService.subscribe(syncQuestionsData);
+    const handleQUpdate = (e: any) => {
+      const detail = e.detail;
+      if (!detail?.eventId || detail.eventId === currentEvent?.id) {
+        syncQuestionsData();
+      }
+    };
+    window.addEventListener('tn_assembly_proceedings_question_update', handleQUpdate as EventListener);
+    window.addEventListener('storage', syncQuestionsData);
+    return () => {
+      unsub();
+      window.removeEventListener('tn_assembly_proceedings_question_update', handleQUpdate as EventListener);
+      window.removeEventListener('storage', syncQuestionsData);
+    };
+  }, [currentEvent?.id]);
+
+  const activeQuestion = questionsList.find(q => q.id === activeQuestionId) || questionsList.find(q => q.called_status === 'calling');
+  const uncalledQuestions = questionsList.filter(q => q.called_status !== 'completed' && q.id !== activeQuestion?.id);
+  const nextQuestionToCall = uncalledQuestions[0] || null;
+  const completedQuestionsList = questionsList.filter(q => q.called_status === 'completed');
+
+  const handleCallQuestion = async (q: ProceedingsQuestion) => {
+    if (!currentEvent?.id || isCallingNextQ) return;
+    setIsCallingNextQ(true);
+    try {
+      await storageService.setActiveQuestion(currentEvent.id, q.id, {
+        role: userSession?.role || (isSuperAdmin ? 'super_admin' : 'coordinator'),
+        name: userSession?.name || 'Speaker'
+      });
+      syncQuestionsData();
+      onShowToast(
+        'Question Called',
+        `Question #${q.calling_order || q.queue_order || 1} by ${q.student_name} called to floor and projected.`,
+        'success'
+      );
+    } catch (err: any) {
+      onShowToast('Error', err?.message || 'Failed to call question.', 'error');
+    } finally {
+      setIsCallingNextQ(false);
+    }
+  };
+
+  const handleCompleteQuestion = async (q: ProceedingsQuestion) => {
+    if (!currentEvent?.id) return;
+    try {
+      await storageService.completeActiveQuestion(currentEvent.id, q.id, {
+        role: userSession?.role || (isSuperAdmin ? 'super_admin' : 'coordinator'),
+        name: userSession?.name || 'Speaker'
+      });
+      syncQuestionsData();
+      onShowToast(
+        'Question Answered',
+        `Question #${q.calling_order || q.queue_order || 1} answered and completed. Ready for next question.`,
+        'info'
+      );
+    } catch (err: any) {
+      onShowToast('Error', err?.message || 'Failed to complete question.', 'error');
+    }
+  };
+
+  const handleSkipQuestion = async (q: ProceedingsQuestion) => {
+    if (!currentEvent?.id) return;
+    try {
+      await storageService.skipActiveQuestion(currentEvent.id, q.id, {
+        role: userSession?.role || (isSuperAdmin ? 'super_admin' : 'coordinator'),
+        name: userSession?.name || 'Speaker'
+      });
+      syncQuestionsData();
+      onShowToast('Question Yielded', 'Active question closed without completion.', 'info');
+    } catch (err: any) {
+      onShowToast('Error', err?.message || 'Failed to skip question.', 'error');
+    }
+  };
 
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
@@ -1061,6 +1164,200 @@ export const ControlTab: React.FC<ControlTabProps> = ({
               <History className="w-3.5 h-3.5" />
               <span>See the full speaking record →</span>
             </button>
+          </div>
+
+          {/* 3.5 PARLIAMENTARY QUESTION HOUR - OFFICIAL CALLING ORDER */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
+                  🎙️ Question Calling Order
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                  {questionsList.length} approved
+                </span>
+                {completedQuestionsList.length > 0 && (
+                  <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                    {completedQuestionsList.length} answered
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsArrangeOrderModalOpen(true)}
+                  className="px-3 py-1.5 rounded-xl border border-amber-500/40 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/50 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                >
+                  <ArrowUpDown className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Arrange Order</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Current Active Question Banner */}
+            {activeQuestion ? (
+              <div className="p-4 rounded-2xl border-2 border-amber-500/60 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent dark:from-amber-950/50 dark:via-amber-950/20 space-y-3 shadow-md shadow-amber-950/20">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-500/20 pb-2.5">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-amber-500 text-slate-950 flex items-center gap-1.5 animate-pulse">
+                      <span className="w-1.5 h-1.5 rounded-full bg-slate-950" />
+                      NOW ON FLOOR
+                    </span>
+                    <span className="font-mono text-sm font-black text-amber-600 dark:text-amber-400">
+                      #{activeQuestion.calling_order || activeQuestion.queue_order || 1}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const ps = storageService.getProjectorSettings(currentEvent?.id);
+                        storageService.saveProjectorSettings(currentEvent?.id || '', {
+                          ...ps,
+                          activeQuestionId: activeQuestion.id,
+                          displayScene: 'question_hour'
+                        });
+                        onShowToast('Projector Updated', 'Displaying Question Hour slide on auditorium projector', 'info');
+                      }}
+                      className="px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Tv className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Project Slide</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSkipQuestion(activeQuestion)}
+                      className="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 cursor-pointer"
+                    >
+                      Yield
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleCompleteQuestion(activeQuestion)}
+                      className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow transition-all flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Mark Answered & Next</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-black text-base text-slate-900 dark:text-white">
+                      {activeQuestion.student_name}
+                    </span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      activeQuestion.bench === 'Ruling' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
+                    }`}>
+                      {activeQuestion.bench}
+                    </span>
+                    {activeQuestion.constituency && (
+                      <span className="text-xs text-slate-500 font-mono">
+                        {activeQuestion.constituency}
+                      </span>
+                    )}
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                      {activeQuestion.ministry}
+                    </span>
+                  </div>
+                  <p className="text-xs md:text-sm text-slate-700 dark:text-slate-300 font-serif italic pt-1">
+                    "{activeQuestion.question_text}"
+                  </p>
+                </div>
+              </div>
+            ) : nextQuestionToCall ? (
+              /* Next Question to Call Card */
+              <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                      NEXT QUESTION
+                    </span>
+                    <span className="font-mono text-sm font-black text-amber-600 dark:text-amber-400">
+                      #{nextQuestionToCall.calling_order || nextQuestionToCall.queue_order || 1}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                    <span className="font-black text-sm text-slate-900 dark:text-white">
+                      {nextQuestionToCall.student_name}
+                    </span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      nextQuestionToCall.bench === 'Ruling' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
+                    }`}>
+                      {nextQuestionToCall.bench}
+                    </span>
+                    {nextQuestionToCall.constituency && (
+                      <span className="text-xs text-slate-500 font-mono">
+                        {nextQuestionToCall.constituency}
+                      </span>
+                    )}
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                      {nextQuestionToCall.ministry}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 italic line-clamp-1">
+                    "{nextQuestionToCall.question_text}"
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={isCallingNextQ}
+                  onClick={() => handleCallQuestion(nextQuestionToCall)}
+                  className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/20 cursor-pointer transition-all self-stretch sm:self-auto shrink-0"
+                >
+                  <Play className="w-3.5 h-3.5 fill-slate-950" />
+                  <span>CALL QUESTION</span>
+                </button>
+              </div>
+            ) : questionsList.length === 0 ? (
+              <div className="py-6 text-center text-xs text-slate-400 italic rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
+                No approved questions available for Question Hour yet.
+              </div>
+            ) : (
+              <div className="py-6 text-center text-xs text-emerald-600 dark:text-emerald-400 font-bold rounded-xl border border-emerald-500/30 bg-emerald-500/5">
+                All approved questions have been called and answered!
+              </div>
+            )}
+
+            {/* Upcoming Sequence Preview */}
+            {uncalledQuestions.length > (activeQuestion ? 0 : 1) && (
+              <div className="space-y-1.5 pt-1">
+                <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  <span>UPCOMING OFFICIAL QUEUE ({uncalledQuestions.length - (activeQuestion ? 0 : 1)})</span>
+                  <span className="text-slate-500">Deterministic sequence</span>
+                </div>
+                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                  {(activeQuestion ? uncalledQuestions : uncalledQuestions.slice(1)).map((q, idx) => (
+                    <div
+                      key={q.id}
+                      className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-850 flex items-center justify-between gap-2 text-xs"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="w-6 h-6 rounded-md bg-slate-200 dark:bg-slate-800 font-mono font-bold text-[11px] text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                          #{q.calling_order || (idx + (activeQuestion ? 1 : 2))}
+                        </span>
+                        <span className="font-bold text-slate-800 dark:text-slate-200 truncate">
+                          {q.student_name}
+                        </span>
+                        <span className="text-slate-400 font-mono text-[11px] truncate">
+                          {q.constituency || 'General Assembly'}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 shrink-0">
+                          {q.ministry}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider shrink-0">
+                        Queued
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* 4. GOVERNMENT FORMATION COLLAPSIBLE (Matching User Reference Image 2) */}
@@ -2044,6 +2341,21 @@ export const ControlTab: React.FC<ControlTabProps> = ({
           </div>
         </div>
       )}
+
+      {/* Arrange Question Calling Order Modal */}
+      <ArrangeQuestionOrderModal
+        isOpen={isArrangeOrderModalOpen}
+        onClose={() => {
+          setIsArrangeOrderModalOpen(false);
+          syncQuestionsData();
+        }}
+        eventId={currentEvent?.id || ''}
+        eventSlug={currentEvent ? getEventSlug(currentEvent) : undefined}
+        eventName={currentEvent?.college_name || 'TN Assembly'}
+        userRole={userSession?.role || (isSuperAdmin ? 'super_admin' : 'coordinator')}
+        userSession={userSession}
+        onShowToast={onShowToast}
+      />
 
     </div>
   );

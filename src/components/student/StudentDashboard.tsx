@@ -387,7 +387,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         const allQ = [...storageService.getProceedingsQuestions(eventSlug), ...storageService.getProceedingsQuestions(activeId)];
         const uniqueQ = Array.from(new Map(allQ.map(q => [q.id, q])).values());
         setStudentQuestions(uniqueQ.filter(q => q.student_id === student.id || q.student_name === student.full_name));
-        const approvedAndStarred = uniqueQ.filter(q => q.status === 'Approved' || q.status === 'Starred');
+        const approvedAndStarred = uniqueQ
+          .filter(q => q.status === 'Approved' || q.status === 'Starred')
+          .sort((a, b) => (a.calling_order ?? a.queue_order ?? 999999) - (b.calling_order ?? b.queue_order ?? 999999));
         setApprovedHouseQuestions(approvedAndStarred);
         if (ministerInfo) {
           setMinisterQuestions(approvedAndStarred.filter(q => isQuestionForMinister(q, student.role)));
@@ -2240,7 +2242,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800/80 pb-2.5">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
-                                #{q.queue_order || idx + 1}
+                                #{q.calling_order ?? q.queue_order ?? (idx + 1)}
                               </span>
                               <span className="font-bold text-xs text-slate-900 dark:text-white">
                                 {q.student_name}

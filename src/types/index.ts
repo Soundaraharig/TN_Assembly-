@@ -468,13 +468,14 @@ export interface SecurityAuditLog {
 }
 
 export interface ProjectorStudioSettings {
-  displayScene: 'auto' | 'welcome' | 'agenda' | 'flash_vote' | 'election' | 'election_result' | 'bill_voting' | 'bill_result' | 'break';
+  displayScene: 'auto' | 'welcome' | 'agenda' | 'flash_vote' | 'election' | 'election_result' | 'bill_voting' | 'bill_result' | 'break' | 'question_hour';
   revealedElectionId?: string;
   activeElectionId?: string;
   revealedBillId?: string;
   activeBillId?: string;
   revealedFlashVoteId?: string;
   activeFlashVoteId?: string;
+  activeQuestionId?: string | null;
   timer?: LiveTimerState;
   tickerMessage: string;
   isTickerActive: boolean;
@@ -515,6 +516,10 @@ export interface ProceedingsQuestion {
   question_type: 'Standard' | 'Starred' | 'Unstarred' | 'Zero Hour' | 'Calling Attention';
   status: 'Submitted' | 'Under Review' | 'Approved' | 'Starred' | 'Rejected';
   queue_order?: number;
+  calling_order?: number;
+  called_status?: 'uncalled' | 'calling' | 'completed';
+  called_at?: string;
+  completed_at?: string;
   created_at: string;
   updated_at?: string;
   approved_by?: string;

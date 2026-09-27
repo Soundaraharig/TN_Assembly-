@@ -3721,6 +3721,63 @@ class StorageService {
             }
           }
         })
+        .on('broadcast', { event: 'question_order_updated' }, (msg: any) => {
+          if (msg?.payload?.eventId) {
+            const evId = msg.payload.eventId;
+            this.fetchProceedingsQuestionsOnDemand(evId).then(() => {
+              this.notify();
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('tn_assembly_proceedings_question_update', {
+                  detail: { type: 'order_update', eventId: evId, version: msg.payload.version }
+                }));
+                window.dispatchEvent(new Event('storage'));
+              }
+            }).catch(() => {});
+          }
+        })
+        .on('broadcast', { event: 'active_question_updated' }, (msg: any) => {
+          if (msg?.payload?.eventId) {
+            const evId = msg.payload.eventId;
+            const activeQId = msg.payload.activeQuestionId !== undefined ? msg.payload.activeQuestionId : null;
+            const completedQId = msg.payload.completedQuestionId;
+            const allEvs = this.getEvents();
+            const matched = findEventBySlug(allEvs, evId) || allEvs.find(e => e.id === evId);
+            if (matched) {
+              const sc = (matched.social_coverage || {}) as Record<string, any>;
+              sc.active_question_id = activeQId;
+              if (completedQId) {
+                const curCompleted = Array.isArray(sc.completed_question_ids) ? sc.completed_question_ids : [];
+                if (!curCompleted.includes(completedQId)) curCompleted.push(completedQId);
+                sc.completed_question_ids = curCompleted;
+              }
+              this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
+            }
+
+            const localPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+            let changed = false;
+            const updatedPQs = localPQs.map(q => {
+              if (activeQId && q.id === activeQId) {
+                changed = true;
+                return { ...q, called_status: 'calling' as const, called_at: q.called_at || new Date().toISOString() };
+              }
+              if (completedQId && q.id === completedQId) {
+                changed = true;
+                return { ...q, called_status: 'completed' as const, completed_at: q.completed_at || new Date().toISOString() };
+              }
+              return q;
+            });
+            if (changed) {
+              this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, updatedPQs);
+            }
+            this.notify();
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_proceedings_question_update', {
+                detail: { type: 'active_question', eventId: evId, activeQuestionId: activeQId, completedQuestionId: completedQId }
+              }));
+              window.dispatchEvent(new Event('storage'));
+            }
+          }
+        })
         .on('broadcast', { event: 'event_deadline_update' }, (msg: any) => {
           if (msg?.payload?.deadline) {
             const dl = msg.payload.deadline as EventDeadline;
@@ -4542,7 +4599,12 @@ class StorageService {
             reviewer_name: q.reviewer_name || existing.reviewer_name,
             reviewer_role: q.reviewer_role || existing.reviewer_role,
             approved_by: q.approved_by || existing.approved_by,
-            approved_at: q.approved_at || existing.approved_at
+            approved_at: q.approved_at || existing.approved_at,
+            calling_order: q.calling_order !== undefined ? q.calling_order : existing.calling_order,
+            queue_order: q.calling_order !== undefined ? q.calling_order : (q.queue_order !== undefined ? q.queue_order : existing.queue_order),
+            called_status: q.called_status || existing.called_status,
+            called_at: q.called_at || existing.called_at,
+            completed_at: q.completed_at || existing.completed_at
           });
         }
       });
@@ -4674,6 +4736,11 @@ class StorageService {
         proceedings: finalMergedProcs,
         questions: finalMergedPQs,
         proceedings_questions: finalMergedPQs,
+        question_calling_order: existingSC.question_calling_order || this.getQuestionCallingOrderIds(eventId),
+        active_question_id: existingSC.active_question_id !== undefined ? existingSC.active_question_id : this.getActiveQuestionId(eventId),
+        completed_question_ids: existingSC.completed_question_ids || [],
+        question_order_version: existingSC.question_order_version || 1,
+        question_order_updated_at: existingSC.question_order_updated_at || new Date().toISOString(),
         deleted_question_ids: Array.from(deletedQIds),
         deleted_poll_ids: Array.from(deletedIds),
         scores: finalMergedScores,
@@ -14104,7 +14171,7 @@ class StorageService {
     const evSlug = resolvedEvent ? getEventSlug(resolvedEvent).toLowerCase() : undefined;
     const evDbSlug = resolvedEvent?.slug?.toLowerCase();
 
-    return list.filter(q => {
+    const filtered = list.filter(q => {
       const qId = (q.event_id || '').toLowerCase();
       const qSlug = (q.event_slug || '').toLowerCase();
       return (
@@ -14114,6 +14181,40 @@ class StorageService {
         (evSlug && qSlug === evSlug) ||
         (evDbSlug && qSlug === evDbSlug)
       );
+    });
+
+    const targetEv = resolvedEvent || allEvs.find(e => e.id.toLowerCase() === cleanKey);
+    const officialOrderIds: string[] = Array.isArray((targetEv?.social_coverage as any)?.question_calling_order)
+      ? (targetEv!.social_coverage as any).question_calling_order
+      : [];
+    const orderIndexMap = new Map<string, number>();
+    officialOrderIds.forEach((id, idx) => orderIndexMap.set(id, idx + 1));
+
+    return filtered.map(q => {
+      const canonical = getCanonicalQuestionStatus(q);
+      const isApproved = canonical === 'Approved' || canonical === 'Starred';
+      const order = isApproved ? (q.calling_order !== undefined ? q.calling_order : orderIndexMap.get(q.id)) : undefined;
+      return {
+        ...q,
+        status: canonical,
+        calling_order: order,
+        queue_order: order !== undefined ? order : q.queue_order
+      };
+    }).sort((a, b) => {
+      const aIsApproved = a.status === 'Approved' || a.status === 'Starred';
+      const bIsApproved = b.status === 'Approved' || b.status === 'Starred';
+
+      if (aIsApproved && bIsApproved) {
+        const aOrder = a.calling_order;
+        const bOrder = b.calling_order;
+        if (aOrder !== undefined && bOrder !== undefined) return aOrder - bOrder;
+        if (aOrder !== undefined) return -1;
+        if (bOrder !== undefined) return 1;
+        return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+      }
+      if (aIsApproved) return -1;
+      if (bIsApproved) return 1;
+      return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
     });
   }
 
@@ -14272,6 +14373,11 @@ class StorageService {
               ...remote,
               ...lq,
               status: mergedStatus,
+              calling_order: remote.calling_order !== undefined ? remote.calling_order : lq.calling_order,
+              queue_order: remote.calling_order !== undefined ? remote.calling_order : (remote.queue_order !== undefined ? remote.queue_order : lq.queue_order),
+              called_status: remote.called_status || lq.called_status,
+              called_at: remote.called_at || lq.called_at,
+              completed_at: remote.completed_at || lq.completed_at,
               reviewed_by: remote.reviewed_by || lq.reviewed_by,
               flagged_for_admin: Boolean(remote.flagged_for_admin || lq.flagged_for_admin),
               review_note: remote.review_note || lq.review_note,
@@ -14296,6 +14402,29 @@ class StorageService {
             }
           }
         });
+
+        // Apply official calling order from social_coverage
+        if (Array.isArray(sc.question_calling_order)) {
+          sc.question_calling_order.forEach((qId: string, idx: number) => {
+            const q = pqMap.get(qId);
+            if (q) {
+              q.calling_order = idx + 1;
+              q.queue_order = idx + 1;
+            }
+          });
+        }
+        if (sc.active_question_id) {
+          const activeQ = pqMap.get(sc.active_question_id);
+          if (activeQ && activeQ.called_status !== 'completed') {
+            activeQ.called_status = 'calling';
+          }
+        }
+        if (Array.isArray(sc.completed_question_ids)) {
+          sc.completed_question_ids.forEach((cId: string) => {
+            const compQ = pqMap.get(cId);
+            if (compQ) compQ.called_status = 'completed';
+          });
+        }
 
         this.setItem(STORAGE_KEYS.DELETED_QUESTION_IDS, Array.from(deletedQIds));
         this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, [...otherEventsPQs, ...Array.from(pqMap.values())]);
@@ -14419,15 +14548,18 @@ class StorageService {
     const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
     let targetEventId: string | undefined = fallbackEventId;
     let updatedQ: ProceedingsQuestion | undefined;
+    const isApproved = status === 'Approved' || status === 'Starred';
     const updated = list.map(q => {
       if (q.id === questionId) {
         targetEventId = q.event_id || fallbackEventId;
         updatedQ = {
           ...q,
           status,
+          calling_order: isApproved ? q.calling_order : undefined,
+          called_status: isApproved ? q.called_status : undefined,
           updated_at: new Date().toISOString(),
-          approved_by: status === 'Approved' ? (approvedBy || userContext?.name || 'Main Admin') : q.approved_by,
-          approved_at: status === 'Approved' ? new Date().toISOString() : q.approved_at
+          approved_by: isApproved ? (approvedBy || userContext?.name || 'Main Admin') : q.approved_by,
+          approved_at: isApproved ? (q.approved_at || new Date().toISOString()) : q.approved_at
         };
         return updatedQ;
       }
@@ -14456,6 +14588,19 @@ class StorageService {
       const allEvs = this.getEvents();
       const matched = findEventBySlug(allEvs, targetEventId) || allEvs.find(e => e.id === targetEventId);
       const syncId = matched?.id || targetEventId;
+
+      if (matched && !isApproved) {
+        const sc = (matched.social_coverage || {}) as Record<string, any>;
+        if (Array.isArray(sc.question_calling_order)) {
+          sc.question_calling_order = sc.question_calling_order.filter((id: string) => id !== questionId);
+        }
+        if (sc.active_question_id === questionId) {
+          sc.active_question_id = null;
+        }
+        matched.social_coverage = sc;
+        this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
+      }
+
       this.syncEventStateToSupabase(syncId, true).catch(err => {
         console.warn('[Supabase] updateProceedingsQuestionStatus sync error:', err);
       });
@@ -14574,6 +14719,7 @@ class StorageService {
       const curPQs = Array.isArray(currentSc.proceedings_questions) ? currentSc.proceedings_questions : [];
       const curQs = Array.isArray(currentSc.questions) ? currentSc.questions : [];
       const curDeletedIds = Array.isArray(currentSc.deleted_question_ids) ? currentSc.deleted_question_ids : [];
+      const curCallingOrder = Array.isArray(currentSc.question_calling_order) ? currentSc.question_calling_order : [];
       if (!curDeletedIds.includes(questionId)) {
         curDeletedIds.push(questionId);
       }
@@ -14582,6 +14728,8 @@ class StorageService {
         proceedings_questions: curPQs.filter((q: any) => q.id !== questionId),
         questions: curQs.filter((q: any) => q.id !== questionId),
         deleted_question_ids: curDeletedIds,
+        question_calling_order: curCallingOrder.filter((id: string) => id !== questionId),
+        active_question_id: currentSc.active_question_id === questionId ? null : currentSc.active_question_id,
         updated_at: new Date().toISOString()
       };
       this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
@@ -14610,6 +14758,331 @@ class StorageService {
         detail: { type: 'delete', questionId, eventId: syncId }
       }));
     }
+  }
+
+  // ── OFFICIAL QUESTION CALLING ORDER & SPEAKER SESSION MANAGEMENT ───────────
+
+  public getQuestionCallingOrderIds(eventId: string): string[] {
+    if (!eventId) return [];
+    const allEvs = this.getEvents();
+    const matched = findEventBySlug(allEvs, eventId) || allEvs.find(e => e.id === eventId);
+    const sc = (matched?.social_coverage || {}) as Record<string, any>;
+    if (Array.isArray(sc.question_calling_order) && sc.question_calling_order.length > 0) {
+      return sc.question_calling_order;
+    }
+    const qs = this.getProceedingsQuestions(eventId);
+    const approvedOrdered = qs.filter(q => (q.status === 'Approved' || q.status === 'Starred') && q.calling_order !== undefined);
+    approvedOrdered.sort((a, b) => (a.calling_order || 0) - (b.calling_order || 0));
+    return approvedOrdered.map(q => q.id);
+  }
+
+  public async saveQuestionCallingOrder(
+    eventId: string,
+    orderedQuestionIds: string[],
+    userContext?: { role?: string; name?: string }
+  ): Promise<{ success: boolean; error?: string }> {
+    const callerRole = (userContext?.role || '').toLowerCase().trim();
+    const isAuthorized = callerRole === 'super_admin' || callerRole === 'coordinator';
+    if (!isAuthorized) {
+      return {
+        success: false,
+        error: 'Unauthorized: Only Main Admin / Super Admin can arrange or save the official calling order.'
+      };
+    }
+
+    if (!eventId) {
+      return { success: false, error: 'Event ID is required.' };
+    }
+
+    const allEvents = this.getEvents();
+    const matched = findEventBySlug(allEvents, eventId) || allEvents.find(e => e.id === eventId);
+    const syncId = matched?.id || eventId;
+
+    const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+    const orderMap = new Map<string, number>();
+    orderedQuestionIds.forEach((id, idx) => orderMap.set(id, idx + 1));
+
+    const updated = list.map(q => {
+      const qEventId = q.event_id || '';
+      const isThisEvent = qEventId === syncId || qEventId === eventId || (matched && (q.event_slug === matched.slug || q.event_slug === getEventSlug(matched)));
+      if (isThisEvent) {
+        if (orderMap.has(q.id)) {
+          const orderNum = orderMap.get(q.id)!;
+          return {
+            ...q,
+            calling_order: orderNum,
+            queue_order: orderNum,
+            updated_at: new Date().toISOString()
+          };
+        } else if (q.status === 'Approved' || q.status === 'Starred') {
+          // If approved but omitted from order, clear calling order
+          return {
+            ...q,
+            calling_order: undefined,
+            updated_at: new Date().toISOString()
+          };
+        }
+      }
+      return q;
+    });
+
+    this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, updated);
+
+    // Update in-memory event social_coverage
+    let version = 1;
+    if (matched) {
+      const curSc = (matched.social_coverage || {}) as Record<string, any>;
+      version = (curSc.question_order_version || 0) + 1;
+      const nowIso = new Date().toISOString();
+      const updatedThisEventQs = updated.filter(q => q.event_id === syncId || (matched && q.event_slug === matched.slug));
+
+      matched.social_coverage = {
+        ...curSc,
+        question_calling_order: orderedQuestionIds,
+        question_order_version: version,
+        question_order_updated_at: nowIso,
+        proceedings_questions: updatedThisEventQs,
+        questions: updatedThisEventQs,
+        updated_at: nowIso
+      };
+      this.setItem(STORAGE_KEYS.EVENTS, allEvents.map(e => e.id === matched.id ? matched : e));
+    }
+
+    this.notify();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_proceedings_question_update', {
+        detail: { type: 'order_update', eventId: syncId, orderedQuestionIds, version }
+      }));
+      window.dispatchEvent(new Event('storage'));
+    }
+
+    this.logAudit({
+      event_id: syncId,
+      action: 'QUESTION_CALLING_ORDER_SAVED',
+      actor_role: userContext?.role || 'super_admin',
+      actor_name: userContext?.name || 'Main Admin',
+      details: `Main Admin set official question calling order (${orderedQuestionIds.length} approved questions)`
+    });
+
+    this.broadcast('question_order_updated', {
+      eventId: syncId,
+      type: 'question_order_updated',
+      version,
+      updatedAt: new Date().toISOString()
+    }).catch(err => console.warn('[Supabase] broadcast question_order_updated error:', err));
+
+    try {
+      await this.syncEventStateToSupabase(syncId, true);
+      return { success: true };
+    } catch (err: any) {
+      console.warn('[Supabase] saveQuestionCallingOrder sync warning:', err);
+      return { success: true };
+    }
+  }
+
+  public getActiveQuestionId(eventId?: string): string | null {
+    if (!eventId) return null;
+    const allEvs = this.getEvents();
+    const matched = findEventBySlug(allEvs, eventId) || allEvs.find(e => e.id === eventId);
+    const sc = (matched?.social_coverage || {}) as Record<string, any>;
+    if (sc.active_question_id) return sc.active_question_id;
+
+    // Check projector settings
+    const ps = this.getProjectorSettings(matched?.id || eventId);
+    if (ps.activeQuestionId) return ps.activeQuestionId;
+
+    // Check questions in memory
+    const qs = this.getProceedingsQuestions(eventId);
+    const activeQ = qs.find(q => q.called_status === 'calling');
+    return activeQ?.id || null;
+  }
+
+  public getActiveQuestion(eventId?: string): ProceedingsQuestion | null {
+    const activeId = this.getActiveQuestionId(eventId);
+    if (!activeId) return null;
+    const qs = this.getProceedingsQuestions(eventId);
+    return qs.find(q => q.id === activeId) || null;
+  }
+
+  public async setActiveQuestion(
+    eventId: string,
+    questionId: string | null,
+    _userContext?: { role?: string; name?: string }
+  ): Promise<{ success: boolean; error?: string }> {
+    if (!eventId) return { success: false, error: 'Event ID required' };
+    const allEvents = this.getEvents();
+    const matched = findEventBySlug(allEvents, eventId) || allEvents.find(e => e.id === eventId);
+    const syncId = matched?.id || eventId;
+
+    const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+    const updated = list.map(q => {
+      if (q.id === questionId) {
+        return {
+          ...q,
+          called_status: 'calling' as const,
+          called_at: q.called_at || new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+      }
+      return q;
+    });
+    this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, updated);
+
+    if (matched) {
+      const curSc = (matched.social_coverage || {}) as Record<string, any>;
+      matched.social_coverage = {
+        ...curSc,
+        active_question_id: questionId,
+        updated_at: new Date().toISOString()
+      };
+      this.setItem(STORAGE_KEYS.EVENTS, allEvents.map(e => e.id === matched.id ? matched : e));
+    }
+
+    // Direct Projector update to question_hour scene
+    if (questionId) {
+      const curPs = this.getProjectorSettings(syncId);
+      this.saveProjectorSettings(syncId, {
+        ...curPs,
+        activeQuestionId: questionId,
+        displayScene: 'question_hour'
+      });
+    }
+
+    this.notify();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_proceedings_question_update', {
+        detail: { type: 'active_question', eventId: syncId, activeQuestionId: questionId }
+      }));
+      window.dispatchEvent(new Event('storage'));
+    }
+
+    this.broadcast('active_question_updated', {
+      eventId: syncId,
+      activeQuestionId: questionId,
+      updatedAt: new Date().toISOString()
+    }).catch(err => console.warn('[Supabase] broadcast active_question_updated error:', err));
+
+    this.syncEventStateToSupabase(syncId, true).catch(() => {});
+    return { success: true };
+  }
+
+  public async completeActiveQuestion(
+    eventId: string,
+    questionId: string,
+    _userContext?: { role?: string; name?: string }
+  ): Promise<{ success: boolean; error?: string }> {
+    if (!eventId || !questionId) return { success: false, error: 'Event ID and question ID required' };
+    const allEvents = this.getEvents();
+    const matched = findEventBySlug(allEvents, eventId) || allEvents.find(e => e.id === eventId);
+    const syncId = matched?.id || eventId;
+
+    const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+    const updated = list.map(q => {
+      if (q.id === questionId) {
+        return {
+          ...q,
+          called_status: 'completed' as const,
+          completed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+      }
+      return q;
+    });
+    this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, updated);
+
+    if (matched) {
+      const curSc = (matched.social_coverage || {}) as Record<string, any>;
+      const completedIds = Array.isArray(curSc.completed_question_ids) ? curSc.completed_question_ids : [];
+      if (!completedIds.includes(questionId)) completedIds.push(questionId);
+      matched.social_coverage = {
+        ...curSc,
+        active_question_id: null,
+        completed_question_ids: completedIds,
+        updated_at: new Date().toISOString()
+      };
+      this.setItem(STORAGE_KEYS.EVENTS, allEvents.map(e => e.id === matched.id ? matched : e));
+    }
+
+    const curPs = this.getProjectorSettings(syncId);
+    this.saveProjectorSettings(syncId, {
+      ...curPs,
+      activeQuestionId: null
+    });
+
+    this.notify();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_proceedings_question_update', {
+        detail: { type: 'question_completed', eventId: syncId, questionId }
+      }));
+      window.dispatchEvent(new Event('storage'));
+    }
+
+    this.broadcast('active_question_updated', {
+      eventId: syncId,
+      activeQuestionId: null,
+      completedQuestionId: questionId,
+      updatedAt: new Date().toISOString()
+    }).catch(() => {});
+
+    this.syncEventStateToSupabase(syncId, true).catch(() => {});
+    return { success: true };
+  }
+
+  public async skipActiveQuestion(
+    eventId: string,
+    questionId: string,
+    _userContext?: { role?: string; name?: string }
+  ): Promise<{ success: boolean; error?: string }> {
+    if (!eventId) return { success: false, error: 'Event ID required' };
+    const allEvents = this.getEvents();
+    const matched = findEventBySlug(allEvents, eventId) || allEvents.find(e => e.id === eventId);
+    const syncId = matched?.id || eventId;
+
+    const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+    const updated = list.map(q => {
+      if (q.id === questionId) {
+        return {
+          ...q,
+          called_status: 'uncalled' as const,
+          updated_at: new Date().toISOString()
+        };
+      }
+      return q;
+    });
+    this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, updated);
+
+    if (matched) {
+      const curSc = (matched.social_coverage || {}) as Record<string, any>;
+      matched.social_coverage = {
+        ...curSc,
+        active_question_id: null,
+        updated_at: new Date().toISOString()
+      };
+      this.setItem(STORAGE_KEYS.EVENTS, allEvents.map(e => e.id === matched.id ? matched : e));
+    }
+
+    const curPs = this.getProjectorSettings(syncId);
+    this.saveProjectorSettings(syncId, {
+      ...curPs,
+      activeQuestionId: null
+    });
+
+    this.notify();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_proceedings_question_update', {
+        detail: { type: 'question_skipped', eventId: syncId, questionId }
+      }));
+      window.dispatchEvent(new Event('storage'));
+    }
+
+    this.broadcast('active_question_updated', {
+      eventId: syncId,
+      activeQuestionId: null,
+      updatedAt: new Date().toISOString()
+    }).catch(() => {});
+
+    this.syncEventStateToSupabase(syncId, true).catch(() => {});
+    return { success: true };
   }
 
   // ── PROCEEDINGS MOTIONS ─────────────────────────────────────────────

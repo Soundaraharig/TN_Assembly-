@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import type { BillProceeding, Learner, EventDeadline, ProceedingsQuestion, ProceedingsMotion, UserRole } from '../../types';
+import type { BillProceeding, Learner, EventDeadline, ProceedingsQuestion, ProceedingsMotion, UserRole, UserSession } from '../../types';
 import { getCanonicalQuestionStatus } from '../../types';
 import { storageService } from '../../services/storageService';
 import { getEventSlug } from '../../utils/slug';
@@ -22,8 +22,10 @@ import {
   RefreshCw,
   Lock,
   Unlock,
-  Eye
+  Eye,
+  ArrowUpDown
 } from 'lucide-react';
+import { ArrangeQuestionOrderModal } from './ArrangeQuestionOrderModal';
 
 interface ProceedingsTabProps {
   proceedings: BillProceeding[];
@@ -31,6 +33,7 @@ interface ProceedingsTabProps {
   eventId: string;
   eventSlug?: string;
   userRole?: UserRole;
+  userSession?: UserSession | null;
   onAddBill: (bill: Partial<BillProceeding>) => void;
   onUpdateBillStatus: (id: string, status: BillProceeding['status'], ayes?: number, noes?: number) => void;
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
@@ -42,6 +45,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   eventId,
   eventSlug,
   userRole,
+  userSession,
   onAddBill,
   onUpdateBillStatus,
   onShowToast
@@ -58,6 +62,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   const [motions, setMotions] = useState<ProceedingsMotion[]>(() => storageService.getProceedingsMotions(authoritativeEventId || eventSlug || ''));
   const [isTogglingDeadline, setIsTogglingDeadline] = useState(false);
   const [selectedQuestion, setSelectedQuestion] = useState<ProceedingsQuestion | null>(null);
+  const [isArrangeOrderOpen, setIsArrangeOrderOpen] = useState(false);
 
   // Filters
   const [statusFilter, setStatusFilter] = useState<'All' | 'Submitted' | 'Under Review' | 'Approved' | 'Starred' | 'Rejected'>('All');
@@ -274,7 +279,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
         `"${(q.ministry || '').replace(/"/g, '""')}"`,
         `"${(q.question_type || '').replace(/"/g, '""')}"`,
         `"${(q.status || '').replace(/"/g, '""')}"`,
-        `"${q.queue_order || idx + 1}"`,
+        `"${q.calling_order || q.queue_order || idx + 1}"`,
         `"${(q.question_text || '').replace(/"/g, '""')}"`,
         `"${q.created_at || ''}"`,
         `"${q.approved_at || ''}"`,
@@ -657,6 +662,21 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
 
               <button
                 type="button"
+                onClick={() => setIsArrangeOrderOpen(true)}
+                className="px-3.5 py-2 rounded-xl text-xs font-bold border border-amber-500/50 bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+                title="Arrange official question calling order for Speaker"
+              >
+                <ArrowUpDown className="w-3.5 h-3.5 text-amber-500" />
+                <span>Arrange Question Order</span>
+                {readyToPutCount > 0 && (
+                  <span className="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-amber-500 text-slate-950 font-black">
+                    {readyToPutCount}
+                  </span>
+                )}
+              </button>
+
+              <button
+                type="button"
                 onClick={() => onShowToast('Projector Display', 'Showing Questions Order Paper on live floor projector', 'info')}
                 className="px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white flex items-center gap-1.5 cursor-pointer shadow-xs"
               >
@@ -760,7 +780,21 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                             );
                           })()}
                         </td>
-                        <td className="p-3.5 font-mono text-slate-400">#{q.queue_order || idx + 1}</td>
+                        <td className="p-3.5 font-mono">
+                          {q.calling_order ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20">
+                              #{q.calling_order}
+                              {q.called_status === 'calling' && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
+                              )}
+                              {q.called_status === 'completed' && (
+                                <Check className="w-3 h-3 text-emerald-500" />
+                              )}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 font-normal">#{q.queue_order || '—'}</span>
+                          )}
+                        </td>
                         <td className="p-3.5 text-right">
                           {(() => {
                             const currentCanonical = normalizeStatus(q);
@@ -875,7 +909,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                             Question Details &amp; Review
                           </h3>
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                            Queue #{selectedQuestion.queue_order || '—'}
+                            {selectedQuestion.calling_order ? `Order #${selectedQuestion.calling_order}` : `Queue #${selectedQuestion.queue_order || '—'}`}
                           </span>
                         </div>
                         <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -1604,6 +1638,21 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
 
         </div>
       )}
+
+      {/* Arrange Question Calling Order Modal */}
+      <ArrangeQuestionOrderModal
+        isOpen={isArrangeOrderOpen}
+        onClose={() => {
+          setIsArrangeOrderOpen(false);
+          refreshData();
+        }}
+        eventId={authoritativeEventId || eventId}
+        eventSlug={eventSlug}
+        eventName={storageService.getEvents().find(e => e.id === (authoritativeEventId || eventId))?.college_name || 'TN Assembly'}
+        userRole={userRole}
+        userSession={userSession}
+        onShowToast={onShowToast}
+      />
 
     </div>
   );

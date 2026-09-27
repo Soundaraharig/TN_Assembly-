@@ -358,6 +358,24 @@ export const ProjectorTab: React.FC<ProjectorTabProps> = ({
                   Welcome to the Legislative Assembly. Session commencing shortly.
                 </p>
               </div>
+            ) : settings.displayScene === 'question_hour' ? (
+              <div className="space-y-4 animate-result-reveal max-w-2xl mx-auto">
+                <span className="text-xs font-black uppercase tracking-widest text-amber-300 bg-amber-500/20 px-4 py-1.5 rounded-full border border-amber-400/30 inline-flex items-center gap-1.5 shadow-lg">
+                  PARLIAMENTARY QUESTION HOUR
+                </span>
+                <div className="text-xl md:text-2xl font-black text-amber-400 font-mono">
+                  {(() => {
+                    const q = storageService.getProceedingsQuestions(currentEvent?.id).find(x => x.id === settings.activeQuestionId) || storageService.getActiveQuestion(currentEvent?.id);
+                    return q ? `QUESTION NO. ${q.calling_order || q.queue_order || 1}` : 'QUESTION HOUR ON FLOOR';
+                  })()}
+                </div>
+                <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-700/80 font-serif text-sm md:text-base italic text-slate-200">
+                  {(() => {
+                    const q = storageService.getProceedingsQuestions(currentEvent?.id).find(x => x.id === settings.activeQuestionId) || storageService.getActiveQuestion(currentEvent?.id);
+                    return q ? `"${q.question_text}"` : 'Question presentation active on auditorium screen';
+                  })()}
+                </div>
+              </div>
             ) : settings.displayScene === 'election_result' ? (
               <div className="space-y-4 animate-result-reveal max-w-3xl mx-auto">
                 <span className="text-xs font-black uppercase tracking-widest text-amber-300 bg-amber-500/20 px-4 py-1.5 rounded-full border border-amber-400/30 inline-flex items-center gap-1.5 shadow-lg">
@@ -513,6 +531,7 @@ export const ProjectorTab: React.FC<ProjectorTabProps> = ({
               { id: 'auto', label: 'Auto Detect (Default)', desc: 'Smart switch between live votes & agenda' },
               { id: 'welcome', label: 'Welcome / Standby Screen', desc: 'Displays college logo & welcome banner' },
               { id: 'agenda', label: 'Legislative Agenda Session', desc: 'Broadcasts active agenda item title & role' },
+              { id: 'question_hour', label: 'Parliamentary Question Hour', desc: 'Displays active question, member & ministry' },
               { id: 'flash_vote', label: 'Live Floor Division', desc: 'Shows real-time motion AYE/NO counters' },
               { id: 'election', label: 'Parliamentary Elections (Live)', desc: 'Shows live election ballot & turnout' },
               { id: 'election_result', label: 'Election Result Reveal (Animated)', desc: 'Animated winner declaration & candidate breakdown' },

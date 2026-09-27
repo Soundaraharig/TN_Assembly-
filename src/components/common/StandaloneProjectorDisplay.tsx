@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import type { CollegeEvent, AgendaItem, Election, LiveFlashVote, Learner, BillProceeding, LiveTimerState } from '../../types';
+import type { CollegeEvent, AgendaItem, Election, LiveFlashVote, Learner, BillProceeding, LiveTimerState, ProceedingsQuestion } from '../../types';
 import { Radio, Maximize2, Minimize2, Clock, Sparkles, Trophy, Crown, Shield, FileText, CheckCircle2, XCircle } from 'lucide-react';
 import type { ProjectorStudioSettings } from '../../types';
 import { storageService } from '../../services/storageService';
@@ -29,6 +29,7 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
   const [flashVotes, setFlashVotes] = useState<LiveFlashVote[]>(initialFlashVotes);
   const [learners, setLearners] = useState<Learner[]>(initialLearners);
   const [bills, setBills] = useState<BillProceeding[]>(() => storageService.getBills(initialEvent?.id));
+  const [questions, setQuestions] = useState<ProceedingsQuestion[]>(() => storageService.getProceedingsQuestions(initialEvent?.id));
 
   // Authoritative studio settings pushed from ControlTab / ElectionsTab
   const [settings, setSettings] = useState<ProjectorStudioSettings>(() =>
@@ -99,6 +100,7 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
         setFlashVotes(storageService.getFlashVotes(ev.id));
         setLearners(storageService.getLearners(ev.id));
         setBills(storageService.getBills(ev.id));
+        setQuestions(storageService.getProceedingsQuestions(ev.id));
 
         const freshTimer = storageService.getLiveTimerState(ev.id);
         setTimerState(freshTimer);
@@ -195,6 +197,14 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
 
   const isBillClosedUnrevealed = !!(
     settings.displayScene === 'bill_voting' && targetBill && targetBill.status === 'Vote Closed' && !targetBill.is_result_revealed
+  );
+
+  // Authoritative Question Hour State
+  const activeQuestionId = settings.activeQuestionId || storageService.getActiveQuestionId(currentEvent?.id);
+  const activeQuestion = questions.find(q => q.id === activeQuestionId) || (settings.displayScene === 'question_hour' ? questions.find(q => q.called_status === 'calling') : null);
+  const isQuestionHourScene = !!(
+    (settings.displayScene === 'question_hour' && activeQuestion) ||
+    (settings.displayScene === 'auto' && activeQuestion && activeQuestion.called_status === 'calling')
   );
 
   const isBillUpcoming = !!(
@@ -328,6 +338,51 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
             <p className="text-xl md:text-3xl text-slate-300 max-w-3xl mx-auto font-medium leading-relaxed">
               Welcome to the Legislative Assembly. House proceedings commencing shortly.
             </p>
+          </div>
+
+        /* ══════════════════════════════════════════════════════════════════════ */
+        /* SCENE: PARLIAMENTARY QUESTION HOUR (CURRENT ACTIVE QUESTION)           */
+        /* ══════════════════════════════════════════════════════════════════════ */
+        ) : isQuestionHourScene && activeQuestion ? (
+          <div className="space-y-8 animate-result-reveal max-w-5xl mx-auto w-full text-center">
+            <div className="space-y-3">
+              <span className="text-xs md:text-sm font-black uppercase tracking-widest text-amber-300 bg-amber-500/20 px-6 py-2 rounded-full border border-amber-400/40 inline-flex items-center gap-2 shadow-xl shadow-amber-950/40">
+                PARLIAMENTARY QUESTION HOUR
+              </span>
+              <div className="text-2xl md:text-4xl font-mono font-black text-amber-400">
+                QUESTION NO. {activeQuestion.calling_order || activeQuestion.queue_order || 1}
+              </div>
+            </div>
+
+            {/* Member and Ministry Meta Pill */}
+            <div className="flex flex-wrap items-center justify-center gap-3 md:gap-4 text-sm md:text-base font-bold">
+              <div className="px-4 py-2 rounded-2xl bg-slate-900/90 border border-slate-700/80 shadow-lg text-slate-300">
+                Hon. Member: <strong className="text-white text-base md:text-lg">{activeQuestion.student_name}</strong>
+              </div>
+              {activeQuestion.constituency && (
+                <div className="px-4 py-2 rounded-2xl bg-slate-900/90 border border-slate-700/80 shadow-lg text-slate-300">
+                  Constituency: <strong className="text-white">{activeQuestion.constituency}</strong>
+                </div>
+              )}
+              <div className="px-4 py-2 rounded-2xl bg-amber-950/50 border border-amber-500/40 shadow-lg text-amber-300">
+                Target Ministry: <strong className="text-white">{activeQuestion.ministry}</strong>
+              </div>
+              <span className={`px-3.5 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider ${
+                activeQuestion.bench === 'Ruling'
+                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                  : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+              }`}>
+                {activeQuestion.bench} Bench
+              </span>
+            </div>
+
+            {/* Question Text in Large Elegant Presentation Card */}
+            <div className="p-8 md:p-12 rounded-3xl bg-slate-900/95 border-2 border-slate-700/80 shadow-2xl max-w-4xl mx-auto text-left relative overflow-hidden backdrop-blur-sm">
+              <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-600" />
+              <p className="text-2xl md:text-4xl font-serif text-white leading-relaxed font-medium">
+                "{activeQuestion.question_text}"
+              </p>
+            </div>
           </div>
 
         /* ══════════════════════════════════════════════════════════════════════ */

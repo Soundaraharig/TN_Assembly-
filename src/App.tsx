@@ -894,6 +894,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           eventId={activeEvent.id}
           eventSlug={getEventSlug(activeEvent)}
           userRole={props.userSession?.role || props.role}
+          userSession={props.userSession}
           onAddBill={(bill) => storageService.addBill(bill)}
           onUpdateBillStatus={(id, status, ayes, noes) => storageService.updateBillStatus(id, status, ayes, noes)}
           onShowToast={props.addToast}
