@@ -252,9 +252,9 @@
     "semantic_hash": "9f604ed936e84741cd889d4e8b44a48c"
   },
   "src/components/coordinator/ProceedingsTab.tsx": {
-    "mtime": 1790507644.601323,
-    "seen": 1790507947.8174555,
-    "ast_hash": "281bbf5502907c2893a6562a78a07811",
+    "mtime": 1790508826.3532376,
+    "seen": 1790508956.886933,
+    "ast_hash": "82710a92192a4b40ba0d724d8be41764",
     "semantic_hash": ""
   },
   "src/components/coordinator/ProjectorTab.tsx": {
@@ -597,6 +597,12 @@
     "mtime": 1790507617.7437954,
     "seen": 1790507947.8161547,
     "ast_hash": "ff71cc559a357aa71fd4d1e89ac5b371",
+    "semantic_hash": ""
+  },
+  "src/components/coordinator/SubmissionListModal.tsx": {
+    "mtime": 1790508423.8451872,
+    "seen": 1790508956.8902986,
+    "ast_hash": "5a9232141ba2f02a5ce3031524c7755e",
     "semantic_hash": ""
   }
 }

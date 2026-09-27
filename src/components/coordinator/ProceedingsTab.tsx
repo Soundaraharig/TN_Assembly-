@@ -23,9 +23,13 @@ import {
   Lock,
   Unlock,
   Eye,
-  ArrowUpDown
+  ArrowUpDown,
+  Copy,
+  CheckCircle2,
+  XCircle
 } from 'lucide-react';
 import { ArrangeQuestionOrderModal } from './ArrangeQuestionOrderModal';
+import { SubmissionListModal, type SubmittedMemberRecord } from './SubmissionListModal';
 
 interface ProceedingsTabProps {
   proceedings: BillProceeding[];
@@ -91,6 +95,10 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
 
   // Selected Committee Room Filter for Motions
   const [selectedRoom, setSelectedRoom] = useState<string | null>(null);
+
+  // Question Hour Submission Roster Modal
+  const [isSubmissionModalOpen, setIsSubmissionModalOpen] = useState(false);
+  const [submissionModalTab, setSubmissionModalTab] = useState<'all' | 'submitted' | 'not_submitted'>('not_submitted');
 
   // Sync data on tab or storage updates
   const refreshData = () => {
@@ -313,10 +321,189 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
     return getCanonicalQuestionStatus({ status: qOrStatus });
   };
 
-  // Calculations for Questions Sub-Tab
-  const uniqueSubmittersCount = new Set(questions.map(q => q.student_name)).size;
-  const totalMembersCount = learners.length || 196;
-  const progressPct = Math.min(100, Math.round((uniqueSubmittersCount / totalMembersCount) * 100));
+  // ── FILTER-AWARE PARTICIPANT SUBMISSION PROGRESS ───────────────────────────
+  // Effective event participants
+  const effectiveLearners = useMemo(() => {
+    if (learners && learners.length > 0) return learners;
+    if (authoritativeEventId || eventId) {
+      const cached = storageService.getLearners(authoritativeEventId || eventId);
+      if (cached.length > 0) return cached;
+    }
+    return [];
+  }, [learners, authoritativeEventId, eventId]);
+
+  const getLearnerBench = (l: Learner): 'Ruling' | 'Opposition' | string => {
+    if (l.bench) return l.bench;
+    if (l.party_id || l.party_name) {
+      const parties = storageService.getParties(authoritativeEventId || eventId || targetSlug);
+      const p = parties.find(party => party.id === l.party_id || (party.name && l.party_name && party.name.toLowerCase() === l.party_name.toLowerCase()));
+      if (p?.bench) return p.bench;
+    }
+    return '';
+  };
+
+  const isLearnerQuestion = (l: Learner, q: ProceedingsQuestion) => {
+    if (q.student_id && l.id && q.student_id === l.id) return true;
+    if (q.student_name && l.full_name && q.student_name.trim().toLowerCase() === l.full_name.trim().toLowerCase()) return true;
+    return false;
+  };
+
+  // Filter-aware eligible participants for the current bench selection
+  const eligibleLearners = useMemo(() => {
+    return effectiveLearners.filter(l => {
+      if (l.is_active === false || l.status === 'Inactive') return false;
+      if (benchFilter === 'All') return true;
+      return getLearnerBench(l).toLowerCase() === benchFilter.toLowerCase();
+    });
+  }, [effectiveLearners, benchFilter]);
+
+  // Valid, non-deleted questions scoped to this event
+  const validProceedingsQuestions = useMemo(() => {
+    const deletedIds = storageService.getAllDeletedQuestionIds();
+    return questions.filter(q => {
+      if (deletedIds.has(q.id)) return false;
+      if ((q as any).deleted || (q.status as any) === 'Deleted') return false;
+      return true;
+    });
+  }, [questions, authoritativeEventId, eventId, targetSlug]);
+
+  // Partition eligible learners into submitted vs not-submitted (respecting bench and ministry filters)
+  const { submittedLearnersList, notSubmittedLearnersList } = useMemo(() => {
+    const sub: SubmittedMemberRecord[] = [];
+    const notSub: Learner[] = [];
+
+    eligibleLearners.forEach(l => {
+      let lQs = validProceedingsQuestions.filter(q => isLearnerQuestion(l, q));
+      if (ministryFilter !== 'All') {
+        lQs = lQs.filter(q => q.ministry === ministryFilter);
+      }
+
+      if (lQs.length > 0) {
+        sub.push({ learner: l, questions: lQs });
+      } else {
+        notSub.push(l);
+      }
+    });
+
+    return { submittedLearnersList: sub, notSubmittedLearnersList: notSub };
+  }, [eligibleLearners, validProceedingsQuestions, ministryFilter]);
+
+  const uniqueSubmittersCount = submittedLearnersList.length;
+  const totalMembersCount = eligibleLearners.length;
+  const progressPct = totalMembersCount > 0
+    ? Math.round((uniqueSubmittersCount / totalMembersCount) * 1000) / 10
+    : 0;
+
+  // Clipboard copy helper for filtered submission names
+  const handleCopyFilteredSubmissionNames = (targetTab: 'all' | 'submitted' | 'not_submitted' = 'not_submitted') => {
+    const listToCopy = targetTab === 'submitted'
+      ? submittedLearnersList.map(s => ({ learner: s.learner, isSubmitted: true, qCount: s.questions.length, ministry: s.questions[0]?.ministry }))
+      : targetTab === 'not_submitted'
+      ? notSubmittedLearnersList.map(l => ({ learner: l, isSubmitted: false, qCount: 0, ministry: '' }))
+      : [
+          ...submittedLearnersList.map(s => ({ learner: s.learner, isSubmitted: true, qCount: s.questions.length, ministry: s.questions[0]?.ministry })),
+          ...notSubmittedLearnersList.map(l => ({ learner: l, isSubmitted: false, qCount: 0, ministry: '' }))
+        ];
+
+    if (listToCopy.length === 0) {
+      onShowToast('Empty List', 'No participants match the selected filter.', 'info');
+      return;
+    }
+
+    const tabLabel = targetTab === 'all' ? 'ALL ELIGIBLE' : targetTab === 'submitted' ? 'SUBMITTED' : 'NOT SUBMITTED';
+    const benchLabel = benchFilter === 'All' ? 'ALL BENCHES' : `${benchFilter.toUpperCase()} BENCH`;
+    const ministryLabel = ministryFilter !== 'All' ? ` — ${ministryFilter.toUpperCase()}` : '';
+
+    const lines: string[] = [
+      `${targetSlug} — ${benchLabel}${ministryLabel} — ${tabLabel} (${listToCopy.length})`,
+      '────────────────────────────────────────────────────────────'
+    ];
+
+    listToCopy.forEach((item, idx) => {
+      const l = item.learner;
+      const constituency = l.constituency_name
+        ? `${l.constituency_number ? `${l.constituency_number} - ` : ''}${l.constituency_name}`
+        : 'Constituency Unassigned';
+      const bench = l.bench || 'Bench Unassigned';
+      const party = l.party_name ? ` (${l.party_name})` : '';
+      const note = item.isSubmitted ? ` [SUBMITTED: ${item.qCount} question(s) - ${item.ministry || 'Question Hour'}]` : ' [NOT SUBMITTED]';
+      lines.push(`${idx + 1}. ${l.full_name} — ${constituency} — ${bench}${party}${note}`);
+    });
+
+    const fullText = lines.join('\n');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(fullText).then(() => {
+        onShowToast('Names Copied', `Copied ${listToCopy.length} delegate names to clipboard.`, 'success');
+      }).catch(() => {
+        onShowToast('Names Copied', `Copied ${listToCopy.length} delegate names.`, 'info');
+      });
+    }
+  };
+
+  // CSV download helper for filtered submissions
+  const handleDownloadFilteredSubmissionCSV = (targetMode: 'both' | 'submitted' | 'not_submitted' = 'both') => {
+    const rowsData: Array<{ learner: Learner; isSubmitted: boolean; questions?: ProceedingsQuestion[] }> = [];
+
+    if (targetMode === 'both' || targetMode === 'submitted') {
+      submittedLearnersList.forEach(s => rowsData.push({ learner: s.learner, isSubmitted: true, questions: s.questions }));
+    }
+    if (targetMode === 'both' || targetMode === 'not_submitted') {
+      notSubmittedLearnersList.forEach(l => rowsData.push({ learner: l, isSubmitted: false }));
+    }
+
+    if (rowsData.length === 0) {
+      onShowToast('Empty Export', 'No participants match the selected filter.', 'info');
+      return;
+    }
+
+    const headers = [
+      '#',
+      'Student Name',
+      'Access Code',
+      'Constituency Number',
+      'Constituency Name',
+      'Bench',
+      'Party',
+      'Submission Status',
+      'Questions Count',
+      'Target Ministry',
+      'Submitted At'
+    ];
+
+    const rows = rowsData.map((item, idx) => {
+      const l = item.learner;
+      const latestQ = item.questions?.[0];
+      const ministries = item.questions?.map(q => q.ministry).filter(Boolean) || [];
+      const uniqueMinistries = Array.from(new Set(ministries)).join('; ');
+
+      return [
+        idx + 1,
+        `"${(l.full_name || '').replace(/"/g, '""')}"`,
+        `"${(l.access_code || '').replace(/"/g, '""')}"`,
+        `"${l.constituency_number !== undefined ? l.constituency_number : ''}"`,
+        `"${(l.constituency_name || '').replace(/"/g, '""')}"`,
+        `"${(l.bench || '').replace(/"/g, '""')}"`,
+        `"${(l.party_name || '').replace(/"/g, '""')}"`,
+        item.isSubmitted ? '"Submitted"' : '"Not Submitted"',
+        item.questions ? item.questions.length : 0,
+        `"${uniqueMinistries.replace(/"/g, '""')}"`,
+        latestQ?.created_at ? `"${latestQ.created_at}"` : '""'
+      ];
+    });
+
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(e => e.join(','))].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    const benchPart = benchFilter.toLowerCase().replace(/\s+/g, '_');
+    link.setAttribute('download', `question_hour_${benchPart}_${targetMode}_${Date.now()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    onShowToast('CSV Downloaded', `Exported ${rowsData.length} delegate records to CSV.`, 'success');
+  };
 
   const totalSubmitted = questions.length;
   const pendingCount = questions.filter(q => getCanonicalQuestionStatus(q) === 'Submitted').length;
@@ -507,22 +694,114 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
 
             </div>
 
-            {/* Real-time Submissions Progress Bar */}
-            <div className="pt-2 space-y-2">
-              <div className="flex items-center justify-between text-xs font-bold">
-                <span className="text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                  <Users className="w-3.5 h-3.5 text-amber-500" />
-                  <span>Participant Submission Progress</span>
-                </span>
-                <span className="text-amber-600 dark:text-amber-400 font-mono">
-                  {uniqueSubmittersCount} of {totalMembersCount} members asked a question ({progressPct}%)
-                </span>
+            {/* Real-time Submissions Progress Bar & Filter-Aware Controls */}
+            <div className="pt-2 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs font-bold">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Participant Submission Progress</span>
+                  </span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
+                    benchFilter === 'Opposition'
+                      ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30'
+                      : benchFilter === 'Ruling'
+                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                      : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30'
+                  }`}>
+                    {benchFilter === 'All' ? 'All Benches' : `${benchFilter} Bench`}
+                  </span>
+                  {ministryFilter !== 'All' && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/30 flex items-center gap-1">
+                      <Building2 className="w-2.5 h-2.5" />
+                      <span>{ministryFilter}</span>
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-amber-600 dark:text-amber-400 font-mono font-black">
+                    {totalMembersCount > 0 ? (
+                      `${uniqueSubmittersCount} of ${totalMembersCount} members asked a question (${progressPct}%)`
+                    ) : (
+                      '0 of 0 members asked a question — No eligible delegates'
+                    )}
+                  </span>
+                </div>
               </div>
+
+              {/* Progress Bar Track */}
               <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2.5 overflow-hidden">
                 <div
                   className="bg-gradient-to-r from-amber-500 to-emerald-500 h-2.5 rounded-full transition-all duration-500"
-                  style={{ width: `${progressPct}%` }}
+                  style={{ width: `${Math.min(100, Math.max(0, progressPct))}%` }}
                 />
+              </div>
+
+              {/* Submission Roster Action Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-slate-200/60 dark:border-slate-800/60">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSubmissionModalTab('submitted');
+                      setIsSubmissionModalOpen(true);
+                    }}
+                    className="px-3 py-1.5 rounded-xl text-xs font-extrabold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    title="View delegates who have submitted questions"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Submitted: {uniqueSubmittersCount}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSubmissionModalTab('not_submitted');
+                      setIsSubmissionModalOpen(true);
+                    }}
+                    className="px-3 py-1.5 rounded-xl text-xs font-extrabold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/30 hover:bg-rose-500/20 transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    title="View delegates who have not yet submitted questions"
+                  >
+                    <XCircle className="w-3.5 h-3.5" />
+                    <span>Not Submitted: {notSubmittedLearnersList.length}</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSubmissionModalTab('not_submitted');
+                      setIsSubmissionModalOpen(true);
+                    }}
+                    className="px-3 py-1.5 rounded-xl text-xs font-bold border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 text-slate-700 dark:text-slate-300 flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    title="Open the filter-aware Submission Roster modal"
+                  >
+                    <Eye className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Submission List</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleCopyFilteredSubmissionNames('not_submitted')}
+                    className="px-3 py-1.5 rounded-xl text-xs font-bold border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 text-slate-700 dark:text-slate-300 flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    title="Copy Not Submitted names to clipboard"
+                  >
+                    <Copy className="w-3.5 h-3.5 text-rose-500" />
+                    <span>Copy Names</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadFilteredSubmissionCSV('both')}
+                    className="px-3 py-1.5 rounded-xl text-xs font-bold border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 text-slate-700 dark:text-slate-300 flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    title="Download filter-aware CSV roster"
+                  >
+                    <Download className="w-3.5 h-3.5 text-emerald-500" />
+                    <span>Download CSV</span>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -1651,6 +1930,20 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
         eventName={storageService.getEvents().find(e => e.id === (authoritativeEventId || eventId))?.college_name || 'TN Assembly'}
         userRole={userRole}
         userSession={userSession}
+        onShowToast={onShowToast}
+      />
+
+      {/* Question Hour Submission Roster Modal */}
+      <SubmissionListModal
+        isOpen={isSubmissionModalOpen}
+        onClose={() => setIsSubmissionModalOpen(false)}
+        eventName={storageService.getEvents().find(e => e.id === (authoritativeEventId || eventId))?.college_name || targetSlug || 'TN Assembly'}
+        benchFilter={benchFilter}
+        onBenchFilterChange={(newBench) => setBenchFilter(newBench)}
+        ministryFilter={ministryFilter}
+        submittedList={submittedLearnersList}
+        notSubmittedList={notSubmittedLearnersList}
+        initialTab={submissionModalTab}
         onShowToast={onShowToast}
       />
 
