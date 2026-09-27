@@ -40,7 +40,8 @@ import {
   Tv,
   Eye,
   MessageSquare,
-  Star
+  Star,
+  ShieldAlert
 } from 'lucide-react';
 
 import { storageService } from '../../services/storageService';
@@ -92,35 +93,66 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
   const allEventAgenda = agenda.length >= 2 ? agenda : storageService.getAgenda(currentEvent?.id);
 
-  const currentAgendaList = allEventAgenda
-    .filter(a => activeDayTab === 'Pre-Event' ? (a.day === 'Pre-Event' || a.day.includes('Pre')) : a.day === activeDayTab)
-    .sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+  const currentAgendaList = useMemo(() => {
+    return allEventAgenda
+      .filter(a => activeDayTab === 'Pre-Event' ? (a.day === 'Pre-Event' || a.day.includes('Pre')) : a.day === activeDayTab)
+      .sort((a, b) => {
+        const orderA = a.order ?? (a as any).order_number;
+        const orderB = b.order ?? (b as any).order_number;
+        if (orderA !== undefined && orderB !== undefined && orderA !== orderB) {
+          return orderA - orderB;
+        }
+        const timeDiff = storageService.parseTimeToMinutes(a.time) - storageService.parseTimeToMinutes(b.time);
+        if (timeDiff !== 0) return timeDiff;
+        return (a.created_at || '').localeCompare(b.created_at || '');
+      });
+  }, [allEventAgenda, activeDayTab]);
 
-  const filteredAgendaList = currentAgendaList.filter(item => {
-    if (agendaFilter === 'SCORED_VOTED') {
-      return item.title.toLowerCase().includes('election') ||
-             item.title.toLowerCase().includes('bill') ||
-             item.title.toLowerCase().includes('debate') ||
-             item.speaker_role?.toLowerCase().includes('election');
+  const filteredAgendaList = useMemo(() => {
+    return currentAgendaList.filter(item => {
+      if (agendaFilter === 'SCORED_VOTED') {
+        return item.title.toLowerCase().includes('election') ||
+               item.title.toLowerCase().includes('bill') ||
+               item.title.toLowerCase().includes('debate') ||
+               item.speaker_role?.toLowerCase().includes('election');
+      }
+      return true;
+    });
+  }, [currentAgendaList, agendaFilter]);
+
+  const isDayStarted = useMemo(() => {
+    const hasStartedItem = currentAgendaList.some(a => a.is_current || a.status === 'In Progress' || a.status === 'Completed');
+    const persistedStarted = currentEvent?.id ? storageService.isDayStarted(currentEvent.id, activeDayTab) : false;
+    return hasStartedItem || persistedStarted;
+  }, [currentAgendaList, currentEvent?.id, activeDayTab]);
+
+  const activeAgendaItem = useMemo(() => {
+    const current = currentAgendaList.find(a => a.is_current);
+    if (current) return current;
+
+    if (isDayStarted && currentAgendaList.length > 0) {
+      return currentAgendaList.find(a => a.status === 'In Progress') ||
+             currentAgendaList.find(a => a.status !== 'Completed') ||
+             currentAgendaList[0];
     }
-    return true;
-  });
 
-  const [currentAgendaIndex, setCurrentAgendaIndex] = useState<number>(() => {
-    const idx = currentAgendaList.findIndex(a => a.is_current);
-    return idx >= 0 ? idx : Math.min(8, currentAgendaList.length - 1);
-  });
+    return currentAgendaList[0] || {
+      id: 'ag_curr',
+      event_id: currentEvent?.id || '',
+      day: activeDayTab,
+      time: '09:00 AM',
+      title: 'Registration Opens',
+      description: '30 min',
+      speaker_role: 'Registration Desk',
+      is_current: false
+    };
+  }, [currentAgendaList, isDayStarted, activeDayTab, currentEvent?.id]);
 
-  const activeAgendaItem = currentAgendaList[currentAgendaIndex] || currentAgendaList[0] || {
-    id: 'ag_curr',
-    event_id: currentEvent?.id || '',
-    day: 'Day 1',
-    time: '10:05 AM',
-    title: 'Speaker Election',
-    description: '10 min',
-    speaker_role: 'speaker_election',
-    is_current: true
-  };
+  const currentAgendaIndex = useMemo(() => {
+    if (!activeAgendaItem) return 0;
+    const idx = currentAgendaList.findIndex(a => a.id === activeAgendaItem.id);
+    return idx >= 0 ? idx : 0;
+  }, [currentAgendaList, activeAgendaItem]);
 
   // ── Speech Timer State ───────────────────────────────────────────────────
   const [timerDurationSec, setTimerDurationSec] = useState(() => {
@@ -384,12 +416,9 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     }
   };
 
-  // Sync active session and speaking floor data with persistent storage & realtime
+  // Sync speaking floor data with persistent storage & realtime (READ ONLY - do not overwrite agenda on mount)
   useEffect(() => {
     if (!currentEvent?.id) return;
-
-    // Set active session for speaking requests
-    storageService.setActiveSession(currentEvent.id, { id: activeAgendaItem.id, title: activeAgendaItem.title });
 
     const refreshSpeakingData = () => {
       if (!currentEvent?.id) return;
@@ -734,48 +763,81 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     }
   };
 
+  const handleStartDay = async () => {
+    if (!currentEvent?.id) return;
+    const startedItem = await storageService.startEventDay(currentEvent.id, activeDayTab);
+    if (startedItem) {
+      if (onSetCurrentAgendaItem) {
+        onSetCurrentAgendaItem(currentEvent.id, startedItem.id);
+      }
+      const dur = (startedItem.duration_minutes || 10) * 60;
+      setTimerDurationSec(dur);
+      setSecondsLeft(dur);
+      setIsTimerRunning(false);
+      storageService.saveLiveTimerState(currentEvent.id, {
+        durationSec: dur,
+        secondsLeft: dur,
+        isRunning: false,
+        updatedAt: Date.now()
+      });
+      onShowToast(`${activeDayTab} Started`, `Active Agenda: ${startedItem.title}`, 'success');
+    }
+  };
+
   const handleNextAgenda = () => {
+    if (!isDayStarted) {
+      onShowToast('Day Not Started', `Click [ START ${activeDayTab.toUpperCase()} ] to officially activate this day.`, 'info');
+      return;
+    }
     if (currentAgendaIndex < currentAgendaList.length - 1) {
       const nextIdx = currentAgendaIndex + 1;
-      setCurrentAgendaIndex(nextIdx);
       const nextItem = currentAgendaList[nextIdx];
       if (currentEvent) {
         storageService.setCurrentAgendaItem(currentEvent.id, nextItem.id);
         if (onSetCurrentAgendaItem) {
           onSetCurrentAgendaItem(currentEvent.id, nextItem.id);
         }
+        const dur = (nextItem.duration_minutes || 10) * 60;
+        setTimerDurationSec(dur);
+        setSecondsLeft(dur);
+        setIsTimerRunning(false);
         storageService.saveLiveTimerState(currentEvent.id, {
-          durationSec: timerDurationSec,
-          secondsLeft: timerDurationSec,
+          durationSec: dur,
+          secondsLeft: dur,
           isRunning: false,
           updatedAt: Date.now()
         });
       }
-      setSecondsLeft(timerDurationSec);
-      setIsTimerRunning(false);
       onShowToast('Next Session Item', nextItem.title, 'success');
+    } else {
+      onShowToast('Agenda Completed', `You have reached the last agenda item for ${activeDayTab}.`, 'info');
     }
   };
 
   const handlePrevAgenda = () => {
+    if (!isDayStarted) {
+      onShowToast('Day Not Started', `Click [ START ${activeDayTab.toUpperCase()} ] to officially activate this day.`, 'info');
+      return;
+    }
     if (currentAgendaIndex > 0) {
       const prevIdx = currentAgendaIndex - 1;
-      setCurrentAgendaIndex(prevIdx);
       const prevItem = currentAgendaList[prevIdx];
       if (currentEvent) {
         storageService.setCurrentAgendaItem(currentEvent.id, prevItem.id);
         if (onSetCurrentAgendaItem) {
           onSetCurrentAgendaItem(currentEvent.id, prevItem.id);
         }
+        const dur = (prevItem.duration_minutes || 10) * 60;
+        setTimerDurationSec(dur);
+        setSecondsLeft(dur);
+        setIsTimerRunning(false);
         storageService.saveLiveTimerState(currentEvent.id, {
-          durationSec: timerDurationSec,
-          secondsLeft: timerDurationSec,
+          durationSec: dur,
+          secondsLeft: dur,
           isRunning: false,
           updatedAt: Date.now()
         });
       }
-      setSecondsLeft(timerDurationSec);
-      setIsTimerRunning(false);
       onShowToast('Previous Session Item', prevItem.title, 'info');
     }
   };
@@ -813,22 +875,35 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   return (
     <div className="space-y-6 animate-fade-in pb-12">
 
-      {/* Top Quick Status & Projector View Bar (Matching 4th Image) */}
+      {/* Top Quick Status & Projector View Bar */}
       <div className="flex items-center justify-between bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl px-5 py-3 shadow-sm">
         <div className="flex items-center gap-3">
           <span className="px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-700/50 flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             {activeDayTab}
           </span>
+          <span className="text-xs text-slate-500 dark:text-slate-400 font-medium hidden sm:inline">
+            {isDayStarted ? 'LIVE / ACTIVE' : 'Not Started'}
+          </span>
           <button
             type="button"
             onClick={onOpenProjectorView || (() => window.open('/?projector=true', '_blank'))}
-            className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 flex items-center gap-1.5 transition-colors cursor-pointer ml-2"
           >
             <Monitor className="w-4 h-4 text-blue-500" />
             <span>Open Projector View</span>
           </button>
         </div>
+        {!isDayStarted && (
+          <button
+            type="button"
+            onClick={handleStartDay}
+            className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow-sm flex items-center gap-1.5 transition-all cursor-pointer"
+          >
+            <Play className="w-3.5 h-3.5 fill-current" />
+            <span>START {activeDayTab.toUpperCase()}</span>
+          </button>
+        )}
       </div>
       
       {/* 2-Column Responsive Layout matching User Reference Images 2 & 3 */}
@@ -839,21 +914,93 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
           {/* 1. CURRENT AGENDA ITEM CARD */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400">
-                <Clock className="w-3.5 h-3.5 text-amber-500" />
-                <span>Current Agenda Item</span>
+            
+            {/* Card Header: Day Status & Manual Control Badge */}
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-amber-500" />
+                <span className="text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                  {activeDayTab}
+                </span>
+
+                {isDayStarted ? (
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-700/50 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    LIVE / ACTIVE
+                  </span>
+                ) : (
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
+                    Not Started
+                  </span>
+                )}
+
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border border-amber-300 dark:border-amber-700/60 flex items-center gap-1">
+                  <ShieldAlert className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                  MANUAL AGENDA CONTROL
+                </span>
               </div>
-              <button
-                onClick={() => onShowToast('Add On-The-Spot Item', 'Enter an ad-hoc point of order or special debate', 'info')}
-                className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>On-the-spot item</span>
-              </button>
+
+              <div className="flex items-center gap-2">
+                {!isDayStarted ? (
+                  <button
+                    type="button"
+                    onClick={handleStartDay}
+                    className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white text-xs font-black shadow-md shadow-emerald-600/25 flex items-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    <span>START {activeDayTab.toUpperCase()}</span>
+                  </button>
+                ) : (
+                  <span className="px-3 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-700/50 text-xs font-black flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                    {activeDayTab.toUpperCase()} ACTIVE
+                  </span>
+                )}
+
+                <button
+                  onClick={() => onShowToast('Add On-The-Spot Item', 'Enter an ad-hoc point of order or special debate', 'info')}
+                  className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>On-the-spot item</span>
+                </button>
+              </div>
             </div>
 
+            {/* If Day is Not Started, show the prominent START DAY callout banner */}
+            {!isDayStarted ? (
+              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-wider">
+                      {activeDayTab} · Not Started
+                    </h4>
+                  </div>
+                  <p className="text-xs text-slate-600 dark:text-slate-300">
+                    First scheduled item: <strong className="text-slate-900 dark:text-white">{currentAgendaList[0]?.title || 'Agenda Item 1'}</strong> {currentAgendaList[0]?.time ? `(${currentAgendaList[0]?.time})` : ''}
+                  </p>
+                  <p className="text-[11px] text-amber-700 dark:text-amber-400 font-semibold flex items-center gap-1 mt-1">
+                    <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+                    <span>Agenda advances only when the Main Admin changes it.</span>
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleStartDay}
+                  className="px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black text-sm shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all cursor-pointer shrink-0"
+                >
+                  <Play className="w-4 h-4 fill-current" />
+                  <span>▶ START {activeDayTab.toUpperCase()}</span>
+                </button>
+              </div>
+            ) : null}
+
+            {/* Current Active Item Details */}
             <div>
+              <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 font-medium mb-1">
+                <span>Current Agenda Item ({currentAgendaIndex + 1} of {currentAgendaList.length})</span>
+                <span className="text-amber-600 dark:text-amber-400 font-semibold hidden sm:inline">Agenda advances only when the Main Admin changes it.</span>
+              </div>
               <div className="flex items-center gap-2.5 flex-wrap">
                 <h2 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
                   {activeAgendaItem.title}
@@ -889,20 +1036,22 @@ export const ControlTab: React.FC<ControlTabProps> = ({
             <div className="flex items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
               <button
                 onClick={handlePrevAgenda}
-                disabled={currentAgendaIndex === 0}
+                disabled={!isDayStarted || currentAgendaIndex === 0}
                 className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 flex items-center gap-1 transition-all cursor-pointer"
               >
                 <ChevronLeft className="w-3.5 h-3.5" /> Previous
               </button>
               <button
                 onClick={handleNextAgenda}
-                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-1 transition-all cursor-pointer"
+                disabled={!isDayStarted || currentAgendaIndex >= currentAgendaList.length - 1}
+                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 flex items-center gap-1 transition-all cursor-pointer"
               >
                 Skip
               </button>
               <button
                 onClick={handleNextAgenda}
-                className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-black shadow-md shadow-amber-500/20 flex items-center gap-1.5 transition-all ml-auto cursor-pointer"
+                disabled={!isDayStarted || currentAgendaIndex >= currentAgendaList.length - 1}
+                className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white text-xs font-black shadow-md shadow-amber-500/20 flex items-center gap-1.5 transition-all ml-auto cursor-pointer"
               >
                 <span>Next</span> <ChevronRight className="w-4 h-4" />
               </button>
@@ -1671,7 +1820,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
             {/* Scrollable Agenda Item List (YIP Style) */}
             <div className="space-y-1.5 max-h-[460px] overflow-y-auto pr-1">
-              {filteredAgendaList.map((item, idx) => {
+              {filteredAgendaList.map((item) => {
                 const isSelected = item.id === activeAgendaItem.id;
                 const isCompleted = item.status === 'Completed';
                 const durationText = item.duration_minutes
@@ -1688,7 +1837,6 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                         setResetConfirmItem(item);
                         return;
                       }
-                      setCurrentAgendaIndex(idx);
                       const targetItem = item;
                       if (currentEvent) {
                         storageService.setCurrentAgendaItem(currentEvent.id, targetItem.id);

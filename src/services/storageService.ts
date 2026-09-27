@@ -8862,6 +8862,14 @@ class StorageService {
     });
     this.setItem(STORAGE_KEYS.AGENDA, all);
 
+    const targetItem = all.find(a => a.id === itemId);
+    if (targetItem && targetItem.day) {
+      const key = `tn_assembly_started_days_${eventId}`;
+      const startedDays = this.getItem<Record<string, boolean>>(key, {});
+      startedDays[targetItem.day] = true;
+      this.setItem(key, startedDays);
+    }
+
     // Also sync projector settings selectedAgendaId
     const currentProj = this.getProjectorSettings(eventId);
     if (currentProj.selectedAgendaId !== itemId) {
@@ -8881,6 +8889,47 @@ class StorageService {
 
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+  }
+
+  public isDayStarted(eventId?: string, day?: string): boolean {
+    if (!eventId || !day) return false;
+    const dayItems = this.getAgenda(eventId).filter(a => {
+      if (day === 'Pre-Event') return a.day === 'Pre-Event' || a.day.includes('Pre');
+      return a.day === day;
+    });
+    const hasActiveOrCompleted = dayItems.some(a => a.is_current || a.status === 'In Progress' || a.status === 'Completed');
+    if (hasActiveOrCompleted) return true;
+
+    const key = `tn_assembly_started_days_${eventId}`;
+    const startedDays = this.getItem<Record<string, boolean>>(key, {});
+    return !!startedDays[day];
+  }
+
+  public async startEventDay(eventId: string, day: 'Pre-Event' | 'Day 1' | 'Day 2' | string): Promise<AgendaItem | null> {
+    if (!eventId || !day) return null;
+    const dayItems = this.getAgenda(eventId)
+      .filter(a => day === 'Pre-Event' ? (a.day === 'Pre-Event' || a.day.includes('Pre')) : a.day === day)
+      .sort((a, b) => {
+        const orderA = a.order ?? (a as any).order_number ?? 999;
+        const orderB = b.order ?? (b as any).order_number ?? 999;
+        if (orderA !== orderB) return orderA - orderB;
+        return this.parseTimeToMinutes(a.time) - this.parseTimeToMinutes(b.time);
+      });
+
+    if (dayItems.length === 0) return null;
+
+    // Mark day as started in persistent store
+    const key = `tn_assembly_started_days_${eventId}`;
+    const startedDays = this.getItem<Record<string, boolean>>(key, {});
+    startedDays[day] = true;
+    this.setItem(key, startedDays);
+
+    // If an item in this day is already is_current, preserve it; otherwise activate the first item
+    const existingCurrent = dayItems.find(a => a.is_current);
+    const targetItem = existingCurrent || dayItems[0];
+
+    this.setCurrentAgendaItem(eventId, targetItem.id);
+    return targetItem;
   }
 
   // ── ASSEMBLY SPEAKING FLOOR & HAND-RAISE SYSTEM ─────────────────────────
@@ -8951,14 +9000,16 @@ class StorageService {
       const agenda = this.getAgenda(eventId);
       const current = agenda.find(a => a.is_current);
       if (current) return { id: current.id, title: current.title };
-      if (agenda.length > 0) return { id: agenda[0].id, title: agenda[0].title };
     }
-    return { id: 'speaker_election', title: 'Speaker Election' };
+    return { id: '', title: '' };
   }
 
   public async setActiveSession(eventId: string, session: { id: string; title: string }): Promise<void> {
-    if (!eventId) return;
-    this.setCurrentAgendaItem(eventId, session.id);
+    if (!eventId || !session?.id) return;
+    const current = this.getActiveSession(eventId);
+    if (current.id !== session.id) {
+      this.setCurrentAgendaItem(eventId, session.id);
+    }
   }
 
   public getSpeakingRequests(eventId?: string, sessionId?: string): SpeakingRequest[] {

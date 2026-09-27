@@ -520,38 +520,58 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
     return 'Assembly Debate & Floor Open';
   }, [liveBill, liveFlashVote, liveElection, projectorSettings?.displayScene, activeSpeakingTurn]);
 
-  // Agenda items: Current, Next, Upcoming, Completed
+  // Agenda items: Current, Next, Upcoming, Completed scoped to the active day
   const currentAgendaItem = useMemo(() => {
     const cur = agenda.find(a => a.is_current);
     if (cur) return cur;
-    return agenda.find(a => a.id === activeSession.id) || agenda[0] || null;
+    if (activeSession.id) {
+      const match = agenda.find(a => a.id === activeSession.id);
+      if (match) return match;
+    }
+    return agenda.find(a => a.status === 'In Progress') || null;
   }, [agenda, activeSession.id]);
+
+  const currentDayAgenda = useMemo(() => {
+    const targetDay = currentAgendaItem?.day || 'Day 1';
+    return agenda
+      .filter(a => targetDay === 'Pre-Event' ? (a.day === 'Pre-Event' || a.day.includes('Pre')) : a.day === targetDay)
+      .sort((a, b) => {
+        const orderA = a.order ?? (a as any).order_number;
+        const orderB = b.order ?? (b as any).order_number;
+        if (orderA !== undefined && orderB !== undefined && orderA !== orderB) {
+          return orderA - orderB;
+        }
+        const timeDiff = storageService.parseTimeToMinutes(a.time) - storageService.parseTimeToMinutes(b.time);
+        if (timeDiff !== 0) return timeDiff;
+        return (a.created_at || '').localeCompare(b.created_at || '');
+      });
+  }, [agenda, currentAgendaItem?.day]);
 
   const currentIndex = useMemo(() => {
     if (!currentAgendaItem) return -1;
-    return agenda.findIndex(a => a.id === currentAgendaItem.id);
-  }, [agenda, currentAgendaItem]);
+    return currentDayAgenda.findIndex(a => a.id === currentAgendaItem.id);
+  }, [currentDayAgenda, currentAgendaItem]);
 
   const nextAgendaItem = useMemo(() => {
-    if (currentIndex >= 0 && currentIndex < agenda.length - 1) {
-      return agenda[currentIndex + 1];
+    if (currentIndex >= 0 && currentIndex < currentDayAgenda.length - 1) {
+      return currentDayAgenda[currentIndex + 1];
     }
     return null;
-  }, [agenda, currentIndex]);
+  }, [currentDayAgenda, currentIndex]);
 
   const upcomingAgendaItems = useMemo(() => {
-    if (currentIndex >= 0 && currentIndex < agenda.length - 2) {
-      return agenda.slice(currentIndex + 2);
+    if (currentIndex >= 0 && currentIndex < currentDayAgenda.length - 2) {
+      return currentDayAgenda.slice(currentIndex + 2);
     }
     return [];
-  }, [agenda, currentIndex]);
+  }, [currentDayAgenda, currentIndex]);
 
   const completedAgendaItems = useMemo(() => {
     if (currentIndex > 0) {
-      return agenda.slice(0, currentIndex).reverse();
+      return currentDayAgenda.slice(0, currentIndex).reverse();
     }
-    return agenda.filter(a => a.status === 'Completed');
-  }, [agenda, currentIndex]);
+    return currentDayAgenda.filter(a => a.status === 'Completed');
+  }, [currentDayAgenda, currentIndex]);
 
   const isUrgentDiscussion = useMemo(() => {
     const t = (activeSession.title || '').toLowerCase();
