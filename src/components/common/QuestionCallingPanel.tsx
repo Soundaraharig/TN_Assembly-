@@ -321,7 +321,7 @@ export const QuestionCallingPanel: React.FC<QuestionCallingPanelProps> = ({
               </div>
             </div>
 
-            <div className="space-y-1">
+            <div className="space-y-1 w-full min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-black text-base md:text-lg text-slate-900 dark:text-white break-words">
                   {activeId.fullName}
@@ -366,13 +366,13 @@ export const QuestionCallingPanel: React.FC<QuestionCallingPanelProps> = ({
         const nextId = getMemberIdentity(nextQuestionToCall);
         return (
           /* ── NEXT QUESTION CARD (When floor is open) ── */
-          <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
-            <div className="space-y-1 min-w-0">
+          <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/40 flex flex-col lg:flex-row lg:items-center justify-between gap-4 shadow-xs">
+            <div className="flex-1 min-w-0 w-full space-y-1.5">
               <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 shrink-0">
                   NEXT QUESTION
                 </span>
-                <span className="font-mono text-sm font-black text-amber-600 dark:text-amber-400">
+                <span className="font-mono text-sm font-black text-amber-600 dark:text-amber-400 shrink-0">
                   #{nextQuestionToCall.calling_order || nextQuestionToCall.queue_order || 1}
                 </span>
               </div>
@@ -381,12 +381,12 @@ export const QuestionCallingPanel: React.FC<QuestionCallingPanelProps> = ({
                   {nextId.fullName}
                 </span>
                 {nextId.participantDisplay && (
-                  <span className="px-1.5 py-0.5 rounded-md font-mono font-bold text-xs bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30">
+                  <span className="px-1.5 py-0.5 rounded-md font-mono font-bold text-xs bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30 shrink-0">
                     {nextId.participantDisplay}
                   </span>
                 )}
                 <span
-                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold shrink-0 ${
                     nextQuestionToCall.bench === 'Ruling'
                       ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
                       : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
@@ -394,24 +394,24 @@ export const QuestionCallingPanel: React.FC<QuestionCallingPanelProps> = ({
                 >
                   {nextQuestionToCall.bench}
                 </span>
-                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300 break-words">
                   {nextQuestionToCall.ministry}
                 </span>
               </div>
               <div className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400 break-words">
                 {nextId.constituencyFull}
               </div>
-              <p className="text-xs text-slate-600 dark:text-slate-400 italic line-clamp-2">
+              <p className="text-xs md:text-sm text-slate-700 dark:text-slate-300 font-serif italic pt-0.5 leading-relaxed break-words whitespace-normal">
                 "{nextQuestionToCall.question_text}"
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 self-stretch sm:self-auto shrink-0">
+            <div className="flex flex-wrap items-center gap-2 shrink-0 pt-1 lg:pt-0">
               <button
                 type="button"
                 disabled={isCallingNextQ}
                 onClick={() => handleCallQuestion(nextQuestionToCall)}
-                className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/20 cursor-pointer transition-all self-stretch sm:self-auto shrink-0 disabled:opacity-50"
+                className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/20 cursor-pointer transition-all shrink-0 disabled:opacity-50"
               >
                 <Play className="w-3.5 h-3.5 fill-slate-950" />
                 <span>CALL QUESTION</span>
@@ -419,7 +419,7 @@ export const QuestionCallingPanel: React.FC<QuestionCallingPanelProps> = ({
               <button
                 type="button"
                 onClick={() => handleSetAsCurrentQuestion(nextQuestionToCall)}
-                className="px-3 py-2 rounded-xl text-xs font-bold text-amber-700 dark:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 flex items-center gap-1.5 cursor-pointer transition-colors self-stretch sm:self-auto shrink-0"
+                className="px-3 py-2 rounded-xl text-xs font-bold text-amber-700 dark:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 flex items-center gap-1.5 cursor-pointer transition-colors shrink-0"
                 title="Designate as official current question"
               >
                 <span>SET AS CURRENT</span>
@@ -427,7 +427,7 @@ export const QuestionCallingPanel: React.FC<QuestionCallingPanelProps> = ({
               <button
                 type="button"
                 onClick={() => setInspectQuestion(nextQuestionToCall)}
-                className="px-3 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 cursor-pointer transition-colors self-stretch sm:self-auto shrink-0"
+                className="px-3 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 cursor-pointer transition-colors shrink-0"
               >
                 <Eye className="w-3.5 h-3.5 text-amber-500" />
                 <span>VIEW FULL</span>

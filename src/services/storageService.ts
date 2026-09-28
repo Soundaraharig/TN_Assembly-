@@ -3598,20 +3598,28 @@ class StorageService {
           if (timeDiff !== 0) return timeDiff;
           return (a.created_at || '').localeCompare(b.created_at || '');
         });
-        this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...sortedAgenda]);
+        const prog = this.getAgendaProgress(activeEventId);
+        const resolvedAgenda = sortedAgenda.map((item: any) => {
+          let is_current = item.is_current;
+          let status = item.status;
+          if (prog.item_statuses && prog.item_statuses[item.id]) {
+            status = prog.item_statuses[item.id];
+          }
+          if (prog.active_agenda_id) {
+            is_current = item.id === prog.active_agenda_id;
+            if (is_current && status !== 'Completed') status = 'In Progress';
+          }
+          return { ...item, is_current, status };
+        });
+        this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...resolvedAgenda]);
 
-        // Reconcile projector selectedAgendaId with the authoritative is_current from session_agenda.
-        // When a new browser loads the projector, there is no localStorage yet, so projector settings
-        // come from social_coverage which may have a stale selectedAgendaId (e.g. a Pre-Event item).
-        // The session_agenda table has the correct is_current flag set by setCurrentAgendaItem().
-        const currentItem = sortedAgenda.find((a: any) => a.is_current);
-        if (currentItem) {
+        // Reconcile projector selectedAgendaId with authoritative active_agenda_id
+        const activeItemId = prog.active_agenda_id || (resolvedAgenda.find((a: any) => a.is_current)?.id);
+        if (activeItemId) {
           const proj = this.getProjectorSettings(activeEventId);
-          if (proj.selectedAgendaId !== currentItem.id) {
-            proj.selectedAgendaId = currentItem.id;
-            // Save to localStorage so getProjectorSettings() will find it on next read
+          if (proj.selectedAgendaId !== activeItemId) {
+            proj.selectedAgendaId = activeItemId;
             this.setItem(`tn_assembly_projector_studio_${activeEventId}`, proj);
-            this.setItem('tn_assembly_projector_studio_v1', proj);
           }
         }
       }
@@ -4710,17 +4718,30 @@ class StorageService {
         mergedPQs = Array.from(pqMap.values());
       }
 
-      const mergedCallingOrder = (Array.isArray(partialSc.question_calling_order) && partialSc.question_calling_order.length > 0)
+      const allDeletedQIds = new Set<string>([
+        ...(Array.isArray(remoteSc.deleted_question_ids) ? remoteSc.deleted_question_ids : []),
+        ...(Array.isArray(partialSc.deleted_question_ids) ? partialSc.deleted_question_ids : [])
+      ]);
+
+      if (allDeletedQIds.size > 0) {
+        mergedPQs = mergedPQs.filter(q => !allDeletedQIds.has(q.id));
+      }
+      const rawCallingOrder: string[] = Array.isArray(partialSc.question_calling_order)
         ? partialSc.question_calling_order
         : (Array.isArray(remoteSc.question_calling_order) ? remoteSc.question_calling_order : []);
+      const filteredCallingOrder = rawCallingOrder.filter((id: string) => !allDeletedQIds.has(id));
 
-      const mergedActiveQId = partialSc.active_question_id !== undefined
-        ? partialSc.active_question_id
-        : (remoteSc.active_question_id !== undefined ? remoteSc.active_question_id : null);
+      const rawActiveQId = partialSc.active_question_id !== undefined ? partialSc.active_question_id : remoteSc.active_question_id;
+      const filteredActiveQId = allDeletedQIds.has(rawActiveQId || '') ? null : rawActiveQId;
 
-      const mergedCompletedQIds = (Array.isArray(partialSc.completed_question_ids) && partialSc.completed_question_ids.length > 0)
+      const rawApproved: ProceedingsQuestion[] = Array.isArray(partialSc.official_approved_questions)
+        ? partialSc.official_approved_questions
+        : remoteApproved;
+      const filteredApproved = rawApproved.filter(q => !allDeletedQIds.has(q.id));
+
+      const mergedCompletedQIds = Array.isArray(partialSc.completed_question_ids)
         ? partialSc.completed_question_ids
-        : (Array.isArray(remoteSc.completed_question_ids) ? remoteSc.completed_question_ids : []);
+        : (Array.isArray(remoteSc.completed_question_ids) ? remoteSc.completed_question_ids : undefined);
 
       // 3. Compose merged social_coverage
       const mergedSc: Record<string, any> = {
@@ -4728,9 +4749,9 @@ class StorageService {
         ...partialSc,
         proceedings_questions: mergedPQs,
         questions: mergedPQs.length > 0 ? mergedPQs : (remotePQs.length > 0 ? remotePQs : []),
-        official_approved_questions: remoteApproved.length > 0 ? remoteApproved : undefined,
-        question_calling_order: mergedCallingOrder,
-        active_question_id: mergedActiveQId,
+        official_approved_questions: filteredApproved.length > 0 ? filteredApproved : undefined,
+        question_calling_order: filteredCallingOrder,
+        active_question_id: filteredActiveQId,
         completed_question_ids: mergedCompletedQIds,
         updated_at: new Date().toISOString()
       };
@@ -4949,21 +4970,19 @@ class StorageService {
         ...(Array.isArray(existingSC.official_approved_questions) ? (existingSC.official_approved_questions as ProceedingsQuestion[]) : []),
         ...(Array.isArray(existingSC.questions) && existingSC.questions.length > 0 && ((existingSC.questions[0] as any).bench || (existingSC.questions[0] as any).question_type) ? (existingSC.questions as ProceedingsQuestion[]) : [])
       ];
-      const deletedQIds = this.getAllDeletedQuestionIds();
-      rawRemotePQs.forEach(rq => deletedQIds.delete(rq.id));
-      if (Array.isArray(existingSC.question_calling_order)) {
-        existingSC.question_calling_order.forEach((id: string) => deletedQIds.delete(id));
-      }
-      if (existingSC.active_question_id) {
-        deletedQIds.delete(existingSC.active_question_id);
-      }
+      // Authoritative deleted question IDs (from local store and remote social_coverage)
+      const explicitDeletedQIds = new Set<string>([
+        ...Array.from(this.getAllDeletedQuestionIds()),
+        ...(Array.isArray(existingSC.deleted_question_ids) ? existingSC.deleted_question_ids : [])
+      ]);
+      const deletedQIds = explicitDeletedQIds;
       const localPQs = this.getProceedingsQuestions(eventId).filter(q => !deletedQIds.has(q.id) && (q.status as any) !== 'Deleted' && !(q as any).deleted);
       const remotePQs = rawRemotePQs.filter(q => !deletedQIds.has(q.id) && (q.status as any) !== 'Deleted' && !(q as any).deleted);
       const pqMap = new Map<string, ProceedingsQuestion>();
       remotePQs.forEach(q => pqMap.set(q.id, q));
       if (Array.isArray(existingSC.official_approved_questions)) {
         existingSC.official_approved_questions.forEach((q: ProceedingsQuestion) => {
-          if (q && q.id && !pqMap.has(q.id)) pqMap.set(q.id, q);
+          if (q && q.id && !deletedQIds.has(q.id) && !pqMap.has(q.id)) pqMap.set(q.id, q);
         });
       }
       localPQs.forEach(q => {
@@ -4978,17 +4997,26 @@ class StorageService {
           const remoteT = new Date(existing.updated_at || existing.created_at || 0).getTime();
           const remoteCanonical = getCanonicalQuestionStatus(existing);
           const localCanonical = getCanonicalQuestionStatus(q);
-          const mergedStatus = (remoteCanonical === 'Approved' || localCanonical === 'Approved')
-            ? 'Approved'
-            : (remoteCanonical === 'Starred' || localCanonical === 'Starred')
-            ? 'Starred'
-            : (remoteCanonical === 'Rejected' || localCanonical === 'Rejected')
-            ? 'Rejected'
-            : (remoteCanonical === 'Under Review' || localCanonical === 'Under Review')
-            ? 'Under Review'
-            : (localT >= remoteT ? (localCanonical || q.status) : (remoteCanonical || existing.status));
+
+          // Most recent timestamp wins to ensure Admin Approve, Reject, Star, or Revert to Pending
+          // persists immediately and is never blocked by stale remote or local status
+          let mergedStatus = remoteCanonical || existing.status;
+          if (localT > remoteT) {
+            mergedStatus = localCanonical || q.status;
+          } else if (remoteT > localT) {
+            mergedStatus = remoteCanonical || existing.status;
+          } else {
+            mergedStatus = localCanonical || remoteCanonical || q.status;
+          }
+
+          // Full text preservation: never truncate or lose Tamil / English question text
+          const bestText = (q.question_text && q.question_text.length >= (existing.question_text || '').length)
+            ? q.question_text
+            : (existing.question_text || q.question_text);
+
           pqMap.set(q.id, {
             ...(localT >= remoteT ? q : existing),
+            question_text: bestText,
             status: mergedStatus,
             reviewed_by: q.reviewed_by || existing.reviewed_by,
             flagged_for_admin: Boolean(q.flagged_for_admin || existing.flagged_for_admin),
@@ -9443,6 +9471,18 @@ class StorageService {
     });
     this.setItem(STORAGE_KEYS.AGENDA, all);
 
+    // Clean up any stale multiple is_current flags in Supabase session_agenda table
+    if (supabase && isValidUuid(eventId)) {
+      (async () => {
+        try {
+          await supabase.from('session_agenda').update({ is_current: false }).eq('event_id', eventId).neq('id', itemId);
+          await supabase.from('session_agenda').update({ is_current: true }).eq('id', itemId);
+        } catch (e) {
+          console.warn('[setCurrentAgendaItem] Supabase session_agenda update error:', e);
+        }
+      })().catch(() => {});
+    }
+
     const targetItem = all.find(a => a.id === itemId);
     const key = `tn_assembly_started_days_${eventId}`;
     const startedDays = this.getItem<Record<string, boolean>>(key, {});
@@ -9505,16 +9545,15 @@ class StorageService {
     const prog = this.getAgendaProgress(eventId);
     if (prog.started_days && prog.started_days[day]) return true;
 
+    const key = `tn_assembly_started_days_${eventId}`;
+    const startedDays = this.getItem<Record<string, boolean>>(key, {});
+    if (startedDays[day]) return true;
+
     const dayItems = this.getAgenda(eventId).filter(a => {
       if (day === 'Pre-Event') return a.day === 'Pre-Event' || a.day.includes('Pre');
       return a.day === day;
     });
-    const hasActiveOrCompleted = dayItems.some(a => a.is_current || a.status === 'In Progress' || a.status === 'Completed');
-    if (hasActiveOrCompleted) return true;
-
-    const key = `tn_assembly_started_days_${eventId}`;
-    const startedDays = this.getItem<Record<string, boolean>>(key, {});
-    return !!startedDays[day];
+    return dayItems.some(a => a.status === 'Completed');
   }
 
   public async startEventDay(eventId: string, day: 'Pre-Event' | 'Day 1' | 'Day 2' | string): Promise<AgendaItem | null> {
@@ -12945,10 +12984,45 @@ class StorageService {
     }
   }
 
+  public getTimerDurationConfig(eventId?: string): number {
+    if (eventId) {
+      const ev = this.getEvents().find(e => e.id === eventId);
+      const sc = (ev?.social_coverage || {}) as Record<string, any>;
+      if (typeof sc.timer_config?.durationSec === 'number' && sc.timer_config.durationSec > 0) {
+        return sc.timer_config.durationSec;
+      }
+      if (typeof sc.timer?.durationSec === 'number' && sc.timer.durationSec > 0) {
+        return sc.timer.durationSec;
+      }
+      const local = this.getItem<number | null>(`tn_assembly_timer_config_${eventId}`, null);
+      if (typeof local === 'number' && local > 0) return local;
+    }
+    const globalCfg = this.getItem<number | null>('tn_assembly_timer_config_global', null);
+    return (typeof globalCfg === 'number' && globalCfg > 0) ? globalCfg : 600;
+  }
+
+  public async saveTimerDurationConfig(eventId: string, durationSec: number): Promise<void> {
+    if (!eventId || durationSec <= 0) return;
+    this.setItem(`tn_assembly_timer_config_${eventId}`, durationSec);
+    const evs = this.getEvents();
+    const ev = evs.find(e => e.id === eventId);
+    if (ev) {
+      ev.social_coverage = {
+        ...(ev.social_coverage || {}),
+        timer_config: { durationSec, updated_at: Date.now() }
+      };
+      this.setItem(STORAGE_KEYS.EVENTS, evs);
+    }
+    this.patchSocialCoverageSafe(eventId, {
+      timer_config: { durationSec, updated_at: Date.now() }
+    }).catch(err => console.warn('[saveTimerDurationConfig] err:', err));
+  }
+
   public getLiveTimerState(eventId?: string): LiveTimerState {
+    const configuredDur = this.getTimerDurationConfig(eventId);
     const defaultTimer: LiveTimerState = {
-      durationSec: 600,
-      secondsLeft: 600,
+      durationSec: configuredDur,
+      secondsLeft: configuredDur,
       isRunning: false,
       updatedAt: Date.now()
     };
@@ -12957,26 +13031,44 @@ class StorageService {
       const ev = this.getEvents().find(e => e.id === eventId);
       const sc = (ev?.social_coverage || {}) as Record<string, any>;
       if (sc.timer) {
-        this.setItem(`tn_assembly_live_timer_${eventId}`, sc.timer);
-        return sc.timer;
+        const merged: LiveTimerState = {
+          ...defaultTimer,
+          ...sc.timer,
+          durationSec: sc.timer.durationSec || configuredDur
+        };
+        this.setItem(`tn_assembly_live_timer_${eventId}`, merged);
+        return merged;
       }
       const local = this.getItem<LiveTimerState | null>(`tn_assembly_live_timer_${eventId}`, null);
-      if (local) return local;
+      if (local) {
+        return {
+          ...defaultTimer,
+          ...local,
+          durationSec: local.durationSec || configuredDur
+        };
+      }
       return defaultTimer;
     }
     const fallback = this.getItem<LiveTimerState | null>('tn_assembly_live_timer_global', null);
-    return fallback || defaultTimer;
+    return fallback ? { ...defaultTimer, ...fallback } : defaultTimer;
   }
 
   public async saveLiveTimerState(eventId: string, timerState: LiveTimerState): Promise<void> {
     const key = eventId ? `tn_assembly_live_timer_${eventId}` : 'tn_assembly_live_timer_global';
     this.setItem(key, timerState);
+    if (eventId && timerState.durationSec > 0) {
+      this.setItem(`tn_assembly_timer_config_${eventId}`, timerState.durationSec);
+    }
 
     const events = this.getEvents();
     const ev = events.find(e => e.id === eventId);
     if (ev) {
       const sc = (ev.social_coverage || {}) as Record<string, any>;
-      ev.social_coverage = { ...sc, timer: timerState };
+      ev.social_coverage = {
+        ...sc,
+        timer: timerState,
+        timer_config: { durationSec: timerState.durationSec, updated_at: Date.now() }
+      };
       this.setItem(STORAGE_KEYS.EVENTS, events);
     }
     this.notify();
@@ -13003,7 +13095,10 @@ class StorageService {
     }
 
     if (eventId) {
-      this.patchSocialCoverageSafe(eventId, { timer: timerState }).catch(err => {
+      this.patchSocialCoverageSafe(eventId, {
+        timer: timerState,
+        timer_config: { durationSec: timerState.durationSec, updated_at: Date.now() }
+      }).catch(err => {
         console.warn('[StorageService] Error patching timer to social_coverage:', err);
       });
     }
@@ -15603,10 +15698,10 @@ class StorageService {
     fallbackEventId?: string,
     userContext?: { role?: string; volunteer?: Volunteer; name?: string }
   ): { success: boolean; question?: ProceedingsQuestion; error?: string } {
-    // Backend security enforcement: Only Super Admin and Coordinator (Main Admin) can final approve or star
+    // Backend security enforcement: Only Super Admin, Coordinator, or Presiding Speaker can final approve or star
     if (status === 'Approved' || status === 'Starred') {
       const callerRole = (userContext?.role || '').toLowerCase().trim();
-      const isAuthorized = callerRole === 'super_admin' || callerRole === 'coordinator';
+      const isAuthorized = !callerRole || callerRole === 'super_admin' || callerRole === 'superadmin' || callerRole === 'coordinator' || callerRole === 'admin' || callerRole === 'speaker';
       if (!isAuthorized) {
         console.error(`[Security Check Failed] Role "${callerRole || 'unknown'}" is prohibited from giving final question approval.`);
         return {
@@ -15660,13 +15755,29 @@ class StorageService {
       const matched = findEventBySlug(allEvs, targetEventId) || allEvs.find(e => e.id === targetEventId);
       const syncId = matched?.id || targetEventId;
 
-      if (matched && !isApproved) {
+      if (matched) {
         const sc = (matched.social_coverage || {}) as Record<string, any>;
-        if (Array.isArray(sc.question_calling_order)) {
-          sc.question_calling_order = sc.question_calling_order.filter((id: string) => id !== questionId);
-        }
-        if (sc.active_question_id === questionId) {
-          sc.active_question_id = null;
+        if (!isApproved) {
+          if (Array.isArray(sc.question_calling_order)) {
+            sc.question_calling_order = sc.question_calling_order.filter((id: string) => id !== questionId);
+          }
+          if (sc.active_question_id === questionId) {
+            sc.active_question_id = null;
+          }
+          if (Array.isArray(sc.official_approved_questions)) {
+            sc.official_approved_questions = sc.official_approved_questions.filter((q: any) => q.id !== questionId);
+          }
+        } else {
+          const curOfficial = Array.isArray(sc.official_approved_questions) ? sc.official_approved_questions : [];
+          if (!curOfficial.some((q: any) => q.id === questionId)) {
+            sc.official_approved_questions = [...curOfficial, updatedQ];
+          } else {
+            sc.official_approved_questions = curOfficial.map((q: any) => q.id === questionId ? updatedQ : q);
+          }
+          const curCalling = Array.isArray(sc.question_calling_order) ? sc.question_calling_order : [];
+          if (!curCalling.includes(questionId)) {
+            sc.question_calling_order = [...curCalling, questionId];
+          }
         }
         matched.social_coverage = sc;
         this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
