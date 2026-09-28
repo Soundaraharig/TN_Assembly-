@@ -7,8 +7,7 @@ import type {
   LiveFlashVote,
   BillProceeding,
   SpeakingRequest,
-  SpeakingTurn,
-  ProceedingsQuestion
+  SpeakingTurn
 } from '../../types';
 import {
   storageService,
@@ -33,10 +32,7 @@ import {
   Award,
   Layers,
   HelpCircle,
-  Star,
   X,
-  MessageSquare,
-  Play,
   History,
   Search,
   ChevronDown,
@@ -46,6 +42,7 @@ import {
   formatMemberConstituency,
   isPresidingOfficer
 } from '../../utils/memberIdentity';
+import { QuestionCallingPanel } from '../common/QuestionCallingPanel';
 
 export interface SpeakerDashboardProps {
   speaker: Learner;
@@ -124,19 +121,6 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
   const [historySessionFilter, setHistorySessionFilter] = useState<string>('all');
   const [selectedHistoryLearnerId, setSelectedHistoryLearnerId] = useState<string | null>(null);
 
-  // ── Question Hour State (read-only, same source as Main Admin ControlTab) ──
-  const [questionsList, setQuestionsList] = useState<ProceedingsQuestion[]>(() =>
-    eventId
-      ? storageService.getProceedingsQuestions(eventId).filter(q => q.status === 'Approved' || q.status === 'Starred')
-      : []
-  );
-  const [activeQuestionId, setActiveQuestionId] = useState<string | null>(() =>
-    eventId ? storageService.getActiveQuestionId(eventId) : null
-  );
-  const [inspectQuestion, setInspectQuestion] = useState<ProceedingsQuestion | null>(null);
-  const [isCallingQuestion, setIsCallingQuestion] = useState<boolean>(false);
-  const [isCompletingQuestion, setIsCompletingQuestion] = useState<boolean>(false);
-
   // Map of learners by id for quick lookup of constituency / bench
   const learnersMap = useMemo(() => {
     return new Map<string, Learner>(learners.map(l => [l.id, l]));
@@ -164,12 +148,6 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
       setLearners(allLearners);
     }
     setTurnCounts(storageService.getSpeakingTurnCounts(eventId, currentSession.id));
-    // Sync Question Hour data (same source as Main Admin ControlTab)
-    const qs = storageService.getProceedingsQuestions(eventId).filter(
-      q => q.status === 'Approved' || q.status === 'Starred'
-    );
-    setQuestionsList(qs);
-    setActiveQuestionId(storageService.getActiveQuestionId(eventId));
   }, [eventId]);
 
   // Initial load & listeners (compact realtime event bindings, zero aggressive polling)
@@ -377,67 +355,6 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
     }
   };
 
-  // Parliamentary Question Calling Handlers (Question Hour / Urgent Discussion)
-  const handleCallQuestion = async (q: ProceedingsQuestion) => {
-    if (!eventId || isCallingQuestion) return;
-    setIsCallingQuestion(true);
-    try {
-      await storageService.setActiveQuestion(eventId, q.id, {
-        role: speaker?.role || 'Speaker',
-        name: speaker?.full_name || 'Speaker'
-      });
-      syncFloorData();
-      onShowToast(
-        'Question Called',
-        `Question #${q.calling_order || q.queue_order || 1} by ${q.student_name} called to floor and projected.`,
-        'success'
-      );
-    } catch (err: any) {
-      onShowToast('Error', err?.message || 'Failed to call question.', 'error');
-    } finally {
-      setIsCallingQuestion(false);
-    }
-  };
-
-  const handleCompleteQuestion = async (q: ProceedingsQuestion) => {
-    if (!eventId || isCompletingQuestion) return;
-    setIsCompletingQuestion(true);
-    try {
-      await storageService.completeActiveQuestion(eventId, q.id, {
-        role: speaker?.role || 'Speaker',
-        name: speaker?.full_name || 'Speaker'
-      });
-      syncFloorData();
-      onShowToast(
-        'Question Answered',
-        `Question #${q.calling_order || q.queue_order || 1} answered and completed. Ready for next question.`,
-        'info'
-      );
-    } catch (err: any) {
-      onShowToast('Error', err?.message || 'Failed to complete question.', 'error');
-    } finally {
-      setIsCompletingQuestion(false);
-    }
-  };
-
-  const handleSkipQuestion = async (q: ProceedingsQuestion) => {
-    if (!eventId) return;
-    try {
-      await storageService.skipActiveQuestion(eventId, q.id, {
-        role: speaker?.role || 'Speaker',
-        name: speaker?.full_name || 'Speaker'
-      });
-      syncFloorData();
-      onShowToast(
-        'Question Yielded',
-        `Question #${q.calling_order || q.queue_order || 1} yielded.`,
-        'info'
-      );
-    } catch (err: any) {
-      onShowToast('Error', err?.message || 'Failed to yield question.', 'error');
-    }
-  };
-
   // Hands Down action (clear waiting queue with confirmation)
   const handleConfirmHandsDown = async () => {
     setIsLoweringHands(true);
@@ -573,56 +490,6 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
     return currentDayAgenda.filter(a => a.status === 'Completed');
   }, [currentDayAgenda, currentIndex]);
 
-  const isUrgentDiscussion = useMemo(() => {
-    const t1 = (activeSession.title || '').toLowerCase();
-    const t2 = (currentAgendaItem?.title || '').toLowerCase();
-    return (
-      t1.includes('urgent') || t1.includes('public importance') || t1.includes('zero hour') ||
-      t2.includes('urgent') || t2.includes('public importance') || t2.includes('zero hour')
-    );
-  }, [activeSession.title, currentAgendaItem?.title]);
-
-  const isQuestionHourSession = useMemo(() => {
-    const t1 = (activeSession.title || '').toLowerCase();
-    const t2 = (currentAgendaItem?.title || '').toLowerCase();
-    return (
-      t1.includes('question hour') || t1.includes('question') ||
-      t2.includes('question hour') || t2.includes('question')
-    );
-  }, [activeSession.title, currentAgendaItem?.title]);
-
-  // ── Authoritative Question Calling Order State (Exact Same Source & Ordering as Main Admin ControlTab) ──
-  const activeQuestion = useMemo(() => {
-    return questionsList.find(q => q.id === activeQuestionId) || questionsList.find(q => q.called_status === 'calling') || null;
-  }, [questionsList, activeQuestionId]);
-
-  const uncalledQuestions = useMemo(() => {
-    return questionsList.filter(q => q.called_status !== 'completed' && q.id !== activeQuestion?.id);
-  }, [questionsList, activeQuestion]);
-
-  const nextQuestionToCall = useMemo(() => {
-    return uncalledQuestions[0] || null;
-  }, [uncalledQuestions]);
-
-  const completedQuestionsList = useMemo(() => {
-    return questionsList.filter(q => q.called_status === 'completed');
-  }, [questionsList]);
-
-  const upcomingQuestions = useMemo(() => {
-    return activeQuestion ? uncalledQuestions : uncalledQuestions.slice(1);
-  }, [activeQuestion, uncalledQuestions]);
-
-  // Aliases for compatibility
-  const relevantQuestions = questionsList;
-  const qhActiveQuestion = activeQuestion;
-  const qhCompletedQuestions = completedQuestionsList;
-  const qhNextQuestion = nextQuestionToCall;
-  const qhUpcomingQuestions = upcomingQuestions;
-
-  const qhIsActive = useMemo(() => {
-    return Boolean(qhActiveQuestion) || qhCompletedQuestions.length > 0 || isQuestionHourSession || isUrgentDiscussion;
-  }, [qhActiveQuestion, qhCompletedQuestions, isQuestionHourSession, isUrgentDiscussion]);
-
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans selection:bg-amber-500 selection:text-slate-950 transition-colors">
       {/* Presiding Officer Desk Status Banner (Compact sub-header, non-duplicate) */}
@@ -724,7 +591,7 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
           }`}
         >
           <HelpCircle className="w-3.5 h-3.5" />
-          <span>Questions{relevantQuestions.length > 0 ? ` (${relevantQuestions.length})` : ''}</span>
+          <span>Questions</span>
         </button>
         <button
           type="button"
@@ -1056,333 +923,18 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
           <div className={`lg:col-span-5 space-y-6 ${activeTab !== 'floor' ? 'block' : 'hidden lg:block'}`}>
             {/* ════════════════════════════════════════════════════════════════
                 QUESTION HOUR / URGENT DISCUSSION — Presiding Floor Control
-                Uses exact same data source as Main Admin ControlTab.
+                Uses exact same shared QuestionCallingPanel as Main Admin ControlTab.
                 ════════════════════════════════════════════════════════════════ */}
-            <div className={`rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm dark:shadow-xl overflow-hidden ${activeTab === 'questions' ? 'block' : 'hidden lg:block'}`}>
-              <div className="p-4 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5">
-                  <div className="p-2 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-                    <HelpCircle className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-2">
-                      {isUrgentDiscussion ? 'URGENT PUBLIC IMPORTANCE DISCUSSION' : 'QUESTION HOUR'}
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/15 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-500/30">
-                        {relevantQuestions.length} tabled
-                      </span>
-                      {qhCompletedQuestions.length > 0 && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                          {qhCompletedQuestions.length} answered
-                        </span>
-                      )}
-                    </h2>
-                    <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-                      {isUrgentDiscussion
-                        ? 'Urgent public interest motions & queries · Presiding Floor Control'
-                        : 'Official calling order set by Main Admin · Presiding Floor Control'}
-                    </p>
-                  </div>
-                </div>
-                {qhIsActive && (
-                  <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-amber-500 text-slate-950 animate-pulse flex items-center gap-1 shrink-0">
-                    <span className="w-1.5 h-1.5 rounded-full bg-slate-950" />
-                    IN SESSION
-                  </span>
-                )}
-              </div>
-
-              <div className="p-4 space-y-4">
-                {/* Current Active Question */}
-                {qhActiveQuestion ? (
-                  <div className="p-4 rounded-2xl border-2 border-amber-500/60 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent dark:from-amber-950/50 dark:via-amber-950/20 space-y-3 shadow-md shadow-amber-950/20">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="px-2.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-amber-500 text-slate-950 flex items-center gap-1.5 animate-pulse">
-                          <span className="w-1.5 h-1.5 rounded-full bg-slate-950" />
-                          {isUrgentDiscussion ? 'CURRENT ITEM' : 'CURRENT QUESTION'}
-                        </span>
-                        <span className="font-mono text-sm font-black text-amber-600 dark:text-amber-400">
-                          #{qhActiveQuestion.calling_order || qhActiveQuestion.queue_order || 1}
-                        </span>
-                      </div>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
-                        CALLED / CURRENT
-                      </span>
-                    </div>
-                    <div className="space-y-1.5">
-                      <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-2">
-                        <span className="font-black text-base text-slate-900 dark:text-white">
-                          {qhActiveQuestion.student_name}
-                        </span>
-                        {formatMemberConstituency(qhActiveQuestion, learnersMap) && (
-                          <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">
-                            {formatMemberConstituency(qhActiveQuestion, learnersMap)}
-                          </span>
-                        )}
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            qhActiveQuestion.bench === 'Ruling'
-                              ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20'
-                              : 'bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-500/20'
-                          }`}>
-                            {qhActiveQuestion.bench}
-                          </span>
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/20">
-                            {qhActiveQuestion.ministry}
-                          </span>
-                        </div>
-                      </div>
-                      <p className="text-xs text-slate-700 dark:text-slate-300 font-serif italic line-clamp-2">
-                        "{qhActiveQuestion.question_text}"
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={() => setInspectQuestion(qhActiveQuestion)}
-                        className="px-3 py-1.5 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 bg-white/80 dark:bg-slate-800 hover:bg-white dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 cursor-pointer transition-colors"
-                      >
-                        <Eye className="w-3.5 h-3.5 text-amber-500" />
-                        <span>VIEW FULL QUESTION</span>
-                      </button>
-                      <button
-                        type="button"
-                        disabled={isCompletingQuestion}
-                        onClick={() => handleCompleteQuestion(qhActiveQuestion)}
-                        className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                      >
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>{isCompletingQuestion ? 'Completing...' : 'MARK ANSWERED & NEXT'}</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleSkipQuestion(qhActiveQuestion)}
-                        className="px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 cursor-pointer"
-                      >
-                        Yield
-                      </button>
-                    </div>
-                  </div>
-                ) : relevantQuestions.length === 0 ? (
-                  <div className="py-8 text-center space-y-2">
-                    <HelpCircle className="w-8 h-8 text-slate-300 dark:text-slate-700 mx-auto" />
-                    <div className="text-sm font-bold text-slate-600 dark:text-slate-400">No questions tabled</div>
-                    <p className="text-xs text-slate-500 max-w-xs mx-auto">
-                      When questions are tabled, the official calling queue will appear here.
-                    </p>
-                  </div>
-                ) : qhCompletedQuestions.length === relevantQuestions.length ? (
-                  <div className="py-6 text-center text-xs text-emerald-600 dark:text-emerald-400 font-bold rounded-xl border border-emerald-500/30 bg-emerald-500/5">
-                    <CheckCircle2 className="w-6 h-6 mx-auto mb-1.5 text-emerald-500" />
-                    All tabled questions have been called and answered!
-                  </div>
-                ) : null}
-
-                {/* Next Question to Call (When no question is actively on floor) */}
-                {qhNextQuestion && !qhActiveQuestion && relevantQuestions.length > 0 && qhCompletedQuestions.length < relevantQuestions.length && (
-                  <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/40 space-y-2.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
-                          {isUrgentDiscussion ? 'NEXT ITEM' : 'NEXT QUESTION'}
-                        </span>
-                        <span className="font-mono text-sm font-black text-amber-600 dark:text-amber-400">
-                          #{qhNextQuestion.calling_order || qhNextQuestion.queue_order || 1}
-                        </span>
-                      </div>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
-                        QUEUED
-                      </span>
-                    </div>
-                    <div className="space-y-1">
-                      <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-2">
-                        <span className="font-bold text-sm text-slate-900 dark:text-white">{qhNextQuestion.student_name}</span>
-                        {formatMemberConstituency(qhNextQuestion, learnersMap) && (
-                          <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">
-                            {formatMemberConstituency(qhNextQuestion, learnersMap)}
-                          </span>
-                        )}
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${qhNextQuestion.bench === 'Ruling' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-rose-500/10 text-rose-700 dark:text-rose-400'}`}>{qhNextQuestion.bench}</span>
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400">{qhNextQuestion.ministry}</span>
-                        </div>
-                      </div>
-                      <p className="text-xs text-slate-600 dark:text-slate-400 italic line-clamp-1">
-                        "{qhNextQuestion.question_text}"
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 pt-1">
-                      <button
-                        type="button"
-                        disabled={isCallingQuestion}
-                        onClick={() => handleCallQuestion(qhNextQuestion)}
-                        className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-md shadow-amber-500/20 cursor-pointer transition-all shrink-0 disabled:opacity-50"
-                      >
-                        <Play className="w-3.5 h-3.5 fill-slate-950" />
-                        <span>{isCallingQuestion ? 'CALLING...' : 'CALL QUESTION'}</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setInspectQuestion(qhNextQuestion)}
-                        className="px-3 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 cursor-pointer transition-colors shrink-0"
-                      >
-                        <Eye className="w-3.5 h-3.5 text-amber-500" />
-                        <span>VIEW FULL QUESTION</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Up Next Preview (When a question is ALREADY active on floor) */}
-                {qhNextQuestion && qhActiveQuestion && (
-                  <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/40 space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-sky-100 dark:bg-sky-500/20 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-500/30">
-                          UP NEXT
-                        </span>
-                        <span className="font-mono text-sm font-black text-amber-600 dark:text-amber-400">
-                          #{qhNextQuestion.calling_order || qhNextQuestion.queue_order || 1}
-                        </span>
-                      </div>
-                      <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
-                        QUEUED
-                      </span>
-                    </div>
-                    <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-2">
-                      <span className="font-bold text-sm text-slate-900 dark:text-white">{qhNextQuestion.student_name}</span>
-                      {formatMemberConstituency(qhNextQuestion, learnersMap) && (
-                        <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">
-                          {formatMemberConstituency(qhNextQuestion, learnersMap)}
-                        </span>
-                      )}
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${qhNextQuestion.bench === 'Ruling' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-rose-500/10 text-rose-700 dark:text-rose-400'}`}>{qhNextQuestion.bench}</span>
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400">{qhNextQuestion.ministry}</span>
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 pt-1">
-                      <button
-                        type="button"
-                        disabled={isCallingQuestion}
-                        onClick={() => handleCallQuestion(qhNextQuestion)}
-                        className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs uppercase tracking-wider flex items-center gap-1 shadow-sm cursor-pointer transition-all disabled:opacity-50"
-                      >
-                        <Play className="w-3 h-3 fill-slate-950" />
-                        <span>CALL NEXT</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setInspectQuestion(qhNextQuestion)}
-                        className="px-2.5 py-1 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 flex items-center gap-1 cursor-pointer transition-colors"
-                      >
-                        <Eye className="w-3 h-3 text-amber-500" />
-                        <span>VIEW FULL</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Completed Questions Summary */}
-                {qhCompletedQuestions.length > 0 && (
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                      <span>COMPLETED ({qhCompletedQuestions.length})</span>
-                      <span className="text-emerald-500 font-bold">Answered</span>
-                    </div>
-                    <div className="space-y-1 max-h-28 overflow-y-auto pr-1">
-                      {qhCompletedQuestions.map((q) => (
-                        <div
-                          key={q.id}
-                          className="px-3 py-2 rounded-xl border border-slate-200/80 dark:border-slate-800/60 bg-slate-50/60 dark:bg-slate-950/30 flex items-center justify-between gap-2 text-xs opacity-70"
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                            <span className="w-5 h-5 rounded-md bg-emerald-950/80 text-emerald-400 font-mono font-bold text-[10px] flex items-center justify-center shrink-0">#{q.calling_order || q.queue_order || '?'}</span>
-                            <span className="font-bold text-slate-700 dark:text-slate-300 break-words">{q.student_name}</span>
-                            {formatMemberConstituency(q, learnersMap) && (
-                              <span className="text-amber-600 dark:text-amber-400 font-mono font-bold text-[10px] break-words hidden sm:inline">
-                                ({formatMemberConstituency(q, learnersMap)})
-                              </span>
-                            )}
-                            <span className="text-slate-400 text-[11px] truncate hidden sm:inline">{q.ministry}</span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setInspectQuestion(q)}
-                            className="px-2 py-0.5 rounded-lg text-[10px] font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 cursor-pointer flex items-center gap-1 shrink-0 transition-colors"
-                          >
-                            <Eye className="w-3 h-3" />
-                            <span className="hidden sm:inline">View</span>
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Upcoming Questions Queue */}
-                {qhUpcomingQuestions.length > 0 && (
-                  <div className="space-y-1.5 pt-1">
-                    <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                      <span>UPCOMING OFFICIAL ORDER ({qhUpcomingQuestions.length})</span>
-                      <span className="text-slate-500 dark:text-slate-600">Deterministic sequence</span>
-                    </div>
-                    <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
-                      {qhUpcomingQuestions.map((q) => (
-                        <div
-                          key={q.id}
-                          className="px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/40 flex items-center justify-between gap-2 text-xs hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className="w-6 h-6 rounded-md bg-slate-200 dark:bg-slate-800 font-mono font-bold text-[11px] text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
-                              #{q.calling_order || q.queue_order || '?'}
-                            </span>
-                            <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 min-w-0">
-                              <span className="font-bold text-slate-800 dark:text-slate-200 break-words">
-                                {q.student_name}
-                              </span>
-                              {formatMemberConstituency(q, learnersMap) && (
-                                <span className="text-amber-600 dark:text-amber-400 font-mono font-bold text-[10px] break-words">
-                                  {formatMemberConstituency(q, learnersMap)}
-                                </span>
-                              )}
-                            </div>
-                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold shrink-0 ${q.bench === 'Ruling' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'}`}>
-                              {q.bench}
-                            </span>
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 shrink-0 hidden sm:inline">
-                              {q.ministry}
-                            </span>
-                            {q.status === 'Starred' && (
-                              <Star className="w-3 h-3 text-yellow-400 fill-yellow-400 shrink-0" />
-                            )}
-                          </div>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <button
-                              type="button"
-                              disabled={isCallingQuestion}
-                              onClick={() => handleCallQuestion(q)}
-                              className="px-2.5 py-1 rounded-lg text-[10px] font-black uppercase text-slate-950 bg-amber-500 hover:bg-amber-400 cursor-pointer flex items-center gap-1 transition-colors shrink-0 disabled:opacity-50"
-                            >
-                              <Play className="w-2.5 h-2.5 fill-slate-950" />
-                              <span>CALL QUESTION</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setInspectQuestion(q)}
-                              className="px-2 py-1 rounded-lg text-[10px] font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 cursor-pointer flex items-center gap-1 transition-colors"
-                            >
-                              <Eye className="w-3 h-3 text-amber-500" />
-                              <span className="hidden sm:inline">VIEW FULL</span>
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
+            <div className={activeTab === 'questions' ? 'block' : 'hidden lg:block'}>
+              {eventId && (
+                <QuestionCallingPanel
+                  eventId={eventId}
+                  userRole={speaker.role}
+                  userName={speaker.full_name}
+                  learners={learners}
+                  onShowToast={onShowToast}
+                />
+              )}
             </div>
 
             {/* Live Voting & Participation Card */}
@@ -1883,148 +1435,7 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════════════
-          FULL QUESTION INSPECTION MODAL
-          Same design as ArrangeQuestionOrderModal's inspect view.
-          Preserves complete Tamil/English text without truncation.
-          ═══════════════════════════════════════════════════════════════════ */}
-      {inspectQuestion && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/50 dark:bg-slate-950/80 backdrop-blur-sm animate-fade-in" onClick={() => setInspectQuestion(null)}>
-          <div
-            className="w-full max-w-lg max-h-[90vh] flex flex-col rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-2xl overflow-hidden text-slate-900 dark:text-slate-100 animate-scale-in"
-            onClick={e => e.stopPropagation()}
-          >
-            {/* Modal Header */}
-            <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 shrink-0">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/30">
-                  <MessageSquare className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-black text-slate-900 dark:text-white">Full Parliamentary Question</h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Order Position #{questionsList.findIndex(q => q.id === inspectQuestion.id) + 1} of {questionsList.length}
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setInspectQuestion(null)}
-                className="p-2 rounded-xl text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
-            {/* Modal Content — Scrollable */}
-            <div className="flex-1 overflow-y-auto p-5 space-y-5">
-              {/* Member Details Grid */}
-              <div className="grid grid-cols-2 gap-3 p-4 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800">
-                <div>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-500 uppercase font-bold tracking-wider">Member Name</span>
-                  <div className="font-bold text-slate-900 dark:text-white text-sm mt-0.5">{inspectQuestion.student_name}</div>
-                  {formatMemberConstituency(inspectQuestion, learnersMap) && (
-                    <div className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400 mt-0.5">
-                      {formatMemberConstituency(inspectQuestion, learnersMap)}
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-500 uppercase font-bold tracking-wider">Bench</span>
-                  <div className="mt-0.5">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                      inspectQuestion.bench === 'Ruling'
-                        ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20'
-                        : 'bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-500/20'
-                    }`}>
-                      {inspectQuestion.bench}
-                    </span>
-                  </div>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-500 uppercase font-bold tracking-wider">Constituency</span>
-                  <div className="font-bold text-amber-600 dark:text-amber-400 text-sm mt-0.5 font-mono">
-                    {formatMemberConstituency(inspectQuestion, learnersMap) || 'General Assembly'}
-                  </div>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-500 uppercase font-bold tracking-wider">Target Ministry</span>
-                  <div className="font-bold text-amber-600 dark:text-amber-400 text-sm mt-0.5">{inspectQuestion.ministry}</div>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-500 uppercase font-bold tracking-wider">Question Type</span>
-                  <div className="font-bold text-slate-700 dark:text-slate-200 text-sm mt-0.5 flex items-center gap-1.5">
-                    {inspectQuestion.question_type || 'Standard'}
-                    {inspectQuestion.status === 'Starred' && <Star className="w-3 h-3 text-yellow-400 fill-yellow-400" />}
-                  </div>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-500 uppercase font-bold tracking-wider">Calling Status</span>
-                  <div className="mt-0.5">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase tracking-wider ${
-                      inspectQuestion.called_status === 'calling'
-                        ? 'bg-amber-500 text-slate-950 animate-pulse'
-                        : inspectQuestion.called_status === 'completed'
-                          ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                          : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
-                    }`}>
-                      {inspectQuestion.called_status === 'calling' ? 'CURRENT' : inspectQuestion.called_status === 'completed' ? 'ANSWERED' : 'QUEUED'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Full Question Text — Never Truncated */}
-              <div className="space-y-2">
-                <span className="text-[10px] text-slate-500 dark:text-slate-500 uppercase font-bold tracking-wider">Full Question Text</span>
-                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 font-serif text-sm leading-relaxed whitespace-pre-wrap break-words">
-                  "{inspectQuestion.question_text}"
-                </div>
-              </div>
-
-              {/* Administrative Metadata */}
-              <div className="space-y-2 text-[11px] text-slate-500 dark:text-slate-400 border-t border-slate-200 dark:border-slate-800 pt-3">
-                <div className="flex items-center justify-between">
-                  <span>Approval Status: <strong className="text-emerald-600 dark:text-emerald-400">{inspectQuestion.status}</strong></span>
-                  {inspectQuestion.approved_by && (
-                    <span>Approved by: <strong className="text-slate-700 dark:text-white">{inspectQuestion.approved_by}</strong></span>
-                  )}
-                </div>
-                {inspectQuestion.created_at && (
-                  <div className="flex items-center justify-between">
-                    <span>Submitted: <strong className="text-slate-700 dark:text-slate-300">{new Date(inspectQuestion.created_at).toLocaleString()}</strong></span>
-                    {inspectQuestion.approved_at && (
-                      <span>Approved: <strong className="text-slate-700 dark:text-slate-300">{new Date(inspectQuestion.approved_at).toLocaleString()}</strong></span>
-                    )}
-                  </div>
-                )}
-                {inspectQuestion.reviewed_by && (
-                  <div>
-                    <span>Reviewed by: <strong className="text-slate-700 dark:text-slate-300">{inspectQuestion.reviewed_by}</strong></span>
-                    {inspectQuestion.review_note && (
-                      <span className="ml-2 italic text-slate-400">— "{inspectQuestion.review_note}"</span>
-                    )}
-                  </div>
-                )}
-                {inspectQuestion.seat_number && (
-                  <div>Seat Number: <strong className="text-slate-700 dark:text-slate-300">{inspectQuestion.seat_number}</strong></div>
-                )}
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex justify-end shrink-0">
-              <button
-                type="button"
-                onClick={() => setInspectQuestion(null)}
-                className="px-5 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-white cursor-pointer transition-colors"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ═══════════════════════════════════════════════════════════════════
           ASSEMBLY HANSARD — SPEAKING HISTORY MODAL

@@ -15217,38 +15217,69 @@ class StorageService {
       }
       return q;
     });
-    this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, updated);
+
+    let nextQuestionId: string | null = null;
+    let completedIds: string[] = [];
 
     if (matched) {
       const curSc = (matched.social_coverage || {}) as Record<string, any>;
-      const completedIds = Array.isArray(curSc.completed_question_ids) ? curSc.completed_question_ids : [];
+      completedIds = Array.isArray(curSc.completed_question_ids) ? [...curSc.completed_question_ids] : [];
       if (!completedIds.includes(questionId)) completedIds.push(questionId);
+
+      // Determine next question according to official calling order
+      const callingOrder: string[] = Array.isArray(curSc.question_calling_order) ? curSc.question_calling_order : [];
+      for (const qid of callingOrder) {
+        if (qid !== questionId && !completedIds.includes(qid)) {
+          const cand = updated.find(x => x.id === qid);
+          if (cand && cand.called_status !== 'completed' && (cand.status === 'Approved' || cand.status === 'Starred')) {
+            nextQuestionId = qid;
+            break;
+          }
+        }
+      }
+
+      // If nextQuestionId found, mark it calling in memory
+      if (nextQuestionId) {
+        const nextIdx = updated.findIndex(x => x.id === nextQuestionId);
+        if (nextIdx >= 0) {
+          updated[nextIdx] = {
+            ...updated[nextIdx],
+            called_status: 'calling',
+            called_at: updated[nextIdx].called_at || new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          };
+        }
+      }
+
       matched.social_coverage = {
         ...curSc,
-        active_question_id: null,
+        active_question_id: nextQuestionId,
         completed_question_ids: completedIds,
         updated_at: new Date().toISOString()
       };
       this.setItem(STORAGE_KEYS.EVENTS, allEvents.map(e => e.id === matched.id ? matched : e));
     }
 
+    this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, updated);
+
     const curPs = this.getProjectorSettings(syncId);
     this.saveProjectorSettings(syncId, {
       ...curPs,
-      activeQuestionId: null
+      activeQuestionId: nextQuestionId,
+      displayScene: nextQuestionId ? 'question_hour' : curPs.displayScene
     });
 
     this.notify();
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('tn_assembly_proceedings_question_update', {
-        detail: { type: 'question_completed', eventId: syncId, questionId }
+        detail: { type: 'question_completed', eventId: syncId, questionId, nextQuestionId }
       }));
       window.dispatchEvent(new Event('storage'));
     }
 
     this.broadcast('active_question_updated', {
       eventId: syncId,
-      activeQuestionId: null,
+      activeQuestionId: nextQuestionId,
       completedQuestionId: questionId,
       updatedAt: new Date().toISOString()
     }).catch(() => {});
