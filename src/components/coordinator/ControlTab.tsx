@@ -46,7 +46,7 @@ import {
 } from 'lucide-react';
 
 import { storageService } from '../../services/storageService';
-import { playTimerAlarm, stopAllAlertAudio } from '../../utils/audioAlert';
+import { playTimerAlarm, stopAllAlertAudio, unlockAudioContext, playStartChirp } from '../../utils/audioAlert';
 import { getEventSlug } from '../../utils/slug';
 import { ArrangeQuestionOrderModal } from './ArrangeQuestionOrderModal';
 import { formatMemberConstituency, isPresidingOfficer } from '../../utils/memberIdentity';
@@ -244,6 +244,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   });
 
   // Persistent Audio Tone Configuration
+  const windowSessionId = useMemo(() => `ctrl_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`, []);
   const [audioConfig, setAudioConfig] = useState<TimerAudioConfig>(() => {
     return storageService.getTimerAudioConfig(currentEvent?.id);
   });
@@ -256,10 +257,26 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
   const isSoundEnabled = !audioConfig.is_muted;
 
-  // Sync audio configuration when event changes or remote update arrives
+  // Authoritatively fetch audio configuration from IndexedDB / Supabase on mount
   useEffect(() => {
-    const syncAudio = () => {
-      setAudioConfig(storageService.getTimerAudioConfig(currentEvent?.id));
+    if (!currentEvent?.id) return;
+    storageService.fetchTimerAudioConfig(currentEvent.id).then(cfg => {
+      if (cfg) {
+        setAudioConfig(cfg);
+      }
+    }).catch(console.warn);
+  }, [currentEvent?.id]);
+
+  // Sync audio configuration when remote update arrives
+  useEffect(() => {
+    const syncAudio = (e?: any) => {
+      const detail = e?.detail;
+      if (detail?.eventId && currentEvent?.id && detail.eventId !== currentEvent.id) return;
+      if (detail?.config) {
+        setAudioConfig(detail.config);
+      } else {
+        setAudioConfig(storageService.getTimerAudioConfig(currentEvent?.id));
+      }
     };
     syncAudio();
     window.addEventListener('tn_assembly_timer_audio_update', syncAudio);
@@ -274,6 +291,9 @@ export const ControlTab: React.FC<ControlTabProps> = ({
       const detail = e.detail;
       if (!detail) return;
       if (detail.eventId && currentEvent?.id && detail.eventId !== currentEvent.id) return;
+      // Prevent self-cancellation if triggered locally
+      if (detail.senderId && detail.senderId === windowSessionId) return;
+
       if (detail.action === 'stop') {
         stopAllAlertAudio();
         setIsAlarmSounding(false);
@@ -291,7 +311,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
       window.removeEventListener('tn_assembly_timer_alarm_event', handleAlarmBroadcast);
       stopAllAlertAudio();
     };
-  }, [currentEvent?.id]);
+  }, [currentEvent?.id, windowSessionId]);
 
   useEffect(() => {
     const handleTimerSync = () => {
@@ -304,6 +324,13 @@ export const ControlTab: React.FC<ControlTabProps> = ({
           setSecondsLeft(remaining);
           if (remaining > 0) {
             hasAlarmTriggeredRef.current = false;
+          } else if (remaining === 0 && !hasAlarmTriggeredRef.current) {
+            hasAlarmTriggeredRef.current = true;
+            setIsAlarmSounding(true);
+            const activeCfg = storageService.getTimerAudioConfig(currentEvent?.id);
+            if (!activeCfg.is_muted) {
+              playTimerAlarm(activeCfg);
+            }
           }
         } else {
           setSecondsLeft(state.secondsLeft);
@@ -348,11 +375,12 @@ export const ControlTab: React.FC<ControlTabProps> = ({
             if (!hasAlarmTriggeredRef.current) {
               hasAlarmTriggeredRef.current = true;
               setIsAlarmSounding(true);
-              if (!audioConfig.is_muted) {
-                playTimerAlarm(audioConfig);
+              const activeCfg = storageService.getTimerAudioConfig(currentEvent?.id);
+              if (!activeCfg.is_muted) {
+                playTimerAlarm(activeCfg);
               }
               if (currentEvent?.id) {
-                storageService.broadcastTimerAlarm(currentEvent.id, 'trigger').catch(console.warn);
+                storageService.broadcastTimerAlarm(currentEvent.id, 'trigger', windowSessionId).catch(console.warn);
               }
             }
             onShowToast('⏰ Time Expired', `Floor time for ${activeAgendaItem?.title || 'Session'} concluded`, 'info');
@@ -366,19 +394,19 @@ export const ControlTab: React.FC<ControlTabProps> = ({
           }
           setIsTimerRunning(live.isRunning);
         }
-      }, 1000);
+      }, 500);
     }
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isTimerRunning, audioConfig, activeAgendaItem?.title, currentEvent?.id, timerDurationSec, onShowToast]);
+  }, [isTimerRunning, activeAgendaItem?.title, currentEvent?.id, timerDurationSec, onShowToast, windowSessionId]);
 
   const handleStopAlarm = () => {
     stopAllAlertAudio();
     setIsAlarmSounding(false);
     setIsTestingAudio(false);
     if (currentEvent?.id) {
-      storageService.broadcastTimerAlarm(currentEvent.id, 'stop').catch(console.warn);
+      storageService.broadcastTimerAlarm(currentEvent.id, 'stop', windowSessionId).catch(console.warn);
     }
     onShowToast('Alarm Silenced', 'Session timer alarm stopped', 'info');
   };
@@ -493,7 +521,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
   const playTimerBeep = () => {
     if (!audioConfig.is_muted) {
-      playTimerAlarm(audioConfig);
+      playStartChirp(audioConfig.volume);
     }
   };
 
@@ -924,6 +952,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     }
     const nextRunning = !isTimerRunning;
     if (nextRunning) {
+      unlockAudioContext();
       hasAlarmTriggeredRef.current = false;
       stopAllAlertAudio();
       setIsAlarmSounding(false);

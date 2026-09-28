@@ -248,3 +248,38 @@ export async function playTimerAlarm(config?: TimerAudioConfig | null): Promise<
     playChimeSequence(vol);
   }
 }
+
+/**
+ * Resumes audio context on user interaction to comply with browser autoplay policies.
+ */
+export function unlockAudioContext(): void {
+  const ctx = getSafeAudioContext();
+  if (ctx && ctx.state === 'suspended') {
+    ctx.resume().catch(() => {});
+  }
+}
+
+/**
+ * Short, crisp chirp to acknowledge timer start without triggering full alarm.
+ */
+export function playStartChirp(volume = 0.5): void {
+  const ctx = getSafeAudioContext();
+  if (!ctx) return;
+  const masterVol = Math.max(0, Math.min(1, volume));
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(660, now);
+  osc.frequency.exponentialRampToValueAtTime(880, now + 0.08);
+
+  gain.gain.setValueAtTime(0.2 * masterVol, now);
+  gain.gain.linearRampToValueAtTime(0.001, now + 0.08);
+
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+
+  osc.start(now);
+  osc.stop(now + 0.08);
+}

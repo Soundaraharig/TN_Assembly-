@@ -51,18 +51,41 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
     return ts.secondsLeft;
   });
 
+  const hasProjectorAlarmTriggeredRef = useRef(false);
+
+  // Pre-fetch persistent audio settings for the active event
+  useEffect(() => {
+    const targetId = currentEvent?.id || initialEvent?.id;
+    if (targetId) {
+      storageService.fetchTimerAudioConfig(targetId).catch(() => {});
+    }
+  }, [currentEvent?.id, initialEvent?.id]);
+
   // Client-side 1-second countdown tick: 0 network egress
   useEffect(() => {
     const timerInterval = setInterval(() => {
       setTimerState(currentTs => {
         if (!currentTs.isRunning) {
           setDisplaySeconds(currentTs.secondsLeft);
+          if (currentTs.secondsLeft > 0) {
+            hasProjectorAlarmTriggeredRef.current = false;
+          }
           return currentTs;
         }
         if (currentTs.startedAt) {
           const elapsed = Math.floor((Date.now() - currentTs.startedAt) / 1000);
           const remaining = Math.max(0, currentTs.secondsLeft - elapsed);
           setDisplaySeconds(remaining);
+          if (remaining <= 0 && !hasProjectorAlarmTriggeredRef.current) {
+            hasProjectorAlarmTriggeredRef.current = true;
+            const targetId = currentEvent?.id || initialEvent?.id;
+            const audioCfg = storageService.getTimerAudioConfig(targetId);
+            if (!audioCfg.is_muted) {
+              playTimerAlarm(audioCfg);
+            }
+          } else if (remaining > 0) {
+            hasProjectorAlarmTriggeredRef.current = false;
+          }
         } else {
           setDisplaySeconds(prev => Math.max(0, prev - 1));
         }
@@ -71,7 +94,7 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
     }, 1000);
 
     return () => clearInterval(timerInterval);
-  }, []);
+  }, [currentEvent?.id, initialEvent?.id]);
 
   // Scoped on-demand Display portal fetch (runs once on mount)
   const hasMountedDisplayFetchRef = useRef(false);

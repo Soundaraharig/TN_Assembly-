@@ -87,6 +87,7 @@ import { supabase, isSupabaseEnabled } from '../lib/supabase';
 import { getEventSlug, findEventBySlug } from '../utils/slug';
 import { ARTS_PROCEEDINGS_QUESTIONS } from '../data/artsProceedingsQuestions';
 import { canManageSessionAttendance } from '../utils/permissions';
+import { saveAudioConfigToIDB, getAudioConfigFromIDB } from '../utils/audioStorage';
 
 // ---------------------------------------------------------------------------
 // Cache versioning & Stale-While-Revalidate metadata
@@ -525,6 +526,7 @@ class StorageService {
   private realtimeCleanupPromise: Promise<void> | null = null;
   private attendanceCleanupPromise: Promise<void> | null = null;
   private coordinatorEventsCache = new Map<string, CollegeEvent[]>();
+  private timerAudioMemoryCache = new Map<string, TimerAudioConfig>();
 
   public getLastEventsError(): string | null {
     return this.lastEventsError;
@@ -936,6 +938,15 @@ class StorageService {
       this.notify();
     } catch (e) {
       console.error('Storage error:', e);
+    }
+  }
+
+  private setItemSafe<T>(key: string, value: T): void {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+      this.notify();
+    } catch (e) {
+      console.warn(`[StorageService] localStorage quota warning for "${key}". Data safely held in memory/IDB.`);
     }
   }
 
@@ -1506,7 +1517,13 @@ class StorageService {
         this.setItem(`tn_assembly_live_timer_${ev.id}`, sc.timer);
       }
       if (sc.timer_audio_config && typeof sc.timer_audio_config === 'object') {
-        this.setItem(`tn_assembly_timer_audio_${ev.id}`, sc.timer_audio_config);
+        const audioCfg = sc.timer_audio_config as TimerAudioConfig;
+        this.timerAudioMemoryCache.set(ev.id, audioCfg);
+        this.setItemSafe(`tn_assembly_timer_audio_${ev.id}`, audioCfg);
+        saveAudioConfigToIDB(ev.id, audioCfg).catch(() => {});
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('tn_assembly_timer_audio_update', { detail: { eventId: ev.id, config: audioCfg } }));
+        }
       }
       if (sc.agenda_progress && typeof sc.agenda_progress === 'object') {
         const prog = sc.agenda_progress as EventAgendaProgress;
@@ -13001,19 +13018,80 @@ class StorageService {
     };
 
     if (eventId) {
+      const mem = this.timerAudioMemoryCache.get(eventId);
+      if (mem) return { ...defaultConfig, ...mem };
+
       const ev = this.getEvents().find(e => e.id === eventId);
       const sc = (ev?.social_coverage || {}) as Record<string, any>;
       if (sc.timer_audio_config && typeof sc.timer_audio_config === 'object') {
-        this.setItem(`tn_assembly_timer_audio_${eventId}`, sc.timer_audio_config);
-        return { ...defaultConfig, ...sc.timer_audio_config };
+        const merged = { ...defaultConfig, ...sc.timer_audio_config };
+        this.timerAudioMemoryCache.set(eventId, merged);
+        this.setItemSafe(`tn_assembly_timer_audio_${eventId}`, merged);
+        return merged;
       }
       const local = this.getItem<TimerAudioConfig | null>(`tn_assembly_timer_audio_${eventId}`, null);
-      if (local) return { ...defaultConfig, ...local };
+      if (local) {
+        const merged = { ...defaultConfig, ...local };
+        this.timerAudioMemoryCache.set(eventId, merged);
+        return merged;
+      }
       return defaultConfig;
     }
 
     const fallback = this.getItem<TimerAudioConfig | null>('tn_assembly_timer_audio_global', null);
     return fallback ? { ...defaultConfig, ...fallback } : defaultConfig;
+  }
+
+  /**
+   * Authoritatively fetches timer audio configuration from IndexedDB / Supabase
+   * on mount or browser reload to ensure custom uploaded audio files are never lost.
+   */
+  public async fetchTimerAudioConfig(eventId: string): Promise<TimerAudioConfig> {
+    if (!eventId) return this.getTimerAudioConfig();
+
+    // 1. Try local IndexedDB first (holds full custom audio files without quota limits)
+    try {
+      const fromIDB = await getAudioConfigFromIDB(eventId);
+      if (fromIDB && (fromIDB.tone_type || fromIDB.custom_audio_data)) {
+        this.timerAudioMemoryCache.set(eventId, fromIDB);
+        this.setItemSafe(`tn_assembly_timer_audio_${eventId}`, fromIDB);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('tn_assembly_timer_audio_update', { detail: { eventId, config: fromIDB } }));
+        }
+        return fromIDB;
+      }
+    } catch (err) {
+      console.warn('[StorageService] IDB read warning:', err);
+    }
+
+    // 2. Fetch directly from authoritative Supabase storage
+    if (supabase && isValidUuid(eventId)) {
+      try {
+        const { data, error } = await supabase
+          .from('college_events')
+          .select('social_coverage')
+          .eq('id', eventId)
+          .single();
+
+        if (!error && data?.social_coverage) {
+          const sc = data.social_coverage as Record<string, any>;
+          if (sc.timer_audio_config && typeof sc.timer_audio_config === 'object') {
+            const config = sc.timer_audio_config as TimerAudioConfig;
+            this.timerAudioMemoryCache.set(eventId, config);
+            saveAudioConfigToIDB(eventId, config).catch(() => {});
+            this.setItemSafe(`tn_assembly_timer_audio_${eventId}`, config);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_timer_audio_update', { detail: { eventId, config } }));
+            }
+            return config;
+          }
+        }
+      } catch (err) {
+        console.warn('[StorageService] Error fetching timer_audio_config from Supabase:', err);
+      }
+    }
+
+    return this.getTimerAudioConfig(eventId);
   }
 
   public async saveTimerAudioConfig(eventId: string, config: Partial<TimerAudioConfig>): Promise<void> {
@@ -13025,15 +13103,39 @@ class StorageService {
       updated_at: new Date().toISOString()
     };
 
+    // 1. Update in-memory cache immediately
+    this.timerAudioMemoryCache.set(eventId, merged);
+
+    // 2. Save full config (with custom audio base64) to IndexedDB
+    await saveAudioConfigToIDB(eventId, merged).catch(err => {
+      console.warn('[StorageService] Error saving audio config to IDB:', err);
+    });
+
+    // 3. LocalStorage safe storage (avoids quota exceeded crashes)
     const key = `tn_assembly_timer_audio_${eventId}`;
-    this.setItem(key, merged);
+    this.setItemSafe(key, merged);
 
     const events = this.getEvents();
     const ev = events.find(e => e.id === eventId);
     if (ev) {
       const sc = (ev.social_coverage || {}) as Record<string, any>;
       ev.social_coverage = { ...sc, timer_audio_config: merged };
-      this.setItem(STORAGE_KEYS.EVENTS, events);
+      const safeEvents = events.map(eItem => {
+        if (eItem.id === eventId) {
+          const cleanSC = {
+            ...sc,
+            timer_audio_config: {
+              ...merged,
+              custom_audio_data: merged.custom_audio_data && merged.custom_audio_data.length > 50000
+                ? '[PERSISTED_IN_IDB_AND_SUPABASE]'
+                : merged.custom_audio_data
+            }
+          };
+          return { ...eItem, social_coverage: cleanSC };
+        }
+        return eItem;
+      });
+      this.setItemSafe(STORAGE_KEYS.EVENTS, safeEvents);
     }
 
     this.notify();
@@ -13042,6 +13144,7 @@ class StorageService {
       window.dispatchEvent(new Event('storage'));
     }
 
+    // 4. Broadcast via Supabase Realtime channel
     if (supabase) {
       try {
         if (!this.realtimeChannel || this.currentRealtimeEventId !== eventId) {
@@ -13059,14 +13162,15 @@ class StorageService {
       }
     }
 
+    // 5. Authoritative persistence into Supabase JSONB
     this.patchSocialCoverageSafe(eventId, { timer_audio_config: merged }).catch(err => {
       console.warn('[StorageService] Error patching timer_audio_config to social_coverage:', err);
     });
   }
 
-  public async broadcastTimerAlarm(eventId: string, action: 'trigger' | 'stop'): Promise<void> {
+  public async broadcastTimerAlarm(eventId: string, action: 'trigger' | 'stop', senderId?: string): Promise<void> {
     if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('tn_assembly_timer_alarm_event', { detail: { eventId, action } }));
+      window.dispatchEvent(new CustomEvent('tn_assembly_timer_alarm_event', { detail: { eventId, action, senderId } }));
     }
     if (supabase) {
       try {
@@ -13077,7 +13181,7 @@ class StorageService {
           await this.realtimeChannel.send({
             type: 'broadcast',
             event: 'timer_alarm_event',
-            payload: { eventId, action, timestamp: Date.now() }
+            payload: { eventId, action, senderId, timestamp: Date.now() }
           });
         }
       } catch (e) {
