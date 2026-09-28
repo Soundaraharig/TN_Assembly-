@@ -30,6 +30,7 @@ import type {
   TeamMember,
   FlashVoteAudience,
   EventDeadline,
+  EventAgendaProgress,
   ProceedingsQuestion,
   ProceedingsMotion,
   SecurityAuditLog,
@@ -1502,6 +1503,41 @@ class StorageService {
       }
       if (sc.timer) {
         this.setItem(`tn_assembly_live_timer_${ev.id}`, sc.timer);
+      }
+      if (sc.agenda_progress && typeof sc.agenda_progress === 'object') {
+        const prog = sc.agenda_progress as EventAgendaProgress;
+        this.setItem(`tn_assembly_agenda_progress_${ev.id}`, prog);
+        if (prog.started_days) {
+          const key = `tn_assembly_started_days_${ev.id}`;
+          const existingStarted = this.getItem<Record<string, boolean>>(key, {});
+          this.setItem(key, { ...existingStarted, ...prog.started_days });
+        }
+        const deletedAgendaIds = this.getDeletedAgendaIds();
+        const allAgenda = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, []).filter(a => !deletedAgendaIds.has(a.id));
+        let hasAgendaChanges = false;
+        const updatedAgenda = allAgenda.map(item => {
+          if (item.event_id === ev.id) {
+            let nextStatus = item.status;
+            let nextCurrent = item.is_current;
+            if (prog.item_statuses && prog.item_statuses[item.id]) {
+              nextStatus = prog.item_statuses[item.id];
+            } else if (Array.isArray(prog.completed_agenda_ids) && prog.completed_agenda_ids.includes(item.id)) {
+              nextStatus = 'Completed';
+            }
+            if (prog.active_agenda_id) {
+              nextCurrent = item.id === prog.active_agenda_id;
+              if (nextCurrent) nextStatus = 'In Progress';
+            }
+            if (nextStatus !== item.status || nextCurrent !== item.is_current) {
+              hasAgendaChanges = true;
+              return { ...item, status: nextStatus, is_current: nextCurrent };
+            }
+          }
+          return item;
+        });
+        if (hasAgendaChanges) {
+          this.setItem(STORAGE_KEYS.AGENDA, updatedAgenda);
+        }
       }
       if (sc.last_bell_ring) {
         this.setItem(`tn_assembly_last_bell_${ev.id}`, sc.last_bell_ring);
@@ -4233,6 +4269,29 @@ class StorageService {
             }
           }
         })
+        .on('broadcast', { event: 'agenda_progress_update' }, (msg: any) => {
+          if (msg?.payload?.eventId && msg?.payload?.progress) {
+            const evId = msg.payload.eventId;
+            const prog = msg.payload.progress as EventAgendaProgress;
+            this.setItem(`tn_assembly_agenda_progress_${evId}`, prog);
+            if (prog.started_days) {
+              const key = `tn_assembly_started_days_${evId}`;
+              const existingStarted = this.getItem<Record<string, boolean>>(key, {});
+              this.setItem(key, { ...existingStarted, ...prog.started_days });
+            }
+            const curEvs = this.getEvents();
+            const ev = curEvs.find(e => e.id === evId);
+            if (ev) {
+              ev.social_coverage = { ...(ev.social_coverage || {}), agenda_progress: prog };
+              this.setItem(STORAGE_KEYS.EVENTS, curEvs);
+            }
+            this.notify();
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_agenda_progress_update', { detail: msg.payload }));
+              window.dispatchEvent(new Event('storage'));
+            }
+          }
+        })
         .on('broadcast', { event: 'login_recorded' }, (msg: any) => {
           if (msg?.payload?.record) {
             const rec = msg.payload.record as LoginRecord;
@@ -5025,6 +5084,7 @@ class StorageService {
         ...existingSC,
         projector_settings: projSettings || existingSC.projector_settings,
         timer: this.getLiveTimerState(eventId) || existingSC.timer,
+        agenda_progress: this.getAgendaProgress(eventId),
         last_bell_ring: lastBell || existingSC.last_bell_ring,
         open_nominations: openNoms,
         nominations: noms,
@@ -8770,6 +8830,130 @@ class StorageService {
     }
   }
 
+  public getAgendaProgress(eventId?: string): EventAgendaProgress {
+    const defaultProg: EventAgendaProgress = {
+      completed_agenda_ids: [],
+      item_statuses: {},
+      started_days: {},
+      updated_at: new Date().toISOString()
+    };
+    if (!eventId) return defaultProg;
+
+    const ev = this.getEvents().find(e => e.id === eventId);
+    const sc = (ev?.social_coverage || {}) as Record<string, any>;
+    if (sc.agenda_progress && typeof sc.agenda_progress === 'object') {
+      const prog = sc.agenda_progress as EventAgendaProgress;
+      this.setItem(`tn_assembly_agenda_progress_${eventId}`, prog);
+      return prog;
+    }
+
+    const local = this.getItem<EventAgendaProgress | null>(`tn_assembly_agenda_progress_${eventId}`, null);
+    if (local) return local;
+
+    const startedDays = this.getItem<Record<string, boolean>>(`tn_assembly_started_days_${eventId}`, {});
+    const items = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, []).filter(a => a.event_id === eventId);
+    const current = items.find(a => a.is_current);
+    const completed = items.filter(a => a.status === 'Completed').map(a => a.id);
+    const statuses: Record<string, AgendaStatus> = {};
+    items.forEach(a => { if (a.status) statuses[a.id] = a.status; });
+
+    return {
+      active_agenda_id: current?.id,
+      active_day: current?.day,
+      completed_agenda_ids: completed,
+      item_statuses: statuses,
+      started_days: startedDays,
+      updated_at: new Date().toISOString()
+    };
+  }
+
+  public async saveAgendaProgress(eventId: string, patch: Partial<EventAgendaProgress>): Promise<void> {
+    if (!eventId) return;
+    const existing = this.getAgendaProgress(eventId);
+    const merged: EventAgendaProgress = {
+      ...existing,
+      ...patch,
+      completed_agenda_ids: Array.from(new Set([
+        ...(existing.completed_agenda_ids || []),
+        ...(patch.completed_agenda_ids || [])
+      ])),
+      item_statuses: {
+        ...(existing.item_statuses || {}),
+        ...(patch.item_statuses || {})
+      },
+      started_days: {
+        ...(existing.started_days || {}),
+        ...(patch.started_days || {})
+      },
+      updated_at: new Date().toISOString()
+    };
+
+    if (patch.active_agenda_id !== undefined) {
+      merged.active_agenda_id = patch.active_agenda_id;
+    }
+    if (patch.active_day !== undefined) {
+      merged.active_day = patch.active_day;
+    }
+
+    this.setItem(`tn_assembly_agenda_progress_${eventId}`, merged);
+    if (merged.started_days) {
+      this.setItem(`tn_assembly_started_days_${eventId}`, merged.started_days);
+    }
+
+    const allEvs = this.getEvents();
+    const ev = allEvs.find(e => e.id === eventId);
+    if (ev) {
+      ev.social_coverage = { ...(ev.social_coverage || {}), agenda_progress: merged };
+      this.setItem(STORAGE_KEYS.EVENTS, allEvs);
+    }
+
+    this.notify();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_agenda_progress_update', { detail: { eventId, progress: merged } }));
+      window.dispatchEvent(new Event('storage'));
+    }
+
+    if (supabase) {
+      try {
+        if (!this.realtimeChannel || this.currentRealtimeEventId !== eventId) {
+          this.setupRealtimeSync(eventId);
+        }
+        if (this.realtimeChannel) {
+          await this.realtimeChannel.send({
+            type: 'broadcast',
+            event: 'agenda_progress_update',
+            payload: { eventId, progress: merged }
+          });
+        }
+      } catch (e) {
+        console.warn('Realtime broadcast agenda_progress_update failed:', e);
+      }
+    }
+
+    this.patchSocialCoverageSafe(eventId, { agenda_progress: merged }).catch(err => {
+      console.warn('[StorageService] Error patching agenda_progress to social_coverage:', err);
+    });
+  }
+
+  public getActiveAgendaDay(eventId?: string): 'Pre-Event' | 'Day 1' | 'Day 2' | string {
+    if (!eventId) return 'Day 1';
+    const all = this.getAgenda(eventId);
+    const current = all.find(a => a.is_current);
+    if (current && current.day) {
+      return current.day;
+    }
+    const prog = this.getAgendaProgress(eventId);
+    if (prog.active_day) {
+      return prog.active_day;
+    }
+    const key = `tn_assembly_started_days_${eventId}`;
+    const started = { ...(prog.started_days || {}), ...(this.getItem<Record<string, boolean>>(key, {})) };
+    if (started['Day 2']) return 'Day 2';
+    if (started['Day 1']) return 'Day 1';
+    if (started['Pre-Event']) return 'Pre-Event';
+    return 'Day 1';
+  }
+
   public getAgenda(eventId?: string): AgendaItem[] {
     const deletedAgendaIds = this.getDeletedAgendaIds();
     const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA).filter(a => !deletedAgendaIds.has(a.id));
@@ -8784,7 +8968,24 @@ class StorageService {
       return (a.created_at || '').localeCompare(b.created_at || '');
     };
     if (eventId) {
-      const eventItems = all.filter(a => a.event_id === eventId);
+      const prog = this.getAgendaProgress(eventId);
+      const eventItems = all.filter(a => a.event_id === eventId).map(item => {
+        let status = item.status;
+        let is_current = item.is_current;
+        if (prog.item_statuses && prog.item_statuses[item.id]) {
+          status = prog.item_statuses[item.id];
+        } else if (Array.isArray(prog.completed_agenda_ids) && prog.completed_agenda_ids.includes(item.id)) {
+          status = 'Completed';
+        }
+        if (prog.active_agenda_id) {
+          is_current = item.id === prog.active_agenda_id;
+          if (is_current && status !== 'Completed') status = 'In Progress';
+        }
+        if (!status) {
+          status = is_current ? 'In Progress' : 'Upcoming';
+        }
+        return { ...item, status, is_current };
+      });
       return [...eventItems].sort(sortFn);
     }
     return [...all].sort(sortFn);
@@ -9051,6 +9252,14 @@ class StorageService {
     this.sbUpsert('session_agenda', target as unknown as Record<string, unknown>);
     if (target.event_id) {
       this.sessionAgendaCache.delete(target.event_id);
+      const curProg = this.getAgendaProgress(target.event_id);
+      const nextStatuses = { ...(curProg.item_statuses || {}), [itemId]: 'Upcoming' as AgendaStatus };
+      const nextCompleted = (curProg.completed_agenda_ids || []).filter(id => id !== itemId);
+      this.saveAgendaProgress(target.event_id, {
+        completed_agenda_ids: nextCompleted,
+        item_statuses: nextStatuses,
+        active_agenda_id: curProg.active_agenda_id === itemId ? undefined : curProg.active_agenda_id
+      });
     }
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
@@ -9123,8 +9332,25 @@ class StorageService {
     this.setItem(STORAGE_KEYS.AGENDA, updated);
     if (target) {
       this.sbUpsert('session_agenda', target as unknown as Record<string, unknown>);
+      if (target.event_id) {
+        const evId = target.event_id;
+        const curProg = this.getAgendaProgress(evId);
+        const nextStatuses = { ...(curProg.item_statuses || {}), [itemId]: status };
+        let nextCompleted = Array.isArray(curProg.completed_agenda_ids) ? [...curProg.completed_agenda_ids] : [];
+        if (status === 'Completed' && !nextCompleted.includes(itemId)) {
+          nextCompleted.push(itemId);
+        } else if (status !== 'Completed') {
+          nextCompleted = nextCompleted.filter(id => id !== itemId);
+        }
+        this.saveAgendaProgress(evId, {
+          active_agenda_id: status === 'In Progress' ? itemId : (curProg.active_agenda_id === itemId ? undefined : curProg.active_agenda_id),
+          completed_agenda_ids: nextCompleted,
+          item_statuses: nextStatuses
+        });
+      }
     }
     this.notify();
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
   }
 
   public reorderAgendaItems(eventId: string, day: AgendaDay, orderedIds: string[]) {
@@ -9169,12 +9395,28 @@ class StorageService {
     this.setItem(STORAGE_KEYS.AGENDA, all);
 
     const targetItem = all.find(a => a.id === itemId);
+    const key = `tn_assembly_started_days_${eventId}`;
+    const startedDays = this.getItem<Record<string, boolean>>(key, {});
     if (targetItem && targetItem.day) {
-      const key = `tn_assembly_started_days_${eventId}`;
-      const startedDays = this.getItem<Record<string, boolean>>(key, {});
       startedDays[targetItem.day] = true;
       this.setItem(key, startedDays);
     }
+
+    // Persist authoritative agenda_progress to Supabase
+    const eventItems = all.filter(a => a.event_id === eventId);
+    const completedIds = eventItems.filter(a => a.status === 'Completed').map(a => a.id);
+    const statuses: Record<string, AgendaStatus> = {};
+    eventItems.forEach(a => {
+      if (a.status) statuses[a.id] = a.status;
+    });
+
+    this.saveAgendaProgress(eventId, {
+      active_agenda_id: itemId,
+      active_day: targetItem?.day || 'Day 1',
+      completed_agenda_ids: completedIds,
+      item_statuses: statuses,
+      started_days: startedDays
+    });
 
     // Also sync projector settings selectedAgendaId
     const currentProj = this.getProjectorSettings(eventId);
@@ -9211,6 +9453,9 @@ class StorageService {
 
   public isDayStarted(eventId?: string, day?: string): boolean {
     if (!eventId || !day) return false;
+    const prog = this.getAgendaProgress(eventId);
+    if (prog.started_days && prog.started_days[day]) return true;
+
     const dayItems = this.getAgenda(eventId).filter(a => {
       if (day === 'Pre-Event') return a.day === 'Pre-Event' || a.day.includes('Pre');
       return a.day === day;
@@ -9242,9 +9487,15 @@ class StorageService {
     startedDays[day] = true;
     this.setItem(key, startedDays);
 
-    // If an item in this day is already is_current, preserve it; otherwise activate the first item
     const existingCurrent = dayItems.find(a => a.is_current);
     const targetItem = existingCurrent || dayItems[0];
+
+    const curProg = this.getAgendaProgress(eventId);
+    this.saveAgendaProgress(eventId, {
+      active_day: day,
+      started_days: { ...(curProg.started_days || {}), [day]: true },
+      active_agenda_id: targetItem.id
+    });
 
     this.setCurrentAgendaItem(eventId, targetItem.id);
     return targetItem;

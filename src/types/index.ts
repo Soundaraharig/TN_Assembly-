@@ -501,6 +501,15 @@ export interface EventDeadline {
   updated_at: string;
 }
 
+export interface EventAgendaProgress {
+  active_agenda_id?: string;
+  active_day?: 'Pre-Event' | 'Day 1' | 'Day 2' | string;
+  completed_agenda_ids: string[];
+  item_statuses: Record<string, AgendaStatus>;
+  started_days: Record<string, boolean>;
+  updated_at: string;
+}
+
 export interface ProceedingsQuestion {
   id: string;
   event_id: string;

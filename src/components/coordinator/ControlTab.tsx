@@ -81,8 +81,35 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
 
   // ── Agenda Navigation State ──────────────────────────────────────────────
-  const [activeDayTab, setActiveDayTab] = useState<'Pre-Event' | 'Day 1' | 'Day 2'>('Day 1');
+  const [activeDayTab, setActiveDayTab] = useState<'Pre-Event' | 'Day 1' | 'Day 2'>(() => {
+    const actDay = storageService.getActiveAgendaDay(currentEvent?.id);
+    if (actDay === 'Pre-Event' || actDay === 'Day 1' || actDay === 'Day 2') return actDay;
+    return 'Day 1';
+  });
   const [agendaFilter, setAgendaFilter] = useState<'ALL' | 'SCORED_VOTED'>('ALL');
+
+  // Synchronize activeDayTab when event changes or authoritative agenda progress arrives
+  useEffect(() => {
+    if (!currentEvent?.id) return;
+    const syncActiveDay = () => {
+      const actDay = storageService.getActiveAgendaDay(currentEvent.id);
+      if (actDay === 'Pre-Event' || actDay === 'Day 1' || actDay === 'Day 2') {
+        setActiveDayTab(actDay);
+      }
+    };
+    syncActiveDay();
+    window.addEventListener('tn_assembly_agenda_progress_update', syncActiveDay);
+    return () => {
+      window.removeEventListener('tn_assembly_agenda_progress_update', syncActiveDay);
+    };
+  }, [currentEvent?.id]);
+
+  const handleSelectDayTab = (day: 'Pre-Event' | 'Day 1' | 'Day 2') => {
+    setActiveDayTab(day);
+    if (currentEvent?.id) {
+      storageService.saveAgendaProgress(currentEvent.id, { active_day: day }).catch(console.error);
+    }
+  };
 
 
 
@@ -128,7 +155,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     if (isDayStarted && currentAgendaList.length > 0) {
       return currentAgendaList.find(a => a.status === 'In Progress') ||
              currentAgendaList.find(a => a.status !== 'Completed') ||
-             currentAgendaList[0];
+             currentAgendaList[currentAgendaList.length - 1];
     }
 
     return currentAgendaList[0] || {
@@ -1674,7 +1701,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   return (
                     <button
                       key={day}
-                      onClick={() => setActiveDayTab(day)}
+                      onClick={() => handleSelectDayTab(day)}
                       className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                         isActive
                           ? 'bg-orange-500 text-white shadow-sm font-black'
