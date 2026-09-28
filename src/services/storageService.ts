@@ -2683,7 +2683,20 @@ class StorageService {
 
         if (!error && data && Array.isArray(data)) {
           this.lastEventsError = null;
-          const evs = (data as unknown as CollegeEvent[]).map(e => this.normalizeEvent(e));
+          const currentEvents = this.getEvents();
+          const currentEvMap = new Map<string, CollegeEvent>(currentEvents.map(ev => [ev.id, ev]));
+          const evs = (data as unknown as CollegeEvent[]).map(e => {
+            const existing = currentEvMap.get(e.id);
+            const mergedSc = {
+              ...((existing?.social_coverage as any) || {}),
+              ...((e.social_coverage as any) || {})
+            };
+            return this.normalizeEvent({
+              ...existing,
+              ...e,
+              social_coverage: Object.keys(mergedSc).length > 0 ? mergedSc : undefined
+            });
+          });
           this.setItem(STORAGE_KEYS.EVENTS, evs);
           this.restoreJkkncetEvent();
           this.eventsFetched = true;
@@ -14649,6 +14662,12 @@ class StorageService {
         this.setItem(STORAGE_KEYS.DELETED_QUESTION_IDS, Array.from(deletedQIds));
         this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, [...otherEventsPQs, ...Array.from(pqMap.values())]);
         this.notify();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('tn_assembly_proceedings_question_update', {
+            detail: { type: 'fetch', eventId: ev.id }
+          }));
+          window.dispatchEvent(new Event('storage'));
+        }
       }
     } catch (err) {
       console.warn('[StorageService] fetchProceedingsQuestionsOnDemand exception:', err);
@@ -15107,6 +15126,13 @@ class StorageService {
     const matched = findEventBySlug(allEvs, eventId) || allEvs.find(e => e.id === eventId);
     const sc = (matched?.social_coverage || {}) as Record<string, any>;
     if (sc.active_question_id) return sc.active_question_id;
+
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const stored = localStorage.getItem(`tn_assembly_active_question_${matched?.id || eventId}`);
+        if (stored) return stored;
+      } catch {}
+    }
 
     // Check projector settings
     const ps = this.getProjectorSettings(matched?.id || eventId);

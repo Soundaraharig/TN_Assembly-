@@ -1085,7 +1085,7 @@ export function App() {
     if (initialSession?.role === 'student' && initialSession.studentCode) {
       const code = initialSession.studentCode.trim().toUpperCase();
       const all = storageService.getLearners();
-      return all.find(l => l.access_code.toUpperCase() === code) || null;
+      return all.find(l => l.access_code.toUpperCase() === code) || initialSession.student || null;
     }
     return null;
   });
@@ -1441,7 +1441,9 @@ export function App() {
           if (sess && sess.role === 'student' && sess.studentCode) {
             const cleanCode = sess.studentCode.trim().toUpperCase();
             const allLearners = storageService.getLearners();
-            const targetStudent: Learner = allLearners.find(l => l.access_code.toUpperCase() === cleanCode) || {
+            const fallbackStudent = (sess as any).student as Learner | undefined;
+            const fallbackRole: string | undefined = fallbackStudent ? fallbackStudent.role : undefined;
+            const targetStudent: Learner = allLearners.find(l => l.access_code.toUpperCase() === cleanCode) || fallbackStudent || {
               id: `learner_${cleanCode}`,
               event_id: sess.currentEventId || (evs[0]?.id || ''),
               full_name: sess.name || 'Student Delegate',
@@ -1449,6 +1451,7 @@ export function App() {
               email: 'delegate@assembly.edu',
               phone: '',
               bench: 'Ruling',
+              role: fallbackRole,
               department: 'Assembly Delegate',
               academic_year: '3rd Year',
               day1_checked_in: true,
@@ -1475,7 +1478,9 @@ export function App() {
         if (sess.role === 'student' && sess.studentCode) {
           const cleanCode = sess.studentCode.trim().toUpperCase();
           const allLearners = storageService.getLearners();
-          const targetStudent: Learner = allLearners.find(l => l.access_code.toUpperCase() === cleanCode) || {
+          const fallbackStudent = (sess as any).student as Learner | undefined;
+          const fallbackRole: string | undefined = fallbackStudent ? fallbackStudent.role : undefined;
+          const targetStudent: Learner = allLearners.find(l => l.access_code.toUpperCase() === cleanCode) || fallbackStudent || {
             id: `learner_${cleanCode}`,
             event_id: sess.currentEventId || (evs[0]?.id || ''),
             full_name: sess.name || 'Student Delegate',
@@ -1483,6 +1488,7 @@ export function App() {
             email: 'delegate@assembly.edu',
             phone: '',
             bench: 'Ruling',
+            role: fallbackRole,
             department: 'Assembly Delegate',
             academic_year: '3rd Year',
             day1_checked_in: true,

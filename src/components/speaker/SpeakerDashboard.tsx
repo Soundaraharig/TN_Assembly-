@@ -148,14 +148,73 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
       setLearners(allLearners);
     }
     setTurnCounts(storageService.getSpeakingTurnCounts(eventId, currentSession.id));
+    // Determine approved questions count for quick tab badge
+    const currentApprovedQs = storageService.getProceedingsQuestions(eventId).filter(
+      q => q.status === 'Approved' || q.status === 'Starred'
+    );
+    setApprovedQuestionsCount(currentApprovedQs.length);
   }, [eventId]);
+
+  const [approvedQuestionsCount, setApprovedQuestionsCount] = useState<number>(() => {
+    return eventId
+      ? storageService.getProceedingsQuestions(eventId).filter(
+          q => q.status === 'Approved' || q.status === 'Starred'
+        ).length
+      : 0;
+  });
+
+  // Speech timer synchronization
+  const [timerState, setTimerState] = useState(() => storageService.getLiveTimerState(eventId));
+  const [timerSecondsLeft, setTimerSecondsLeft] = useState<number>(() => {
+    const ts = storageService.getLiveTimerState(eventId);
+    if (ts.isRunning && ts.startedAt) {
+      const elapsed = Math.floor((Date.now() - ts.startedAt) / 1000);
+      return Math.max(0, ts.secondsLeft - elapsed);
+    }
+    return ts.secondsLeft !== undefined ? ts.secondsLeft : 600;
+  });
+
+  useEffect(() => {
+    const handleTimerSync = () => {
+      const ts = storageService.getLiveTimerState(eventId);
+      setTimerState(ts);
+      if (ts.isRunning && ts.startedAt) {
+        const elapsed = Math.floor((Date.now() - ts.startedAt) / 1000);
+        setTimerSecondsLeft(Math.max(0, ts.secondsLeft - elapsed));
+      } else {
+        setTimerSecondsLeft(ts.secondsLeft !== undefined ? ts.secondsLeft : 600);
+      }
+    };
+    handleTimerSync();
+    const unsub = storageService.subscribe(handleTimerSync);
+    window.addEventListener('tn_assembly_timer_update', handleTimerSync);
+    window.addEventListener('storage', handleTimerSync);
+    return () => {
+      unsub();
+      window.removeEventListener('tn_assembly_timer_update', handleTimerSync);
+      window.removeEventListener('storage', handleTimerSync);
+    };
+  }, [eventId]);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+    if (timerState.isRunning && timerSecondsLeft > 0) {
+      interval = setInterval(() => {
+        setTimerSecondsLeft(prev => Math.max(0, prev - 1));
+      }, 1000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [timerState.isRunning, timerSecondsLeft]);
 
   // Initial load & listeners (compact realtime event bindings, zero aggressive polling)
   useEffect(() => {
     syncFloorData();
 
-    // Fetch cloud speaking requests, turns, questions, and hydrate event data
+    // Setup compact realtime WebSocket sync and fetch cloud data
     if (eventId) {
+      storageService.setupRealtimeSync(eventId);
       storageService.fetchActiveSpeakingRequests(eventId).then(() => syncFloorData()).catch(() => {});
       storageService.fetchSpeakingTurns(eventId).then(() => syncFloorData()).catch(() => {});
       storageService.fetchProceedingsQuestionsOnDemand(eventId).then(() => syncFloorData()).catch(() => {});
@@ -554,6 +613,24 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
               <span>{floorStateText}</span>
             </div>
 
+            {/* Live Synchronized Floor Speech Timer */}
+            <div
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border font-mono font-black text-xs transition-all shadow-sm ${
+                timerState.isRunning
+                  ? timerSecondsLeft <= 15
+                    ? 'bg-rose-500/15 border-rose-500/40 text-rose-600 dark:text-rose-400 animate-pulse'
+                    : timerSecondsLeft <= 60
+                      ? 'bg-amber-500/15 border-amber-500/40 text-amber-600 dark:text-amber-400'
+                      : 'bg-emerald-500/15 border-emerald-500/40 text-emerald-600 dark:text-emerald-400'
+                  : 'bg-slate-100 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700/80 text-slate-700 dark:text-slate-300'
+              }`}
+              title="Official Assembly Floor Speech Timer"
+            >
+              <Clock className="w-3.5 h-3.5" />
+              <span>{Math.floor(timerSecondsLeft / 60).toString().padStart(2, '0')}:{(timerSecondsLeft % 60).toString().padStart(2, '0')}</span>
+              {timerState.isRunning && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />}
+            </div>
+
             <button
               type="button"
               onClick={handleManualRefresh}
@@ -591,7 +668,7 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
           }`}
         >
           <HelpCircle className="w-3.5 h-3.5" />
-          <span>Questions</span>
+          <span>Questions{approvedQuestionsCount > 0 ? ` (${approvedQuestionsCount})` : ''}</span>
         </button>
         <button
           type="button"

@@ -618,13 +618,18 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
 
   const handleToggleTimer = () => {
+    let currentSec = secondsLeft;
+    if (currentSec <= 0) {
+      currentSec = timerDurationSec;
+      setSecondsLeft(currentSec);
+    }
     const nextRunning = !isTimerRunning;
     if (nextRunning && isSoundEnabled) playTimerBeep();
     setIsTimerRunning(nextRunning);
     if (currentEvent?.id) {
       storageService.saveLiveTimerState(currentEvent.id, {
         durationSec: timerDurationSec,
-        secondsLeft: secondsLeft,
+        secondsLeft: currentSec,
         isRunning: nextRunning,
         startedAt: nextRunning ? Date.now() : undefined,
         pausedAt: !nextRunning ? Date.now() : undefined,
@@ -644,6 +649,37 @@ export const ControlTab: React.FC<ControlTabProps> = ({
         updatedAt: Date.now()
       });
     }
+  };
+
+  const handleSetPreset = (presetSec: number) => {
+    const dur = Math.max(10, presetSec);
+    setTimerDurationSec(dur);
+    setSecondsLeft(dur);
+    setIsTimerRunning(false);
+    if (currentEvent?.id) {
+      storageService.saveLiveTimerState(currentEvent.id, {
+        durationSec: dur,
+        secondsLeft: dur,
+        isRunning: false,
+        updatedAt: Date.now()
+      });
+    }
+  };
+
+  const handleAdjustSeconds = (delta: number) => {
+    setSecondsLeft(prev => {
+      const nextSec = Math.max(0, prev + delta);
+      if (currentEvent?.id) {
+        storageService.saveLiveTimerState(currentEvent.id, {
+          durationSec: Math.max(timerDurationSec, nextSec),
+          secondsLeft: nextSec,
+          isRunning: isTimerRunning,
+          startedAt: isTimerRunning ? Date.now() : undefined,
+          updatedAt: Date.now()
+        });
+      }
+      return nextSec;
+    });
   };
 
   const handleDurationChange = (val: number) => {
@@ -957,18 +993,203 @@ export const ControlTab: React.FC<ControlTabProps> = ({
             </div>
           </div>
 
-          {/* 2. SPEECH DURATION TIMER CARD */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div className="text-center md:text-left">
-              <span className="font-mono text-6xl md:text-7xl font-black tracking-tight text-slate-400 dark:text-slate-300 select-none">
-                {formatTimerDigits(secondsLeft)}
-              </span>
+          {/* 2. SPEECH DURATION TIMER CARD (ENLARGED & HIGH-CONTRAST) */}
+          <div className="bg-white dark:bg-slate-900 border-2 border-slate-200/90 dark:border-slate-800 rounded-3xl p-6 sm:p-7 shadow-sm space-y-6">
+            
+            {/* Header: Title, Active Agenda indicator, Status Chip & Sound Chime */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800/80 pb-4">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-amber-500" />
+                  <span className="text-sm sm:text-base font-black uppercase tracking-wider text-slate-900 dark:text-white">
+                    Speech & Debate Duration Timer
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                  Authoritative speech countdown • Synchronized with stage & speaker screens
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                {secondsLeft === 0 ? (
+                  <span className="px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 flex items-center gap-1.5 animate-pulse">
+                    <span className="w-2 h-2 rounded-full bg-rose-500" />
+                    Time Expired
+                  </span>
+                ) : isTimerRunning ? (
+                  <span className="px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    Live Countdown
+                  </span>
+                ) : (
+                  <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
+                    Paused / Ready
+                  </span>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextSound = !isSoundEnabled;
+                    setIsSoundEnabled(nextSound);
+                    if (nextSound) playTimerBeep();
+                    onShowToast('Audio Feedback', nextSound ? 'Timer chime enabled (plays on expiry)' : 'Timer chime muted', 'info');
+                  }}
+                  className={`px-3 py-1 rounded-full text-xs font-bold border transition-all flex items-center gap-1.5 cursor-pointer ${
+                    isSoundEnabled
+                      ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30 shadow-sm'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
+                  title="Toggle alert sound when timer reaches 00:00"
+                >
+                  {isSoundEnabled ? <Volume2 className="w-3.5 h-3.5 text-amber-500" /> : <VolumeX className="w-3.5 h-3.5" />}
+                  <span>{isSoundEnabled ? 'Chime On' : 'Chime Off'}</span>
+                </button>
+              </div>
             </div>
 
-            <div className="space-y-3 shrink-0">
+            {/* Giant Digital Clock Stage Display */}
+            <div className="bg-slate-950 dark:bg-slate-950 rounded-2xl py-8 sm:py-10 px-4 border border-slate-800 shadow-xl flex flex-col items-center justify-center relative overflow-hidden">
+              {/* Dynamic ambient backdrop illumination */}
+              {isTimerRunning && (
+                <div
+                  className={`absolute inset-0 pointer-events-none opacity-20 blur-3xl transition-colors duration-700 ${
+                    secondsLeft <= 15 ? 'bg-rose-600' : secondsLeft <= 60 ? 'bg-amber-500' : 'bg-emerald-500'
+                  }`}
+                />
+              )}
+
+              {/* The BIG Timer Digits */}
+              <div
+                className={`font-mono text-7xl sm:text-8xl md:text-9xl font-black tracking-tight sm:tracking-normal select-none leading-none z-10 transition-colors duration-300 tabular-nums ${
+                  secondsLeft === 0
+                    ? 'text-rose-500 animate-pulse drop-shadow-[0_0_35px_rgba(244,63,94,0.8)]'
+                    : isTimerRunning && secondsLeft <= 15
+                      ? 'text-rose-400 animate-pulse drop-shadow-[0_0_30px_rgba(244,63,94,0.6)]'
+                      : isTimerRunning && secondsLeft <= 60
+                        ? 'text-amber-400 drop-shadow-[0_0_25px_rgba(245,158,11,0.5)]'
+                        : isTimerRunning
+                          ? 'text-emerald-400 drop-shadow-[0_0_25px_rgba(52,211,153,0.4)]'
+                          : 'text-white drop-shadow-[0_0_15px_rgba(255,255,255,0.2)]'
+                }`}
+              >
+                {formatTimerDigits(secondsLeft)}
+              </div>
+
+              {/* Progress Bar & Sub-indicators */}
+              <div className="w-full max-w-lg mt-6 space-y-2 z-10">
+                <div className="h-2.5 w-full bg-slate-900 rounded-full overflow-hidden p-0.5 border border-slate-800">
+                  <div
+                    className={`h-full rounded-full transition-all duration-300 ${
+                      secondsLeft <= 15
+                        ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.8)]'
+                        : secondsLeft <= 60
+                          ? 'bg-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.8)]'
+                          : isTimerRunning
+                            ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]'
+                            : 'bg-slate-500'
+                    }`}
+                    style={{
+                      width: `${Math.min(100, Math.max(0, (secondsLeft / Math.max(1, timerDurationSec)) * 100))}%`
+                    }}
+                  />
+                </div>
+                <div className="flex items-center justify-between text-xs font-mono font-semibold text-slate-400 px-1">
+                  <span>{Math.floor(secondsLeft / 60)}m {secondsLeft % 60}s remaining</span>
+                  <span>Target: {Math.floor(timerDurationSec / 60)}m {timerDurationSec % 60 ? `${timerDurationSec % 60}s` : ''}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Primary Action Buttons (Enlarged & Prominent) */}
+            <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
+              <button
+                type="button"
+                onClick={handleToggleTimer}
+                className={`px-8 py-3.5 rounded-2xl font-black text-sm md:text-base flex items-center justify-center gap-2.5 transition-all shadow-lg active:scale-95 cursor-pointer ${
+                  isTimerRunning
+                    ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-amber-500/25 ring-2 ring-amber-400/50'
+                    : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/30'
+                }`}
+              >
+                {isTimerRunning ? (
+                  <>
+                    <Pause className="w-5 h-5 fill-current" />
+                    <span>PAUSE TIMER</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-5 h-5 fill-current" />
+                    <span>START TIMER</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleResetTimer}
+                className="px-6 py-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm md:text-base flex items-center justify-center gap-2 transition-all shadow-sm active:scale-95 cursor-pointer"
+              >
+                <RotateCcw className="w-4 h-4" />
+                <span>RESET</span>
+              </button>
+
+              {/* Quick Time Bump Buttons: +30s / -30s */}
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => handleAdjustSeconds(30)}
+                  className="px-3.5 py-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-xs md:text-sm font-bold text-slate-700 dark:text-slate-300 transition-all cursor-pointer shadow-sm active:scale-95"
+                  title="Grant 30 extra seconds"
+                >
+                  +30s
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleAdjustSeconds(-30)}
+                  disabled={secondsLeft <= 0}
+                  className="px-3.5 py-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-xs md:text-sm font-bold text-slate-700 dark:text-slate-300 transition-all cursor-pointer shadow-sm active:scale-95 disabled:opacity-40"
+                  title="Deduct 30 seconds"
+                >
+                  -30s
+                </button>
+              </div>
+            </div>
+
+            {/* Quick Presets & Custom Seconds Input Row */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100 dark:border-slate-800 text-xs">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-slate-400 dark:text-slate-500 font-bold uppercase tracking-wider text-[11px] mr-1">
+                  Presets:
+                </span>
+                {[
+                  { label: '1m', sec: 60 },
+                  { label: '2m', sec: 120 },
+                  { label: '3m', sec: 180 },
+                  { label: '5m', sec: 300 },
+                  { label: '10m', sec: 600 }
+                ].map(p => (
+                  <button
+                    key={p.sec}
+                    type="button"
+                    onClick={() => handleSetPreset(p.sec)}
+                    className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer ${
+                      timerDurationSec === p.sec
+                        ? 'bg-amber-500 text-slate-950 font-black shadow-sm'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+
               <div className="flex items-center gap-2">
+                <span className="text-slate-400 dark:text-slate-500 font-semibold">Custom:</span>
                 <input
                   type="number"
+                  min="10"
+                  step="10"
                   value={timerDurationSec}
                   onChange={(e) => {
                     const val = parseInt(e.target.value) || 600;
@@ -976,33 +1197,8 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   }}
                   className="w-20 px-2.5 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-center font-mono font-bold text-xs text-slate-900 dark:text-white focus:outline-none focus:border-amber-500"
                 />
-                <span className="text-xs text-slate-500 font-semibold">sec</span>
-
-                <button
-                  onClick={handleToggleTimer}
-                  className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-black text-xs shadow-md shadow-amber-500/20 flex items-center gap-1.5 transition-all cursor-pointer"
-                >
-                  {isTimerRunning ? <><Pause className="w-3.5 h-3.5" /> Pause</> : <><Play className="w-3.5 h-3.5" /> Start</>}
-                </button>
-
-                <button
-                  onClick={handleResetTimer}
-                  className="px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1 transition-all cursor-pointer"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" /> Reset
-                </button>
+                <span className="text-slate-500 font-semibold">sec</span>
               </div>
-
-              <button
-                onClick={() => {
-                  setIsSoundEnabled(!isSoundEnabled);
-                  onShowToast('Audio Feedback', isSoundEnabled ? 'Timer alert sound muted' : 'Timer alert sound enabled', 'info');
-                }}
-                className="text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer"
-              >
-                {isSoundEnabled ? <Volume2 className="w-3.5 h-3.5 text-amber-500" /> : <VolumeX className="w-3.5 h-3.5 text-slate-400" />}
-                <span>{isSoundEnabled ? 'Timer sound enabled' : 'Tap once to enable timer sound'}</span>
-              </button>
             </div>
           </div>
 

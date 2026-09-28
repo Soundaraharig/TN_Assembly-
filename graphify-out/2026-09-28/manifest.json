@@ -180,9 +180,9 @@
     "semantic_hash": "3d1db61d896d7a7ddbe19b109b93c6bc"
   },
   "src/components/coordinator/ControlTab.tsx": {
-    "mtime": 1790580446.336023,
-    "seen": 1790580558.658275,
-    "ast_hash": "8ca0d92cfb89c9d3fef135c748dda676",
+    "mtime": 1790572745.4400964,
+    "seen": 1790580055.9367337,
+    "ast_hash": "c2049e47b677bcb890b42bb2bf376457",
     "semantic_hash": ""
   },
   "src/components/coordinator/CoordinatorDashboard.tsx": {
@@ -606,9 +606,9 @@
     "semantic_hash": ""
   },
   "src/components/speaker/SpeakerDashboard.tsx": {
-    "mtime": 1790580520.9553382,
-    "seen": 1790580558.6598577,
-    "ast_hash": "8f57a5a0de53a81248b27eca36d99ad8",
+    "mtime": 1790579425.6213462,
+    "seen": 1790580055.95636,
+    "ast_hash": "5e425b5f2bd4093d2844855a80d1fe69",
     "semantic_hash": ""
   },
   "src/utils/memberIdentity.ts": {
