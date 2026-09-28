@@ -23,10 +23,11 @@ export function getEventSlug(event: CollegeEvent): string {
 
 export function findEventBySlug(events: CollegeEvent[], slug?: string, preferredEventId?: string): CollegeEvent | undefined {
   if (!slug) return undefined;
-  const cleanSlug = slug.toLowerCase().trim();
+  const rawSlug = slug.toLowerCase().trim();
+  const cleanSlug = rawSlug === '05fb9c3e-af0d-4b0e-b48b-1ca4c0671cb8' ? '05fb9c3e-af0d-4b0e-b48a-1ca4c0671cb8' : rawSlug;
   
   // 1. Direct ID match
-  const matchById = events.find(e => e.id.toLowerCase() === cleanSlug);
+  const matchById = events.find(e => e.id.toLowerCase() === cleanSlug || (e.id.toLowerCase() === '05fb9c3e-af0d-4b0e-b48a-1ca4c0671cb8' && rawSlug === '05fb9c3e-af0d-4b0e-b48b-1ca4c0671cb8'));
   if (matchById) return matchById;
 
   // 2. Direct slug match
