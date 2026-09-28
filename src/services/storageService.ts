@@ -8969,14 +8969,14 @@ class StorageService {
 
   public getActiveAgendaDay(eventId?: string): 'Pre-Event' | 'Day 1' | 'Day 2' | string {
     if (!eventId) return 'Day 1';
+    const prog = this.getAgendaProgress(eventId);
+    if (prog.active_day) {
+      return prog.active_day;
+    }
     const all = this.getAgenda(eventId);
     const current = all.find(a => a.is_current);
     if (current && current.day) {
       return current.day;
-    }
-    const prog = this.getAgendaProgress(eventId);
-    if (prog.active_day) {
-      return prog.active_day;
     }
     const key = `tn_assembly_started_days_${eventId}`;
     const started = { ...(prog.started_days || {}), ...(this.getItem<Record<string, boolean>>(key, {})) };

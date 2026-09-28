@@ -12093,7 +12093,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/components/coordinator/ControlTab.tsx",
-      "source_location": "L1705",
+      "source_location": "L1742",
       "weight": 1.0
     },
     {
@@ -12105,7 +12105,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/components/coordinator/ControlTab.tsx",
-      "source_location": "L232",
+      "source_location": "L278",
       "weight": 1.0
     },
     {
@@ -12117,7 +12117,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/components/coordinator/ControlTab.tsx",
-      "source_location": "L239",
+      "source_location": "L285",
       "weight": 1.0
     },
     {
@@ -12129,7 +12129,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/components/coordinator/ControlTab.tsx",
-      "source_location": "L2885",
+      "source_location": "L2919",
       "weight": 1.0
     },
     {
@@ -12141,7 +12141,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/components/coordinator/ControlTab.tsx",
-      "source_location": "L614",
+      "source_location": "L660",
       "weight": 1.0
     },
     {
@@ -12153,7 +12153,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/components/coordinator/ControlTab.tsx",
-      "source_location": "L821",
+      "source_location": "L900",
       "weight": 1.0
     },
     {
@@ -12165,7 +12165,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/components/coordinator/ControlTab.tsx",
-      "source_location": "L824",
+      "source_location": "L903",
       "weight": 1.0
     },
     {
@@ -12177,7 +12177,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/components/coordinator/ControlTab.tsx",
-      "source_location": "L827",
+      "source_location": "L906",
       "weight": 1.0
     },
     {
@@ -20630,7 +20630,7 @@
     },
     {
       "source": "src_services_storageservice_storageservice_getactiveagendaday",
-      "target": "src_services_storageservice_storageservice_getagenda",
+      "target": "src_services_storageservice_storageservice_getagendaprogress",
       "relation": "calls",
       "_origin": "ast",
       "confidence": "EXTRACTED",
@@ -20642,14 +20642,14 @@
     },
     {
       "source": "src_services_storageservice_storageservice_getactiveagendaday",
-      "target": "src_services_storageservice_storageservice_getagendaprogress",
+      "target": "src_services_storageservice_storageservice_getagenda",
       "relation": "calls",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/services/storageService.ts",
-      "source_location": "L8977",
+      "source_location": "L8976",
       "weight": 1.0
     },
     {
@@ -56334,5 +56334,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "9ecf057a8fcf508399e25dca60f63dfd3e80b8ef"
+  "built_at_commit": "22b96a4ad8c2b662b0a2c9b3b1677b576a08441c"
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import type {
   Learner,
   Party,
@@ -88,7 +88,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 }) => {
 
 
-  // ── Agenda Navigation State ──────────────────────────────────────────────
+  // ── Agenda Navigation & Local State ──────────────────────────────────────
   const [activeDayTab, setActiveDayTab] = useState<'Pre-Event' | 'Day 1' | 'Day 2'>(() => {
     const actDay = storageService.getActiveAgendaDay(currentEvent?.id);
     if (actDay === 'Pre-Event' || actDay === 'Day 1' || actDay === 'Day 2') return actDay;
@@ -96,10 +96,52 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   });
   const [agendaFilter, setAgendaFilter] = useState<'ALL' | 'SCORED_VOTED'>('ALL');
 
+  // Local agenda state to guarantee immediate optimistic UI updates
+  const [localAgenda, setLocalAgenda] = useState<AgendaItem[]>(() => {
+    const storeAgenda = storageService.getAgenda(currentEvent?.id);
+    if (storeAgenda && storeAgenda.length > 0) return storeAgenda;
+    return agenda;
+  });
+
+  // Keep localAgenda in sync with props or event changes
+  useEffect(() => {
+    const fresh = storageService.getAgenda(currentEvent?.id);
+    if (fresh && fresh.length > 0) {
+      setLocalAgenda(fresh);
+    } else if (agenda && agenda.length > 0) {
+      setLocalAgenda(agenda);
+    }
+  }, [currentEvent?.id, agenda]);
+
+  // Subscribe to storageService updates and custom events for real-time agenda sync
+  useEffect(() => {
+    if (!currentEvent?.id) return;
+    const syncAgenda = () => {
+      const fresh = storageService.getAgenda(currentEvent.id);
+      if (fresh && fresh.length > 0) {
+        setLocalAgenda(fresh);
+      }
+    };
+    const unsub = storageService.subscribe(syncAgenda);
+    window.addEventListener('tn_assembly_agenda_update', syncAgenda);
+    window.addEventListener('tn_assembly_agenda_progress_update', syncAgenda);
+    return () => {
+      unsub();
+      window.removeEventListener('tn_assembly_agenda_update', syncAgenda);
+      window.removeEventListener('tn_assembly_agenda_progress_update', syncAgenda);
+    };
+  }, [currentEvent?.id]);
+
+  // Guard against background echoes clobbering recent manual day selection
+  const lastUserSelectedDayRef = useRef<{ day: 'Pre-Event' | 'Day 1' | 'Day 2'; timestamp: number } | null>(null);
+
   // Synchronize activeDayTab when event changes or authoritative agenda progress arrives
   useEffect(() => {
     if (!currentEvent?.id) return;
     const syncActiveDay = () => {
+      if (lastUserSelectedDayRef.current && Date.now() - lastUserSelectedDayRef.current.timestamp < 5000) {
+        return;
+      }
       const actDay = storageService.getActiveAgendaDay(currentEvent.id);
       if (actDay === 'Pre-Event' || actDay === 'Day 1' || actDay === 'Day 2') {
         setActiveDayTab(actDay);
@@ -113,15 +155,19 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   }, [currentEvent?.id]);
 
   const handleSelectDayTab = (day: 'Pre-Event' | 'Day 1' | 'Day 2') => {
+    lastUserSelectedDayRef.current = { day, timestamp: Date.now() };
     setActiveDayTab(day);
     if (currentEvent?.id) {
       storageService.saveAgendaProgress(currentEvent.id, { active_day: day }).catch(console.error);
     }
   };
 
-
-
-  const allEventAgenda = agenda.length >= 2 ? agenda : storageService.getAgenda(currentEvent?.id);
+  const allEventAgenda = useMemo(() => {
+    if (localAgenda && localAgenda.length > 0) return localAgenda;
+    const storeAgenda = storageService.getAgenda(currentEvent?.id);
+    if (storeAgenda && storeAgenda.length > 0) return storeAgenda;
+    return agenda;
+  }, [localAgenda, currentEvent?.id, agenda]);
 
   const currentAgendaList = useMemo(() => {
     return allEventAgenda
@@ -761,6 +807,53 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
   const [isGovtFormationOpen, setIsGovtFormationOpen] = useState(true);
 
+  // ── Unified Agenda Selection Handler ──────────────────────────────────────
+  const handleSelectAgendaItem = useCallback((targetItem: AgendaItem) => {
+    if (!targetItem) return;
+
+    // 1. Immediate optimistic local agenda update for instant UI feedback
+    setLocalAgenda(prevList => {
+      return prevList.map(item => {
+        if (item.id === targetItem.id) {
+          return { ...item, is_current: true, status: 'In Progress' };
+        }
+        if (item.is_current && item.id !== targetItem.id) {
+          return { ...item, is_current: false, status: 'Completed' };
+        }
+        return item;
+      });
+    });
+
+    // 2. Ensure activeDayTab matches the selected session's day
+    if (targetItem.day && (targetItem.day === 'Pre-Event' || targetItem.day === 'Day 1' || targetItem.day === 'Day 2')) {
+      setActiveDayTab(targetItem.day as any);
+      lastUserSelectedDayRef.current = { day: targetItem.day as any, timestamp: Date.now() };
+    }
+
+    // 3. Reset session timer and stop any playing alarm
+    const dur = (targetItem.duration_minutes || 10) * 60;
+    setTimerDurationSec(dur);
+    setSecondsLeft(dur);
+    setIsTimerRunning(false);
+    hasAlarmTriggeredRef.current = false;
+    stopAllAlertAudio();
+    setIsAlarmSounding(false);
+
+    // 4. Durably persist to backend storage and trigger listeners
+    if (currentEvent?.id) {
+      storageService.setCurrentAgendaItem(currentEvent.id, targetItem.id);
+      if (onSetCurrentAgendaItem) {
+        onSetCurrentAgendaItem(currentEvent.id, targetItem.id);
+      }
+      storageService.saveLiveTimerState(currentEvent.id, {
+        durationSec: dur,
+        secondsLeft: dur,
+        isRunning: false,
+        updatedAt: Date.now()
+      });
+    }
+  }, [currentEvent?.id, onSetCurrentAgendaItem]);
+
   // ── Individual Agenda Item Reset State ────────────────────────────────────
   const [resetConfirmItem, setResetConfirmItem] = useState<AgendaItem | null>(null);
   const [isResettingItem, setIsResettingItem] = useState(false);
@@ -771,21 +864,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     try {
       const res = storageService.resetIndividualAgendaItem(currentEvent.id, resetConfirmItem.id);
       if (res.success) {
-        // Activate it so it becomes current, session state resets, current agenda changes to that item, projector follows it
-        storageService.setCurrentAgendaItem(currentEvent.id, resetConfirmItem.id);
-        if (onSetCurrentAgendaItem) {
-          onSetCurrentAgendaItem(currentEvent.id, resetConfirmItem.id);
-        }
-        const dur = (resetConfirmItem.duration_minutes || 10) * 60;
-        setTimerDurationSec(dur);
-        setSecondsLeft(dur);
-        setIsTimerRunning(false);
-        storageService.saveLiveTimerState(currentEvent.id, {
-          durationSec: dur,
-          secondsLeft: dur,
-          isRunning: false,
-          updatedAt: Date.now()
-        });
+        handleSelectAgendaItem(resetConfirmItem);
         onShowToast('Session Re-Opened', `"${resetConfirmItem.title}" is now active on floor and projector.`, 'success');
       } else {
         onShowToast('Reset Failed', res.error || 'Could not reset agenda session.', 'error');
@@ -938,19 +1017,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     if (!currentEvent?.id) return;
     const startedItem = await storageService.startEventDay(currentEvent.id, activeDayTab);
     if (startedItem) {
-      if (onSetCurrentAgendaItem) {
-        onSetCurrentAgendaItem(currentEvent.id, startedItem.id);
-      }
-      const dur = (startedItem.duration_minutes || 10) * 60;
-      setTimerDurationSec(dur);
-      setSecondsLeft(dur);
-      setIsTimerRunning(false);
-      storageService.saveLiveTimerState(currentEvent.id, {
-        durationSec: dur,
-        secondsLeft: dur,
-        isRunning: false,
-        updatedAt: Date.now()
-      });
+      handleSelectAgendaItem(startedItem);
       onShowToast(`${activeDayTab} Started`, `Active Agenda: ${startedItem.title}`, 'success');
     }
   };
@@ -963,22 +1030,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     if (currentAgendaIndex < currentAgendaList.length - 1) {
       const nextIdx = currentAgendaIndex + 1;
       const nextItem = currentAgendaList[nextIdx];
-      if (currentEvent) {
-        storageService.setCurrentAgendaItem(currentEvent.id, nextItem.id);
-        if (onSetCurrentAgendaItem) {
-          onSetCurrentAgendaItem(currentEvent.id, nextItem.id);
-        }
-        const dur = (nextItem.duration_minutes || 10) * 60;
-        setTimerDurationSec(dur);
-        setSecondsLeft(dur);
-        setIsTimerRunning(false);
-        storageService.saveLiveTimerState(currentEvent.id, {
-          durationSec: dur,
-          secondsLeft: dur,
-          isRunning: false,
-          updatedAt: Date.now()
-        });
-      }
+      handleSelectAgendaItem(nextItem);
       onShowToast('Next Session Item', nextItem.title, 'success');
     } else {
       onShowToast('Agenda Completed', `You have reached the last agenda item for ${activeDayTab}.`, 'info');
@@ -993,22 +1045,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     if (currentAgendaIndex > 0) {
       const prevIdx = currentAgendaIndex - 1;
       const prevItem = currentAgendaList[prevIdx];
-      if (currentEvent) {
-        storageService.setCurrentAgendaItem(currentEvent.id, prevItem.id);
-        if (onSetCurrentAgendaItem) {
-          onSetCurrentAgendaItem(currentEvent.id, prevItem.id);
-        }
-        const dur = (prevItem.duration_minutes || 10) * 60;
-        setTimerDurationSec(dur);
-        setSecondsLeft(dur);
-        setIsTimerRunning(false);
-        storageService.saveLiveTimerState(currentEvent.id, {
-          durationSec: dur,
-          secondsLeft: dur,
-          isRunning: false,
-          updatedAt: Date.now()
-        });
-      }
+      handleSelectAgendaItem(prevItem);
       onShowToast('Previous Session Item', prevItem.title, 'info');
     }
   };
@@ -2085,7 +2122,11 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   return (
                     <button
                       key={day}
-                      onClick={() => handleSelectDayTab(day)}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSelectDayTab(day);
+                      }}
                       className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                         isActive
                           ? 'bg-orange-500 text-white shadow-sm font-black'
@@ -2103,7 +2144,11 @@ export const ControlTab: React.FC<ControlTabProps> = ({
             <div className="flex items-center gap-2 text-xs pt-1">
               <span className="text-slate-400 font-medium">Show:</span>
               <button
-                onClick={() => setAgendaFilter('ALL')}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setAgendaFilter('ALL');
+                }}
                 className={`px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
                   agendaFilter === 'ALL'
                     ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-sm'
@@ -2113,7 +2158,11 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                 Full agenda
               </button>
               <button
-                onClick={() => setAgendaFilter('SCORED_VOTED')}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setAgendaFilter('SCORED_VOTED');
+                }}
                 className={`px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer ${
                   agendaFilter === 'SCORED_VOTED'
                     ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-sm'
@@ -2138,28 +2187,13 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                 return (
                   <div
                     key={item.id}
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.stopPropagation();
                       if (isCompleted) {
                         setResetConfirmItem(item);
                         return;
                       }
-                      const targetItem = item;
-                      if (currentEvent) {
-                        storageService.setCurrentAgendaItem(currentEvent.id, targetItem.id);
-                        if (onSetCurrentAgendaItem) {
-                          onSetCurrentAgendaItem(currentEvent.id, targetItem.id);
-                        }
-                        const dur = (targetItem.duration_minutes || 10) * 60;
-                        setTimerDurationSec(dur);
-                        setSecondsLeft(dur);
-                        setIsTimerRunning(false);
-                        storageService.saveLiveTimerState(currentEvent.id, {
-                          durationSec: dur,
-                          secondsLeft: dur,
-                          isRunning: false,
-                          updatedAt: Date.now()
-                        });
-                      }
+                      handleSelectAgendaItem(item);
                     }}
                     className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 ${
                       isCompleted
