@@ -14551,6 +14551,15 @@ class StorageService {
       normalizedKey.includes('05fb9c3e') ||
       normalizedKey.includes('jkkn-arts');
     if (isArtsEvent) {
+      let textUpdated = false;
+      filtered = filtered.map(q => {
+        const fullQ = ARTS_PROCEEDINGS_QUESTIONS.find(aq => aq.id === q.id);
+        if (fullQ && fullQ.question_text && fullQ.question_text.length > (q.question_text || '').length) {
+          textUpdated = true;
+          return { ...q, question_text: fullQ.question_text };
+        }
+        return q;
+      });
       const filteredIdSet = new Set(filtered.map(q => q.id));
       const artsMissing = ARTS_PROCEEDINGS_QUESTIONS.filter(aq => !filteredIdSet.has(aq.id));
       if (artsMissing.length > 0) {
@@ -14560,6 +14569,16 @@ class StorageService {
           event_slug: targetEv?.slug || 'jkkn-arts-tn-assembly-2026-tamil-nadu-2026'
         }));
         filtered = [...filtered, ...toAdd];
+        textUpdated = true;
+      }
+      if (textUpdated) {
+        const curAll = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+        const filteredMap = new Map(filtered.map(q => [q.id, q]));
+        const updatedAll = curAll.map(q => filteredMap.get(q.id) || q);
+        filtered.forEach(q => {
+          if (!updatedAll.some(uq => uq.id === q.id)) updatedAll.push(q);
+        });
+        this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, updatedAll);
       }
     }
 
@@ -14805,6 +14824,14 @@ class StorageService {
                 event_id: ev.id,
                 event_slug: ev.slug || getEventSlug(ev as any)
               });
+            } else {
+              const existing = pqMap.get(aq.id)!;
+              if (aq.question_text && aq.question_text.length > (existing.question_text || '').length) {
+                pqMap.set(aq.id, {
+                  ...existing,
+                  question_text: aq.question_text
+                });
+              }
             }
           });
         }

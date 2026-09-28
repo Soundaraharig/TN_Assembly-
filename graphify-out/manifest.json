@@ -354,9 +354,9 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1790579337.3475864,
-    "seen": 1790580055.965823,
-    "ast_hash": "b9d41d62ab1235295b8f167b81bf8c8c",
+    "mtime": 1790597750.990945,
+    "seen": 1790597826.8550758,
+    "ast_hash": "582976281a053496b1e44ece86c334c2",
     "semantic_hash": ""
   },
   "src/types/index.ts": {
@@ -396,9 +396,9 @@
     "semantic_hash": ""
   },
   "src/utils/slug.ts": {
-    "mtime": 1789998079.3032954,
-    "seen": 1789998499.2485344,
-    "ast_hash": "7f536f06bcb1056d8dd22f244035a74b",
+    "mtime": 1790590693.539514,
+    "seen": 1790597826.8557436,
+    "ast_hash": "91e7a0e7711a74a4eb46f28b8daf3ae0",
     "semantic_hash": ""
   },
   "start_vite.ps1": {
@@ -621,6 +621,60 @@
     "mtime": 1790579698.6785462,
     "seen": 1790580055.9241157,
     "ast_hash": "721d587821703a8ed3dbabf4719dadca",
+    "semantic_hash": ""
+  },
+  "scratch/enriched_questions.json": {
+    "mtime": 1790589257.3684905,
+    "seen": 1790597826.849715,
+    "ast_hash": "a3a23a1a5e6869fd274cec974c0b19dd",
+    "semantic_hash": ""
+  },
+  "scratch/extract_authentic.cjs": {
+    "mtime": 1790592372.8247104,
+    "seen": 1790597826.8497176,
+    "ast_hash": "69588a6f4d986fffa94d5dd4db64e214",
+    "semantic_hash": ""
+  },
+  "scratch/extract_recovered.js": {
+    "mtime": 1790586302.243012,
+    "seen": 1790597826.8497186,
+    "ast_hash": "820e21a8ea12bc53fba67e986b0aa399",
+    "semantic_hash": ""
+  },
+  "scratch/find_full_text.cjs": {
+    "mtime": 1790592567.072397,
+    "seen": 1790597826.8497927,
+    "ast_hash": "63647a2e3219d93313f6b1add26c35e7",
+    "semantic_hash": ""
+  },
+  "scratch/parse_complete.cjs": {
+    "mtime": 1790592402.0905604,
+    "seen": 1790597826.8497944,
+    "ast_hash": "e8beeb53ce56f9f57e5e14cc973a5dac",
+    "semantic_hash": ""
+  },
+  "scratch/recovered_questions.json": {
+    "mtime": 1790586310.605727,
+    "seen": 1790597826.8497953,
+    "ast_hash": "0f2fa38c2aeab8c940e7f50a2c39e79f",
+    "semantic_hash": ""
+  },
+  "src/data/artsProceedingsQuestions.ts": {
+    "mtime": 1790597717.523971,
+    "seen": 1790597826.8545306,
+    "ast_hash": "f6ccc27cd5d95dd4310b0956a975cb24",
+    "semantic_hash": ""
+  },
+  "scratch/line143_content.txt": {
+    "mtime": 1790592533.1721108,
+    "seen": 1790597826.856941,
+    "ast_hash": "d4abf13af93e1dc7cb6400969166f7cd",
+    "semantic_hash": ""
+  },
+  "scratch/raw_arts_line.txt": {
+    "mtime": 1790592387.021684,
+    "seen": 1790597826.8569424,
+    "ast_hash": "3b179668d346b795725dfeeed8342429",
     "semantic_hash": ""
   }
 }
