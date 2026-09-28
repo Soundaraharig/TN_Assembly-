@@ -1500,6 +1500,9 @@ class StorageService {
         this.setItem(`tn_assembly_projector_studio_${ev.id}`, sc.projector_settings);
         this.setItem('tn_assembly_projector_studio_v1', sc.projector_settings);
       }
+      if (sc.timer) {
+        this.setItem(`tn_assembly_live_timer_${ev.id}`, sc.timer);
+      }
       if (sc.last_bell_ring) {
         this.setItem(`tn_assembly_last_bell_${ev.id}`, sc.last_bell_ring);
       }
@@ -3458,7 +3461,7 @@ class StorageService {
    * NEVER queries: volunteers, event_day_attendance, event_days, committees, political_parties, or full learners table.
    * Utilizes Stale-While-Revalidate with 5-minute TTL and realtime broadcast sync.
    */
-  public async fetchDisplayPortalData(slugOrId: string, force = false): Promise<void> {
+  public async fetchDisplayPortalData(slugOrId: string, force = true): Promise<void> {
     const sb = supabase;
     if (!sb || !slugOrId) return;
 
@@ -3484,30 +3487,31 @@ class StorageService {
 
       const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
 
-      // 2. Fetch single event metadata
+      // 2. Fetch single event metadata (Authoritative fetch from Supabase to prevent multi-window divergence)
       let targetEv: CollegeEvent | null = null;
-      const cached = this.getEvents().find(e => e.id === resolvedEventId);
-      if (cached && cached.social_coverage) {
-        targetEv = cached;
+      let evQuery = sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS);
+      if (isUuid(resolvedEventId)) {
+        evQuery = evQuery.eq('id', resolvedEventId);
+      } else if (isUuid(slugOrId)) {
+        evQuery = evQuery.eq('id', slugOrId);
       } else {
-        let evQuery = sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS);
-        if (isUuid(resolvedEventId)) {
-          evQuery = evQuery.eq('id', resolvedEventId);
-        } else if (isUuid(slugOrId)) {
-          evQuery = evQuery.eq('id', slugOrId);
-        } else {
-          const clean = slugOrId.trim();
-          evQuery = evQuery.eq('slug', clean);
-        }
-        const { data: evData, error: evErr } = await evQuery.limit(1);
-        if (!evErr && evData && evData.length > 0) {
-          targetEv = this.normalizeEvent(evData[0] as unknown as CollegeEvent);
-          resolvedEventId = targetEv.id;
-          const curEvs = this.getEvents();
-          const existing = curEvs.find(e => e.id === targetEv!.id);
-          const merged = existing ? { ...existing, ...targetEv } : targetEv;
-          this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== targetEv!.id), merged]);
-          this.unpackAndApplyEventState([merged], targetEv.id);
+        const clean = slugOrId.trim();
+        evQuery = evQuery.eq('slug', clean);
+      }
+      const { data: evData, error: evErr } = await evQuery.limit(1);
+      if (!evErr && evData && evData.length > 0) {
+        targetEv = this.normalizeEvent(evData[0] as unknown as CollegeEvent);
+        resolvedEventId = targetEv.id;
+        const curEvs = this.getEvents();
+        const existing = curEvs.find(e => e.id === targetEv!.id);
+        const merged = existing ? { ...existing, ...targetEv } : targetEv;
+        this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== targetEv!.id), merged]);
+        this.unpackAndApplyEventState([merged], targetEv.id);
+      } else {
+        // Fallback to cache ONLY if remote query failed or offline
+        const cached = this.getEvents().find(e => e.id === resolvedEventId);
+        if (cached && cached.social_coverage) {
+          targetEv = cached;
         }
       }
 
@@ -3670,10 +3674,23 @@ class StorageService {
       const channel = supabase.channel(channelName)
         .on('broadcast', { event: 'projector_update' }, (msg: any) => {
           if (msg?.payload?.eventId && msg?.payload?.settings) {
-            this.setItem(`tn_assembly_projector_studio_${msg.payload.eventId}`, msg.payload.settings);
-            this.setItem('tn_assembly_projector_studio_v1', msg.payload.settings);
+            const evId = msg.payload.eventId;
+            const newSettings = msg.payload.settings;
+            this.setItem(`tn_assembly_projector_studio_${evId}`, newSettings);
+            this.setItem('tn_assembly_projector_studio_v1', newSettings);
+
+            const curEvs = this.getEvents();
+            const ev = curEvs.find(e => e.id === evId);
+            if (ev) {
+              ev.social_coverage = { ...(ev.social_coverage || {}), projector_settings: newSettings };
+              this.setItem(STORAGE_KEYS.EVENTS, curEvs);
+            }
+
             this.notify();
-            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_projector_update', { detail: msg.payload }));
+              window.dispatchEvent(new Event('storage'));
+            }
           }
         })
         .on('broadcast', { event: 'speaker_bell' }, (msg: any) => {
@@ -4043,7 +4060,16 @@ class StorageService {
         .on('broadcast', { event: 'timer_update' }, (msg: any) => {
           if (msg?.payload?.eventId && msg?.payload?.timerState) {
             const evId = msg.payload.eventId;
-            this.setItem(`tn_assembly_live_timer_${evId}`, msg.payload.timerState);
+            const newTimer = msg.payload.timerState;
+            this.setItem(`tn_assembly_live_timer_${evId}`, newTimer);
+
+            const curEvs = this.getEvents();
+            const ev = curEvs.find(e => e.id === evId);
+            if (ev) {
+              ev.social_coverage = { ...(ev.social_coverage || {}), timer: newTimer };
+              this.setItem(STORAGE_KEYS.EVENTS, curEvs);
+            }
+
             this.notify();
             if (typeof window !== 'undefined') {
               window.dispatchEvent(new CustomEvent('tn_assembly_timer_update', { detail: msg.payload }));
@@ -4190,12 +4216,21 @@ class StorageService {
                   proj.selectedAgendaId = currentItem.id;
                   this.setItem(`tn_assembly_projector_studio_${evId}`, proj);
                   this.setItem('tn_assembly_projector_studio_v1', proj);
+                  const curEvs = this.getEvents();
+                  const ev = curEvs.find(e => e.id === evId);
+                  if (ev) {
+                    ev.social_coverage = { ...(ev.social_coverage || {}), projector_settings: proj };
+                    this.setItem(STORAGE_KEYS.EVENTS, curEvs);
+                  }
                 }
               }
             }
 
             this.notify();
-            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_agenda_update', { detail: msg.payload }));
+              window.dispatchEvent(new Event('storage'));
+            }
           }
         })
         .on('broadcast', { event: 'login_recorded' }, (msg: any) => {
@@ -4989,6 +5024,7 @@ class StorageService {
       const payload = {
         ...existingSC,
         projector_settings: projSettings || existingSC.projector_settings,
+        timer: this.getLiveTimerState(eventId) || existingSC.timer,
         last_bell_ring: lastBell || existingSC.last_bell_ring,
         open_nominations: openNoms,
         nominations: noms,
@@ -9144,17 +9180,29 @@ class StorageService {
     const currentProj = this.getProjectorSettings(eventId);
     if (currentProj.selectedAgendaId !== itemId) {
       currentProj.selectedAgendaId = itemId;
+      if (currentProj.displayScene === 'question_hour' || currentProj.displayScene === 'welcome') {
+        currentProj.displayScene = 'agenda';
+      }
       this.saveProjectorSettings(eventId, currentProj);
     }
 
     // Broadcast agenda_update
-    if (supabase && this.realtimeChannel) {
-      const eventAgenda = all.filter(a => a.event_id === eventId);
-      this.realtimeChannel.send({
-        type: 'broadcast',
-        event: 'agenda_update',
-        payload: { eventId, agenda: eventAgenda }
-      }).catch((err: any) => console.warn('Realtime broadcast agenda_update failed:', err));
+    if (supabase) {
+      try {
+        if (!this.realtimeChannel || this.currentRealtimeEventId !== eventId) {
+          this.setupRealtimeSync(eventId);
+        }
+        if (this.realtimeChannel) {
+          const eventAgenda = all.filter(a => a.event_id === eventId);
+          this.realtimeChannel.send({
+            type: 'broadcast',
+            event: 'agenda_update',
+            payload: { eventId, agenda: eventAgenda }
+          }).catch((err: any) => console.warn('Realtime broadcast agenda_update failed:', err));
+        }
+      } catch (err: any) {
+        console.warn('Realtime broadcast agenda_update failed:', err);
+      }
     }
 
     this.notify();
@@ -12605,11 +12653,16 @@ class StorageService {
       updatedAt: Date.now()
     };
     if (eventId) {
-      const local = this.getItem<LiveTimerState | null>(`tn_assembly_live_timer_${eventId}`, null);
-      if (local) return local;
+      // Authoritative Supabase social_coverage is primary source of truth across all windows
       const ev = this.getEvents().find(e => e.id === eventId);
       const sc = (ev?.social_coverage || {}) as Record<string, any>;
-      if (sc.timer) return sc.timer;
+      if (sc.timer) {
+        this.setItem(`tn_assembly_live_timer_${eventId}`, sc.timer);
+        return sc.timer;
+      }
+      const local = this.getItem<LiveTimerState | null>(`tn_assembly_live_timer_${eventId}`, null);
+      if (local) return local;
+      return defaultTimer;
     }
     const fallback = this.getItem<LiveTimerState | null>('tn_assembly_live_timer_global', null);
     return fallback || defaultTimer;
@@ -12632,16 +12685,27 @@ class StorageService {
       window.dispatchEvent(new Event('storage'));
     }
 
-    if (supabase && this.realtimeChannel) {
+    if (supabase) {
       try {
-        await this.realtimeChannel.send({
-          type: 'broadcast',
-          event: 'timer_update',
-          payload: { eventId, timerState }
-        });
+        if (!this.realtimeChannel || this.currentRealtimeEventId !== eventId) {
+          this.setupRealtimeSync(eventId);
+        }
+        if (this.realtimeChannel) {
+          await this.realtimeChannel.send({
+            type: 'broadcast',
+            event: 'timer_update',
+            payload: { eventId, timerState }
+          });
+        }
       } catch (e) {
         console.warn('Realtime broadcast timer_update failed:', e);
       }
+    }
+
+    if (eventId) {
+      this.patchSocialCoverageSafe(eventId, { timer: timerState }).catch(err => {
+        console.warn('[StorageService] Error patching timer to social_coverage:', err);
+      });
     }
   }
 
@@ -13236,14 +13300,16 @@ class StorageService {
     };
 
     if (eventId) {
-      // LOCAL localStorage is authoritative — it reflects the most recent setCurrentAgendaItem()
-      // and saveProjectorSettings() calls from this browser. social_coverage from the Supabase
-      // event snapshot may be stale (e.g. pointing to an old Pre-Event selectedAgendaId).
-      const local = this.getItem<ProjectorStudioSettings | null>(`tn_assembly_projector_studio_${eventId}`, null);
-      if (local) return local;
+      // Authoritative Supabase social_coverage is primary source of truth across all windows
       const ev = this.getEvents().find(e => e.id === eventId);
       const sc = (ev?.social_coverage || {}) as Record<string, any>;
-      if (sc.projector_settings) return sc.projector_settings;
+      if (sc.projector_settings) {
+        this.setItem(`tn_assembly_projector_studio_${eventId}`, sc.projector_settings);
+        return sc.projector_settings;
+      }
+      const local = this.getItem<ProjectorStudioSettings | null>(`tn_assembly_projector_studio_${eventId}`, null);
+      if (local) return local;
+      return defaultSettings;
     }
     const fallback = this.getItem<ProjectorStudioSettings | null>('tn_assembly_projector_studio_v1', null);
     return fallback || defaultSettings;
@@ -13262,20 +13328,32 @@ class StorageService {
       this.setItem(STORAGE_KEYS.EVENTS, events);
     }
     this.notify();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_projector_update', { detail: { eventId, settings } }));
+      window.dispatchEvent(new Event('storage'));
+    }
 
-    if (supabase && this.realtimeChannel) {
+    if (supabase) {
       try {
-        await this.realtimeChannel.send({
-          type: 'broadcast',
-          event: 'projector_update',
-          payload: { eventId, settings }
-        });
+        if (!this.realtimeChannel || this.currentRealtimeEventId !== eventId) {
+          this.setupRealtimeSync(eventId);
+        }
+        if (this.realtimeChannel) {
+          await this.realtimeChannel.send({
+            type: 'broadcast',
+            event: 'projector_update',
+            payload: { eventId, settings }
+          });
+        }
       } catch (e) {
         console.warn('Realtime broadcast projector_update failed:', e);
       }
     }
 
     if (eventId) {
+      this.patchSocialCoverageSafe(eventId, { projector_settings: settings }).catch(err => {
+        console.warn('[StorageService] Error patching projector_settings to social_coverage:', err);
+      });
       await this.syncEventStateToSupabase(eventId);
     }
   }

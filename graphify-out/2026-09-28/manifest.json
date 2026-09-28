@@ -354,9 +354,9 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1790597750.990945,
-    "seen": 1790597826.8550758,
-    "ast_hash": "582976281a053496b1e44ece86c334c2",
+    "mtime": 1790599493.1302292,
+    "seen": 1790599594.147413,
+    "ast_hash": "0614604dc2da50dec2503fea3b330ec7",
     "semantic_hash": ""
   },
   "src/types/index.ts": {
@@ -675,6 +675,54 @@
     "mtime": 1790592387.021684,
     "seen": 1790597826.8569424,
     "ast_hash": "3b179668d346b795725dfeeed8342429",
+    "semantic_hash": ""
+  },
+  "scratch/audit_storage.cjs": {
+    "mtime": 1790598337.3416078,
+    "seen": 1790599594.1413107,
+    "ast_hash": "334e1b0c8803fe3b451aa9a168eba998",
+    "semantic_hash": ""
+  },
+  "scratch/audit_storage_lines.json": {
+    "mtime": 1790598343.7965937,
+    "seen": 1790599594.141312,
+    "ast_hash": "3ddd8747d5c3f854da1aa0ac310ea1ef",
+    "semantic_hash": ""
+  },
+  "scratch/check_all_pqs.cjs": {
+    "mtime": 1790598724.813566,
+    "seen": 1790599594.141313,
+    "ast_hash": "99aaea63129152eabb601390b5515a97",
+    "semantic_hash": ""
+  },
+  "scratch/find_attendance.cjs": {
+    "mtime": 1790598632.040217,
+    "seen": 1790599594.141698,
+    "ast_hash": "bff8deb65927996f2f9feaf96bb7f537",
+    "semantic_hash": ""
+  },
+  "scratch/find_sc_updates.cjs": {
+    "mtime": 1790598529.7916298,
+    "seen": 1790599594.1417756,
+    "ast_hash": "afd46b0423554d50d14ccfcad1a40197",
+    "semantic_hash": ""
+  },
+  "scratch/find_score_methods.cjs": {
+    "mtime": 1790598488.5658438,
+    "seen": 1790599594.1417768,
+    "ast_hash": "1019c0a1c01fa777876185d28616fac9",
+    "semantic_hash": ""
+  },
+  "scratch/find_sync_calls.cjs": {
+    "mtime": 1790598422.8305986,
+    "seen": 1790599594.1417775,
+    "ast_hash": "c7ab95e1f9da70a7c98df8f2a500e476",
+    "semantic_hash": ""
+  },
+  "scratch/find_truncations.cjs": {
+    "mtime": 1790598549.0968087,
+    "seen": 1790599594.1417787,
+    "ast_hash": "dff051e42bbe00b564e3d2388bcc4b59",
     "semantic_hash": ""
   }
 }

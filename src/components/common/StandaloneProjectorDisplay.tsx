@@ -81,7 +81,7 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
     const activeEv = extractEventFromUrl(evs) || initialEvent || (currentEvent?.id ? evs.find(e => e.id === currentEvent.id) : null) || evs[0];
     const target = activeEv?.id || extractEventSlugCandidateFromUrl();
     if (target) {
-      storageService.fetchDisplayPortalData(target).catch(err =>
+      storageService.fetchDisplayPortalData(target, true).catch(err =>
         console.warn('[StandaloneProjectorDisplay] display data fetch warning:', err)
       );
     }
@@ -116,10 +116,31 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
 
     syncState();
     window.addEventListener('storage', syncState);
+    window.addEventListener('tn_assembly_timer_update', syncState);
+    window.addEventListener('tn_assembly_projector_update', syncState);
+    window.addEventListener('tn_assembly_agenda_update', syncState);
+
+    const handleRevalidate = () => {
+      syncState();
+      const evs = storageService.getEvents();
+      const activeEv = extractEventFromUrl(evs) || initialEvent || (currentEvent?.id ? evs.find(e => e.id === currentEvent.id) : null) || evs[0];
+      const target = activeEv?.id || extractEventSlugCandidateFromUrl();
+      if (target && !document.hidden) {
+        storageService.fetchDisplayPortalData(target, true).catch(() => {});
+      }
+    };
+
+    window.addEventListener('online', handleRevalidate);
+    document.addEventListener('visibilitychange', handleRevalidate);
     const unsubscribe = storageService.subscribe(syncState);
 
     return () => {
       window.removeEventListener('storage', syncState);
+      window.removeEventListener('tn_assembly_timer_update', syncState);
+      window.removeEventListener('tn_assembly_projector_update', syncState);
+      window.removeEventListener('tn_assembly_agenda_update', syncState);
+      window.removeEventListener('online', handleRevalidate);
+      document.removeEventListener('visibilitychange', handleRevalidate);
       unsubscribe();
     };
   }, [currentEvent?.id, initialEvent?.id]);

@@ -190,10 +190,14 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
-    if (isTimerRunning && secondsLeft > 0) {
+    if (isTimerRunning) {
       interval = setInterval(() => {
-        setSecondsLeft(prev => {
-          if (prev <= 1) {
+        const live = storageService.getLiveTimerState(currentEvent?.id);
+        if (live.isRunning && live.startedAt) {
+          const elapsed = Math.floor((Date.now() - live.startedAt) / 1000);
+          const remaining = Math.max(0, live.secondsLeft - elapsed);
+          setSecondsLeft(remaining);
+          if (remaining <= 0) {
             setIsTimerRunning(false);
             if (currentEvent?.id) {
               storageService.saveLiveTimerState(currentEvent.id, {
@@ -206,17 +210,18 @@ export const ControlTab: React.FC<ControlTabProps> = ({
             if (isSoundEnabled) {
               playTimerBeep();
             }
-            onShowToast('⏰ Time Expired', `Floor time for ${activeAgendaItem.title} concluded`, 'info');
-            return 0;
+            onShowToast('⏰ Time Expired', `Floor time for ${activeAgendaItem?.title || 'Session'} concluded`, 'info');
           }
-          return prev - 1;
-        });
+        } else {
+          setSecondsLeft(live.secondsLeft);
+          setIsTimerRunning(live.isRunning);
+        }
       }, 1000);
     }
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isTimerRunning, secondsLeft, isSoundEnabled, activeAgendaItem, currentEvent?.id, timerDurationSec]);
+  }, [isTimerRunning, isSoundEnabled, activeAgendaItem?.title, currentEvent?.id, timerDurationSec, onShowToast]);
 
   const playTimerBeep = () => {
     try {
