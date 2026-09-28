@@ -48,8 +48,19 @@ import type {
   SpeakingRequest,
   SpeakingRequestStatus,
   SpeakingTurn,
-  SpeakingTurnStatus
+  SpeakingTurnStatus,
+  QuestionSnapshot
 } from '../types';
+
+export const CANONICAL_QUESTION_TARGETS: string[] = [
+  'Chief Minister',
+  'Ministry of Education',
+  'Ministry of Finance',
+  'Ministry of Health & Family Welfare',
+  'Ministry of IT & AI',
+  'Ministry of Public Works & Infrastructure',
+  'Ministry of Youth & Sports'
+];
 import { getRecordSessionStatuses, getCanonicalQuestionStatus } from '../types';
 import {
   INITIAL_EVENTS,
@@ -2687,6 +2698,29 @@ class StorageService {
     };
   }
 
+  /**
+   * Retrieves the authoritative target list for Question Hour submissions and filtering.
+   * "Chief Minister" is NOT a ministry and is ALWAYS displayed at the top of the target list,
+   * followed by the configured ministries (or the default 6 ministries).
+   */
+  public getQuestionTargets(eventId?: string): string[] {
+    const defaultList = [...CANONICAL_QUESTION_TARGETS];
+    if (!eventId) return defaultList;
+
+    const ministries = this.getCabinetMinistries(eventId);
+    if (!ministries || ministries.length === 0) {
+      return defaultList;
+    }
+
+    // Filter out 'Chief Minister' from ministries if present to avoid duplication
+    const otherMinistries = ministries.filter(
+      m => m.toLowerCase().trim() !== 'chief minister' && m.toLowerCase().trim() !== 'cm'
+    );
+
+    // Chief Minister ALWAYS at index 0 at the top of the target list
+    return ['Chief Minister', ...(otherMinistries.length > 0 ? otherMinistries : defaultList.slice(1))];
+  }
+
   public getCabinetMinistries(eventId: string): string[] {
     if (!eventId) return [];
     const cleanKey = eventId.toLowerCase().trim();
@@ -2729,14 +2763,15 @@ class StorageService {
   /**
    * Directly fetches the latest target ministries for the specified event from Supabase college_events.
    * Scoped strictly to the given event ID or slug with race-condition timestamp protection.
+   * Guarantees "Chief Minister" is at the top of the Question Hour targets.
    */
   public async fetchEventMinistries(eventIdOrSlug: string): Promise<string[]> {
-    if (!eventIdOrSlug) return [];
+    if (!eventIdOrSlug) return [...CANONICAL_QUESTION_TARGETS];
     const cleanKey = eventIdOrSlug.trim();
     const reqTime = Date.now();
     this.lastMinistryReqTimes[cleanKey.toLowerCase()] = reqTime;
 
-    const currentCached = this.getCabinetMinistries(cleanKey);
+    const currentCached = this.getQuestionTargets(cleanKey);
     const sb = supabase;
     if (!sb || !isSupabaseEnabled) {
       return currentCached;
@@ -2765,13 +2800,15 @@ class StorageService {
 
       // Race condition check: drop stale server response if a newer request was made
       if (this.lastMinistryReqTimes[cleanKey.toLowerCase()] && this.lastMinistryReqTimes[cleanKey.toLowerCase()] > reqTime) {
-        return this.getCabinetMinistries(cleanKey);
+        return this.getQuestionTargets(cleanKey);
       }
 
       if (data && data.length > 0) {
         const ev = data[0];
         const sc = (ev.social_coverage || {}) as Record<string, any>;
-        const ministries: string[] = Array.isArray(sc.cabinet_ministries) ? sc.cabinet_ministries : [];
+        const ministries: string[] = Array.isArray(sc.cabinet_ministries) && sc.cabinet_ministries.length > 0
+          ? sc.cabinet_ministries
+          : CANONICAL_QUESTION_TARGETS.slice(1);
 
         if (typeof localStorage !== 'undefined' && ev.id) {
           try {
@@ -2788,7 +2825,8 @@ class StorageService {
         }
 
         this.notify();
-        return ministries;
+        const targets = ['Chief Minister', ...ministries.filter(m => m.toLowerCase().trim() !== 'chief minister' && m.toLowerCase().trim() !== 'cm')];
+        return targets;
       }
     } catch (err) {
       console.warn('[StorageService] fetchEventMinistries exception:', err);
@@ -15592,7 +15630,17 @@ class StorageService {
           });
         });
 
-        // Emergency cold-start recovery ONLY if remote DB returned 0 questions for ARTS
+        // Generic Safety Guard: If remote returned 0 questions while local cache had questions, protect existing questions!
+        if (validRemotePQs.length === 0 && thisEventLocalPQs.length > 0) {
+          console.warn(`[StorageService] QUESTION INTEGRITY WARNING: Remote fetch returned 0 questions while local cache has ${thisEventLocalPQs.length} questions for event ${ev.id}. Preserving local questions against false wipe.`);
+          thisEventLocalPQs.forEach(lq => {
+            if (!deletedQIds.has(lq.id) && (lq.status as any) !== 'Deleted' && !(lq as any).deleted) {
+              pqMap.set(lq.id, lq);
+            }
+          });
+        }
+
+        // Emergency cold-start recovery ONLY if remote DB and local state both have 0 questions for ARTS
         const isArtsEvent = ev.id === '05fb9c3e-af0d-4b0e-b48a-1ca4c0671cb8' ||
           ev.slug?.includes('jkkn-arts') ||
           cleanEventKey.includes('05fb9c3e');
@@ -15608,7 +15656,7 @@ class StorageService {
         }
 
         thisEventLocalPQs.forEach(lq => {
-          if (deletedQIds.has(lq.id) || (lq.status as any) !== 'Deleted' && (lq as any).deleted || (lq.status as any) === 'Deleted') return;
+          if (deletedQIds.has(lq.id) || ((lq.status as any) !== 'Deleted' && (lq as any).deleted) || (lq.status as any) === 'Deleted') return;
           if (remoteQIdSet.has(lq.id)) {
             const remote = pqMap.get(lq.id)!;
             const localT = new Date(lq.updated_at || lq.created_at || 0).getTime();
@@ -15624,9 +15672,21 @@ class StorageService {
               : (remoteCanonical === 'Under Review' || localCanonical === 'Under Review')
               ? 'Under Review'
               : (localT >= remoteT ? (localCanonical || lq.status) : (remoteCanonical || remote.status));
+
+            // CRITICAL: Question text must NEVER be truncated or shortened
+            const bestText = (lq.question_text && lq.question_text.length >= (remote.question_text || '').length)
+              ? lq.question_text
+              : (remote.question_text || lq.question_text);
+
             pqMap.set(lq.id, {
               ...remote,
               ...lq,
+              question_text: bestText,
+              target: lq.target || remote.target || lq.target_ministry_name || remote.target_ministry_name || lq.ministry || remote.ministry,
+              target_name: lq.target_name || remote.target_name || lq.target_ministry_name || remote.target_ministry_name || lq.ministry || remote.ministry,
+              target_ministry_name: lq.target_ministry_name || remote.target_ministry_name || lq.ministry || remote.ministry,
+              ministry: lq.ministry || remote.ministry,
+              constituency_number: lq.constituency_number !== undefined ? lq.constituency_number : remote.constituency_number,
               status: mergedStatus,
               calling_order: remote.calling_order !== undefined ? remote.calling_order : lq.calling_order,
               queue_order: remote.calling_order !== undefined ? remote.calling_order : (remote.queue_order !== undefined ? remote.queue_order : lq.queue_order),
@@ -15644,6 +15704,7 @@ class StorageService {
               updated_at: localT >= remoteT ? lq.updated_at : remote.updated_at
             });
           } else {
+            // NEVER conclude a question was deleted merely because it is absent from a fetch!
             // Only drop if explicitly tombstoned in remote deleted list
             if (!remoteDeletedQIds.includes(lq.id)) {
               pqMap.set(lq.id, lq);
@@ -15686,6 +15747,7 @@ class StorageService {
         this.setItem(STORAGE_KEYS.DELETED_QUESTION_IDS, Array.from(deletedQIds));
         this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, [...otherEventsPQs, ...Array.from(pqMap.values())]);
         this.setItem(`tn_assembly_proceedings_questions_${ev.id}`, Array.from(pqMap.values()));
+        this.updateQuestionSnapshot(ev.id).catch(() => {});
         this.notify();
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('tn_assembly_proceedings_question_update', {
@@ -15705,8 +15767,9 @@ class StorageService {
     if (!question.question_text || !question.question_text.trim()) {
       return { success: false, error: 'Question text cannot be empty.' };
     }
-    if (!question.ministry || !question.ministry.trim()) {
-      return { success: false, error: 'Target Ministry must be selected.' };
+    const targetName = (question.target_name || (question as any).target || question.target_ministry_name || question.ministry?.trim() || 'Chief Minister').trim();
+    if (!targetName) {
+      return { success: false, error: 'Target Ministry or Chief Minister must be selected.' };
     }
 
     const activeEvId = this.getActiveEventId();
@@ -15724,9 +15787,13 @@ class StorageService {
       student_name: question.student_name || 'Hon. Member',
       bench: question.bench || 'Ruling',
       constituency: question.constituency || 'Assembly Delegate',
-      ministry: question.ministry.trim(),
-      target_ministry_id: question.target_ministry_id || question.ministry.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-      target_ministry_name: question.ministry.trim(),
+      constituency_name: question.constituency_name || question.constituency || 'Assembly Delegate',
+      constituency_number: question.constituency_number !== undefined ? question.constituency_number : null,
+      target: targetName,
+      target_name: targetName,
+      target_ministry_name: targetName,
+      ministry: targetName,
+      target_ministry_id: question.target_ministry_id || targetName.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
       question_text: question.question_text.trim(),
       question_type: question.question_type || 'Standard',
       status: 'Submitted',
@@ -15749,9 +15816,11 @@ class StorageService {
 
     try {
       await this.syncEventStateToSupabase(eventId);
+      this.updateQuestionSnapshot(eventId).catch(() => {});
       return { success: true, question: newQuestion };
     } catch (err: any) {
       console.warn('[Supabase] submitProceedingsQuestion sync error:', err);
+      this.updateQuestionSnapshot(eventId).catch(() => {});
       return { success: true, question: newQuestion };
     }
   }
@@ -15764,6 +15833,8 @@ class StorageService {
     const resolvedEvent = this.getEvents().find(e => (question.event_id && e.id === question.event_id) || (eventSlug && (getEventSlug(e) === eventSlug || e.slug === eventSlug))) || activeEv;
     const eventId = resolvedEvent?.id || question.event_id || eventSlug;
 
+    const targetName = (question.target_name || (question as any).target || question.target_ministry_name || question.ministry?.trim() || 'Chief Minister').trim();
+
     const newQuestion: ProceedingsQuestion = {
       id: question.id || `q-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       event_id: eventId,
@@ -15772,9 +15843,13 @@ class StorageService {
       student_name: question.student_name || 'Hon. Member',
       bench: question.bench || 'Ruling',
       constituency: question.constituency || 'Assembly Delegate',
-      ministry: question.ministry?.trim() || '',
-      target_ministry_id: question.target_ministry_id || (question.ministry ? question.ministry.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') : undefined),
-      target_ministry_name: question.target_ministry_name || question.ministry?.trim(),
+      constituency_name: question.constituency_name || question.constituency || 'Assembly Delegate',
+      constituency_number: question.constituency_number !== undefined ? question.constituency_number : null,
+      target: targetName,
+      target_name: targetName,
+      target_ministry_name: targetName,
+      ministry: targetName,
+      target_ministry_id: question.target_ministry_id || targetName.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
       question_text: question.question_text?.trim() || '',
       question_type: question.question_type || 'Standard',
       status: question.status || 'Submitted',
@@ -15787,8 +15862,11 @@ class StorageService {
     this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, list);
     this.broadcast('question_update', { eventId, question: newQuestion, isNewSubmission: true }).catch(() => {});
     this.notify();
-    this.syncEventStateToSupabase(eventId).catch(err => {
+    this.syncEventStateToSupabase(eventId).then(() => {
+      this.updateQuestionSnapshot(eventId).catch(() => {});
+    }).catch(err => {
       console.warn('[Supabase] addProceedingsQuestion sync error:', err);
+      this.updateQuestionSnapshot(eventId).catch(() => {});
     });
     return newQuestion;
   }
@@ -15859,6 +15937,13 @@ class StorageService {
 
       if (matched) {
         const sc = (matched.social_coverage || {}) as Record<string, any>;
+        const curPQs = Array.isArray(sc.proceedings_questions) ? sc.proceedings_questions : [];
+        if (!curPQs.some((q: any) => q.id === questionId)) {
+          sc.proceedings_questions = [...curPQs, updatedQ];
+        } else {
+          sc.proceedings_questions = curPQs.map((q: any) => q.id === questionId ? updatedQ : q);
+        }
+        sc.questions = sc.proceedings_questions;
         if (!isApproved) {
           if (Array.isArray(sc.question_calling_order)) {
             sc.question_calling_order = sc.question_calling_order.filter((id: string) => id !== questionId);
@@ -15885,8 +15970,11 @@ class StorageService {
         this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
       }
 
-      this.syncEventStateToSupabase(syncId, true).catch(err => {
+      this.syncEventStateToSupabase(syncId, true).then(() => {
+        this.updateQuestionSnapshot(syncId).catch(() => {});
+      }).catch(err => {
         console.warn('[Supabase] updateProceedingsQuestionStatus sync error:', err);
+        this.updateQuestionSnapshot(syncId).catch(() => {});
       });
     }
 
@@ -15955,8 +16043,11 @@ class StorageService {
       const allEvs = this.getEvents();
       const matched = findEventBySlug(allEvs, targetEventId) || allEvs.find(e => e.id === targetEventId);
       const syncId = matched?.id || targetEventId;
-      this.syncEventStateToSupabase(syncId, true).catch(err => {
+      this.syncEventStateToSupabase(syncId, true).then(() => {
+        this.updateQuestionSnapshot(syncId).catch(() => {});
+      }).catch(err => {
         console.warn('[Supabase] reviewAndApproachMainAdmin sync error:', err);
+        this.updateQuestionSnapshot(syncId).catch(() => {});
       });
     }
 
@@ -16030,8 +16121,11 @@ class StorageService {
 
     // Authoritative persistence to Supabase college_events (forceImmediate = true ensures no loss on refresh)
     if (syncId) {
-      this.syncEventStateToSupabase(syncId, true).catch(err => {
+      this.syncEventStateToSupabase(syncId, true).then(() => {
+        this.updateQuestionSnapshot(syncId).catch(() => {});
+      }).catch(err => {
         console.warn('[Supabase] deleteProceedingsQuestion sync error:', err);
+        this.updateQuestionSnapshot(syncId).catch(() => {});
       });
     }
 
@@ -16158,9 +16252,11 @@ class StorageService {
 
     try {
       await this.syncEventStateToSupabase(syncId, true);
+      this.updateQuestionSnapshot(syncId).catch(() => {});
       return { success: true };
     } catch (err: any) {
       console.warn('[Supabase] saveQuestionCallingOrder sync warning:', err);
+      this.updateQuestionSnapshot(syncId).catch(() => {});
       return { success: true };
     }
   }

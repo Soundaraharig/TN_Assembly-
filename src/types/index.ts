@@ -530,6 +530,10 @@ export interface ProceedingsQuestion {
   student_name: string;
   bench: 'Ruling' | 'Opposition';
   constituency?: string;
+  constituency_name?: string;
+  constituency_number?: string | number | null;
+  target?: string;
+  target_name?: string;
   ministry: string;
   target_ministry_id?: string;
   target_ministry_name?: string;
@@ -551,7 +555,31 @@ export interface ProceedingsQuestion {
   review_note?: string;
   reviewer_name?: string;
   reviewer_role?: string;
+  rejection_reason?: string;
   seat_number?: string;
+}
+
+export interface QuestionSnapshot {
+  event_id: string;
+  event_slug?: string;
+  college_name?: string;
+  short_name?: string;
+  snapshot_version: string;
+  snapshot_timestamp: string;
+  total_questions: number;
+  counts: {
+    submitted: number;
+    under_review: number;
+    approved: number;
+    starred: number;
+    rejected: number;
+    deleted: number;
+  };
+  question_calling_order: string[];
+  active_question_id: string | null;
+  completed_question_ids?: string[];
+  deleted_question_ids?: string[];
+  questions: ProceedingsQuestion[];
 }
 
 export type CanonicalQuestionStatus = 'Submitted' | 'Under Review' | 'Approved' | 'Starred' | 'Rejected';

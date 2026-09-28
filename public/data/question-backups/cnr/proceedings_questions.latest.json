@@ -1,0 +1,22 @@
+{
+  "event_id": "35f87a38-62de-4e0c-bffb-59c394f987b1",
+  "event_slug": "jkkncnr-tn-assembly-2026-tamil-nadu-2026",
+  "college_name": "JKKN CNR TN ASSEMBLY 2026",
+  "short_name": "cnr",
+  "snapshot_version": "1.0.0",
+  "snapshot_timestamp": "2026-09-28T16:57:53.345Z",
+  "total_questions": 0,
+  "counts": {
+    "submitted": 0,
+    "under_review": 0,
+    "approved": 0,
+    "starred": 0,
+    "rejected": 0,
+    "deleted": 0
+  },
+  "question_calling_order": [],
+  "active_question_id": null,
+  "completed_question_ids": [],
+  "deleted_question_ids": [],
+  "questions": []
+}

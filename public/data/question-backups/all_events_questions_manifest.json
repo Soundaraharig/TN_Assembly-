@@ -1,0 +1,61 @@
+{
+  "generated_at": "2026-09-28T16:57:53.342Z",
+  "events": {
+    "648790e1-0836-4a29-8a53-74929e7404f3": {
+      "college_name": "JKKN AHS TN ASSEMBLY 2026",
+      "short_name": "ahs",
+      "slug": "jkkn-ahs-tn-assembly-2026-tamil-nadu-2026",
+      "total_questions": 0,
+      "counts": {
+        "submitted": 0,
+        "under_review": 0,
+        "approved": 0,
+        "starred": 0,
+        "rejected": 0,
+        "deleted": 0
+      }
+    },
+    "35f87a38-62de-4e0c-bffb-59c394f987b1": {
+      "college_name": "JKKN CNR TN ASSEMBLY 2026",
+      "short_name": "cnr",
+      "slug": "jkkncnr-tn-assembly-2026-tamil-nadu-2026",
+      "total_questions": 0,
+      "counts": {
+        "submitted": 0,
+        "under_review": 0,
+        "approved": 0,
+        "starred": 0,
+        "rejected": 0,
+        "deleted": 0
+      }
+    },
+    "200fdd74-4d21-44d5-9f63-9a07bf267824": {
+      "college_name": "JKKNCET TN ASSEMBLY 2026",
+      "short_name": "jkkncet",
+      "slug": "jkkncet-tn-assembly-2026-tamil-nadu-2026",
+      "total_questions": 29,
+      "counts": {
+        "submitted": 27,
+        "under_review": 1,
+        "approved": 0,
+        "starred": 0,
+        "rejected": 1,
+        "deleted": 49
+      }
+    },
+    "05fb9c3e-af0d-4b0e-b48a-1ca4c0671cb8": {
+      "college_name": "JKKN ARTS TN ASSEMBLY 2026",
+      "short_name": "arts",
+      "slug": "jkkn-arts-tn-assembly-2026-tamil-nadu-2026",
+      "total_questions": 22,
+      "counts": {
+        "submitted": 0,
+        "under_review": 0,
+        "approved": 19,
+        "starred": 0,
+        "rejected": 3,
+        "deleted": 50
+      }
+    }
+  }
+}
