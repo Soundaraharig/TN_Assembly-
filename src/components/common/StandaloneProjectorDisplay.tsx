@@ -5,6 +5,7 @@ import type { ProjectorStudioSettings } from '../../types';
 import { storageService } from '../../services/storageService';
 import { extractEventFromUrl, extractEventSlugCandidateFromUrl } from '../../utils/slug';
 import { formatMemberConstituency } from '../../utils/memberIdentity';
+import { playTimerAlarm, stopAllAlertAudio } from '../../utils/audioAlert';
 
 interface StandaloneProjectorDisplayProps {
   currentEvent?: CollegeEvent | null;
@@ -130,8 +131,24 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
       }
     };
 
+    const handleAlarmEvent = (e: any) => {
+      const detail = e.detail;
+      if (!detail) return;
+      const targetId = currentEvent?.id || initialEvent?.id;
+      if (detail.eventId && targetId && detail.eventId !== targetId) return;
+      if (detail.action === 'stop') {
+        stopAllAlertAudio();
+      } else if (detail.action === 'trigger') {
+        const audioCfg = storageService.getTimerAudioConfig(targetId);
+        if (!audioCfg.is_muted) {
+          playTimerAlarm(audioCfg);
+        }
+      }
+    };
+
     window.addEventListener('online', handleRevalidate);
     document.addEventListener('visibilitychange', handleRevalidate);
+    window.addEventListener('tn_assembly_timer_alarm_event', handleAlarmEvent);
     const unsubscribe = storageService.subscribe(syncState);
 
     return () => {
@@ -139,8 +156,10 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
       window.removeEventListener('tn_assembly_timer_update', syncState);
       window.removeEventListener('tn_assembly_projector_update', syncState);
       window.removeEventListener('tn_assembly_agenda_update', syncState);
+      window.removeEventListener('tn_assembly_timer_alarm_event', handleAlarmEvent);
       window.removeEventListener('online', handleRevalidate);
       document.removeEventListener('visibilitychange', handleRevalidate);
+      stopAllAlertAudio();
       unsubscribe();
     };
   }, [currentEvent?.id, initialEvent?.id]);

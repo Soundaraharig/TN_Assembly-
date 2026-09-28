@@ -9,7 +9,9 @@ import type {
   CollegeEvent,
   SpeakingRequest,
   SpeakingTurn,
-  UserSession
+  UserSession,
+  TimerAudioConfig,
+  TimerToneType
 } from '../../types';
 import {
   Clock,
@@ -35,10 +37,16 @@ import {
   Mic,
   Search,
   Hand,
-  ShieldAlert
+  ShieldAlert,
+  BellOff,
+  Music,
+  Sliders,
+  Upload,
+  Trash2
 } from 'lucide-react';
 
 import { storageService } from '../../services/storageService';
+import { playTimerAlarm, stopAllAlertAudio } from '../../utils/audioAlert';
 import { getEventSlug } from '../../utils/slug';
 import { ArrangeQuestionOrderModal } from './ArrangeQuestionOrderModal';
 import { formatMemberConstituency, isPresidingOfficer } from '../../utils/memberIdentity';
@@ -177,6 +185,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   }, [currentAgendaList, activeAgendaItem]);
 
   // ── Speech Timer State ───────────────────────────────────────────────────
+  // ── Speech Timer & Expiration Audio Alert State ──────────────────────────
   const [timerDurationSec, setTimerDurationSec] = useState(() => {
     return storageService.getLiveTimerState(currentEvent?.id)?.durationSec || 600;
   });
@@ -187,7 +196,56 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   const [isTimerRunning, setIsTimerRunning] = useState(() => {
     return !!storageService.getLiveTimerState(currentEvent?.id)?.isRunning;
   });
-  const [isSoundEnabled, setIsSoundEnabled] = useState(false);
+
+  // Persistent Audio Tone Configuration
+  const [audioConfig, setAudioConfig] = useState<TimerAudioConfig>(() => {
+    return storageService.getTimerAudioConfig(currentEvent?.id);
+  });
+  const [showAudioSettings, setShowAudioSettings] = useState(false);
+  const [isAlarmSounding, setIsAlarmSounding] = useState(false);
+  const [isTestingAudio, setIsTestingAudio] = useState(false);
+  const [isUploadingAudio, setIsUploadingAudio] = useState(false);
+  const hasAlarmTriggeredRef = useRef(false);
+  const audioFileInputRef = useRef<HTMLInputElement>(null);
+
+  const isSoundEnabled = !audioConfig.is_muted;
+
+  // Sync audio configuration when event changes or remote update arrives
+  useEffect(() => {
+    const syncAudio = () => {
+      setAudioConfig(storageService.getTimerAudioConfig(currentEvent?.id));
+    };
+    syncAudio();
+    window.addEventListener('tn_assembly_timer_audio_update', syncAudio);
+    return () => {
+      window.removeEventListener('tn_assembly_timer_audio_update', syncAudio);
+    };
+  }, [currentEvent?.id]);
+
+  // Synchronized alarm stop/trigger across windows
+  useEffect(() => {
+    const handleAlarmBroadcast = (e: any) => {
+      const detail = e.detail;
+      if (!detail) return;
+      if (detail.eventId && currentEvent?.id && detail.eventId !== currentEvent.id) return;
+      if (detail.action === 'stop') {
+        stopAllAlertAudio();
+        setIsAlarmSounding(false);
+        setIsTestingAudio(false);
+      } else if (detail.action === 'trigger') {
+        setIsAlarmSounding(true);
+        const cfg = storageService.getTimerAudioConfig(currentEvent?.id);
+        if (!cfg.is_muted) {
+          playTimerAlarm(cfg);
+        }
+      }
+    };
+    window.addEventListener('tn_assembly_timer_alarm_event', handleAlarmBroadcast);
+    return () => {
+      window.removeEventListener('tn_assembly_timer_alarm_event', handleAlarmBroadcast);
+      stopAllAlertAudio();
+    };
+  }, [currentEvent?.id]);
 
   useEffect(() => {
     const handleTimerSync = () => {
@@ -196,9 +254,16 @@ export const ControlTab: React.FC<ControlTabProps> = ({
         setTimerDurationSec(state.durationSec);
         if (state.isRunning && state.startedAt) {
           const elapsed = Math.floor((Date.now() - state.startedAt) / 1000);
-          setSecondsLeft(Math.max(0, state.secondsLeft - elapsed));
+          const remaining = Math.max(0, state.secondsLeft - elapsed);
+          setSecondsLeft(remaining);
+          if (remaining > 0) {
+            hasAlarmTriggeredRef.current = false;
+          }
         } else {
           setSecondsLeft(state.secondsLeft);
+          if (state.secondsLeft > 0) {
+            hasAlarmTriggeredRef.current = false;
+          }
         }
         setIsTimerRunning(state.isRunning);
       }
@@ -234,13 +299,25 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                 updatedAt: Date.now()
               });
             }
-            if (isSoundEnabled) {
-              playTimerBeep();
+            if (!hasAlarmTriggeredRef.current) {
+              hasAlarmTriggeredRef.current = true;
+              setIsAlarmSounding(true);
+              if (!audioConfig.is_muted) {
+                playTimerAlarm(audioConfig);
+              }
+              if (currentEvent?.id) {
+                storageService.broadcastTimerAlarm(currentEvent.id, 'trigger').catch(console.warn);
+              }
             }
             onShowToast('⏰ Time Expired', `Floor time for ${activeAgendaItem?.title || 'Session'} concluded`, 'info');
+          } else {
+            hasAlarmTriggeredRef.current = false;
           }
         } else {
           setSecondsLeft(live.secondsLeft);
+          if (live.secondsLeft > 0) {
+            hasAlarmTriggeredRef.current = false;
+          }
           setIsTimerRunning(live.isRunning);
         }
       }, 1000);
@@ -248,22 +325,130 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isTimerRunning, isSoundEnabled, activeAgendaItem?.title, currentEvent?.id, timerDurationSec, onShowToast]);
+  }, [isTimerRunning, audioConfig, activeAgendaItem?.title, currentEvent?.id, timerDurationSec, onShowToast]);
+
+  const handleStopAlarm = () => {
+    stopAllAlertAudio();
+    setIsAlarmSounding(false);
+    setIsTestingAudio(false);
+    if (currentEvent?.id) {
+      storageService.broadcastTimerAlarm(currentEvent.id, 'stop').catch(console.warn);
+    }
+    onShowToast('Alarm Silenced', 'Session timer alarm stopped', 'info');
+  };
+
+  const handleToggleMute = () => {
+    const nextMuted = !audioConfig.is_muted;
+    const update: Partial<TimerAudioConfig> = { is_muted: nextMuted };
+    if (currentEvent?.id) {
+      storageService.saveTimerAudioConfig(currentEvent.id, update).catch(console.warn);
+    }
+    setAudioConfig(prev => ({ ...prev, ...update }));
+    if (nextMuted) {
+      stopAllAlertAudio();
+      setIsAlarmSounding(false);
+      setIsTestingAudio(false);
+    }
+    onShowToast('Audio Alert', nextMuted ? 'Timer chime muted' : 'Timer chime active (plays on expiry)', 'info');
+  };
+
+  const handleSelectTone = async (type: TimerToneType) => {
+    const update: Partial<TimerAudioConfig> = { tone_type: type };
+    if (currentEvent?.id) {
+      await storageService.saveTimerAudioConfig(currentEvent.id, update);
+    }
+    setAudioConfig(prev => ({ ...prev, ...update }));
+    onShowToast('Tone Selected', `Alarm tone set to: ${type.toUpperCase()}`, 'info');
+  };
+
+  const handleVolumeChange = (vol: number) => {
+    const newVol = Math.max(0, Math.min(1, vol));
+    setAudioConfig(prev => ({ ...prev, volume: newVol }));
+    if (currentEvent?.id) {
+      storageService.saveTimerAudioConfig(currentEvent.id, { volume: newVol }).catch(console.warn);
+    }
+  };
+
+  const handleTestAudio = async () => {
+    if (isTestingAudio || isAlarmSounding) {
+      stopAllAlertAudio();
+      setIsTestingAudio(false);
+      setIsAlarmSounding(false);
+      return;
+    }
+    setIsTestingAudio(true);
+    try {
+      await playTimerAlarm({ ...audioConfig, is_muted: false });
+    } finally {
+      setIsTestingAudio(false);
+    }
+  };
+
+  const handleAudioFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 2.5 * 1024 * 1024) {
+      onShowToast('File Too Large', 'Please select an audio file under 2.5 MB.', 'error');
+      if (audioFileInputRef.current) audioFileInputRef.current.value = '';
+      return;
+    }
+
+    setIsUploadingAudio(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64Data = reader.result as string;
+        if (!base64Data) {
+          onShowToast('Upload Error', 'Could not read audio file', 'error');
+          setIsUploadingAudio(false);
+          return;
+        }
+
+        const newConfig: Partial<TimerAudioConfig> = {
+          tone_type: 'custom',
+          custom_audio_data: base64Data,
+          custom_audio_name: file.name,
+          custom_audio_size: file.size
+        };
+
+        if (currentEvent?.id) {
+          await storageService.saveTimerAudioConfig(currentEvent.id, newConfig);
+        }
+        setAudioConfig(prev => ({ ...prev, ...newConfig }));
+        setIsUploadingAudio(false);
+        onShowToast('Custom Tone Saved', `"${file.name}" saved as timer alarm tone.`, 'success');
+      };
+      reader.onerror = () => {
+        setIsUploadingAudio(false);
+        onShowToast('Read Error', 'Failed to read audio file', 'error');
+      };
+      reader.readAsDataURL(file);
+    } catch (err: any) {
+      setIsUploadingAudio(false);
+      onShowToast('Upload Failed', err?.message || 'Failed to upload audio', 'error');
+    }
+  };
+
+  const handleClearCustomAudio = async () => {
+    const update: Partial<TimerAudioConfig> = {
+      tone_type: 'default',
+      custom_audio_data: undefined,
+      custom_audio_name: undefined,
+      custom_audio_size: undefined
+    };
+    if (currentEvent?.id) {
+      await storageService.saveTimerAudioConfig(currentEvent.id, update);
+    }
+    setAudioConfig(prev => ({ ...prev, ...update }));
+    if (audioFileInputRef.current) audioFileInputRef.current.value = '';
+    onShowToast('Reverted to Default', 'Custom audio cleared. Default harmonic chime active.', 'info');
+  };
 
   const playTimerBeep = () => {
-    try {
-      const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(880, ctx.currentTime);
-      gain.gain.setValueAtTime(0.3, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.8);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.8);
-    } catch {}
+    if (!audioConfig.is_muted) {
+      playTimerAlarm(audioConfig);
+    }
   };
 
   const formatTimerDigits = (sec: number) => {
@@ -654,9 +839,17 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     if (currentSec <= 0) {
       currentSec = timerDurationSec;
       setSecondsLeft(currentSec);
+      hasAlarmTriggeredRef.current = false;
+      stopAllAlertAudio();
+      setIsAlarmSounding(false);
     }
     const nextRunning = !isTimerRunning;
-    if (nextRunning && isSoundEnabled) playTimerBeep();
+    if (nextRunning) {
+      hasAlarmTriggeredRef.current = false;
+      stopAllAlertAudio();
+      setIsAlarmSounding(false);
+      if (isSoundEnabled) playTimerBeep();
+    }
     setIsTimerRunning(nextRunning);
     if (currentEvent?.id) {
       storageService.saveLiveTimerState(currentEvent.id, {
@@ -673,6 +866,9 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   const handleResetTimer = () => {
     setIsTimerRunning(false);
     setSecondsLeft(timerDurationSec);
+    hasAlarmTriggeredRef.current = false;
+    stopAllAlertAudio();
+    setIsAlarmSounding(false);
     if (currentEvent?.id) {
       storageService.saveLiveTimerState(currentEvent.id, {
         durationSec: timerDurationSec,
@@ -687,6 +883,9 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     const dur = Math.max(10, presetSec);
     setTimerDurationSec(dur);
     setSecondsLeft(dur);
+    hasAlarmTriggeredRef.current = false;
+    stopAllAlertAudio();
+    setIsAlarmSounding(false);
     setIsTimerRunning(false);
     if (currentEvent?.id) {
       storageService.saveLiveTimerState(currentEvent.id, {
@@ -701,6 +900,11 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   const handleAdjustSeconds = (delta: number) => {
     setSecondsLeft(prev => {
       const nextSec = Math.max(0, prev + delta);
+      if (nextSec > 0) {
+        hasAlarmTriggeredRef.current = false;
+        stopAllAlertAudio();
+        setIsAlarmSounding(false);
+      }
       if (currentEvent?.id) {
         storageService.saveLiveTimerState(currentEvent.id, {
           durationSec: Math.max(timerDurationSec, nextSec),
@@ -1043,7 +1247,17 @@ export const ControlTab: React.FC<ControlTabProps> = ({
               </div>
 
               <div className="flex items-center gap-2 flex-wrap">
-                {secondsLeft === 0 ? (
+                {isAlarmSounding ? (
+                  <button
+                    type="button"
+                    onClick={handleStopAlarm}
+                    className="px-3.5 py-1.5 rounded-full text-xs font-black uppercase tracking-wider bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-600/40 flex items-center gap-2 animate-bounce cursor-pointer"
+                    title="Stop and silence the current alarm"
+                  >
+                    <BellOff className="w-4 h-4 animate-spin" />
+                    <span>SILENCE ALARM</span>
+                  </button>
+                ) : secondsLeft === 0 ? (
                   <span className="px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 flex items-center gap-1.5 animate-pulse">
                     <span className="w-2 h-2 rounded-full bg-rose-500" />
                     Time Expired
@@ -1059,14 +1273,25 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   </span>
                 )}
 
+                {/* Audio Settings Toggle Pill */}
                 <button
                   type="button"
-                  onClick={() => {
-                    const nextSound = !isSoundEnabled;
-                    setIsSoundEnabled(nextSound);
-                    if (nextSound) playTimerBeep();
-                    onShowToast('Audio Feedback', nextSound ? 'Timer chime enabled (plays on expiry)' : 'Timer chime muted', 'info');
-                  }}
+                  onClick={() => setShowAudioSettings(prev => !prev)}
+                  className={`px-3 py-1 rounded-full text-xs font-bold border transition-all flex items-center gap-1.5 cursor-pointer ${
+                    showAudioSettings
+                      ? 'bg-amber-500 text-white border-amber-600 shadow-sm'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  }`}
+                  title="Configure Alarm Tone & Audio Upload"
+                >
+                  <Sliders className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Tone: {audioConfig.tone_type === 'custom' ? (audioConfig.custom_audio_name ? 'Custom' : 'Custom') : audioConfig.tone_type === 'bell' ? 'Assembly Bell' : audioConfig.tone_type === 'gavel' ? 'Gavel' : 'Chime'}</span>
+                </button>
+
+                {/* Sound Toggle (Mute/Unmute) */}
+                <button
+                  type="button"
+                  onClick={handleToggleMute}
                   className={`px-3 py-1 rounded-full text-xs font-bold border transition-all flex items-center gap-1.5 cursor-pointer ${
                     isSoundEnabled
                       ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30 shadow-sm'
@@ -1079,6 +1304,155 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                 </button>
               </div>
             </div>
+
+            {/* Expandable Audio Settings Panel */}
+            {showAudioSettings && (
+              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 space-y-4 transition-all">
+                <div className="flex items-center justify-between border-b border-slate-200/80 dark:border-slate-700/80 pb-2">
+                  <div className="flex items-center gap-2">
+                    <Music className="w-4 h-4 text-amber-500" />
+                    <span className="text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white">
+                      Timer Expiration Audio Settings
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAudioSettings(false)}
+                    className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Tone Selectors */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                    Select Alarm Tone
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {[
+                      { id: 'default', label: 'Default Chime', icon: '🔔', desc: 'Harmonic 3-tone' },
+                      { id: 'bell', label: 'Assembly Bell', icon: '🏛️', desc: 'Double bell ring' },
+                      { id: 'gavel', label: "Speaker's Gavel", icon: '⚖️', desc: 'Parliamentary knock' },
+                      { id: 'custom', label: 'Custom Audio', icon: '🎵', desc: audioConfig.custom_audio_name || 'Upload MP3/WAV' }
+                    ].map(tone => {
+                      const isSel = audioConfig.tone_type === tone.id;
+                      return (
+                        <button
+                          key={tone.id}
+                          type="button"
+                          onClick={() => handleSelectTone(tone.id as TimerToneType)}
+                          className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                            isSel
+                              ? 'border-amber-500 bg-amber-500/10 text-amber-950 dark:text-amber-300 ring-2 ring-amber-500/20 shadow-sm'
+                              : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-center gap-1.5 font-bold text-xs">
+                            <span>{tone.icon}</span>
+                            <span className="truncate">{tone.label}</span>
+                          </div>
+                          <span className="text-[10px] text-slate-500 dark:text-slate-400 block truncate mt-0.5">
+                            {tone.desc}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Custom Audio Upload Section */}
+                <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-2">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="space-y-0.5">
+                      <span className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                        <Upload className="w-3.5 h-3.5 text-indigo-500" />
+                        Custom Audio File
+                      </span>
+                      <p className="text-[11px] text-slate-500">
+                        {audioConfig.custom_audio_name
+                          ? `Active file: ${audioConfig.custom_audio_name} (${Math.round((audioConfig.custom_audio_size || 0) / 1024)} KB)`
+                          : 'Upload an MP3, WAV, or OGG file (max 2.5MB) to play on countdown zero.'}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        ref={audioFileInputRef}
+                        type="file"
+                        accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac"
+                        onChange={handleAudioFileUpload}
+                        className="hidden"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => audioFileInputRef.current?.click()}
+                        disabled={isUploadingAudio}
+                        className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50"
+                      >
+                        <Upload className="w-3 h-3" />
+                        <span>{isUploadingAudio ? 'Uploading...' : audioConfig.custom_audio_name ? 'Replace File' : 'Upload File'}</span>
+                      </button>
+
+                      {audioConfig.custom_audio_name && (
+                        <button
+                          type="button"
+                          onClick={handleClearCustomAudio}
+                          className="px-2.5 py-1.5 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-400 hover:bg-rose-100 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                          title="Remove custom audio"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          <span>Remove</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bottom Bar: Volume Slider + Test Tone Button */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1 border-t border-slate-200/80 dark:border-slate-700/80">
+                  <div className="flex items-center gap-2 flex-1 max-w-xs">
+                    <span className="text-xs text-slate-500 font-medium shrink-0">Volume:</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={audioConfig.volume !== undefined ? audioConfig.volume : 1}
+                      onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
+                      className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                    />
+                    <span className="text-xs font-mono font-bold text-slate-700 dark:text-slate-300 w-10 text-right">
+                      {Math.round((audioConfig.volume !== undefined ? audioConfig.volume : 1) * 100)}%
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleTestAudio}
+                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm ${
+                        isTestingAudio || isAlarmSounding
+                          ? 'bg-rose-600 hover:bg-rose-500 text-white animate-pulse'
+                          : 'bg-amber-500 hover:bg-amber-600 text-white'
+                      }`}
+                    >
+                      {isTestingAudio || isAlarmSounding ? (
+                        <>
+                          <BellOff className="w-3.5 h-3.5" />
+                          <span>Stop Audio</span>
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-3.5 h-3.5 fill-current" />
+                          <span>Test / Preview Tone</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Giant Digital Clock Stage Display */}
             <div className="bg-slate-950 dark:bg-slate-950 rounded-2xl py-8 sm:py-10 px-4 border border-slate-800 shadow-xl flex flex-col items-center justify-center relative overflow-hidden">
@@ -1135,6 +1509,16 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
             {/* Primary Action Buttons (Enlarged & Prominent) */}
             <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
+              {isAlarmSounding && (
+                <button
+                  type="button"
+                  onClick={handleStopAlarm}
+                  className="px-8 py-3.5 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-black text-sm md:text-base flex items-center justify-center gap-2.5 transition-all shadow-lg shadow-rose-600/40 animate-bounce cursor-pointer ring-4 ring-rose-400/50"
+                >
+                  <BellOff className="w-5 h-5 animate-spin" />
+                  <span>STOP ALARM NOW</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handleToggleTimer}

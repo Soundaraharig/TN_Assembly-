@@ -36,6 +36,7 @@ import type {
   SecurityAuditLog,
   ProjectorStudioSettings,
   LiveTimerState,
+  TimerAudioConfig,
   BillVote,
   EventDay,
   DayAttendanceRecord,
@@ -1503,6 +1504,9 @@ class StorageService {
       }
       if (sc.timer) {
         this.setItem(`tn_assembly_live_timer_${ev.id}`, sc.timer);
+      }
+      if (sc.timer_audio_config && typeof sc.timer_audio_config === 'object') {
+        this.setItem(`tn_assembly_timer_audio_${ev.id}`, sc.timer_audio_config);
       }
       if (sc.agenda_progress && typeof sc.agenda_progress === 'object') {
         const prog = sc.agenda_progress as EventAgendaProgress;
@@ -4113,6 +4117,33 @@ class StorageService {
             }
           }
         })
+        .on('broadcast', { event: 'timer_audio_update' }, (msg: any) => {
+          if (msg?.payload?.eventId && msg?.payload?.config) {
+            const evId = msg.payload.eventId;
+            const newAudioCfg = msg.payload.config;
+            this.setItem(`tn_assembly_timer_audio_${evId}`, newAudioCfg);
+
+            const curEvs = this.getEvents();
+            const ev = curEvs.find(e => e.id === evId);
+            if (ev) {
+              ev.social_coverage = { ...(ev.social_coverage || {}), timer_audio_config: newAudioCfg };
+              this.setItem(STORAGE_KEYS.EVENTS, curEvs);
+            }
+
+            this.notify();
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_timer_audio_update', { detail: msg.payload }));
+              window.dispatchEvent(new Event('storage'));
+            }
+          }
+        })
+        .on('broadcast', { event: 'timer_alarm_event' }, (msg: any) => {
+          if (msg?.payload?.eventId) {
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_timer_alarm_event', { detail: msg.payload }));
+            }
+          }
+        })
         .on('broadcast', { event: 'bill_deleted' }, (msg: any) => {
           if (msg?.payload?.billId) {
             this.tombstoneId(msg.payload.billId);
@@ -5084,6 +5115,7 @@ class StorageService {
         ...existingSC,
         projector_settings: projSettings || existingSC.projector_settings,
         timer: this.getLiveTimerState(eventId) || existingSC.timer,
+        timer_audio_config: this.getTimerAudioConfig(eventId) || existingSC.timer_audio_config,
         agenda_progress: this.getAgendaProgress(eventId),
         last_bell_ring: lastBell || existingSC.last_bell_ring,
         open_nominations: openNoms,
@@ -12957,6 +12989,100 @@ class StorageService {
       this.patchSocialCoverageSafe(eventId, { timer: timerState }).catch(err => {
         console.warn('[StorageService] Error patching timer to social_coverage:', err);
       });
+    }
+  }
+
+  public getTimerAudioConfig(eventId?: string): TimerAudioConfig {
+    const defaultConfig: TimerAudioConfig = {
+      tone_type: 'default',
+      volume: 1,
+      is_muted: false,
+      updated_at: new Date().toISOString()
+    };
+
+    if (eventId) {
+      const ev = this.getEvents().find(e => e.id === eventId);
+      const sc = (ev?.social_coverage || {}) as Record<string, any>;
+      if (sc.timer_audio_config && typeof sc.timer_audio_config === 'object') {
+        this.setItem(`tn_assembly_timer_audio_${eventId}`, sc.timer_audio_config);
+        return { ...defaultConfig, ...sc.timer_audio_config };
+      }
+      const local = this.getItem<TimerAudioConfig | null>(`tn_assembly_timer_audio_${eventId}`, null);
+      if (local) return { ...defaultConfig, ...local };
+      return defaultConfig;
+    }
+
+    const fallback = this.getItem<TimerAudioConfig | null>('tn_assembly_timer_audio_global', null);
+    return fallback ? { ...defaultConfig, ...fallback } : defaultConfig;
+  }
+
+  public async saveTimerAudioConfig(eventId: string, config: Partial<TimerAudioConfig>): Promise<void> {
+    if (!eventId) return;
+    const current = this.getTimerAudioConfig(eventId);
+    const merged: TimerAudioConfig = {
+      ...current,
+      ...config,
+      updated_at: new Date().toISOString()
+    };
+
+    const key = `tn_assembly_timer_audio_${eventId}`;
+    this.setItem(key, merged);
+
+    const events = this.getEvents();
+    const ev = events.find(e => e.id === eventId);
+    if (ev) {
+      const sc = (ev.social_coverage || {}) as Record<string, any>;
+      ev.social_coverage = { ...sc, timer_audio_config: merged };
+      this.setItem(STORAGE_KEYS.EVENTS, events);
+    }
+
+    this.notify();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_timer_audio_update', { detail: { eventId, config: merged } }));
+      window.dispatchEvent(new Event('storage'));
+    }
+
+    if (supabase) {
+      try {
+        if (!this.realtimeChannel || this.currentRealtimeEventId !== eventId) {
+          this.setupRealtimeSync(eventId);
+        }
+        if (this.realtimeChannel) {
+          await this.realtimeChannel.send({
+            type: 'broadcast',
+            event: 'timer_audio_update',
+            payload: { eventId, config: merged }
+          });
+        }
+      } catch (e) {
+        console.warn('Realtime broadcast timer_audio_update failed:', e);
+      }
+    }
+
+    this.patchSocialCoverageSafe(eventId, { timer_audio_config: merged }).catch(err => {
+      console.warn('[StorageService] Error patching timer_audio_config to social_coverage:', err);
+    });
+  }
+
+  public async broadcastTimerAlarm(eventId: string, action: 'trigger' | 'stop'): Promise<void> {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_timer_alarm_event', { detail: { eventId, action } }));
+    }
+    if (supabase) {
+      try {
+        if (!this.realtimeChannel || this.currentRealtimeEventId !== eventId) {
+          this.setupRealtimeSync(eventId);
+        }
+        if (this.realtimeChannel) {
+          await this.realtimeChannel.send({
+            type: 'broadcast',
+            event: 'timer_alarm_event',
+            payload: { eventId, action, timestamp: Date.now() }
+          });
+        }
+      } catch (e) {
+        console.warn('Realtime broadcast timer_alarm_event failed:', e);
+      }
     }
   }
 

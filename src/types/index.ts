@@ -385,6 +385,18 @@ export interface LiveTimerState {
   updatedAt: number;
 }
 
+export type TimerToneType = 'default' | 'bell' | 'chime' | 'gavel' | 'custom';
+
+export interface TimerAudioConfig {
+  tone_type: TimerToneType;
+  custom_audio_data?: string; // Data URL (base64) or hosted URL
+  custom_audio_name?: string;
+  custom_audio_size?: number; // bytes
+  volume?: number; // 0 to 1, default 1
+  is_muted?: boolean;
+  updated_at?: string;
+}
+
 export interface ScoringSession {
   id: string;
   name: string;
