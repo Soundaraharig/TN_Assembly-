@@ -1326,13 +1326,11 @@ class StorageService {
         }));
         allNoms = [...allNoms, ...nomsWithEvent];
       }
-      const remoteQuestionDeleted = Array.isArray(sc.deleted_question_ids) ? sc.deleted_question_ids : [];
-      const pollQuestionDeleted = (Array.isArray(sc.deleted_poll_ids) ? sc.deleted_poll_ids : [])
-        .filter((id: string) => typeof id === 'string' && (id.startsWith('q-') || id.startsWith('test-q-')));
-      const allRemoteQDeleted = Array.from(new Set([...remoteQuestionDeleted, ...pollQuestionDeleted]));
-      if (allRemoteQDeleted.length > 0) {
+      const remoteQuestionDeleted = (Array.isArray(sc.deleted_question_ids) ? sc.deleted_question_ids : [])
+        .filter((id: string) => typeof id === 'string' && id.trim().length > 0);
+      if (remoteQuestionDeleted.length > 0) {
         const curDeletedQ = this.getItem<string[]>(STORAGE_KEYS.DELETED_QUESTION_IDS, []);
-        const mergedQ = Array.from(new Set([...curDeletedQ, ...allRemoteQDeleted]));
+        const mergedQ = Array.from(new Set([...curDeletedQ, ...remoteQuestionDeleted]));
         this.setItem(STORAGE_KEYS.DELETED_QUESTION_IDS, mergedQ);
       }
       const remoteDeleted = [
@@ -1346,7 +1344,7 @@ class StorageService {
       }
       const activeDeletedSet = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
       const questionDeletedSet = new Set([
-        ...allRemoteQDeleted,
+        ...remoteQuestionDeleted,
         ...this.getItem<string[]>(STORAGE_KEYS.DELETED_QUESTION_IDS, []),
         ...this.getItem<string[]>('tn_assembly_deleted_question_ids', [])
       ]);
@@ -4513,6 +4511,118 @@ class StorageService {
     await this.broadcast('attendance_marked', payload);
   }
 
+  /**
+   * Safely patches social_coverage in Supabase without clobbering proceedings_questions,
+   * official calling order, active questions, or other concurrent event state.
+   */
+  public async patchSocialCoverageSafe(
+    eventId: string,
+    partialSc: Record<string, any>
+  ): Promise<{ success: boolean; error?: any }> {
+    if (!eventId || !supabase) {
+      return { success: false, error: 'Invalid event ID or Supabase disabled' };
+    }
+
+    try {
+      // 1. Fetch current remote social_coverage directly from Supabase
+      const { data, error } = await supabase
+        .from('college_events')
+        .select('id, social_coverage')
+        .eq('id', eventId)
+        .maybeSingle();
+
+      if (error) {
+        console.warn('[patchSocialCoverageSafe] Fetch error:', error);
+      }
+
+      const remoteSc = ((data?.social_coverage || {}) as Record<string, any>);
+
+      // 2. CRITICAL QUESTION PRESERVATION
+      // If partialSc doesn't supply proceedings_questions or supplies an empty array,
+      // preserve existing remote proceedings_questions!
+      const remotePQs: ProceedingsQuestion[] = Array.isArray(remoteSc.proceedings_questions)
+        ? remoteSc.proceedings_questions
+        : (Array.isArray(remoteSc.questions) ? remoteSc.questions : []);
+      const remoteApproved = Array.isArray(remoteSc.official_approved_questions)
+        ? remoteSc.official_approved_questions
+        : [];
+
+      let mergedPQs = remotePQs;
+      if (Array.isArray(partialSc.proceedings_questions) && partialSc.proceedings_questions.length > 0) {
+        const pqMap = new Map<string, ProceedingsQuestion>();
+        remotePQs.forEach(q => pqMap.set(q.id, q));
+        partialSc.proceedings_questions.forEach((q: ProceedingsQuestion) => {
+          const ex = pqMap.get(q.id);
+          if (!ex) {
+            pqMap.set(q.id, q);
+          } else {
+            pqMap.set(q.id, {
+              ...ex,
+              ...q,
+              question_text: (q.question_text && q.question_text.length >= (ex.question_text || '').length)
+                ? q.question_text
+                : ex.question_text
+            });
+          }
+        });
+        mergedPQs = Array.from(pqMap.values());
+      }
+
+      const mergedCallingOrder = (Array.isArray(partialSc.question_calling_order) && partialSc.question_calling_order.length > 0)
+        ? partialSc.question_calling_order
+        : (Array.isArray(remoteSc.question_calling_order) ? remoteSc.question_calling_order : []);
+
+      const mergedActiveQId = partialSc.active_question_id !== undefined
+        ? partialSc.active_question_id
+        : (remoteSc.active_question_id !== undefined ? remoteSc.active_question_id : null);
+
+      const mergedCompletedQIds = (Array.isArray(partialSc.completed_question_ids) && partialSc.completed_question_ids.length > 0)
+        ? partialSc.completed_question_ids
+        : (Array.isArray(remoteSc.completed_question_ids) ? remoteSc.completed_question_ids : []);
+
+      // 3. Compose merged social_coverage
+      const mergedSc: Record<string, any> = {
+        ...remoteSc,
+        ...partialSc,
+        proceedings_questions: mergedPQs,
+        questions: mergedPQs.length > 0 ? mergedPQs : (remotePQs.length > 0 ? remotePQs : []),
+        official_approved_questions: remoteApproved.length > 0 ? remoteApproved : undefined,
+        question_calling_order: mergedCallingOrder,
+        active_question_id: mergedActiveQId,
+        completed_question_ids: mergedCompletedQIds,
+        updated_at: new Date().toISOString()
+      };
+
+      // 4. Update Supabase
+      const { error: updateErr } = await supabase
+        .from('college_events')
+        .update({
+          social_coverage: mergedSc,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', eventId);
+
+      if (updateErr) {
+        console.warn('[patchSocialCoverageSafe] Update error:', updateErr);
+        return { success: false, error: updateErr };
+      }
+
+      // 5. Update local memory event
+      const allEvs = this.getEvents();
+      const targetEv = allEvs.find(e => e.id === eventId);
+      if (targetEv) {
+        targetEv.social_coverage = mergedSc;
+        this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === eventId ? targetEv : e));
+      }
+      this.notify();
+
+      return { success: true };
+    } catch (e: any) {
+      console.warn('[patchSocialCoverageSafe] Exception:', e);
+      return { success: false, error: e };
+    }
+  }
+
   public async syncEventStateToSupabase(eventId: string, forceImmediate = false): Promise<void> {
     if (!supabase || !eventId) return;
 
@@ -4686,8 +4796,7 @@ class StorageService {
 
       // Safe non-destructive merge of proceedings questions by unique ID, respecting deletions
       const remoteQuestionDeleted = [
-        ...(Array.isArray(existingSC.deleted_question_ids) ? existingSC.deleted_question_ids : []),
-        ...(Array.isArray(existingSC.deleted_poll_ids) ? existingSC.deleted_poll_ids.filter((id: string) => typeof id === 'string' && (id.startsWith('q-') || id.startsWith('test-q-'))) : [])
+        ...(Array.isArray(existingSC.deleted_question_ids) ? existingSC.deleted_question_ids : [])
       ];
       if (remoteQuestionDeleted.length > 0) {
         const curDeletedQ = this.getItem<string[]>(STORAGE_KEYS.DELETED_QUESTION_IDS, []);
@@ -4755,7 +4864,11 @@ class StorageService {
           });
         }
       });
-      const finalMergedPQs = Array.from(pqMap.values()).filter(q => !deletedQIds.has(q.id) && (q.status as any) !== 'Deleted' && !(q as any).deleted);
+      let finalMergedPQs = Array.from(pqMap.values()).filter(q => !deletedQIds.has(q.id) && (q.status as any) !== 'Deleted' && !(q as any).deleted);
+      if (finalMergedPQs.length === 0 && rawRemotePQs.length > 0) {
+        console.warn(`[performSyncEventStateToSupabase] Safety guard: finalMergedPQs was empty but remote had ${rawRemotePQs.length} questions. Preserving rawRemotePQs.`);
+        finalMergedPQs = rawRemotePQs;
+      }
 
       // Update local storage so that all remote questions merged are preserved locally, excluding deleted
       const allPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []).filter(q => !deletedQIds.has(q.id) && (q.status as any) !== 'Deleted' && !(q as any).deleted);
@@ -4763,6 +4876,7 @@ class StorageService {
       allPQs.forEach(q => combinedAllPQsMap.set(q.id, q));
       finalMergedPQs.forEach(q => combinedAllPQsMap.set(q.id, q));
       this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, Array.from(combinedAllPQsMap.values()));
+      this.setItem(`tn_assembly_proceedings_questions_${eventId}`, finalMergedPQs);
 
       // Safe non-destructive merge of proceedings (bills) by unique ID, respecting deletions and protecting terminal status
       const isTerminalBillStatus = (s?: string) => s === 'Vote Closed' || s === 'Result Revealed' || s === 'Result Hidden' || s === 'Passed' || s === 'Failed';
@@ -8135,11 +8249,10 @@ class StorageService {
 
       this.setItem(STORAGE_KEYS.EVENTS, events);
       if (supabase && isValidUuid(eventId)) {
-        supabase
-          .from('college_events')
-          .update({ social_coverage: sc, updated_at: new Date().toISOString() })
-          .eq('id', eventId)
-          .then();
+        this.patchSocialCoverageSafe(eventId, {
+          event_days: days,
+          day_attendance: att
+        }).then();
       }
     } catch (e) {
       console.warn('Failed to mirror event days into social_coverage:', e);
@@ -10113,24 +10226,13 @@ class StorageService {
 
     if (supabase) {
       try {
-        // Fetch current remote social_coverage to merge cleanly
-        const { data: currentRemote } = await supabase
-          .from('college_events')
-          .select('id, social_coverage')
-          .eq('id', dbTargetId)
-          .maybeSingle();
+        const patchRes = await this.patchSocialCoverageSafe(dbTargetId, {
+          cabinet_ministries: ministries
+        });
 
-        const baseSc = (currentRemote?.social_coverage || target?.social_coverage || {}) as Record<string, any>;
-        const updatedSc = { ...baseSc, cabinet_ministries: ministries };
-
-        const { error } = await supabase.from('college_events').update({
-          social_coverage: updatedSc,
-          updated_at: new Date().toISOString()
-        }).eq('id', dbTargetId);
-
-        if (error) {
-          console.error('[Supabase] saveCabinetMinistries error:', error.message);
-          return { success: false, error };
+        if (!patchRes.success) {
+          console.error('[Supabase] saveCabinetMinistries error:', patchRes.error);
+          return { success: false, error: patchRes.error };
         }
 
         // Immediately re-fetch and verify from DB (Requirement 3)
@@ -10265,20 +10367,15 @@ class StorageService {
       this.setItem(STORAGE_KEYS.EVENTS, updatedEvents);
       if (supabase) {
         try {
-          const { data: remoteData } = await supabase
-            .from('college_events')
-            .select('social_coverage')
-            .eq('id', eventId)
-            .maybeSingle();
-          const baseSc = (remoteData?.social_coverage || sc) as Record<string, any>;
-          const remoteRoles = { ...((baseSc.leadership_roles as Record<string, string>) || {}) };
+          const remoteRoles = { ...((sc.leadership_roles as Record<string, string>) || {}) };
           if (targetLearner) {
             remoteRoles[canonicalRole] = targetLearner.id;
           } else {
             delete remoteRoles[canonicalRole];
           }
-          baseSc.leadership_roles = remoteRoles;
-          await supabase.from('college_events').update({ social_coverage: baseSc }).eq('id', eventId);
+          await this.patchSocialCoverageSafe(eventId, {
+            leadership_roles: remoteRoles
+          });
         } catch (e) {
           console.warn('[Supabase] leadership_roles sync error:', e);
         }
@@ -12835,16 +12932,9 @@ class StorageService {
           } catch {}
         }
 
-        await supabase
-          .from('college_events')
-          .update({
-            social_coverage: {
-              ...remoteSC,
-              scores: mergedScores,
-              updated_at: new Date().toISOString()
-            }
-          })
-          .eq('id', eventId);
+        await this.patchSocialCoverageSafe(eventId, {
+          scores: mergedScores
+        });
         this.invalidateCache(eventId);
       } catch (err) {
         console.warn('[StorageService] Error syncing scores to Supabase:', err);
@@ -13788,25 +13878,13 @@ class StorageService {
 
     if (supabase && isValidUuid(targetId)) {
       try {
-        const { data: remoteData } = await supabase
-          .from('college_events')
-          .select('social_coverage')
-          .eq('id', targetId)
-          .maybeSingle();
+        const patchRes = await this.patchSocialCoverageSafe(targetId, {
+          allocation_lock: locked
+        });
+        await supabase.from('college_events').update({ is_locked: locked }).eq('id', targetId);
 
-        const baseSc = (remoteData?.social_coverage || {}) as Record<string, any>;
-        const updatedSc = { ...baseSc, allocation_lock: locked };
-
-        const { error } = await supabase
-          .from('college_events')
-          .update({
-            is_locked: locked,
-            social_coverage: updatedSc
-          })
-          .eq('id', targetId);
-
-        if (error) {
-          console.error('❌ [Supabase Lock Allocation Error]:', error);
+        if (!patchRes.success) {
+          console.error('❌ [Supabase Lock Allocation Error]:', patchRes.error);
           this.setItem(key, prevVal);
           const rollbackEvents = this.getEvents().map(e => {
             if (e.id === targetId) {
@@ -13817,7 +13895,7 @@ class StorageService {
           });
           this.setItem(STORAGE_KEYS.EVENTS, rollbackEvents);
           this.notify();
-          return { success: false, error };
+          return { success: false, error: patchRes.error };
         }
       } catch (err: any) {
         console.error('❌ [Supabase Lock Allocation Exception]:', err);
@@ -13875,24 +13953,12 @@ class StorageService {
 
     if (supabase && isValidUuid(targetId)) {
       try {
-        const { data: remoteData } = await supabase
-          .from('college_events')
-          .select('social_coverage')
-          .eq('id', targetId)
-          .maybeSingle();
+        const patchRes = await this.patchSocialCoverageSafe(targetId, {
+          registrations_frozen: frozen
+        });
 
-        const baseSc = (remoteData?.social_coverage || {}) as Record<string, any>;
-        const updatedSc = { ...baseSc, registrations_frozen: frozen };
-
-        const { error } = await supabase
-          .from('college_events')
-          .update({
-            social_coverage: updatedSc
-          })
-          .eq('id', targetId);
-
-        if (error) {
-          console.error('❌ [Supabase Freeze Registrations Error]:', error);
+        if (!patchRes.success) {
+          console.error('❌ [Supabase Freeze Registrations Error]:', patchRes.error);
           this.setItem(key, prevVal);
           const rollbackEvents = this.getEvents().map(e => {
             if (e.id === targetId) {
@@ -13903,7 +13969,7 @@ class StorageService {
           });
           this.setItem(STORAGE_KEYS.EVENTS, rollbackEvents);
           this.notify();
-          return { success: false, error };
+          return { success: false, error: patchRes.error };
         }
       } catch (err: any) {
         console.error('❌ [Supabase Freeze Registrations Exception]:', err);
@@ -13959,24 +14025,12 @@ class StorageService {
 
     if (supabase && isValidUuid(targetId)) {
       try {
-        const { data: remoteData } = await supabase
-          .from('college_events')
-          .select('social_coverage')
-          .eq('id', targetId)
-          .maybeSingle();
+        const patchRes = await this.patchSocialCoverageSafe(targetId, {
+          scores_locked: locked
+        });
 
-        const baseSc = (remoteData?.social_coverage || {}) as Record<string, any>;
-        const updatedSc = { ...baseSc, scores_locked: locked };
-
-        const { error } = await supabase
-          .from('college_events')
-          .update({
-            social_coverage: updatedSc
-          })
-          .eq('id', targetId);
-
-        if (error) {
-          console.error('❌ [Supabase Lock Scores Error]:', error);
+        if (!patchRes.success) {
+          console.error('❌ [Supabase Lock Scores Error]:', patchRes.error);
           this.setItem(key, prevVal);
           const rollbackEvents = this.getEvents().map(e => {
             if (e.id === targetId) {
@@ -13987,7 +14041,7 @@ class StorageService {
           });
           this.setItem(STORAGE_KEYS.EVENTS, rollbackEvents);
           this.notify();
-          return { success: false, error };
+          return { success: false, error: patchRes.error };
         }
       } catch (err: any) {
         console.error('❌ [Supabase Lock Scores Exception]:', err);
@@ -14034,11 +14088,9 @@ class StorageService {
         ev.social_coverage = updatedSc;
         this.setItem(STORAGE_KEYS.EVENTS, events);
         if (isValidUuid(eventId)) {
-          supabase
-            .from('college_events')
-            .update({ social_coverage: updatedSc, updated_at: new Date().toISOString() })
-            .eq('id', eventId)
-            .then();
+          this.patchSocialCoverageSafe(eventId, {
+            yuva_assignments: assignments
+          }).then();
         }
       }
     }
@@ -14264,26 +14316,13 @@ class StorageService {
     });
 
     // Targeted fast Supabase patch for instant DB persistence
-    const sb = supabase;
-    if (sb && syncId && isValidUuid(syncId)) {
-      sb.from('college_events').select('social_coverage').eq('id', syncId).single().then(
-        ({ data }) => {
-          const currentSc = (data?.social_coverage || {}) as Record<string, any>;
-          const patchedSc = {
-            ...currentSc,
-            event_deadline: target,
-            is_question_window_open: isOpen,
-            updated_at: now
-          };
-          sb.from('college_events').update({ social_coverage: patchedSc }).eq('id', syncId).then(
-            () => {},
-            (err: any) => {
-              console.warn('[Supabase] fast deadline patch error:', err);
-            }
-          );
-        },
-        () => {}
-      );
+    if (syncId && isValidUuid(syncId)) {
+      this.patchSocialCoverageSafe(syncId, {
+        event_deadline: target,
+        is_question_window_open: isOpen
+      }).catch(err => {
+        console.warn('[Supabase] fast deadline patch error:', err);
+      });
     }
 
     // Persist full state to Supabase college_events in background
@@ -14369,10 +14408,6 @@ class StorageService {
   public getAllDeletedQuestionIds(): Set<string> {
     const fromStorage = this.getItem<string[]>(STORAGE_KEYS.DELETED_QUESTION_IDS, []);
     const fromLegacy = this.getItem<string[]>('tn_assembly_deleted_question_ids', []);
-    const fromPolls = [
-      ...this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []),
-      ...this.getItem<string[]>('tn_assembly_deleted_ids', [])
-    ].filter(id => typeof id === 'string' && (id.startsWith('q-') || id.startsWith('test-q-')));
 
     // Also scan all events in memory/localStorage for any tombstones in social_coverage
     const eventTombstones: string[] = [];
@@ -14382,15 +14417,11 @@ class StorageService {
       if (Array.isArray(sc.deleted_question_ids)) {
         eventTombstones.push(...sc.deleted_question_ids);
       }
-      if (Array.isArray(sc.deleted_poll_ids)) {
-        eventTombstones.push(...sc.deleted_poll_ids.filter((id: any) => typeof id === 'string' && (id.startsWith('q-') || id.startsWith('test-q-'))));
-      }
     });
 
     const union = new Set<string>([
       ...fromStorage,
       ...fromLegacy,
-      ...fromPolls,
       ...eventTombstones
     ]);
 
@@ -14546,39 +14577,32 @@ class StorageService {
       }
     }
 
-    // Authoritative hardcoded fallback for JKKN ARTS TN ASSEMBLY 2026 event
-    const isArtsEvent = normalizedKey === '05fb9c3e-af0d-4b0e-b48a-1ca4c0671cb8' ||
-      normalizedKey.includes('05fb9c3e') ||
-      normalizedKey.includes('jkkn-arts');
-    if (isArtsEvent) {
-      let textUpdated = false;
-      filtered = filtered.map(q => {
-        const fullQ = ARTS_PROCEEDINGS_QUESTIONS.find(aq => aq.id === q.id);
-        if (fullQ && fullQ.question_text && fullQ.question_text.length > (q.question_text || '').length) {
-          textUpdated = true;
-          return { ...q, question_text: fullQ.question_text };
-        }
-        return q;
-      });
-      const filteredIdSet = new Set(filtered.map(q => q.id));
-      const artsMissing = ARTS_PROCEEDINGS_QUESTIONS.filter(aq => !filteredIdSet.has(aq.id));
-      if (artsMissing.length > 0) {
-        const toAdd = artsMissing.map(aq => ({
+    // Generic event-scoped cache fallback if filtered is empty
+    if (filtered.length === 0 && targetEv?.id) {
+      const eventScopedCached = this.getItem<ProceedingsQuestion[]>(`tn_assembly_proceedings_questions_${targetEv.id}`, []);
+      if (eventScopedCached.length > 0) {
+        filtered = eventScopedCached.filter(q => !deletedQIds.has(q.id) && (q.status as any) !== 'Deleted' && !(q as any).deleted);
+      }
+    }
+
+    // Emergency cold-start recovery ONLY if zero questions exist anywhere for ARTS
+    if (filtered.length === 0) {
+      const isArtsEvent = normalizedKey === '05fb9c3e-af0d-4b0e-b48a-1ca4c0671cb8' ||
+        normalizedKey.includes('05fb9c3e') ||
+        normalizedKey.includes('jkkn-arts');
+      if (isArtsEvent) {
+        console.warn('[StorageService] Emergency cold-start recovery triggered for ARTS event questions');
+        const toAdd = ARTS_PROCEEDINGS_QUESTIONS.map(aq => ({
           ...aq,
           event_id: targetEv?.id || '05fb9c3e-af0d-4b0e-b48a-1ca4c0671cb8',
           event_slug: targetEv?.slug || 'jkkn-arts-tn-assembly-2026-tamil-nadu-2026'
         }));
-        filtered = [...filtered, ...toAdd];
-        textUpdated = true;
-      }
-      if (textUpdated) {
+        filtered = [...toAdd];
         const curAll = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
-        const filteredMap = new Map(filtered.map(q => [q.id, q]));
-        const updatedAll = curAll.map(q => filteredMap.get(q.id) || q);
-        filtered.forEach(q => {
-          if (!updatedAll.some(uq => uq.id === q.id)) updatedAll.push(q);
-        });
-        this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, updatedAll);
+        const filteredMap = new Map(curAll.map(q => [q.id, q]));
+        toAdd.forEach(q => filteredMap.set(q.id, q));
+        this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, Array.from(filteredMap.values()));
+        this.setItem(`tn_assembly_proceedings_questions_${targetEv?.id || '05fb9c3e-af0d-4b0e-b48a-1ca4c0671cb8'}`, filtered);
       }
     }
 
@@ -14717,10 +14741,9 @@ class StorageService {
           this.setItem(STORAGE_KEYS.EVENTS, allEvs);
         }
 
-        // Synchronize remote deleted_question_ids and deleted_poll_ids (for any q- tombstones)
+        // Synchronize remote deleted_question_ids (respecting authoritative deletions)
         const remoteDeletedQIds: string[] = [
-          ...(Array.isArray(sc.deleted_question_ids) ? sc.deleted_question_ids : []),
-          ...(Array.isArray(sc.deleted_poll_ids) ? sc.deleted_poll_ids.filter((id: string) => typeof id === 'string' && (id.startsWith('q-') || id.startsWith('test-q-'))) : [])
+          ...(Array.isArray(sc.deleted_question_ids) ? sc.deleted_question_ids : [])
         ];
         if (remoteDeletedQIds.length > 0) {
           const curDeleted = this.getItem<string[]>(STORAGE_KEYS.DELETED_QUESTION_IDS, []);
@@ -14813,26 +14836,18 @@ class StorageService {
           });
         });
 
+        // Emergency cold-start recovery ONLY if remote DB returned 0 questions for ARTS
         const isArtsEvent = ev.id === '05fb9c3e-af0d-4b0e-b48a-1ca4c0671cb8' ||
           ev.slug?.includes('jkkn-arts') ||
           cleanEventKey.includes('05fb9c3e');
-        if (isArtsEvent) {
+        if (isArtsEvent && pqMap.size === 0) {
+          console.warn('[StorageService] Emergency cold-start recovery triggered in fetchProceedingsQuestionsOnDemand for ARTS');
           ARTS_PROCEEDINGS_QUESTIONS.forEach(aq => {
-            if (!pqMap.has(aq.id)) {
-              pqMap.set(aq.id, {
-                ...aq,
-                event_id: ev.id,
-                event_slug: ev.slug || getEventSlug(ev as any)
-              });
-            } else {
-              const existing = pqMap.get(aq.id)!;
-              if (aq.question_text && aq.question_text.length > (existing.question_text || '').length) {
-                pqMap.set(aq.id, {
-                  ...existing,
-                  question_text: aq.question_text
-                });
-              }
-            }
+            pqMap.set(aq.id, {
+              ...aq,
+              event_id: ev.id,
+              event_slug: ev.slug || getEventSlug(ev as any)
+            });
           });
         }
 
@@ -14914,6 +14929,7 @@ class StorageService {
 
         this.setItem(STORAGE_KEYS.DELETED_QUESTION_IDS, Array.from(deletedQIds));
         this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, [...otherEventsPQs, ...Array.from(pqMap.values())]);
+        this.setItem(`tn_assembly_proceedings_questions_${ev.id}`, Array.from(pqMap.values()));
         this.notify();
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('tn_assembly_proceedings_question_update', {
@@ -14937,8 +14953,10 @@ class StorageService {
       return { success: false, error: 'Target Ministry must be selected.' };
     }
 
-    const eventSlug = question.event_slug || (question.event_id ? this.getEvents().find(e => e.id === question.event_id)?.slug : undefined) || 'jkkncet-tn-assembly-2026';
-    const resolvedEvent = this.getEvents().find(e => e.id === question.event_id || getEventSlug(e) === eventSlug || e.slug === eventSlug);
+    const activeEvId = this.getActiveEventId();
+    const activeEv = this.getEvents().find(e => e.id === activeEvId);
+    const eventSlug = question.event_slug || (question.event_id ? this.getEvents().find(e => e.id === question.event_id)?.slug : undefined) || (activeEv?.slug || (activeEv ? getEventSlug(activeEv) : undefined)) || '';
+    const resolvedEvent = this.getEvents().find(e => (question.event_id && e.id === question.event_id) || (eventSlug && (getEventSlug(e) === eventSlug || e.slug === eventSlug))) || activeEv;
     const eventId = resolvedEvent?.id || question.event_id || eventSlug;
 
     const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
@@ -14983,9 +15001,11 @@ class StorageService {
   }
 
   public addProceedingsQuestion(question: Partial<ProceedingsQuestion>): ProceedingsQuestion {
+    const activeEvId = this.getActiveEventId();
+    const activeEv = this.getEvents().find(e => e.id === activeEvId);
     const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
-    const eventSlug = question.event_slug || (question.event_id ? this.getEvents().find(e => e.id === question.event_id)?.slug : undefined) || 'jkkncet-tn-assembly-2026';
-    const resolvedEvent = this.getEvents().find(e => e.id === question.event_id || getEventSlug(e) === eventSlug || e.slug === eventSlug);
+    const eventSlug = question.event_slug || (question.event_id ? this.getEvents().find(e => e.id === question.event_id)?.slug : undefined) || (activeEv?.slug || (activeEv ? getEventSlug(activeEv) : undefined)) || '';
+    const resolvedEvent = this.getEvents().find(e => (question.event_id && e.id === question.event_id) || (eventSlug && (getEventSlug(e) === eventSlug || e.slug === eventSlug))) || activeEv;
     const eventId = resolvedEvent?.id || question.event_id || eventSlug;
 
     const newQuestion: ProceedingsQuestion = {
