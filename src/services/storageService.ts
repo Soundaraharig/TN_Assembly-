@@ -3751,11 +3751,42 @@ class StorageService {
         .on('broadcast', { event: 'question_order_updated' }, (msg: any) => {
           if (msg?.payload?.eventId) {
             const evId = msg.payload.eventId;
+            const orderedIds: string[] = Array.isArray(msg.payload.orderedQuestionIds) ? msg.payload.orderedQuestionIds : [];
+            const allEvs = this.getEvents();
+            const matched = findEventBySlug(allEvs, evId) || allEvs.find(e => e.id === evId);
+
+            if (orderedIds.length > 0) {
+              const orderMap = new Map<string, number>();
+              orderedIds.forEach((id, idx) => orderMap.set(id, idx + 1));
+              const localPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+              const updatedPQs = localPQs.map(q => {
+                const qEvId = q.event_id || '';
+                const isThisEvent = qEvId === evId || (matched && (qEvId === matched.id || q.event_slug === matched.slug));
+                if (isThisEvent && orderMap.has(q.id)) {
+                  const num = orderMap.get(q.id)!;
+                  return { ...q, calling_order: num, queue_order: num };
+                }
+                return q;
+              });
+              this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, updatedPQs);
+
+              if (matched) {
+                const curSc = (matched.social_coverage || {}) as Record<string, any>;
+                matched.social_coverage = {
+                  ...curSc,
+                  question_calling_order: orderedIds,
+                  question_order_version: msg.payload.version || (curSc.question_order_version || 0) + 1,
+                  question_order_updated_at: msg.payload.updatedAt || new Date().toISOString()
+                };
+                this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
+              }
+            }
+
             this.fetchProceedingsQuestionsOnDemand(evId).then(() => {
               this.notify();
               if (typeof window !== 'undefined') {
                 window.dispatchEvent(new CustomEvent('tn_assembly_proceedings_question_update', {
-                  detail: { type: 'order_update', eventId: evId, version: msg.payload.version }
+                  detail: { type: 'order_update', eventId: evId, orderedQuestionIds: orderedIds, version: msg.payload.version }
                 }));
                 window.dispatchEvent(new Event('storage'));
               }
@@ -3790,6 +3821,15 @@ class StorageService {
               if (completedQId && q.id === completedQId) {
                 changed = true;
                 return { ...q, called_status: 'completed' as const, completed_at: q.completed_at || new Date().toISOString() };
+              }
+              // Single calling invariant: revert any other question marked calling to uncalled
+              if (activeQId && q.id !== activeQId && q.called_status === 'calling') {
+                changed = true;
+                return { ...q, called_status: 'uncalled' as const };
+              }
+              if (activeQId === null && q.called_status === 'calling') {
+                changed = true;
+                return { ...q, called_status: 'uncalled' as const };
               }
               return q;
             });
@@ -4763,11 +4803,21 @@ class StorageService {
         proceedings: finalMergedProcs,
         questions: finalMergedPQs,
         proceedings_questions: finalMergedPQs,
-        question_calling_order: existingSC.question_calling_order || this.getQuestionCallingOrderIds(eventId),
-        active_question_id: existingSC.active_question_id !== undefined ? existingSC.active_question_id : this.getActiveQuestionId(eventId),
-        completed_question_ids: existingSC.completed_question_ids || [],
-        question_order_version: existingSC.question_order_version || 1,
-        question_order_updated_at: existingSC.question_order_updated_at || new Date().toISOString(),
+        question_calling_order: (Array.isArray((currentEv?.social_coverage as any)?.question_calling_order) && (currentEv!.social_coverage as any).question_calling_order.length > 0)
+          ? (currentEv!.social_coverage as any).question_calling_order
+          : (Array.isArray(existingSC.question_calling_order) && existingSC.question_calling_order.length > 0
+              ? existingSC.question_calling_order
+              : this.getQuestionCallingOrderIds(eventId)),
+        active_question_id: (currentEv?.social_coverage as any)?.active_question_id !== undefined
+          ? (currentEv!.social_coverage as any).active_question_id
+          : (existingSC.active_question_id !== undefined
+              ? existingSC.active_question_id
+              : this.getActiveQuestionId(eventId)),
+        completed_question_ids: Array.isArray((currentEv?.social_coverage as any)?.completed_question_ids)
+          ? (currentEv!.social_coverage as any).completed_question_ids
+          : (Array.isArray(existingSC.completed_question_ids) ? existingSC.completed_question_ids : []),
+        question_order_version: Math.max((currentEv?.social_coverage as any)?.question_order_version || 0, existingSC.question_order_version || 0, 1),
+        question_order_updated_at: (currentEv?.social_coverage as any)?.question_order_updated_at || existingSC.question_order_updated_at || new Date().toISOString(),
         deleted_question_ids: Array.from(deletedQIds),
         deleted_poll_ids: Array.from(deletedIds),
         scores: finalMergedScores,
@@ -14290,21 +14340,42 @@ class StorageService {
     });
 
     const targetEv = resolvedEvent || allEvs.find(e => e.id.toLowerCase() === cleanKey);
-    const officialOrderIds: string[] = Array.isArray((targetEv?.social_coverage as any)?.question_calling_order)
+    let officialOrderIds: string[] = Array.isArray((targetEv?.social_coverage as any)?.question_calling_order)
       ? (targetEv!.social_coverage as any).question_calling_order
       : [];
+    if (officialOrderIds.length === 0) {
+      try {
+        const cached = typeof localStorage !== 'undefined' ? localStorage.getItem(`tn_assembly_question_order_${cleanKey}`) : null;
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) officialOrderIds = parsed;
+        }
+      } catch {}
+    }
     const orderIndexMap = new Map<string, number>();
     officialOrderIds.forEach((id, idx) => orderIndexMap.set(id, idx + 1));
+
+    const authoritativeActiveQId = (targetEv?.social_coverage as any)?.active_question_id || null;
 
     return filtered.map(q => {
       const canonical = getCanonicalQuestionStatus(q);
       const isApproved = canonical === 'Approved' || canonical === 'Starred';
-      const order = isApproved ? (q.calling_order !== undefined ? q.calling_order : orderIndexMap.get(q.id)) : undefined;
+      // Official calling order index set by Admin is authoritative
+      const order = isApproved ? (orderIndexMap.has(q.id) ? orderIndexMap.get(q.id) : q.calling_order) : undefined;
+      
+      let calledStatus = q.called_status;
+      if (authoritativeActiveQId && q.id === authoritativeActiveQId) {
+        if (calledStatus !== 'completed') calledStatus = 'calling';
+      } else if (authoritativeActiveQId && q.id !== authoritativeActiveQId && calledStatus === 'calling') {
+        calledStatus = 'uncalled';
+      }
+
       return {
         ...q,
         status: canonical,
         calling_order: order,
-        queue_order: order !== undefined ? order : q.queue_order
+        queue_order: order !== undefined ? order : q.queue_order,
+        called_status: calledStatus
       };
     }).sort((a, b) => {
       const aIsApproved = a.status === 'Approved' || a.status === 'Starred';
@@ -14362,12 +14433,46 @@ class StorageService {
             localStorage.setItem(`tn_assembly_cabinet_${ev.id}`, JSON.stringify(remoteMinistries));
           } catch {}
         }
-        const targetEv = allEvs.find(e => e.id === ev.id);
+        const remoteCallingOrder = Array.isArray(sc.question_calling_order) ? sc.question_calling_order : [];
+        const remoteActiveQId = sc.active_question_id !== undefined ? sc.active_question_id : null;
+        const remoteCompletedQIds = Array.isArray(sc.completed_question_ids) ? sc.completed_question_ids : [];
+
+        if (typeof localStorage !== 'undefined' && ev.id) {
+          try {
+            if (remoteCallingOrder.length > 0) {
+              localStorage.setItem(`tn_assembly_question_order_${ev.id}`, JSON.stringify(remoteCallingOrder));
+              if (ev.slug) localStorage.setItem(`tn_assembly_question_order_${ev.slug}`, JSON.stringify(remoteCallingOrder));
+            }
+            if (remoteActiveQId) {
+              localStorage.setItem(`tn_assembly_active_question_${ev.id}`, remoteActiveQId);
+            }
+          } catch {}
+        }
+
+        let targetEv = allEvs.find(e => e.id === ev.id);
         if (targetEv) {
           targetEv.cabinet_ministries = remoteMinistries;
           const scEv = (targetEv.social_coverage || {}) as Record<string, any>;
-          targetEv.social_coverage = { ...scEv, cabinet_ministries: remoteMinistries };
-          this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === targetEv.id ? targetEv : e));
+          targetEv.social_coverage = {
+            ...scEv,
+            cabinet_ministries: remoteMinistries,
+            question_calling_order: remoteCallingOrder.length > 0 ? remoteCallingOrder : scEv.question_calling_order,
+            active_question_id: remoteActiveQId !== null ? remoteActiveQId : scEv.active_question_id,
+            completed_question_ids: remoteCompletedQIds.length > 0 ? remoteCompletedQIds : scEv.completed_question_ids,
+            question_order_version: sc.question_order_version || scEv.question_order_version,
+            question_order_updated_at: sc.question_order_updated_at || scEv.question_order_updated_at
+          };
+          this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === targetEv!.id ? targetEv! : e));
+        } else {
+          const newEvEntry: CollegeEvent = {
+            id: ev.id,
+            college_name: ev.college_name,
+            slug: ev.slug,
+            cabinet_ministries: remoteMinistries,
+            social_coverage: sc
+          } as any;
+          allEvs.push(newEvEntry);
+          this.setItem(STORAGE_KEYS.EVENTS, allEvs);
         }
 
         // Synchronize remote deleted_question_ids and deleted_poll_ids (for any q- tombstones)
@@ -14520,10 +14625,19 @@ class StorageService {
           });
         }
         if (sc.active_question_id) {
-          const activeQ = pqMap.get(sc.active_question_id);
-          if (activeQ && activeQ.called_status !== 'completed') {
-            activeQ.called_status = 'calling';
-          }
+          pqMap.forEach(q => {
+            if (q.id === sc.active_question_id) {
+              if (q.called_status !== 'completed') {
+                q.called_status = 'calling';
+              }
+            } else if (q.called_status === 'calling') {
+              q.called_status = 'uncalled';
+            }
+          });
+        } else if (sc.active_question_id === null) {
+          pqMap.forEach(q => {
+            if (q.called_status === 'calling') q.called_status = 'uncalled';
+          });
         }
         if (Array.isArray(sc.completed_question_ids)) {
           sc.completed_question_ids.forEach((cId: string) => {
@@ -14973,6 +15087,7 @@ class StorageService {
     this.broadcast('question_order_updated', {
       eventId: syncId,
       type: 'question_order_updated',
+      orderedQuestionIds,
       version,
       updatedAt: new Date().toISOString()
     }).catch(err => console.warn('[Supabase] broadcast question_order_updated error:', err));
@@ -15027,6 +15142,14 @@ class StorageService {
           ...q,
           called_status: 'calling' as const,
           called_at: q.called_at || new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+      }
+      // Revert any previously 'calling' question back to uncalled if not completed
+      if (q.called_status === 'calling') {
+        return {
+          ...q,
+          called_status: 'uncalled' as const,
           updated_at: new Date().toISOString()
         };
       }

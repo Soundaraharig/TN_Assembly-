@@ -257,6 +257,24 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     }
   };
 
+  const handleSetAsCurrentQuestion = async (q: ProceedingsQuestion) => {
+    if (!currentEvent?.id) return;
+    try {
+      await storageService.setActiveQuestion(currentEvent.id, q.id, {
+        role: userSession?.role || (isSuperAdmin ? 'super_admin' : 'coordinator'),
+        name: userSession?.name || 'Main Admin'
+      });
+      syncQuestionsData();
+      onShowToast(
+        'Current Question Set',
+        `Question #${q.calling_order || q.queue_order || 1} (${q.student_name}) is now the official current question.`,
+        'success'
+      );
+    } catch (err: any) {
+      onShowToast('Error', err?.message || 'Failed to set current question.', 'error');
+    }
+  };
+
   const handleCompleteQuestion = async (q: ProceedingsQuestion) => {
     if (!currentEvent?.id) return;
     try {
@@ -1516,23 +1534,33 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   </p>
                 </div>
 
-                <button
-                  type="button"
-                  disabled={isCallingNextQ}
-                  onClick={() => handleCallQuestion(nextQuestionToCall)}
-                  className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/20 cursor-pointer transition-all self-stretch sm:self-auto shrink-0"
-                >
-                  <Play className="w-3.5 h-3.5 fill-slate-950" />
-                  <span>CALL QUESTION</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setInspectQuestionCtrl(nextQuestionToCall)}
-                  className="px-3 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 cursor-pointer transition-colors self-stretch sm:self-auto shrink-0"
-                >
-                  <Eye className="w-3.5 h-3.5 text-amber-500" />
-                  <span>VIEW FULL</span>
-                </button>
+                <div className="flex flex-wrap items-center gap-2 self-stretch sm:self-auto shrink-0">
+                  <button
+                    type="button"
+                    disabled={isCallingNextQ}
+                    onClick={() => handleCallQuestion(nextQuestionToCall)}
+                    className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/20 cursor-pointer transition-all self-stretch sm:self-auto shrink-0"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-slate-950" />
+                    <span>CALL QUESTION</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetAsCurrentQuestion(nextQuestionToCall)}
+                    className="px-3 py-2 rounded-xl text-xs font-bold text-amber-700 dark:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 flex items-center gap-1.5 cursor-pointer transition-colors self-stretch sm:self-auto shrink-0"
+                    title="Designate as official current question without calling"
+                  >
+                    <span>SET AS CURRENT</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInspectQuestionCtrl(nextQuestionToCall)}
+                    className="px-3 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 cursor-pointer transition-colors self-stretch sm:self-auto shrink-0"
+                  >
+                    <Eye className="w-3.5 h-3.5 text-amber-500" />
+                    <span>VIEW FULL</span>
+                  </button>
+                </div>
               </div>
             ) : questionsList.length === 0 ? (
               <div className="py-6 text-center text-xs text-slate-400 italic rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
@@ -1551,7 +1579,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   <span>UPCOMING OFFICIAL QUEUE ({uncalledQuestions.length - (activeQuestion ? 0 : 1)})</span>
                   <span className="text-slate-500">Deterministic sequence</span>
                 </div>
-                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
                   {(activeQuestion ? uncalledQuestions : uncalledQuestions.slice(1)).map((q, idx) => (
                     <div
                       key={q.id}
@@ -1578,9 +1606,31 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                           {q.ministry}
                         </span>
                       </div>
-                      <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider shrink-0">
-                        Queued
-                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleSetAsCurrentQuestion(q)}
+                          className="px-2 py-1 rounded-lg text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 cursor-pointer transition-colors"
+                          title="Set as authoritative current question"
+                        >
+                          SET AS CURRENT
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCallQuestion(q)}
+                          className="px-2 py-1 rounded-lg text-[10px] font-black uppercase text-slate-950 bg-amber-500 hover:bg-amber-400 cursor-pointer transition-colors"
+                          title="Call immediately to floor"
+                        >
+                          CALL
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setInspectQuestionCtrl(q)}
+                          className="px-2 py-1 rounded-lg text-[10px] font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 cursor-pointer transition-colors"
+                        >
+                          VIEW
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>

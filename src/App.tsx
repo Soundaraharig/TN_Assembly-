@@ -2816,28 +2816,44 @@ export function App() {
               path="/dashboard"
               element={
                 currentStudent ? (
-                  (isSpeakerRole(currentStudent.role) || isDeputySpeakerRole(currentStudent.role)) ? (
-                    <SpeakerDashboard
-                      speaker={currentStudent}
-                      event={currentEvent || events[0] || null}
-                      learners={storageService.getLearners(currentEvent?.id || events[0]?.id)}
-                      agenda={agenda}
-                      elections={storageService.getElections(currentEvent?.id || events[0]?.id, 'student', currentStudent.id)}
-                      flashVotes={storageService.getFlashVotes(currentEvent?.id || events[0]?.id, 'student', currentStudent.id)}
-                      onShowToast={addToast}
-                      onLogout={() => {
-                        clearSession();
-                        setIsAuthenticated(false);
-                        setRole('coordinator');
-                        navigate('/');
-                        addToast('Signed Out', 'You have been signed out', 'info');
-                      }}
-                    />
-                  ) : (
+                  (isSpeakerRole(currentStudent.role) || isDeputySpeakerRole(currentStudent.role)) ? (() => {
+                    const presidingEvent =
+                      (currentStudent.event_id ? events.find(e => e.id === currentStudent.event_id || e.slug === currentStudent.event_id) : null) ||
+                      (currentStudent.event_id ? storageService.getEvents().find(e => e.id === currentStudent.event_id || e.slug === currentStudent.event_id) : null) ||
+                      currentEvent ||
+                      events[0] ||
+                      null;
+                    const presidingEventId = presidingEvent?.id || currentStudent.event_id || currentEvent?.id || events[0]?.id;
+                    const speakerAgenda = presidingEventId ? storageService.getAgenda(presidingEventId) : agenda;
+
+                    return (
+                      <SpeakerDashboard
+                        speaker={currentStudent}
+                        event={presidingEvent}
+                        learners={storageService.getLearners(presidingEventId)}
+                        agenda={speakerAgenda && speakerAgenda.length > 0 ? speakerAgenda : agenda}
+                        elections={storageService.getElections(presidingEventId, 'student', currentStudent.id)}
+                        flashVotes={storageService.getFlashVotes(presidingEventId, 'student', currentStudent.id)}
+                        onShowToast={addToast}
+                        onLogout={() => {
+                          clearSession();
+                          setIsAuthenticated(false);
+                          setRole('coordinator');
+                          navigate('/');
+                          addToast('Signed Out', 'You have been signed out', 'info');
+                        }}
+                      />
+                    );
+                  })() : (
                     <StudentDashboard
                       student={currentStudent}
-                    event={currentEvent || events[0] || null}
-                    agenda={agenda}
+                      event={
+                        (currentStudent.event_id ? events.find(e => e.id === currentStudent.event_id || e.slug === currentStudent.event_id) : null) ||
+                        currentEvent ||
+                        events[0] ||
+                        null
+                      }
+                      agenda={agenda}
                     party={activeParty || null}
                     committee={activeCommittee || null}
                     nominations={storageService.getNominations(currentEvent?.id || events[0]?.id, 'student', currentStudent.id)}

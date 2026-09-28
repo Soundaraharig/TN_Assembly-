@@ -124,6 +124,23 @@ export const ArrangeQuestionOrderModal: React.FC<ArrangeQuestionOrderModalProps>
     setOrderedQuestions(next);
   };
 
+  const moveQuestionToTop = (fromIndex: number) => {
+    if (!isMainAdmin || fromIndex <= 0) return;
+    const fromQ = orderedQuestions[fromIndex];
+    if (fromQ.called_status === 'completed') return;
+
+    // Find the first non-completed index
+    const firstActiveIndex = orderedQuestions.findIndex(q => q.called_status !== 'completed');
+    const targetIdx = firstActiveIndex >= 0 ? firstActiveIndex : 0;
+    if (fromIndex === targetIdx) return;
+
+    const next = [...orderedQuestions];
+    const [moved] = next.splice(fromIndex, 1);
+    next.splice(targetIdx, 0, moved);
+    setOrderedQuestions(next);
+    onShowToast('Position Updated', `Moved to position #${targetIdx + 1}.`, 'info');
+  };
+
   // Drag and Drop handlers
   const handleDragStart = (e: React.DragEvent, index: number) => {
     if (!isMainAdmin) return;
@@ -427,6 +444,16 @@ export const ArrangeQuestionOrderModal: React.FC<ArrangeQuestionOrderModalProps>
 
                     {isMainAdmin && !isCompleted && (
                       <div className="flex items-center gap-1">
+                        {idx > (orderedQuestions.findIndex(x => x.called_status !== 'completed')) && (
+                          <button
+                            type="button"
+                            onClick={() => moveQuestionToTop(idx)}
+                            className="px-2 py-1 rounded-lg text-[10px] font-bold text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 cursor-pointer transition-colors"
+                            title="Place this question at position #1"
+                          >
+                            #1
+                          </button>
+                        )}
                         <button
                           type="button"
                           disabled={idx === 0 || orderedQuestions[idx - 1]?.called_status === 'completed'}
