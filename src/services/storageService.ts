@@ -4019,6 +4019,18 @@ class StorageService {
               this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
             }
 
+            // Sync localStorage active question key for cross-window consistency
+            if (typeof localStorage !== 'undefined') {
+              try {
+                const lsKey = `tn_assembly_active_question_${matched?.id || evId}`;
+                if (activeQId) {
+                  localStorage.setItem(lsKey, activeQId);
+                } else {
+                  localStorage.removeItem(lsKey);
+                }
+              } catch {}
+            }
+
             const localPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
             let changed = false;
             const updatedPQs = localPQs.map(q => {
@@ -15505,6 +15517,8 @@ class StorageService {
             }
             if (remoteActiveQId) {
               localStorage.setItem(`tn_assembly_active_question_${ev.id}`, remoteActiveQId);
+            } else {
+              localStorage.removeItem(`tn_assembly_active_question_${ev.id}`);
             }
           } catch {}
         }
@@ -16266,7 +16280,13 @@ class StorageService {
     const allEvs = this.getEvents();
     const matched = findEventBySlug(allEvs, eventId) || allEvs.find(e => e.id === eventId);
     const sc = (matched?.social_coverage || {}) as Record<string, any>;
+
+    // If social_coverage has active_question_id (truthy), that's authoritative
     if (sc.active_question_id) return sc.active_question_id;
+
+    // If social_coverage explicitly has the key set to null/falsy, respect it — question was yielded/completed
+    // Do NOT fall through to stale localStorage or projector settings
+    if ('active_question_id' in sc && !sc.active_question_id) return null;
 
     if (typeof localStorage !== 'undefined') {
       try {
@@ -16429,11 +16449,22 @@ class StorageService {
 
     this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, updated);
 
+    // Update localStorage active question key
+    if (typeof localStorage !== 'undefined') {
+      try {
+        if (nextQuestionId) {
+          localStorage.setItem(`tn_assembly_active_question_${syncId}`, nextQuestionId);
+        } else {
+          localStorage.removeItem(`tn_assembly_active_question_${syncId}`);
+        }
+      } catch {}
+    }
+
     const curPs = this.getProjectorSettings(syncId);
     this.saveProjectorSettings(syncId, {
       ...curPs,
       activeQuestionId: nextQuestionId,
-      displayScene: nextQuestionId ? 'question_hour' : curPs.displayScene
+      displayScene: nextQuestionId ? 'question_hour' : (curPs.displayScene === 'question_hour' ? 'agenda' : curPs.displayScene)
     });
 
     this.notify();
@@ -16488,10 +16519,18 @@ class StorageService {
       this.setItem(STORAGE_KEYS.EVENTS, allEvents.map(e => e.id === matched.id ? matched : e));
     }
 
+    // Clear stale localStorage active question key so getActiveQuestionId doesn't resurrect it
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.removeItem(`tn_assembly_active_question_${syncId}`);
+      } catch {}
+    }
+
     const curPs = this.getProjectorSettings(syncId);
     this.saveProjectorSettings(syncId, {
       ...curPs,
-      activeQuestionId: null
+      activeQuestionId: null,
+      displayScene: curPs.displayScene === 'question_hour' ? 'agenda' : curPs.displayScene
     });
 
     this.notify();
@@ -16510,6 +16549,46 @@ class StorageService {
 
     this.syncEventStateToSupabase(syncId, true).catch(() => {});
     return { success: true };
+  }
+
+  // ── QUESTION SNAPSHOT (Disaster Recovery) ──────────────────────────
+  public async updateQuestionSnapshot(eventId: string): Promise<void> {
+    if (!eventId) return;
+    try {
+      const allEvs = this.getEvents();
+      const matched = findEventBySlug(allEvs, eventId) || allEvs.find(e => e.id === eventId);
+      const syncId = matched?.id || eventId;
+      const questions = this.getProceedingsQuestions(syncId);
+      const sc = (matched?.social_coverage || {}) as Record<string, any>;
+      const deletedIds = this.getItem<string[]>(STORAGE_KEYS.DELETED_QUESTION_IDS, []);
+
+      const snapshot: QuestionSnapshot = {
+        event_id: syncId,
+        event_slug: matched?.slug || (matched ? getEventSlug(matched) : undefined),
+        college_name: matched?.college_name,
+        short_name: (matched as any)?.short_name || matched?.college_name,
+        snapshot_version: `v${Date.now()}`,
+        snapshot_timestamp: new Date().toISOString(),
+        total_questions: questions.length,
+        counts: {
+          submitted: questions.filter(q => q.status === 'Submitted').length,
+          under_review: questions.filter(q => q.status === 'Under Review').length,
+          approved: questions.filter(q => q.status === 'Approved').length,
+          starred: questions.filter(q => q.status === 'Starred').length,
+          rejected: questions.filter(q => q.status === 'Rejected').length,
+          deleted: deletedIds.length
+        },
+        question_calling_order: Array.isArray(sc.question_calling_order) ? sc.question_calling_order : [],
+        active_question_id: sc.active_question_id || null,
+        completed_question_ids: Array.isArray(sc.completed_question_ids) ? sc.completed_question_ids : [],
+        deleted_question_ids: deletedIds,
+        questions
+      };
+
+      this.setItem(`tn_assembly_question_snapshot_${syncId}`, snapshot);
+    } catch (err) {
+      console.warn('[StorageService] updateQuestionSnapshot error:', err);
+    }
   }
 
   // ── PROCEEDINGS MOTIONS ─────────────────────────────────────────────
