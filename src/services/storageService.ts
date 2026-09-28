@@ -1350,6 +1350,34 @@ class StorageService {
         ...this.getItem<string[]>('tn_assembly_deleted_question_ids', [])
       ]);
 
+      // Protect active/approved proceedings questions and calling order questions
+      if (Array.isArray(sc.question_calling_order)) {
+        sc.question_calling_order.forEach((id: string) => {
+          questionDeletedSet.delete(id);
+          activeDeletedSet.delete(id);
+        });
+      }
+      if (sc.active_question_id) {
+        questionDeletedSet.delete(sc.active_question_id);
+        activeDeletedSet.delete(sc.active_question_id);
+      }
+      if (Array.isArray(sc.proceedings_questions)) {
+        sc.proceedings_questions.forEach((q: any) => {
+          if (q && q.id && q.status !== 'Deleted' && !(q as any).deleted) {
+            questionDeletedSet.delete(q.id);
+            activeDeletedSet.delete(q.id);
+          }
+        });
+      }
+      if (Array.isArray(sc.questions)) {
+        sc.questions.forEach((q: any) => {
+          if (q && q.id && q.status !== 'Deleted' && !(q as any).deleted) {
+            questionDeletedSet.delete(q.id);
+            activeDeletedSet.delete(q.id);
+          }
+        });
+      }
+
       if (Array.isArray(sc.elections)) {
         allElecs = [...allElecs, ...sc.elections.filter((e: any) => !activeDeletedSet.has(e.id))];
       }
@@ -3172,7 +3200,7 @@ class StorageService {
         { data: studentData },
         { data: confData }
       ] = await Promise.all([
-        sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS_LIST).eq('id', eventId).limit(1),
+        sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS).eq('id', eventId).limit(1),
         studentId ? sb.from('learners').select('id, event_id, full_name, roll_no:constituency_number, department, year:academic_year, academic_year, party:party_name, party_name, party_id, access_code, bench, role, constituency_number, constituency_name, committee_name, committee_id').eq('id', studentId).limit(1) : Promise.resolve({ data: null }),
         studentId ? sb.from('learner_allocation_confirmations').select(SUPABASE_COLUMNS.LEARNER_ALLOCATION_CONFIRMATIONS).eq('event_id', eventId).eq('learner_id', studentId).limit(1) : Promise.resolve({ data: null })
       ]);
@@ -3235,7 +3263,7 @@ class StorageService {
         { data: learnersData }
       ] = await Promise.all([
         this.dedupeInFlight<{ data: any }>(`query_event_${eventId}`, async () =>
-          await sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS_LIST).eq('id', eventId).limit(1)
+          await sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS).eq('id', eventId).limit(1)
         ),
         this.dedupeInFlight<{ data: any }>(`query_learners_${eventId}`, async () =>
           await sb.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('event_id', eventId)
@@ -3439,7 +3467,7 @@ class StorageService {
       if (cached && cached.social_coverage) {
         targetEv = cached;
       } else {
-        let evQuery = sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS_LIST);
+        let evQuery = sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS);
         if (isUuid(resolvedEventId)) {
           evQuery = evQuery.eq('id', resolvedEventId);
         } else if (isUuid(slugOrId)) {
@@ -4640,11 +4668,18 @@ class StorageService {
         const curDeletedQ = this.getItem<string[]>(STORAGE_KEYS.DELETED_QUESTION_IDS, []);
         this.setItem(STORAGE_KEYS.DELETED_QUESTION_IDS, Array.from(new Set([...curDeletedQ, ...remoteQuestionDeleted])));
       }
-      const deletedQIds = this.getAllDeletedQuestionIds();
-      const localPQs = this.getProceedingsQuestions(eventId).filter(q => !deletedQIds.has(q.id) && (q.status as any) !== 'Deleted' && !(q as any).deleted);
       const rawRemotePQs = Array.isArray(existingSC.proceedings_questions)
         ? (existingSC.proceedings_questions as ProceedingsQuestion[])
         : (Array.isArray(existingSC.questions) && existingSC.questions.length > 0 && ((existingSC.questions[0] as any).bench || (existingSC.questions[0] as any).question_type) ? (existingSC.questions as ProceedingsQuestion[]) : []);
+      const deletedQIds = this.getAllDeletedQuestionIds();
+      rawRemotePQs.forEach(rq => deletedQIds.delete(rq.id));
+      if (Array.isArray(existingSC.question_calling_order)) {
+        existingSC.question_calling_order.forEach((id: string) => deletedQIds.delete(id));
+      }
+      if (existingSC.active_question_id) {
+        deletedQIds.delete(existingSC.active_question_id);
+      }
+      const localPQs = this.getProceedingsQuestions(eventId).filter(q => !deletedQIds.has(q.id) && (q.status as any) !== 'Deleted' && !(q as any).deleted);
       const remotePQs = rawRemotePQs.filter(q => !deletedQIds.has(q.id) && (q.status as any) !== 'Deleted' && !(q as any).deleted);
       const pqMap = new Map<string, ProceedingsQuestion>();
       remotePQs.forEach(q => pqMap.set(q.id, q));
@@ -5717,7 +5752,7 @@ class StorageService {
           if (matchedVol.event_id) {
             const { data: eventRow } = await supabase
               .from('college_events')
-              .select(SUPABASE_COLUMNS.COLLEGE_EVENTS_LIST)
+              .select(SUPABASE_COLUMNS.COLLEGE_EVENTS)
               .eq('id', matchedVol.event_id)
               .maybeSingle();
 
@@ -5784,7 +5819,7 @@ class StorageService {
           if (matchedJury.event_id) {
             const { data: eventRow } = await supabase
               .from('college_events')
-              .select(SUPABASE_COLUMNS.COLLEGE_EVENTS_LIST)
+              .select(SUPABASE_COLUMNS.COLLEGE_EVENTS)
               .eq('id', matchedJury.event_id)
               .maybeSingle();
 
@@ -14300,9 +14335,42 @@ class StorageService {
       ...eventTombstones
     ]);
 
-    // Keep storage consolidated
-    if (union.size > fromStorage.length) {
-      this.setItem(STORAGE_KEYS.DELETED_QUESTION_IDS, Array.from(union));
+    // PROTECT ACTIVE QUESTIONS: Any question in official calling order, active on floor, or explicitly present in proceedings_questions must NEVER be deleted!
+    evs.forEach(ev => {
+      const sc = (ev.social_coverage || {}) as Record<string, any>;
+      if (Array.isArray(sc.question_calling_order)) {
+        sc.question_calling_order.forEach((id: string) => union.delete(id));
+      }
+      if (sc.active_question_id) {
+        union.delete(sc.active_question_id);
+      }
+      if (Array.isArray(sc.proceedings_questions)) {
+        sc.proceedings_questions.forEach((q: any) => {
+          if (q && q.id && q.status !== 'Deleted' && !(q as any).deleted) {
+            union.delete(q.id);
+          }
+        });
+      }
+      if (Array.isArray(sc.questions)) {
+        sc.questions.forEach((q: any) => {
+          if (q && q.id && q.status !== 'Deleted' && !(q as any).deleted) {
+            union.delete(q.id);
+          }
+        });
+      }
+    });
+
+    // Also un-tombstone any question present in local proceedings questions storage
+    const curLocalPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+    curLocalPQs.forEach(q => {
+      if (q && q.id && (q.status as any) !== 'Deleted' && !(q as any).deleted) {
+        union.delete(q.id);
+      }
+    });
+
+    // Clean up local storage if it was poisoned with active question IDs
+    if (fromStorage.some(id => !union.has(id))) {
+      this.setItem(STORAGE_KEYS.DELETED_QUESTION_IDS, fromStorage.filter(id => union.has(id)));
     }
 
     return union;
@@ -14563,6 +14631,15 @@ class StorageService {
                  !(q as any).deleted;
         });
 
+        // Protect remote and calling order questions from false deletion tombstones
+        remotePQs.forEach(rq => deletedQIds.delete(rq.id));
+        if (Array.isArray(sc.question_calling_order)) {
+          sc.question_calling_order.forEach((qId: string) => deletedQIds.delete(qId));
+        }
+        if (sc.active_question_id) {
+          deletedQIds.delete(sc.active_question_id);
+        }
+
         const validRemotePQs = remotePQs.filter(rq => !deletedQIds.has(rq.id) && (rq.status as any) !== 'Deleted' && !(rq as any).deleted);
         const remoteQIdSet = new Set(validRemotePQs.map(rq => rq.id));
         const pqMap = new Map<string, ProceedingsQuestion>();
@@ -14575,7 +14652,6 @@ class StorageService {
           });
         });
 
-        const now = Date.now();
         thisEventLocalPQs.forEach(lq => {
           if (deletedQIds.has(lq.id) || (lq.status as any) !== 'Deleted' && (lq as any).deleted || (lq.status as any) === 'Deleted') return;
           if (remoteQIdSet.has(lq.id)) {
@@ -14613,16 +14689,9 @@ class StorageService {
               updated_at: localT >= remoteT ? lq.updated_at : remote.updated_at
             });
           } else {
-            // Check if this local question is a recent in-flight submission (< 60s old)
-            const createdTime = new Date(lq.created_at || 0).getTime();
-            const ageMs = now - createdTime;
-            if (ageMs >= 0 && ageMs < 60000) {
-              // Recent in-flight submission awaiting server sync
+            // Only drop if explicitly tombstoned in remote deleted list
+            if (!remoteDeletedQIds.includes(lq.id)) {
               pqMap.set(lq.id, lq);
-            } else {
-              // Older than 60s and absent from remote Supabase -> record was deleted remotely!
-              // Record tombstone so it can never be resurrected
-              deletedQIds.add(lq.id);
             }
           }
         });
