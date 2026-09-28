@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { CollegeEvent, AgendaItem, Election, LiveFlashVote, Learner, BillProceeding, LiveTimerState, ProceedingsQuestion } from '../../types';
-import { Radio, Maximize2, Minimize2, Clock, Sparkles, Trophy, Crown, Shield, FileText, CheckCircle2, XCircle } from 'lucide-react';
+import { Radio, Maximize2, Minimize2, Clock, Sparkles, Trophy, Crown, Shield, FileText, CheckCircle2, XCircle, Volume2, WifiOff } from 'lucide-react';
 import type { ProjectorStudioSettings } from '../../types';
 import { storageService } from '../../services/storageService';
 import { extractEventFromUrl, extractEventSlugCandidateFromUrl } from '../../utils/slug';
 import { formatMemberConstituency } from '../../utils/memberIdentity';
-import { playTimerAlarm, stopAllAlertAudio } from '../../utils/audioAlert';
+import { playTimerAlarm, stopAllAlertAudio, unlockAudioContext, playStartChirp } from '../../utils/audioAlert';
 
 interface StandaloneProjectorDisplayProps {
   currentEvent?: CollegeEvent | null;
@@ -52,6 +52,52 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
   });
 
   const hasProjectorAlarmTriggeredRef = useRef(false);
+
+  // Audio Context Unlock & Network Connection State
+  const [isAudioUnlocked, setIsAudioUnlocked] = useState<boolean>(() => {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem('tn_assembly_audio_unlocked') === 'true';
+    }
+    return false;
+  });
+
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'reconnecting' | 'offline'>(() =>
+    storageService.getConnectionStatus()
+  );
+
+  useEffect(() => {
+    const handleConn = (e: any) => {
+      if (e?.detail?.status) {
+        setConnectionStatus(e.detail.status);
+      } else {
+        setConnectionStatus(storageService.getConnectionStatus());
+      }
+    };
+    window.addEventListener('tn_assembly_connection_status', handleConn);
+    window.addEventListener('online', handleConn);
+    window.addEventListener('offline', handleConn);
+    return () => {
+      window.removeEventListener('tn_assembly_connection_status', handleConn);
+      window.removeEventListener('online', handleConn);
+      window.removeEventListener('offline', handleConn);
+    };
+  }, []);
+
+  const handleUnlockAudio = () => {
+    unlockAudioContext();
+    playStartChirp(0.2);
+    setIsAudioUnlocked(true);
+    try {
+      localStorage.setItem('tn_assembly_audio_unlocked', 'true');
+    } catch {}
+  };
+
+  const handleTestSound = () => {
+    unlockAudioContext();
+    const targetId = currentEvent?.id || initialEvent?.id;
+    const audioCfg = storageService.getTimerAudioConfig(targetId);
+    playTimerAlarm(audioCfg);
+  };
 
   // Pre-fetch persistent audio settings for the active event
   useEffect(() => {
@@ -336,8 +382,45 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
           </p>
         </div>
 
-        {/* Live Status & Live Timer Widget */}
-        <div className="flex items-center gap-4">
+        {/* Live Status, Network Status, Audio Control & Live Timer Widget */}
+        <div className="flex items-center gap-3 flex-wrap justify-end">
+          {/* Connection Status Badge */}
+          {connectionStatus === 'offline' && (
+            <span className="px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-wider bg-rose-500/25 text-rose-400 border border-rose-500/50 flex items-center gap-1.5 animate-pulse shadow-md">
+              <WifiOff className="w-3.5 h-3.5" />
+              <span>OFFLINE</span>
+            </span>
+          )}
+          {connectionStatus === 'reconnecting' && (
+            <span className="px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-wider bg-amber-500/25 text-amber-400 border border-amber-500/50 flex items-center gap-1.5 animate-pulse shadow-md">
+              <Radio className="w-3.5 h-3.5 animate-spin" />
+              <span>RECONNECTING...</span>
+            </span>
+          )}
+
+          {/* Audio Unlock & Test Control */}
+          {!isAudioUnlocked ? (
+            <button
+              type="button"
+              onClick={handleUnlockAudio}
+              className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs flex items-center gap-1.5 transition-all shadow-md shadow-amber-500/30 animate-pulse cursor-pointer"
+              title="Click once to unlock browser audio alarms on this projector screen"
+            >
+              <Volume2 className="w-3.5 h-3.5" />
+              <span>ENABLE AUDIO</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleTestSound}
+              className="px-3 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-slate-300 font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+              title="Sound unlocked and active. Click to test configured alarm."
+            >
+              <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>TEST SOUND</span>
+            </button>
+          )}
+
           {/* Synchronized Stage Timer Pill */}
           <div
             className={`px-5 py-2 rounded-2xl border flex items-center gap-3 transition-all ${

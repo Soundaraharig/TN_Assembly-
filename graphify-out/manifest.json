@@ -102,9 +102,9 @@
     "semantic_hash": ""
   },
   "src/components/common/StandaloneProjectorDisplay.tsx": {
-    "mtime": 1790609363.4449332,
-    "seen": 1790609636.7822452,
-    "ast_hash": "834f893b8a81d61d3b3ede6058a44520",
+    "mtime": 1790613536.8798728,
+    "seen": 1790613715.2850509,
+    "ast_hash": "6a510139146c1068dca2f95d60cf3da2",
     "semantic_hash": ""
   },
   "src/components/common/Toast.tsx": {
@@ -180,9 +180,9 @@
     "semantic_hash": "3d1db61d896d7a7ddbe19b109b93c6bc"
   },
   "src/components/coordinator/ControlTab.tsx": {
-    "mtime": 1790611825.2308757,
-    "seen": 1790612129.2232916,
-    "ast_hash": "a493d564733cd4290da0a8bd08c35a78",
+    "mtime": 1790613475.0006056,
+    "seen": 1790613715.300459,
+    "ast_hash": "3a27e562f8b92bccaa941f82f6364411",
     "semantic_hash": ""
   },
   "src/components/coordinator/CoordinatorDashboard.tsx": {
@@ -354,9 +354,9 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1790612055.0257564,
-    "seen": 1790612129.2263649,
-    "ast_hash": "4d0fbb104a0268e0cae5d813297b5663",
+    "mtime": 1790613584.0735314,
+    "seen": 1790613715.3407285,
+    "ast_hash": "a36134d59ef33faf8874a5150214cc37",
     "semantic_hash": ""
   },
   "src/types/index.ts": {
@@ -606,9 +606,9 @@
     "semantic_hash": ""
   },
   "src/components/speaker/SpeakerDashboard.tsx": {
-    "mtime": 1790580520.9553382,
-    "seen": 1790580558.6598577,
-    "ast_hash": "8f57a5a0de53a81248b27eca36d99ad8",
+    "mtime": 1790613563.9269638,
+    "seen": 1790613715.326211,
+    "ast_hash": "c29d66c302cc86843420574c12604c8d",
     "semantic_hash": ""
   },
   "src/utils/memberIdentity.ts": {

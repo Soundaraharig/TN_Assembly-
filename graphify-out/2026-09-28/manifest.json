@@ -180,9 +180,9 @@
     "semantic_hash": "3d1db61d896d7a7ddbe19b109b93c6bc"
   },
   "src/components/coordinator/ControlTab.tsx": {
-    "mtime": 1790609320.8533745,
-    "seen": 1790609636.7938201,
-    "ast_hash": "8b80b2536494d5d38284e55f06671c24",
+    "mtime": 1790611825.2308757,
+    "seen": 1790612129.2232916,
+    "ast_hash": "a493d564733cd4290da0a8bd08c35a78",
     "semantic_hash": ""
   },
   "src/components/coordinator/CoordinatorDashboard.tsx": {
@@ -354,9 +354,9 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1790609180.248665,
-    "seen": 1790609636.814332,
-    "ast_hash": "8856a4346517d1c013ec150e8e9308fa",
+    "mtime": 1790612055.0257564,
+    "seen": 1790612129.2263649,
+    "ast_hash": "4d0fbb104a0268e0cae5d813297b5663",
     "semantic_hash": ""
   },
   "src/types/index.ts": {
@@ -618,9 +618,9 @@
     "semantic_hash": ""
   },
   "src/components/common/QuestionCallingPanel.tsx": {
-    "mtime": 1790579698.6785462,
-    "seen": 1790580055.9241157,
-    "ast_hash": "721d587821703a8ed3dbabf4719dadca",
+    "mtime": 1790610357.9367042,
+    "seen": 1790612129.2214894,
+    "ast_hash": "9b55a620861a102ea6deaa9a91622dca",
     "semantic_hash": ""
   },
   "scratch/enriched_questions.json": {

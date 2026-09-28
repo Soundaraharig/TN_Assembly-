@@ -36,13 +36,16 @@ import {
   History,
   Search,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Volume2,
+  WifiOff
 } from 'lucide-react';
 import {
   formatMemberConstituency,
   isPresidingOfficer
 } from '../../utils/memberIdentity';
 import { QuestionCallingPanel } from '../common/QuestionCallingPanel';
+import { playTimerAlarm, stopAllAlertAudio, unlockAudioContext, playStartChirp } from '../../utils/audioAlert';
 
 export interface SpeakerDashboardProps {
   speaker: Learner;
@@ -163,7 +166,56 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
       : 0;
   });
 
-  // Speech timer synchronization
+  // Speech timer synchronization & audio alert
+  const hasAlarmTriggeredRef = useRef(false);
+
+  // Audio Context Unlock & Network Connection State
+  const [isAudioUnlocked, setIsAudioUnlocked] = useState<boolean>(() => {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem('tn_assembly_audio_unlocked') === 'true';
+    }
+    return false;
+  });
+
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'reconnecting' | 'offline'>(() =>
+    storageService.getConnectionStatus()
+  );
+
+  useEffect(() => {
+    const handleConn = (e: any) => {
+      if (e?.detail?.status) {
+        setConnectionStatus(e.detail.status);
+      } else {
+        setConnectionStatus(storageService.getConnectionStatus());
+      }
+    };
+    window.addEventListener('tn_assembly_connection_status', handleConn);
+    window.addEventListener('online', handleConn);
+    window.addEventListener('offline', handleConn);
+    return () => {
+      window.removeEventListener('tn_assembly_connection_status', handleConn);
+      window.removeEventListener('online', handleConn);
+      window.removeEventListener('offline', handleConn);
+    };
+  }, []);
+
+  const handleUnlockAudio = () => {
+    unlockAudioContext();
+    playStartChirp(0.2);
+    setIsAudioUnlocked(true);
+    try {
+      localStorage.setItem('tn_assembly_audio_unlocked', 'true');
+    } catch {}
+  };
+
+  const handleTestSound = () => {
+    unlockAudioContext();
+    if (eventId) {
+      const audioCfg = storageService.getTimerAudioConfig(eventId);
+      playTimerAlarm(audioCfg);
+    }
+  };
+
   const [timerState, setTimerState] = useState(() => storageService.getLiveTimerState(eventId));
   const [timerSecondsLeft, setTimerSecondsLeft] = useState<number>(() => {
     const ts = storageService.getLiveTimerState(eventId);
@@ -185,14 +237,32 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
         setTimerSecondsLeft(ts.secondsLeft !== undefined ? ts.secondsLeft : 600);
       }
     };
+
+    const handleAlarmEvent = (e: any) => {
+      const detail = e.detail;
+      if (!detail) return;
+      if (detail.eventId && eventId && detail.eventId !== eventId) return;
+      if (detail.action === 'stop') {
+        stopAllAlertAudio();
+      } else if (detail.action === 'trigger') {
+        const audioCfg = storageService.getTimerAudioConfig(eventId);
+        if (!audioCfg.is_muted) {
+          playTimerAlarm(audioCfg);
+        }
+      }
+    };
+
     handleTimerSync();
     const unsub = storageService.subscribe(handleTimerSync);
     window.addEventListener('tn_assembly_timer_update', handleTimerSync);
+    window.addEventListener('tn_assembly_timer_alarm_event', handleAlarmEvent);
     window.addEventListener('storage', handleTimerSync);
     return () => {
       unsub();
       window.removeEventListener('tn_assembly_timer_update', handleTimerSync);
+      window.removeEventListener('tn_assembly_timer_alarm_event', handleAlarmEvent);
       window.removeEventListener('storage', handleTimerSync);
+      stopAllAlertAudio();
     };
   }, [eventId]);
 
@@ -200,13 +270,25 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
     let interval: NodeJS.Timeout | null = null;
     if (timerState.isRunning && timerSecondsLeft > 0) {
       interval = setInterval(() => {
-        setTimerSecondsLeft(prev => Math.max(0, prev - 1));
+        setTimerSecondsLeft(prev => {
+          const next = Math.max(0, prev - 1);
+          if (next === 0 && !hasAlarmTriggeredRef.current) {
+            hasAlarmTriggeredRef.current = true;
+            const audioCfg = storageService.getTimerAudioConfig(eventId);
+            if (!audioCfg.is_muted) {
+              playTimerAlarm(audioCfg);
+            }
+          } else if (next > 0) {
+            hasAlarmTriggeredRef.current = false;
+          }
+          return next;
+        });
       }, 1000);
     }
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [timerState.isRunning, timerSecondsLeft]);
+  }, [timerState.isRunning, timerSecondsLeft, eventId]);
 
   // Initial load & listeners (compact realtime event bindings, zero aggressive polling)
   useEffect(() => {
@@ -630,6 +712,43 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
               <span>{Math.floor(timerSecondsLeft / 60).toString().padStart(2, '0')}:{(timerSecondsLeft % 60).toString().padStart(2, '0')}</span>
               {timerState.isRunning && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />}
             </div>
+
+            {/* Network Offline / Reconnecting Badge */}
+            {connectionStatus === 'offline' && (
+              <span className="px-2.5 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/40 flex items-center gap-1 animate-pulse shadow-sm">
+                <WifiOff className="w-3.5 h-3.5" />
+                <span>Offline</span>
+              </span>
+            )}
+            {connectionStatus === 'reconnecting' && (
+              <span className="px-2.5 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/40 flex items-center gap-1 animate-pulse shadow-sm">
+                <Radio className="w-3.5 h-3.5 animate-spin" />
+                <span>Reconnecting...</span>
+              </span>
+            )}
+
+            {/* Audio Unlock & Test Button */}
+            {!isAudioUnlocked ? (
+              <button
+                type="button"
+                onClick={handleUnlockAudio}
+                className="px-2.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs flex items-center gap-1.5 transition-all shadow-sm shadow-amber-500/20 animate-pulse cursor-pointer"
+                title="Click once to unlock browser audio alarms on Speaker screen"
+              >
+                <Volume2 className="w-3.5 h-3.5" />
+                <span>Enable Audio</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleTestSound}
+                className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-xs border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-all cursor-pointer"
+                title="Audio unlocked. Click to test configured chime/tone."
+              >
+                <Volume2 className="w-3.5 h-3.5 text-emerald-500" />
+                <span>Test Sound</span>
+              </button>
+            )}
 
             <button
               type="button"

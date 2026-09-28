@@ -527,6 +527,21 @@ class StorageService {
   private attendanceCleanupPromise: Promise<void> | null = null;
   private coordinatorEventsCache = new Map<string, CollegeEvent[]>();
   private timerAudioMemoryCache = new Map<string, TimerAudioConfig>();
+  private connectionStatus: 'connected' | 'reconnecting' | 'offline' = (typeof navigator !== 'undefined' && !navigator.onLine) ? 'offline' : 'connected';
+
+  public getConnectionStatus(): 'connected' | 'reconnecting' | 'offline' {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return 'offline';
+    }
+    return this.connectionStatus;
+  }
+
+  public setConnectionStatus(status: 'connected' | 'reconnecting' | 'offline') {
+    this.connectionStatus = status;
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_connection_status', { detail: { status } }));
+    }
+  }
 
   public getLastEventsError(): string | null {
     return this.lastEventsError;
@@ -817,6 +832,15 @@ class StorageService {
       }, 0);
     }
     if (typeof window !== 'undefined') {
+      window.addEventListener('online', () => {
+        this.setConnectionStatus('reconnecting');
+        if (this.currentRealtimeEventId) {
+          this.reconcileAuthoritativeBackendState(this.currentRealtimeEventId).catch(() => {});
+        }
+      });
+      window.addEventListener('offline', () => {
+        this.setConnectionStatus('offline');
+      });
       window.addEventListener('beforeunload', () => this.flushPendingSyncs());
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'hidden') {
@@ -4538,10 +4562,88 @@ class StorageService {
           }
         });
 
-      channel.subscribe();
+      channel.subscribe((status: string) => {
+        if (status === 'SUBSCRIBED') {
+          this.setConnectionStatus('connected');
+          if (resolvedEventId) {
+            this.reconcileAuthoritativeBackendState(resolvedEventId).catch(() => {});
+          }
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          this.setConnectionStatus('reconnecting');
+        }
+      });
       this.realtimeChannel = channel;
     } catch (e) {
       console.warn('[Supabase] realtime setup error:', e);
+    }
+  }
+
+  public async reconcileAuthoritativeBackendState(eventId: string): Promise<void> {
+    if (!supabase || !eventId || !isValidUuid(eventId)) return;
+
+    try {
+      // 1. Fetch authoritative event social_coverage & session_agenda from Supabase
+      const [evRes, agendaRes] = await Promise.all([
+        supabase.from('college_events').select('id, social_coverage').eq('id', eventId).maybeSingle(),
+        supabase.from('session_agenda').select(SUPABASE_COLUMNS.SESSION_AGENDA).eq('event_id', eventId).order('time', { ascending: true })
+      ]);
+
+      if (evRes.data) {
+        const sc = (evRes.data.social_coverage || {}) as Record<string, any>;
+        const allEvs = this.getEvents();
+        const evIdx = allEvs.findIndex(e => e.id === eventId);
+        if (evIdx >= 0) {
+          allEvs[evIdx] = { ...allEvs[evIdx], social_coverage: sc };
+          this.setItem(STORAGE_KEYS.EVENTS, allEvs);
+        }
+
+        // 2. Reconcile Current Agenda
+        if (agendaRes.data && Array.isArray(agendaRes.data)) {
+          const remoteAgenda = agendaRes.data as unknown as AgendaItem[];
+          const otherAgenda = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, []).filter(a => a.event_id !== eventId);
+          this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...remoteAgenda]);
+        }
+        if (sc.agenda_progress) {
+          this.setItem(`tn_assembly_agenda_progress_${eventId}`, sc.agenda_progress);
+          if (sc.agenda_progress.started_days) {
+            this.setItem(`tn_assembly_started_days_${eventId}`, sc.agenda_progress.started_days);
+          }
+        }
+
+        // 3. Reconcile Current Question (Backend state wins over stale local cache)
+        const deletedIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_QUESTION_IDS, []));
+        (sc.deleted_question_ids || []).forEach((id: string) => deletedIds.add(id));
+        this.setItem(STORAGE_KEYS.DELETED_QUESTION_IDS, Array.from(deletedIds));
+
+        const remotePQs: ProceedingsQuestion[] = (sc.proceedings_questions || []).filter((q: ProceedingsQuestion) => !deletedIds.has(q.id));
+        const allPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []).filter(q => q.event_id !== eventId);
+        this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, [...allPQs, ...remotePQs]);
+
+        // 4. Reconcile Timer State
+        if (sc.timer) {
+          this.setItem(`tn_assembly_live_timer_${eventId}`, sc.timer);
+        }
+        if (sc.timer_config?.durationSec) {
+          this.setItem(`tn_assembly_timer_config_${eventId}`, sc.timer_config.durationSec);
+        }
+
+        // 5. Reconcile Projector / Display State
+        if (sc.projector_settings) {
+          this.setItem(`tn_assembly_projector_studio_${eventId}`, sc.projector_settings);
+          this.setItem('tn_assembly_projector_studio_v1', sc.projector_settings);
+        }
+
+        this.notify();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('tn_assembly_agenda_update', { detail: { eventId } }));
+          window.dispatchEvent(new CustomEvent('tn_assembly_proceedings_question_update', { detail: { eventId } }));
+          window.dispatchEvent(new CustomEvent('tn_assembly_timer_update', { detail: { eventId } }));
+          window.dispatchEvent(new CustomEvent('tn_assembly_projector_update', { detail: { eventId, settings: sc.projector_settings } }));
+          window.dispatchEvent(new Event('storage'));
+        }
+      }
+    } catch (err) {
+      console.warn('[reconcileAuthoritativeBackendState] Reconcile warning:', err);
     }
   }
 

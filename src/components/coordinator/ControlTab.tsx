@@ -42,7 +42,9 @@ import {
   Music,
   Sliders,
   Upload,
-  Trash2
+  Trash2,
+  WifiOff,
+  Radio
 } from 'lucide-react';
 
 import { storageService } from '../../services/storageService';
@@ -270,6 +272,28 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   const [isUploadingAudio, setIsUploadingAudio] = useState(false);
   const hasAlarmTriggeredRef = useRef(false);
   const audioFileInputRef = useRef<HTMLInputElement>(null);
+
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'reconnecting' | 'offline'>(() =>
+    storageService.getConnectionStatus()
+  );
+
+  useEffect(() => {
+    const handleConn = (e: any) => {
+      if (e?.detail?.status) {
+        setConnectionStatus(e.detail.status);
+      } else {
+        setConnectionStatus(storageService.getConnectionStatus());
+      }
+    };
+    window.addEventListener('tn_assembly_connection_status', handleConn);
+    window.addEventListener('online', handleConn);
+    window.addEventListener('offline', handleConn);
+    return () => {
+      window.removeEventListener('tn_assembly_connection_status', handleConn);
+      window.removeEventListener('online', handleConn);
+      window.removeEventListener('offline', handleConn);
+    };
+  }, []);
 
   const isSoundEnabled = !audioConfig.is_muted;
 
@@ -1138,9 +1162,21 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
       {/* Top Quick Status & Projector View Bar */}
       <div className="flex items-center justify-between bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl px-5 py-3 shadow-sm">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          {connectionStatus === 'offline' && (
+            <span className="px-2.5 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/40 flex items-center gap-1 animate-pulse shadow-sm">
+              <WifiOff className="w-3.5 h-3.5" />
+              <span>Offline</span>
+            </span>
+          )}
+          {connectionStatus === 'reconnecting' && (
+            <span className="px-2.5 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/40 flex items-center gap-1 animate-pulse shadow-sm">
+              <Radio className="w-3.5 h-3.5 animate-spin" />
+              <span>Reconnecting...</span>
+            </span>
+          )}
           <span className="px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-700/50 flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
             {activeDayTab}
           </span>
           <span className="text-xs text-slate-500 dark:text-slate-400 font-medium hidden sm:inline">
