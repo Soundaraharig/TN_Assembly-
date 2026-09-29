@@ -172,7 +172,8 @@ export const SUPABASE_COLUMNS: Record<string, string> = {
   EVENT_DAY_ATTENDANCE: 'id,event_id,day_id,event_day_id,student_id,participant_id,status,marked_by,marked_by_role,marked_at,created_at,updated_at',
   LEARNER_ALLOCATION_CONFIRMATIONS: 'id,event_id,learner_id,allocation_hash,confirmed_party,confirmed_committee,confirmed_constituency_name,confirmed_constituency_number,confirmed_bench,checked_at,created_at,updated_at',
   SPEAKING_REQUESTS: 'id,event_id,session_id,session_name,learner_id,learner_name,constituency_number,bench,status,requested_at,called_at,resolved_at,resolved_by,created_at,updated_at',
-  SPEAKING_TURNS: 'id,event_id,session_id,session_name,learner_id,learner_name,request_id,sequence_number,called_at,started_at,completed_at,called_by,status,created_at'
+  SPEAKING_TURNS: 'id,event_id,session_id,session_name,learner_id,learner_name,request_id,sequence_number,called_at,started_at,completed_at,called_by,status,created_at',
+  LOGIN_RECORDS: 'id,event_id,user_id,learner_id,volunteer_id,user_name,role,access_code,login_at,logged_in_at,device_type,device_info,ip_address,details,created_at'
 };
 
 type Listener = () => void;
@@ -262,7 +263,7 @@ export function getComparableTimerState(timer: any): any {
  * Recursively checks if two values represent the exact same state,
  * ignoring non-functional volatile keys (such as `updated_at`).
  */
-export function areJsonbObjectsEqual(a: any, b: any, ignoredKeys: string[] = ['updated_at']): boolean {
+export function areJsonbObjectsEqual(a: any, b: any, ignoredKeys: string[] = ['updated_at', 'updatedAt']): boolean {
   if (a === b) return true;
   if (a === null || a === undefined || b === null || b === undefined) {
     return a === b;
@@ -3409,7 +3410,7 @@ class StorageService {
     try {
       const { data, error } = await supabase
         .from('session_agenda')
-        .select('*')
+        .select(SUPABASE_COLUMNS.SESSION_AGENDA)
         .eq('event_id', eventId)
         .order('time', { ascending: true });
       if (!error && data) {
@@ -6035,12 +6036,13 @@ class StorageService {
         if (table === 'event_days') onConflict = 'event_id,day_number';
         else if (table === 'event_day_attendance') onConflict = 'event_id,day_id,student_id';
 
+        const returnCols = SUPABASE_COLUMNS[table.toUpperCase()] || 'id';
         let query;
         if (sanitized.id && isValidUuid(sanitized.id as string)) {
-          query = sb.from(table).upsert(sanitized, { onConflict }).select();
+          query = sb.from(table).upsert(sanitized, { onConflict }).select(returnCols);
         } else {
           const { id, ...insertPayload } = sanitized;
-          query = sb.from(table).upsert(insertPayload, { onConflict }).select();
+          query = sb.from(table).upsert(insertPayload, { onConflict }).select(returnCols);
         }
 
         const { data, error, status } = await query;
@@ -6070,7 +6072,7 @@ class StorageService {
                   updated_at: new Date().toISOString()
                 })
                 .eq('id', existingRow.id)
-                .select();
+                .select(returnCols);
 
               if (!updateErr && updatedData && updatedData.length > 0) {
                 this.failedWriteSignatures.delete(writeKey);
@@ -6120,8 +6122,9 @@ class StorageService {
     if (!fieldsToUpdate.updated_at) {
       fieldsToUpdate.updated_at = new Date().toISOString();
     }
+    const returnCols = SUPABASE_COLUMNS[table.toUpperCase()] || 'id';
     try {
-      const { data, error, status } = await sb.from(table).update(fieldsToUpdate).eq('id', id).select();
+      const { data, error, status } = await sb.from(table).update(fieldsToUpdate).eq('id', id).select(returnCols);
       if (error || (status && status >= 400)) {
         console.warn(`[Supabase Update Warning] Table: "${table}" (HTTP ${status}):`, error?.message);
         return { success: false, error };
@@ -6161,7 +6164,8 @@ class StorageService {
         let onConflict = 'id';
         if (table === 'event_days') onConflict = 'event_id,day_number';
         else if (table === 'event_day_attendance') onConflict = 'event_id,day_id,student_id';
-        const { data, error, status } = await sb.from(table).upsert(sanitizedBatch, { onConflict }).select();
+        const batchReturnCols = SUPABASE_COLUMNS[table.toUpperCase()] || 'id';
+        const { data, error, status } = await sb.from(table).upsert(sanitizedBatch, { onConflict }).select(batchReturnCols);
         if (error || (status && status >= 400)) {
           this.failedWriteSignatures.set(batchKey, Date.now());
           console.error(`❌ [Supabase Write Batch Error] Table: "${table}" (HTTP ${status}) Code: ${error?.code} — ${error?.message}. Details:`, error?.details || error?.hint);
@@ -6865,7 +6869,7 @@ class StorageService {
     try {
       let query = supabase
         .from('login_records')
-        .select('*', { count: 'exact' });
+        .select(SUPABASE_COLUMNS.LOGIN_RECORDS, { count: 'exact' });
 
       if (eventId) {
         query = query.eq('event_id', eventId);
@@ -7125,7 +7129,7 @@ class StorageService {
             checked_at: now,
             updated_at: now
           }, { onConflict: 'event_id,learner_id' })
-          .select()
+          .select(SUPABASE_COLUMNS.LEARNER_ALLOCATION_CONFIRMATIONS)
           .maybeSingle();
 
         if (error) {
@@ -7137,10 +7141,11 @@ class StorageService {
         }
 
         if (data) {
-          record.id = data.id;
-          record.checked_at = data.checked_at;
-          record.created_at = data.created_at || now;
-          record.updated_at = data.updated_at || now;
+          const row = data as any;
+          record.id = row.id;
+          record.checked_at = row.checked_at;
+          record.created_at = row.created_at || now;
+          record.updated_at = row.updated_at || now;
         }
       } catch (err: any) {
         console.error('[confirmStudentAllocation] Supabase exception:', err);
@@ -7437,7 +7442,7 @@ class StorageService {
           .from('coordinators')
           .update(updatePayload)
           .eq('id', existingDbRecord.id)
-          .select()
+          .select(SUPABASE_COLUMNS.COORDINATORS)
           .maybeSingle();
 
         if (error || !data) {
@@ -7446,13 +7451,14 @@ class StorageService {
           return { success: false, error: error || new Error('Update returned no rows') };
         }
 
+        const rowData = data as any;
         savedRecord = {
-          id: data.id,
-          event_id: data.event_id || coord.event_id || '',
-          name: data.name,
-          email: data.email,
-          password_hash: data.password_hash,
-          raw_temp_password: data.raw_temp_password || data.password_hash
+          id: rowData.id,
+          event_id: rowData.event_id || coord.event_id || '',
+          name: rowData.name,
+          email: rowData.email,
+          password_hash: rowData.password_hash,
+          raw_temp_password: rowData.raw_temp_password || rowData.password_hash
         };
       } else {
         // 3. Coordinator not yet in Supabase -> explicit INSERT (omits non-UUID IDs so Postgres generates UUID)
@@ -7475,7 +7481,7 @@ class StorageService {
         let { data, error, status } = await supabase
           .from('coordinators')
           .insert(insertPayload)
-          .select()
+          .select(SUPABASE_COLUMNS.COORDINATORS)
           .maybeSingle();
 
         // If email already exists (race condition), fallback to update by email
@@ -7485,7 +7491,7 @@ class StorageService {
             .from('coordinators')
             .update(insertPayload)
             .eq('email', emailLower)
-            .select()
+            .select(SUPABASE_COLUMNS.COORDINATORS)
             .maybeSingle();
           data = updateRes.data;
           error = updateRes.error;
@@ -7498,13 +7504,14 @@ class StorageService {
           return { success: false, error: error || new Error('Insert returned no rows') };
         }
 
+        const insertRowData = data as any;
         savedRecord = {
-          id: data.id,
-          event_id: data.event_id || coord.event_id || '',
-          name: data.name,
-          email: data.email,
-          password_hash: data.password_hash,
-          raw_temp_password: data.raw_temp_password || data.password_hash
+          id: insertRowData.id,
+          event_id: insertRowData.event_id || coord.event_id || '',
+          name: insertRowData.name,
+          email: insertRowData.email,
+          password_hash: insertRowData.password_hash,
+          raw_temp_password: insertRowData.raw_temp_password || insertRowData.password_hash
         };
       }
 
@@ -13954,11 +13961,6 @@ class StorageService {
           await this.realtimeChannel.send({
             type: 'broadcast',
             event: 'timer_update',
-            payload: { eventId, timerState: normalized }
-          });
-          await this.realtimeChannel.send({
-            type: 'broadcast',
-            event: 'timer_state_update',
             payload: { eventId, timerState: normalized }
           });
         }
