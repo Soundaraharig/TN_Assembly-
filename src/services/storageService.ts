@@ -16660,6 +16660,9 @@ class StorageService {
       });
 
       this.updateQuestionSnapshot(eventId).catch(() => {});
+      if (supabase && isSupabaseEnabled && isValidUuid(eventId) && !dbPersisted) {
+        return { success: false, error: 'Database persistence could not be verified in Supabase. Please retry your submission.' };
+      }
       return { success: true, question: newQuestion };
     } catch (err: any) {
       console.warn('[Supabase] submitProceedingsQuestion sync error:', err);
@@ -16677,7 +16680,7 @@ class StorageService {
         actuallyPersistedInSupabase: false
       });
       this.updateQuestionSnapshot(eventId).catch(() => {});
-      return { success: true, question: newQuestion };
+      return { success: false, error: err?.message || 'Submission failed to sync with database. Please retry.' };
     }
   }
 
