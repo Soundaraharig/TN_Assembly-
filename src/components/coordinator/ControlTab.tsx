@@ -217,27 +217,23 @@ export const ControlTab: React.FC<ControlTabProps> = ({
       if (matchInAll) return matchInAll;
     }
 
-    // 3. Fallback to first item ONLY IF day has been explicitly started
-    if (isDayStarted && currentAgendaList.length > 0) {
-      return currentAgendaList[0];
-    }
-
-    return currentAgendaList[0] || allEventAgenda[0] || {
-      id: 'ag_curr',
+    // CRITICAL: NEVER invent currentAgendaList[0]! If no session is current, display NOT STARTED
+    return {
+      id: 'not_started',
       event_id: currentEvent?.id || '',
       day: activeDayTab,
-      time: '09:00 AM',
-      title: 'Session Not Started',
-      description: 'Click START DAY to activate agenda',
-      speaker_role: 'Registration Desk',
+      time: '--:--',
+      title: 'NOT STARTED',
+      description: 'Select an agenda item from the list below to begin session',
+      speaker_role: 'Floor Presiding',
       is_current: false
     };
-  }, [allEventAgenda, currentAgendaList, currentEvent?.id, isDayStarted, activeDayTab]);
+  }, [allEventAgenda, currentEvent?.id, activeDayTab]);
 
   const currentAgendaIndex = useMemo(() => {
-    if (!activeAgendaItem) return 0;
+    if (!activeAgendaItem || activeAgendaItem.id === 'not_started') return -1;
     const idx = currentAgendaList.findIndex(a => a.id === activeAgendaItem.id);
-    return idx >= 0 ? idx : 0;
+    return idx;
   }, [currentAgendaList, activeAgendaItem]);
 
   // ── Speech Timer State ───────────────────────────────────────────────────
@@ -256,6 +252,26 @@ export const ControlTab: React.FC<ControlTabProps> = ({
       setCustomDraft(timerDurationSec.toString());
     }
   }, [timerDurationSec]);
+
+  // Real-time synchronization of configured duration from other windows / supervisor
+  useEffect(() => {
+    if (!currentEvent?.id) return;
+    const syncTimerConfig = (e?: any) => {
+      const detail = e?.detail;
+      if (detail?.eventId && detail.eventId !== currentEvent.id) return;
+      const configured = typeof detail?.durationSec === 'number'
+        ? detail.durationSec
+        : storageService.getTimerDurationConfig(currentEvent.id);
+      setTimerDurationSec(configured);
+      if (!isCustomDraftFocusedRef.current) {
+        setCustomDraft(configured.toString());
+      }
+    };
+    window.addEventListener('tn_assembly_timer_config_update', syncTimerConfig);
+    return () => {
+      window.removeEventListener('tn_assembly_timer_config_update', syncTimerConfig);
+    };
+  }, [currentEvent?.id]);
 
   // Audio readiness & gesture unlock
   useEffect(() => {
@@ -940,12 +956,14 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
     // 3. Durably persist to backend storage and trigger listeners (timer state is completely untouched)
     if (currentEvent?.id) {
-      storageService.setCurrentAgendaItem(currentEvent.id, targetItem.id);
       if (onSetCurrentAgendaItem) {
         onSetCurrentAgendaItem(currentEvent.id, targetItem.id);
+      } else {
+        storageService.setCurrentAgendaItem(currentEvent.id, targetItem.id);
       }
+      onShowToast('Session Activated', targetItem.title, 'success');
     }
-  }, [currentEvent?.id, onSetCurrentAgendaItem]);
+  }, [currentEvent?.id, onSetCurrentAgendaItem, onShowToast]);
 
   // ── Individual Agenda Item Reset State ────────────────────────────────────
   const [resetConfirmItem, setResetConfirmItem] = useState<AgendaItem | null>(null);
@@ -1127,11 +1145,16 @@ export const ControlTab: React.FC<ControlTabProps> = ({
       onShowToast('Day Not Started', `Click [ START ${activeDayTab.toUpperCase()} ] to officially activate this day.`, 'info');
       return;
     }
+    if (currentAgendaIndex < 0) {
+      if (currentAgendaList.length > 0) {
+        handleSelectAgendaItem(currentAgendaList[0]);
+      }
+      return;
+    }
     if (currentAgendaIndex < currentAgendaList.length - 1) {
       const nextIdx = currentAgendaIndex + 1;
       const nextItem = currentAgendaList[nextIdx];
       handleSelectAgendaItem(nextItem);
-      onShowToast('Next Session Item', nextItem.title, 'success');
     } else {
       onShowToast('Agenda Completed', `You have reached the last agenda item for ${activeDayTab}.`, 'info');
     }
@@ -1142,12 +1165,12 @@ export const ControlTab: React.FC<ControlTabProps> = ({
       onShowToast('Day Not Started', `Click [ START ${activeDayTab.toUpperCase()} ] to officially activate this day.`, 'info');
       return;
     }
-    if (currentAgendaIndex > 0) {
-      const prevIdx = currentAgendaIndex - 1;
-      const prevItem = currentAgendaList[prevIdx];
-      handleSelectAgendaItem(prevItem);
-      onShowToast('Previous Session Item', prevItem.title, 'info');
+    if (currentAgendaIndex <= 0) {
+      return;
     }
+    const prevIdx = currentAgendaIndex - 1;
+    const prevItem = currentAgendaList[prevIdx];
+    handleSelectAgendaItem(prevItem);
   };
 
   const handlePushToProjector = () => {
@@ -1318,7 +1341,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
             {/* Current Active Item Details */}
             <div>
               <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 font-medium mb-1">
-                <span>Current Agenda Item ({currentAgendaIndex + 1} of {currentAgendaList.length})</span>
+                <span>Current Agenda Item {currentAgendaIndex >= 0 ? `(${currentAgendaIndex + 1} of ${currentAgendaList.length})` : (activeAgendaItem.id === 'not_started' ? '(Not Started)' : `(Active: ${activeAgendaItem.day || 'Floor'})`)}</span>
                 <span className="text-amber-600 dark:text-amber-400 font-semibold hidden sm:inline">Agenda advances only when the Main Admin changes it.</span>
               </div>
               <div className="flex items-center gap-2.5 flex-wrap">
@@ -1356,21 +1379,21 @@ export const ControlTab: React.FC<ControlTabProps> = ({
             <div className="flex items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
               <button
                 onClick={handlePrevAgenda}
-                disabled={!isDayStarted || currentAgendaIndex === 0}
+                disabled={!isDayStarted || currentAgendaIndex <= 0}
                 className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 flex items-center gap-1 transition-all cursor-pointer"
               >
                 <ChevronLeft className="w-3.5 h-3.5" /> Previous
               </button>
               <button
                 onClick={handleNextAgenda}
-                disabled={!isDayStarted || currentAgendaIndex >= currentAgendaList.length - 1}
+                disabled={!isDayStarted || (currentAgendaIndex >= 0 && currentAgendaIndex >= currentAgendaList.length - 1)}
                 className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 flex items-center gap-1 transition-all cursor-pointer"
               >
                 Skip
               </button>
               <button
                 onClick={handleNextAgenda}
-                disabled={!isDayStarted || currentAgendaIndex >= currentAgendaList.length - 1}
+                disabled={!isDayStarted || (currentAgendaIndex >= 0 && currentAgendaIndex >= currentAgendaList.length - 1)}
                 className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white text-xs font-black shadow-md shadow-amber-500/20 flex items-center gap-1.5 transition-all ml-auto cursor-pointer"
               >
                 <span>Next</span> <ChevronRight className="w-4 h-4" />
@@ -1777,6 +1800,22 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   className="w-20 px-2.5 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-center font-mono font-bold text-xs text-slate-900 dark:text-white focus:outline-none focus:border-amber-500"
                 />
                 <span className="text-slate-500 font-semibold">sec</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    isCustomDraftFocusedRef.current = false;
+                    const parsed = parseInt(customDraft, 10);
+                    if (!isNaN(parsed) && parsed >= 1 && parsed <= 3600) {
+                      handleDurationChange(parsed);
+                    } else {
+                      setCustomDraft(timerDurationSec.toString());
+                    }
+                  }}
+                  className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-bold text-xs rounded-xl shadow-sm transition-all cursor-pointer"
+                  title="Apply custom duration"
+                >
+                  Set
+                </button>
               </div>
             </div>
           </div>

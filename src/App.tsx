@@ -2137,14 +2137,13 @@ export function App() {
     addToast('Attendance Updated', `Marked ${studentIds.length} students as ${status}${session ? ` (${session})` : ''}`, 'success');
   };
 
-  const handleSetCurrentAgendaItem = (arg1: string, arg2?: string) => {
+  const handleSetCurrentAgendaItem = async (arg1: string, arg2?: string) => {
     const activeEv = extractEventFromUrl(events) || currentEvent;
     const targetEventId = arg2 ? arg1 : (activeEv?.id || '');
     const itemId = arg2 || arg1;
     if (targetEventId && itemId) {
-      storageService.setCurrentAgendaItem(targetEventId, itemId);
+      await storageService.setCurrentAgendaItem(targetEventId, itemId);
       setAgenda(storageService.getAgenda(targetEventId));
-      addToast('Agenda Updated', 'Marked active agenda item', 'info');
     }
   };
 

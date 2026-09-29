@@ -1581,7 +1581,9 @@ class StorageService {
             } else if (Array.isArray(prog.completed_agenda_ids) && prog.completed_agenda_ids.includes(item.id)) {
               nextStatus = 'Completed';
             }
-            if (prog.active_agenda_id) {
+            // CRITICAL: Do NOT stomp item.is_current if already defined in session_agenda records
+            const hasCurrentInLocal = allAgenda.some(a => a.event_id === ev.id && a.is_current);
+            if (!hasCurrentInLocal && prog.active_agenda_id) {
               nextCurrent = item.id === prog.active_agenda_id;
               if (nextCurrent) nextStatus = 'In Progress';
             }
@@ -3665,13 +3667,15 @@ class StorageService {
           return (a.created_at || '').localeCompare(b.created_at || '');
         });
         const prog = this.getAgendaProgress(activeEventId);
+        const hasCurrentInSorted = sortedAgenda.some((a: any) => a.is_current);
         const resolvedAgenda = sortedAgenda.map((item: any) => {
           let is_current = item.is_current;
           let status = item.status;
           if (prog.item_statuses && prog.item_statuses[item.id]) {
             status = prog.item_statuses[item.id];
           }
-          if (prog.active_agenda_id) {
+          // Do NOT stomp session_agenda.is_current if already marked
+          if (!hasCurrentInSorted && prog.active_agenda_id) {
             is_current = item.id === prog.active_agenda_id;
             if (is_current && status !== 'Completed') status = 'In Progress';
           }
@@ -3679,8 +3683,8 @@ class StorageService {
         });
         this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...resolvedAgenda]);
 
-        // Reconcile projector selectedAgendaId with authoritative active_agenda_id
-        const activeItemId = prog.active_agenda_id || (resolvedAgenda.find((a: any) => a.is_current)?.id);
+        // Reconcile projector selectedAgendaId with authoritative is_current
+        const activeItemId = (resolvedAgenda.find((a: any) => a.is_current)?.id) || prog.active_agenda_id;
         if (activeItemId) {
           const proj = this.getProjectorSettings(activeEventId);
           if (proj.selectedAgendaId !== activeItemId) {
@@ -4220,6 +4224,29 @@ class StorageService {
             }
           }
         })
+        .on('broadcast', { event: 'timer_config_update' }, (msg: any) => {
+          if (msg?.payload?.eventId && typeof msg?.payload?.durationSec === 'number') {
+            const evId = msg.payload.eventId;
+            const dur = msg.payload.durationSec;
+            this.setItem(`tn_assembly_timer_config_${evId}`, dur);
+
+            const curEvs = this.getEvents();
+            const ev = curEvs.find(e => e.id === evId);
+            if (ev) {
+              ev.social_coverage = {
+                ...(ev.social_coverage || {}),
+                timer_config: { durationSec: dur, updated_at: msg.payload.updatedAt || Date.now() }
+              };
+              this.setItem(STORAGE_KEYS.EVENTS, curEvs);
+            }
+
+            this.notify();
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_timer_config_update', { detail: msg.payload }));
+              window.dispatchEvent(new Event('storage'));
+            }
+          }
+        })
         .on('broadcast', { event: 'timer_audio_update' }, (msg: any) => {
           if (msg?.payload?.eventId && msg?.payload?.config) {
             const evId = msg.payload.eventId;
@@ -4381,6 +4408,7 @@ class StorageService {
             if (incomingAgenda) {
               const currentItem = incomingAgenda.find(a => a.is_current);
               if (currentItem) {
+                this.setItem(`tn_assembly_current_agenda_${evId}`, currentItem.id);
                 const proj = this.getProjectorSettings(evId);
                 if (proj.selectedAgendaId !== currentItem.id) {
                   proj.selectedAgendaId = currentItem.id;
@@ -9219,8 +9247,13 @@ class StorageService {
     };
     if (eventId) {
       const prog = this.getAgendaProgress(eventId);
-      const activeId = prog.active_agenda_id || this.getItem<string | null>(`tn_assembly_current_agenda_${eventId}`, null);
-      const eventItems = all.filter(a => a.event_id === eventId).map(item => {
+      const eventItems = all.filter(a => a.event_id === eventId);
+      const hasCurrent = eventItems.some(a => a.is_current);
+      const activeId = hasCurrent
+        ? undefined
+        : (prog.active_agenda_id || this.getItem<string | null>(`tn_assembly_current_agenda_${eventId}`, null));
+
+      const resolved = eventItems.map(item => {
         let status = item.status;
         let is_current = item.is_current;
         if (prog.item_statuses && prog.item_statuses[item.id]) {
@@ -9237,7 +9270,7 @@ class StorageService {
         }
         return { ...item, status, is_current };
       });
-      return [...eventItems].sort(sortFn);
+      return [...resolved].sort(sortFn);
     }
     return [...all].sort(sortFn);
   }
@@ -9623,7 +9656,7 @@ class StorageService {
     this.notify();
   }
 
-  public setCurrentAgendaItem(eventId: string, itemId: string) {
+  public async setCurrentAgendaItem(eventId: string, itemId: string): Promise<void> {
     if (!eventId || !itemId) return;
 
     // Immediately persist explicit key in localStorage for synchronous survival across rapid reloads
@@ -9653,14 +9686,12 @@ class StorageService {
 
     // Clean up any stale multiple is_current flags in Supabase session_agenda table
     if (supabase && isValidUuid(eventId)) {
-      (async () => {
-        try {
-          await supabase.from('session_agenda').update({ is_current: false }).eq('event_id', eventId).neq('id', itemId);
-          await supabase.from('session_agenda').update({ is_current: true }).eq('id', itemId);
-        } catch (e) {
-          console.warn('[setCurrentAgendaItem] Supabase session_agenda update error:', e);
-        }
-      })().catch(() => {});
+      try {
+        await supabase.from('session_agenda').update({ is_current: false }).eq('event_id', eventId).neq('id', itemId);
+        await supabase.from('session_agenda').update({ is_current: true }).eq('id', itemId);
+      } catch (e) {
+        console.warn('[setCurrentAgendaItem] Supabase session_agenda update error:', e);
+      }
     }
 
     const targetItem = updated.find(a => a.id === itemId) || currentAgenda.find(a => a.id === itemId);
@@ -9680,7 +9711,7 @@ class StorageService {
       else if (a.status) statuses[a.id] = a.status;
     });
 
-    this.saveAgendaProgress(eventId, {
+    await this.saveAgendaProgress(eventId, {
       active_agenda_id: itemId,
       active_day: targetItem?.day || 'Day 1',
       completed_agenda_ids: completedIds,
@@ -9695,22 +9726,22 @@ class StorageService {
       if (currentProj.displayScene === 'question_hour' || currentProj.displayScene === 'welcome') {
         currentProj.displayScene = 'agenda';
       }
-      this.saveProjectorSettings(eventId, currentProj);
+      await this.saveProjectorSettings(eventId, currentProj);
     }
 
-    // Broadcast agenda_update
+    // Broadcast agenda_update with UPDATED agenda (not stale all)
+    const eventAgenda = updated.filter(a => a.event_id === eventId);
     if (supabase) {
       try {
         if (!this.realtimeChannel || this.currentRealtimeEventId !== eventId) {
           this.setupRealtimeSync(eventId);
         }
         if (this.realtimeChannel) {
-          const eventAgenda = all.filter(a => a.event_id === eventId);
-          this.realtimeChannel.send({
+          await this.realtimeChannel.send({
             type: 'broadcast',
             event: 'agenda_update',
-            payload: { eventId, agenda: eventAgenda }
-          }).catch((err: any) => console.warn('Realtime broadcast agenda_update failed:', err));
+            payload: { eventId, activeAgendaId: itemId, agenda: eventAgenda, timestamp: Date.now() }
+          });
         }
       } catch (err: any) {
         console.warn('Realtime broadcast agenda_update failed:', err);
@@ -9718,7 +9749,12 @@ class StorageService {
     }
 
     this.notify();
-    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_agenda_update', {
+        detail: { eventId, activeAgendaId: itemId, agenda: eventAgenda }
+      }));
+      window.dispatchEvent(new Event('storage'));
+    }
   }
 
   public isDayStarted(eventId?: string, day?: string): boolean {
@@ -13191,6 +13227,30 @@ class StorageService {
       };
       this.setItem(STORAGE_KEYS.EVENTS, evs);
     }
+
+    this.notify();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_timer_config_update', { detail: { eventId, durationSec } }));
+      window.dispatchEvent(new Event('storage'));
+    }
+
+    if (supabase) {
+      try {
+        if (!this.realtimeChannel || this.currentRealtimeEventId !== eventId) {
+          this.setupRealtimeSync(eventId);
+        }
+        if (this.realtimeChannel) {
+          await this.realtimeChannel.send({
+            type: 'broadcast',
+            event: 'timer_config_update',
+            payload: { eventId, durationSec, updatedAt: Date.now() }
+          });
+        }
+      } catch (e) {
+        console.warn('Realtime broadcast timer_config_update failed:', e);
+      }
+    }
+
     this.patchSocialCoverageSafe(eventId, {
       timer_config: { durationSec, updated_at: Date.now() }
     }).catch(err => console.warn('[saveTimerDurationConfig] err:', err));
@@ -14132,12 +14192,14 @@ class StorageService {
 
     if (proj.return_agenda_item_id) {
       proj.selectedAgendaId = proj.return_agenda_item_id;
+    } else {
       const agenda = this.getAgenda(eventId);
-      const targetItem = agenda.find(a => a.id === proj.return_agenda_item_id);
-      if (targetItem) {
-        this.setCurrentAgendaItem(eventId, targetItem.id);
+      const current = agenda.find(a => a.is_current);
+      if (current) {
+        proj.selectedAgendaId = current.id;
       }
     }
+    // CRITICAL: NEVER mutate session_agenda.is_current in restoreReturnAgendaContext!
     return proj;
   }
 
