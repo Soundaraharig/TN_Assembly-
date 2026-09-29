@@ -49,7 +49,8 @@ import type {
   SpeakingRequestStatus,
   SpeakingTurn,
   SpeakingTurnStatus,
-  QuestionSnapshot
+  QuestionSnapshot,
+  StudentVoteRecord
 } from '../types';
 
 export const CANONICAL_QUESTION_TARGETS: string[] = [
@@ -3901,19 +3902,72 @@ class StorageService {
             const currentFVotes = this.getItem<LiveFlashVote[]>(STORAGE_KEYS.FLASH_VOTES, []).filter(f => !deletedIds.has(f.id));
 
             if (Array.isArray(msg.payload.flashVotes)) {
-              // Full array broadcast from authoritative sender: cleanly replace event's flash votes
+              // Full array broadcast from authoritative sender: non-destructively merge event's flash votes
               const otherEventsFV = currentFVotes.filter(f => f.event_id !== evId);
+              const thisEventCurrent = currentFVotes.filter(f => f.event_id === evId);
+              const currentMap = new Map<string, LiveFlashVote>();
+              thisEventCurrent.forEach(f => currentMap.set(f.id, f));
+
               const incoming = (msg.payload.flashVotes as LiveFlashVote[]).filter(f => !deletedIds.has(f.id));
-              this.setItem(STORAGE_KEYS.FLASH_VOTES, [...otherEventsFV, ...incoming]);
+              const mergedThisEvent = incoming.map(inFV => {
+                const curFV = currentMap.get(inFV.id);
+                if (!curFV) return inFV;
+
+                const votesMap = new Map<string, any>();
+                (curFV.votes || []).forEach(v => votesMap.set(v.learner_id, v));
+                (inFV.votes || []).forEach(v => {
+                  if (!votesMap.has(v.learner_id)) votesMap.set(v.learner_id, v);
+                });
+                const mergedVotes = Array.from(votesMap.values());
+                const mergedVoterIds = Array.from(new Set([
+                  ...(curFV.voter_ids || []),
+                  ...(inFV.voter_ids || []),
+                  ...mergedVotes.map(v => v.learner_id)
+                ])).filter(Boolean);
+
+                return {
+                  ...curFV,
+                  ...inFV,
+                  status: (curFV.status === 'CLOSED' || inFV.status === 'CLOSED') ? 'CLOSED' : inFV.status,
+                  votes: mergedVotes,
+                  voter_ids: mergedVoterIds,
+                  ayes_count: Math.max(inFV.ayes_count || 0, curFV.ayes_count || 0),
+                  noes_count: Math.max(inFV.noes_count || 0, curFV.noes_count || 0),
+                  abstain_count: Math.max(inFV.abstain_count || 0, curFV.abstain_count || 0)
+                };
+              });
+
+              const inIds = new Set(incoming.map(f => f.id));
+              thisEventCurrent.forEach(f => {
+                if (!inIds.has(f.id) && !deletedIds.has(f.id)) mergedThisEvent.push(f);
+              });
+
+              this.setItem(STORAGE_KEYS.FLASH_VOTES, [...otherEventsFV, ...mergedThisEvent]);
             } else if (msg.payload.flashVote && !deletedIds.has(msg.payload.flashVote.id)) {
               const remoteFV = msg.payload.flashVote as LiveFlashVote;
               const existingIndex = currentFVotes.findIndex(f => f.id === remoteFV.id);
               if (existingIndex >= 0) {
                 const existing = currentFVotes[existingIndex];
+                const votesMap = new Map<string, any>();
+                (existing.votes || []).forEach(v => votesMap.set(v.learner_id, v));
+                (remoteFV.votes || []).forEach(v => {
+                  if (!votesMap.has(v.learner_id)) votesMap.set(v.learner_id, v);
+                });
+                const mergedVotes = Array.from(votesMap.values());
+                const mergedVoterIds = Array.from(new Set([
+                  ...(existing.voter_ids || []),
+                  ...(remoteFV.voter_ids || []),
+                  ...mergedVotes.map(v => v.learner_id)
+                ])).filter(Boolean);
+
                 currentFVotes[existingIndex] = {
                   ...existing,
                   ...remoteFV,
-                  votes: existing.votes || remoteFV.votes,
+                  votes: mergedVotes,
+                  voter_ids: mergedVoterIds,
+                  ayes_count: Math.max(remoteFV.ayes_count || 0, existing.ayes_count || 0),
+                  noes_count: Math.max(remoteFV.noes_count || 0, existing.noes_count || 0),
+                  abstain_count: Math.max(remoteFV.abstain_count || 0, existing.abstain_count || 0),
                   status: (existing.status === 'CLOSED' || remoteFV.status === 'CLOSED') ? 'CLOSED' : remoteFV.status
                 };
               } else {
@@ -4449,13 +4503,41 @@ class StorageService {
               this.setItem(STORAGE_KEYS.PROCEEDINGS, [...otherBills, ...mergedThisEvent]);
             } else if (msg.payload.bill && !deletedIds.has(msg.payload.bill.id || msg.payload.billId)) {
               const bId = msg.payload.billId || msg.payload.bill.id;
+              const inB = msg.payload.bill;
               const isTerminalBillStatus = (s?: string) => s === 'Vote Closed' || s === 'Result Revealed' || s === 'Result Hidden' || s === 'Passed' || s === 'Failed';
               const updated = currentBills.map(b => {
                 if (b.id === bId) {
-                  const finalStatus = (isTerminalBillStatus(b.status) && !isTerminalBillStatus(msg.payload.bill.status))
+                  const finalStatus = (isTerminalBillStatus(b.status) && !isTerminalBillStatus(inB.status))
                     ? b.status
-                    : (msg.payload.bill.status || b.status);
-                  return { ...b, ...msg.payload.bill, status: finalStatus };
+                    : (inB.status || b.status);
+
+                  // Non-destructive union of voted_delegate_ids
+                  const mergedVotedIds = Array.from(new Set([
+                    ...(b.voted_delegate_ids || []),
+                    ...(inB.voted_delegate_ids || []),
+                    ...((b.votes || []).map(v => v.delegate_id || v.learner_id || '')),
+                    ...((inB.votes || []).map((v: any) => v.delegate_id || v.learner_id || ''))
+                  ])).filter(Boolean);
+
+                  // Non-destructive merge of votes
+                  const votesMap = new Map<string, BillVote>();
+                  (b.votes || []).forEach(v => votesMap.set(v.delegate_id || v.learner_id || '', v));
+                  (inB.votes || []).forEach((v: any) => {
+                    const k = v.delegate_id || v.learner_id || '';
+                    if (!votesMap.has(k) || v.cast_by === 'Admin') votesMap.set(k, v);
+                  });
+
+                  return {
+                    ...b,
+                    ...inB,
+                    status: finalStatus,
+                    voted_delegate_ids: mergedVotedIds,
+                    votes: Array.from(votesMap.values()),
+                    ayes: Math.max(b.ayes || 0, inB.ayes || 0),
+                    noes: Math.max(b.noes || 0, inB.noes || 0),
+                    abstain: Math.max(b.abstain || 0, inB.abstain || 0),
+                    total_votes: Math.max(b.total_votes || 0, inB.total_votes || 0)
+                  };
                 }
                 return b;
               });
@@ -11548,17 +11630,39 @@ class StorageService {
     );
 
     if (role === 'student') {
-      return nonDeputyList.filter(e => !e.is_archived && e.status !== 'archived').map(e => ({
-        ...e,
-        winner: e.is_result_revealed ? e.winner : undefined,
-        total_votes: e.is_result_revealed ? e.total_votes : 0,
-        voted_delegate_ids: studentId && e.voted_delegate_ids?.includes(studentId) ? [studentId] : [],
-        candidates: (e.candidates || []).map(c => ({
-          ...c,
-          votes: e.is_result_revealed ? c.votes : 0
-        })),
-        is_result_revealed: !!e.is_result_revealed
-      }));
+      return nonDeputyList.filter(e => !e.is_archived && e.status !== 'archived').map(e => {
+        const targetEventId = e.event_id || eventId || targetId || '';
+        const ledgerRecord = targetEventId && studentId ? this.getStudentVote(targetEventId, 'ELECTION', e.id, studentId) : null;
+        const candidateVotedId = ledgerRecord?.candidateId || (e as any).votes_by_delegate?.[studentId || ''];
+
+        if (candidateVotedId && targetEventId && studentId && !ledgerRecord) {
+          this.recordStudentVote({
+            eventId: targetEventId,
+            voteType: 'ELECTION',
+            itemId: e.id,
+            studentId,
+            candidateId: candidateVotedId,
+            timestamp: Date.now(),
+            serverConfirmed: true
+          });
+        }
+
+        const hasVoted = (studentId ? (e.voted_delegate_ids?.includes(studentId) || (e as any).votedLearnerIds?.includes(studentId)) : false) || !!ledgerRecord || !!candidateVotedId;
+
+        return {
+          ...e,
+          winner: e.is_result_revealed ? e.winner : undefined,
+          total_votes: e.is_result_revealed ? e.total_votes : 0,
+          voted_delegate_ids: hasVoted && studentId ? [studentId] : (e.voted_delegate_ids || []),
+          votedLearnerIds: hasVoted && studentId ? [studentId] : ((e as any).votedLearnerIds || []),
+          votes_by_delegate: candidateVotedId && studentId ? { [studentId]: candidateVotedId } : ((e as any).votes_by_delegate || {}),
+          candidates: (e.candidates || []).map(c => ({
+            ...c,
+            votes: e.is_result_revealed ? c.votes : 0
+          })),
+          is_result_revealed: !!e.is_result_revealed
+        };
+      });
     }
     return nonDeputyList.filter(e => !e.is_archived && e.status !== 'archived');
   }
@@ -11711,6 +11815,16 @@ class StorageService {
         candidate_id: candidate.id,
         candidate_name: candidate.name,
         timestamp: new Date().toISOString()
+      });
+      this.recordStudentVote({
+        eventId: election.event_id,
+        voteType: 'ELECTION',
+        itemId: election.id,
+        studentId: delegateId,
+        candidateId: candidate.id,
+        candidateName: candidate.name,
+        timestamp: Date.now(),
+        serverConfirmed: true
       });
     }
 
@@ -12176,6 +12290,7 @@ class StorageService {
     }
 
     if (targetEventId) {
+      this.clearStudentVote(targetEventId, 'ELECTION', electionId);
       // Clear projector if currently showing this election
       try {
         const curProj = this.getProjectorSettings(targetEventId);
@@ -12365,13 +12480,41 @@ class StorageService {
     const list = eventId ? all.filter(f => f.event_id === eventId) : all;
     if (role === 'student') {
       return list.map(v => {
-        const studentVote = studentId && v.votes ? v.votes.find(vt => vt.learner_id === studentId) : undefined;
+        const targetEventId = v.event_id || eventId || '';
+        const ledgerRecord = targetEventId && studentId ? this.getStudentVote(targetEventId, 'FLASH_VOTE', v.id, studentId) : null;
+        let studentVote = studentId && v.votes ? v.votes.find(vt => vt.learner_id === studentId) : undefined;
+
+        if (studentVote && targetEventId && studentId && !ledgerRecord) {
+          this.recordStudentVote({
+            eventId: targetEventId,
+            voteType: 'FLASH_VOTE',
+            itemId: v.id,
+            studentId,
+            decision: studentVote.vote as any,
+            timestamp: Date.now(),
+            serverConfirmed: true
+          });
+        }
+
+        if (!studentVote && ledgerRecord && studentId) {
+          studentVote = {
+            learner_id: studentId,
+            learner_name: 'Delegate',
+            role: 'MLA',
+            bench: 'Ruling',
+            vote: ledgerRecord.decision || 'AYE',
+            timestamp: new Date(ledgerRecord.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          } as any;
+        }
+
+        const hasVoted = !!studentVote || !!ledgerRecord || (studentId ? (v.voter_ids?.includes(studentId) || (v as any).votedLearnerIds?.includes(studentId)) : false);
+
         return {
           ...v,
           ayes_count: v.is_result_revealed ? v.ayes_count : 0,
           noes_count: v.is_result_revealed ? v.noes_count : 0,
           abstain_count: v.is_result_revealed ? v.abstain_count : 0,
-          voter_ids: studentId && v.voter_ids?.includes(studentId) ? [studentId] : [],
+          voter_ids: hasVoted && studentId ? [studentId] : (v.voter_ids || []),
           votes: v.is_result_revealed ? (v.votes || []) : (studentVote ? [studentVote] : []),
           is_result_revealed: !!v.is_result_revealed
         };
@@ -12481,6 +12624,15 @@ class StorageService {
         voter_name: learner.full_name,
         decision,
         timestamp: new Date().toISOString()
+      });
+      this.recordStudentVote({
+        eventId: target.event_id,
+        voteType: 'FLASH_VOTE',
+        itemId: target.id,
+        studentId: learner.id,
+        decision,
+        timestamp: Date.now(),
+        serverConfirmed: true
       });
     }
 
@@ -12667,6 +12819,7 @@ class StorageService {
         this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
       }
 
+      this.clearStudentVote(targetEventId, 'FLASH', voteId);
       this.broadcast('flash_vote_deleted', { eventId: targetEventId, voteId }).catch(() => {});
       this.broadcast('flash_vote_update', { eventId: targetEventId, deletedVoteId: voteId, flashVotes: all.filter(f => f.event_id === targetEventId) }).catch(() => {});
       this.syncEventStateToSupabase(targetEventId);
@@ -12765,7 +12918,38 @@ class StorageService {
     const list = eventId ? all.filter(p => p.event_id === eventId) : all;
     if (role === 'student') {
       return list.map(b => {
-        const studentVote = studentId && b.votes ? b.votes.find(v => v.delegate_id === studentId || v.learner_id === studentId) : undefined;
+        const targetEventId = b.event_id || eventId || '';
+        const ledgerRecord = targetEventId && studentId ? this.getStudentVote(targetEventId, 'BILL', b.id, studentId) : null;
+        let studentVote = studentId && b.votes ? b.votes.find(v => v.delegate_id === studentId || v.learner_id === studentId) : undefined;
+
+        if (studentVote && targetEventId && studentId && !ledgerRecord) {
+          this.recordStudentVote({
+            eventId: targetEventId,
+            voteType: 'BILL',
+            itemId: b.id,
+            studentId,
+            decision: studentVote.vote as any,
+            timestamp: Date.now(),
+            serverConfirmed: true
+          });
+        }
+
+        if (!studentVote && ledgerRecord && studentId) {
+          studentVote = {
+            id: `v_${b.id}_${studentId}`,
+            learner_id: studentId,
+            delegate_id: studentId,
+            learner_name: 'Delegate',
+            vote: (ledgerRecord.decision === 'AYE' ? 'YES' : (ledgerRecord.decision || 'YES')) as 'YES' | 'NO' | 'ABSTAIN',
+            timestamp: new Date(ledgerRecord.timestamp).toISOString(),
+            created_at: new Date(ledgerRecord.timestamp).toISOString(),
+            cast_by: 'Delegate',
+            cast_method: 'delegate'
+          };
+        }
+
+        const hasVoted = !!studentVote || !!ledgerRecord || (studentId ? b.voted_delegate_ids?.includes(studentId) : false);
+
         return {
           ...b,
           ayes: b.is_result_revealed ? b.ayes : 0,
@@ -12774,6 +12958,7 @@ class StorageService {
           total_votes: b.is_result_revealed ? b.total_votes : 0,
           result: b.is_result_revealed ? b.result : undefined,
           votes: b.is_result_revealed ? (b.votes || []) : (studentVote ? [studentVote] : []),
+          voted_delegate_ids: hasVoted && studentId ? [studentId] : (b.voted_delegate_ids || []),
           is_result_revealed: !!b.is_result_revealed
         };
       });
@@ -12889,6 +13074,7 @@ class StorageService {
         };
         this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
       }
+      this.clearStudentVote(eventId, 'BILL', billId);
       this.broadcastBills(eventId, all.filter(b => b.event_id === eventId));
       this.broadcast('bill_deleted', { eventId, billId }).catch(() => {});
       this.broadcast('bill_update', { eventId, deletedBillId: billId, bills: all.filter(b => b.event_id === eventId) }).catch(() => {});
@@ -13138,7 +13324,95 @@ class StorageService {
     this.broadcastBills(eventId, all.filter(b => b.event_id === eventId));
     this.syncEventStateToSupabase(eventId, true).catch(() => {});
     this.notify();
-    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+  }
+
+  // ── AUTHORITATIVE STUDENT VOTE LEDGER ─────────────────────────────────────
+
+  public recordStudentVote(record: StudentVoteRecord): void {
+    if (!record.eventId || !record.itemId || !record.studentId) return;
+    const ledgerKey = `tn_assembly_user_vote_ledger_${record.eventId}_${record.studentId}`;
+    const current = this.getItem<Record<string, StudentVoteRecord>>(ledgerKey, {});
+    const normType = record.voteType === 'FLASH' ? 'FLASH_VOTE' : record.voteType;
+    const itemKey = `${normType}:::${record.itemId}`;
+    const previous = current[itemKey] || current[`${record.voteType}:::${record.itemId}`];
+
+    current[itemKey] = {
+      ...previous,
+      ...record,
+      voteType: normType,
+      timestamp: record.timestamp || Date.now()
+    };
+    this.setItem(ledgerKey, current);
+
+    console.log(`[VOTE-STATE-TRACE] event=${record.eventId} vote=${normType}-${record.itemId} learner=${record.studentId} previous=${!!previous} incoming=true source=${record.serverConfirmed ? 'DB_CONFIRMATION' : 'LOCAL_VOTE_SUCCESS'} timestamp=${Date.now()}`);
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_user_vote_recorded', {
+        detail: { ...record, voteType: normType }
+      }));
+    }
+  }
+
+  public getStudentVote(
+    eventId: string,
+    voteType: 'BILL' | 'ELECTION' | 'FLASH_VOTE' | 'FLASH',
+    itemId: string,
+    studentId?: string
+  ): StudentVoteRecord | null {
+    if (!eventId || !itemId || !studentId) return null;
+    const ledgerKey = `tn_assembly_user_vote_ledger_${eventId}_${studentId}`;
+    const current = this.getItem<Record<string, StudentVoteRecord>>(ledgerKey, {});
+    const normType = voteType === 'FLASH' ? 'FLASH_VOTE' : voteType;
+    return current[`${normType}:::${itemId}`] || current[`${voteType}:::${itemId}`] || null;
+  }
+
+  public getAllStudentVotes(eventId: string, studentId?: string): Record<string, StudentVoteRecord> {
+    if (!eventId || !studentId) return {};
+    const ledgerKey = `tn_assembly_user_vote_ledger_${eventId}_${studentId}`;
+    return this.getItem<Record<string, StudentVoteRecord>>(ledgerKey, {});
+  }
+
+  public clearStudentVote(
+    eventId: string,
+    voteType: 'BILL' | 'ELECTION' | 'FLASH_VOTE' | 'FLASH',
+    itemId: string,
+    studentId?: string
+  ): void {
+    if (!eventId || !itemId) return;
+    const normType = voteType === 'FLASH' ? 'FLASH_VOTE' : voteType;
+    const itemKey = `${normType}:::${itemId}`;
+    const altKey = `${voteType}:::${itemId}`;
+    if (studentId) {
+      const ledgerKey = `tn_assembly_user_vote_ledger_${eventId}_${studentId}`;
+      const current = this.getItem<Record<string, StudentVoteRecord>>(ledgerKey, {});
+      if (current[itemKey] || current[altKey]) {
+        console.log(`[VOTE-STATE-TRACE] event=${eventId} vote=${normType}-${itemId} learner=${studentId} previous=true incoming=false source=RESET timestamp=${Date.now()}`);
+        delete current[itemKey];
+        delete current[altKey];
+        this.setItem(ledgerKey, current);
+      }
+    } else if (typeof window !== 'undefined') {
+      const prefix = `tn_assembly_user_vote_ledger_${eventId}_`;
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(prefix)) {
+          try {
+            const current = JSON.parse(localStorage.getItem(k) || '{}');
+            if (current[itemKey] || current[altKey]) {
+              delete current[itemKey];
+              delete current[altKey];
+              localStorage.setItem(k, JSON.stringify(current));
+            }
+          } catch {}
+        }
+      }
+    }
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_user_vote_recorded', {
+        detail: { eventId, voteType: normType, itemId, studentId, cleared: true }
+      }));
+    }
   }
 
   public castBillVote(
@@ -13242,6 +13516,15 @@ class StorageService {
 
     this.broadcastBill(eventId, updatedBill);
     this.syncEventStateToSupabase(eventId).catch(() => {});
+    this.recordStudentVote({
+      eventId,
+      voteType: 'BILL',
+      itemId: bill.id,
+      studentId: learnerId,
+      decision: vote,
+      timestamp: Date.now(),
+      serverConfirmed: true
+    });
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
     return { success: true };
@@ -13346,6 +13629,15 @@ class StorageService {
 
     this.broadcastBill(eventId, updatedBill);
     this.syncEventStateToSupabase(eventId).catch(() => {});
+    this.recordStudentVote({
+      eventId,
+      voteType: 'BILL',
+      itemId: bill.id,
+      studentId: learnerId,
+      decision: vote,
+      timestamp: Date.now(),
+      serverConfirmed: true
+    });
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
     return { success: true };

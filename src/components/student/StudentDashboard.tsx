@@ -79,6 +79,33 @@ interface StudentDashboardProps {
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
 
+function logVoteStateTrace(params: {
+  eventId?: string;
+  voteType: 'BILL' | 'FLASH' | 'ELECTION';
+  voteId: string;
+  learnerId?: string;
+  participantId?: string;
+  previous: boolean;
+  incoming: boolean;
+  source: string;
+  version?: string | number;
+  timestamp?: string;
+}) {
+  const ts = params.timestamp || new Date().toISOString();
+  console.log(
+    `[VOTE-STATE-TRACE]\n` +
+    `event=${params.eventId || 'unknown'}\n` +
+    `type=${params.voteType}\n` +
+    `voteId=${params.voteId}\n` +
+    `learner=${params.learnerId || params.participantId || 'unknown'}\n` +
+    `previous=${params.previous}\n` +
+    `incoming=${params.incoming}\n` +
+    `source=${params.source}\n` +
+    `version=${params.version || '1.0'}\n` +
+    `timestamp=${ts}`
+  );
+}
+
 export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   student,
   event,
@@ -353,15 +380,144 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [syncedNominations, setSyncedNominations] = useState<Nomination[]>(nominations);
   const [syncedBills, setSyncedBills] = useState<BillProceeding[]>(() => storageService.getBills(resolvedEventId));
 
-  // Authoritative optimistic & pending voting states to eliminate button flicker
-  const [localFlashVotes, setLocalFlashVotes] = useState<Record<string, 'AYE' | 'NO' | 'ABSTAIN'>>({});
+  // Authoritative optimistic & persistent voting states backed by per-user ledger to eliminate button flicker
+  const [localFlashVotes, setLocalFlashVotes] = useState<Record<string, 'AYE' | 'NO' | 'ABSTAIN'>>(() => {
+    const records = Object.values(storageService.getAllStudentVotes(resolvedEventId, student?.id));
+    const map: Record<string, 'AYE' | 'NO' | 'ABSTAIN'> = {};
+    for (const r of records) {
+      if ((r.voteType === 'FLASH' || r.voteType === 'FLASH_VOTE') && r.decision) {
+        map[r.itemId] = r.decision as 'AYE' | 'NO' | 'ABSTAIN';
+      }
+    }
+    return map;
+  });
   const [flashVotePending, setFlashVotePending] = useState<Record<string, boolean>>({});
 
-  const [localBillVotes, setLocalBillVotes] = useState<Record<string, 'YES' | 'NO' | 'ABSTAIN'>>({});
+  const [localBillVotes, setLocalBillVotes] = useState<Record<string, 'YES' | 'NO' | 'ABSTAIN'>>(() => {
+    const records = Object.values(storageService.getAllStudentVotes(resolvedEventId, student?.id));
+    const map: Record<string, 'YES' | 'NO' | 'ABSTAIN'> = {};
+    for (const r of records) {
+      if (r.voteType === 'BILL' && r.decision) {
+        map[r.itemId] = (r.decision === 'AYE' ? 'YES' : r.decision) as 'YES' | 'NO' | 'ABSTAIN';
+      }
+    }
+    return map;
+  });
   const [billVotePending, setBillVotePending] = useState<Record<string, boolean>>({});
 
-  const [localElectionVotes, setLocalElectionVotes] = useState<Record<string, string>>({});
+  const [localElectionVotes, setLocalElectionVotes] = useState<Record<string, string>>(() => {
+    const records = Object.values(storageService.getAllStudentVotes(resolvedEventId, student?.id));
+    const map: Record<string, string> = {};
+    for (const r of records) {
+      if (r.voteType === 'ELECTION' && r.candidateId) {
+        map[r.itemId] = r.candidateId;
+      }
+    }
+    return map;
+  });
   const [electionVotePending, setElectionVotePending] = useState<Record<string, boolean>>({});
+
+  // Sync state from authoritative student vote ledger on mount, student/event change, and realtime updates
+  useEffect(() => {
+    if (!student?.id || !resolvedEventId) return;
+
+    const syncVotesFromLedger = (source: string = 'INITIAL_HYDRATION') => {
+      const records = Object.values(storageService.getAllStudentVotes(resolvedEventId, student.id));
+      
+      setLocalFlashVotes(prev => {
+        let changed = false;
+        const next = { ...prev };
+        for (const r of records) {
+          if ((r.voteType === 'FLASH' || r.voteType === 'FLASH_VOTE') && r.decision) {
+            if (next[r.itemId] !== r.decision) {
+              logVoteStateTrace({
+                eventId: resolvedEventId,
+                voteType: 'FLASH',
+                voteId: r.itemId,
+                learnerId: student.id,
+                participantId: student.access_code || student.id,
+                previous: !!prev[r.itemId],
+                incoming: true,
+                source: prev[r.itemId] ? 'LOCAL_STORAGE' : source,
+                timestamp: String(r.timestamp)
+              });
+              next[r.itemId] = r.decision as 'AYE' | 'NO' | 'ABSTAIN';
+              changed = true;
+            }
+          }
+        }
+        return changed ? next : prev;
+      });
+
+      setLocalBillVotes(prev => {
+        let changed = false;
+        const next = { ...prev };
+        for (const r of records) {
+          if (r.voteType === 'BILL' && r.decision) {
+            const dec = (r.decision === 'AYE' ? 'YES' : r.decision) as 'YES' | 'NO' | 'ABSTAIN';
+            if (next[r.itemId] !== dec) {
+              logVoteStateTrace({
+                eventId: resolvedEventId,
+                voteType: 'BILL',
+                voteId: r.itemId,
+                learnerId: student.id,
+                participantId: student.access_code || student.id,
+                previous: !!prev[r.itemId],
+                incoming: true,
+                source: prev[r.itemId] ? 'LOCAL_STORAGE' : source,
+                timestamp: String(r.timestamp)
+              });
+              next[r.itemId] = dec;
+              changed = true;
+            }
+          }
+        }
+        return changed ? next : prev;
+      });
+
+      setLocalElectionVotes(prev => {
+        let changed = false;
+        const next = { ...prev };
+        for (const r of records) {
+          if (r.voteType === 'ELECTION' && r.candidateId) {
+            if (next[r.itemId] !== r.candidateId) {
+              logVoteStateTrace({
+                eventId: resolvedEventId,
+                voteType: 'ELECTION',
+                voteId: r.itemId,
+                learnerId: student.id,
+                participantId: student.access_code || student.id,
+                previous: !!prev[r.itemId],
+                incoming: true,
+                source: prev[r.itemId] ? 'LOCAL_STORAGE' : source,
+                timestamp: String(r.timestamp)
+              });
+              next[r.itemId] = r.candidateId;
+              changed = true;
+            }
+          }
+        }
+        return changed ? next : prev;
+      });
+    };
+
+    syncVotesFromLedger('INITIAL_HYDRATION');
+
+    const handleVoteRecorded = (e: any) => {
+      const detail = e.detail;
+      if (detail && detail.studentId === student.id && detail.eventId === resolvedEventId) {
+        syncVotesFromLedger('LOCAL_VOTE_SUCCESS');
+      }
+    };
+
+    window.addEventListener('tn_assembly_user_vote_recorded', handleVoteRecorded);
+    const handleStorage = () => syncVotesFromLedger('RECONNECT');
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener('tn_assembly_user_vote_recorded', handleVoteRecorded);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, [resolvedEventId, student?.id]);
 
   useEffect(() => {
     setSyncedElections(elections);
@@ -1058,24 +1214,65 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
               <div className="space-y-4">
                 {activeFlashVotes.map(fv => {
-                  const persistedVote = fv.votes?.find(v => v.learner_id === student.id)?.vote;
-                  const authoritativeVote = persistedVote || localFlashVotes[fv.id];
+                  const ledgerVote = storageService.getStudentVote(resolvedEventId, 'FLASH', fv.id, student.id);
+                  const persistedVote = fv.votes?.find(v => v.learner_id === student.id)?.vote || (fv.voter_ids?.includes(student.id) ? (ledgerVote?.decision || 'AYE') : undefined);
+                  const authoritativeVote = ledgerVote?.decision || persistedVote || localFlashVotes[fv.id];
                   const hasVoted = !!authoritativeVote;
                   const isPending = !!flashVotePending[fv.id];
 
                   const handleVoteClick = (decision: 'AYE' | 'NO' | 'ABSTAIN') => {
                     if (hasVoted || isPending || !onCastFlashVote) return;
+                    logVoteStateTrace({
+                      eventId: resolvedEventId,
+                      voteType: 'FLASH',
+                      voteId: fv.id,
+                      learnerId: student.id,
+                      participantId: student.access_code || student.id,
+                      previous: false,
+                      incoming: true,
+                      source: 'OPTIMISTIC_UPDATE'
+                    });
                     // Immediate optimistic selection
                     setLocalFlashVotes(prev => ({ ...prev, [fv.id]: decision }));
                     setFlashVotePending(prev => ({ ...prev, [fv.id]: true }));
+                    storageService.recordStudentVote({
+                      eventId: resolvedEventId,
+                      voteType: 'FLASH',
+                      itemId: fv.id,
+                      studentId: student.id,
+                      decision,
+                      timestamp: Date.now(),
+                      serverConfirmed: true
+                    });
                     try {
                       onCastFlashVote(fv.id, student, decision);
+                      logVoteStateTrace({
+                        eventId: resolvedEventId,
+                        voteType: 'FLASH',
+                        voteId: fv.id,
+                        learnerId: student.id,
+                        participantId: student.access_code || student.id,
+                        previous: true,
+                        incoming: true,
+                        source: 'LOCAL_VOTE_SUCCESS'
+                      });
                       onShowToast('Division Vote Cast', `Recorded vote: ${decision} — Your vote is final.`, 'success');
                     } catch (err: any) {
+                      storageService.clearStudentVote(resolvedEventId, 'FLASH', fv.id, student.id);
                       setLocalFlashVotes(prev => {
                         const copy = { ...prev };
                         delete copy[fv.id];
                         return copy;
+                      });
+                      logVoteStateTrace({
+                        eventId: resolvedEventId,
+                        voteType: 'FLASH',
+                        voteId: fv.id,
+                        learnerId: student.id,
+                        participantId: student.access_code || student.id,
+                        previous: true,
+                        incoming: false,
+                        source: 'RESET'
                       });
                       onShowToast('Vote Failed', err?.message || 'Vote failed. Please try again.', 'error');
                     } finally {
@@ -1182,34 +1379,86 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
               <div className="space-y-4">
                 {liveBills.map(bill => {
+                  const ledgerVote = storageService.getStudentVote(resolvedEventId, 'BILL', bill.id, student.id);
                   const persistedVote = bill.votes?.find(v => v.delegate_id === student.id || v.learner_id === student.id)?.vote;
-                  const hasPersistedVoted = bill.voted_delegate_ids?.includes(student.id);
-                  const authoritativeVote = persistedVote || localBillVotes[bill.id];
+                  const hasPersistedVoted = bill.voted_delegate_ids?.includes(student.id) || !!ledgerVote;
+                  const authoritativeVote = ledgerVote?.decision || persistedVote || localBillVotes[bill.id];
                   const hasVoted = hasPersistedVoted || !!authoritativeVote;
                   const isPending = !!billVotePending[bill.id];
 
                   const handleBillVoteClick = (decision: 'YES' | 'NO' | 'ABSTAIN') => {
                     if (hasVoted || isPending) return;
+                    logVoteStateTrace({
+                      eventId: resolvedEventId,
+                      voteType: 'BILL',
+                      voteId: bill.id,
+                      learnerId: student.id,
+                      participantId: student.access_code || student.id,
+                      previous: false,
+                      incoming: true,
+                      source: 'OPTIMISTIC_UPDATE'
+                    });
                     setLocalBillVotes(prev => ({ ...prev, [bill.id]: decision }));
                     setBillVotePending(prev => ({ ...prev, [bill.id]: true }));
+                    storageService.recordStudentVote({
+                      eventId: resolvedEventId,
+                      voteType: 'BILL',
+                      itemId: bill.id,
+                      studentId: student.id,
+                      decision,
+                      timestamp: Date.now(),
+                      serverConfirmed: true
+                    });
                     try {
                       const res = storageService.castBillVote(bill.id, resolvedEventId, student, decision);
                       if (res.success) {
+                        logVoteStateTrace({
+                          eventId: resolvedEventId,
+                          voteType: 'BILL',
+                          voteId: bill.id,
+                          learnerId: student.id,
+                          participantId: student.access_code || student.id,
+                          previous: true,
+                          incoming: true,
+                          source: 'DB_CONFIRMATION'
+                        });
                         setSyncedBills(storageService.getBills(resolvedEventId));
                         onShowToast('Bill Vote Cast', `Your vote on ${bill.bill_number} was recorded as ${decision === 'YES' ? 'YES (AYE)' : decision}.`, 'success');
                       } else {
+                        storageService.clearStudentVote(resolvedEventId, 'BILL', bill.id, student.id);
                         setLocalBillVotes(prev => {
                           const copy = { ...prev };
                           delete copy[bill.id];
                           return copy;
                         });
+                        logVoteStateTrace({
+                          eventId: resolvedEventId,
+                          voteType: 'BILL',
+                          voteId: bill.id,
+                          learnerId: student.id,
+                          participantId: student.access_code || student.id,
+                          previous: true,
+                          incoming: false,
+                          source: 'RESET'
+                        });
                         onShowToast('Vote Failed', res.error || 'You may have already voted or voting has closed.', 'error');
                       }
                     } catch (err: any) {
+                      storageService.clearStudentVote(resolvedEventId, 'BILL', bill.id, student.id);
                       setLocalBillVotes(prev => {
                         const copy = { ...prev };
                         delete copy[bill.id];
                         return copy;
+                      });
+                      logVoteStateTrace({
+                        eventId: resolvedEventId,
+                        voteType: 'BILL',
+                        voteId: bill.id,
+                        learnerId: student.id,
+                        participantId: student.access_code || student.id,
+                        previous: true,
+                        incoming: false,
+                        source: 'RESET'
                       });
                       onShowToast('Vote Failed', err?.message || 'Vote failed.', 'error');
                     } finally {
@@ -1330,22 +1579,68 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <div className="space-y-6">
                 {liveElections.map((elec) => {
                   const eligibleCheck = isStudentEligibleForElection(elec);
-                  const votedCandidateId = localElectionVotes[elec.id];
-                  const hasVoted = elec.voted_delegate_ids?.includes(student.id) || (elec as any).votedLearnerIds?.includes(student.id) || !!votedCandidateId;
+                  const ledgerVote = storageService.getStudentVote(resolvedEventId, 'ELECTION', elec.id, student.id);
+                  const votedCandidateId = ledgerVote?.candidateId || localElectionVotes[elec.id];
+                  const hasVoted = elec.voted_delegate_ids?.includes(student.id) || (elec as any).votedLearnerIds?.includes(student.id) || !!ledgerVote || !!votedCandidateId;
                   const isElectionPending = !!electionVotePending[elec.id];
 
                   const handleElectionVote = (candId: string, candName: string) => {
                     if (hasVoted || isElectionPending) return;
+                    logVoteStateTrace({
+                      eventId: resolvedEventId,
+                      voteType: 'ELECTION',
+                      voteId: elec.id,
+                      learnerId: student.id,
+                      participantId: student.access_code || student.id,
+                      previous: false,
+                      incoming: true,
+                      source: 'OPTIMISTIC_UPDATE'
+                    });
                     setLocalElectionVotes(prev => ({ ...prev, [elec.id]: candId }));
                     setElectionVotePending(prev => ({ ...prev, [elec.id]: true }));
+                    storageService.recordStudentVote({
+                      eventId: resolvedEventId,
+                      voteType: 'ELECTION',
+                      itemId: elec.id,
+                      studentId: student.id,
+                      candidateId: candId,
+                      candidateName: candName,
+                      timestamp: Date.now(),
+                      serverConfirmed: true
+                    });
                     try {
-                      onCastVote(elec.id, candId, student.id);
+                      if (onCastVote) {
+                        onCastVote(elec.id, candId, student.id);
+                      } else {
+                        storageService.castVoteInElection(elec.id, candId, student.id);
+                      }
+                      logVoteStateTrace({
+                        eventId: resolvedEventId,
+                        voteType: 'ELECTION',
+                        voteId: elec.id,
+                        learnerId: student.id,
+                        participantId: student.access_code || student.id,
+                        previous: true,
+                        incoming: true,
+                        source: 'LOCAL_VOTE_SUCCESS'
+                      });
                       onShowToast('Vote Recorded', `You voted for ${candName} in ${elec.title}`, 'success');
                     } catch (err: any) {
+                      storageService.clearStudentVote(resolvedEventId, 'ELECTION', elec.id, student.id);
                       setLocalElectionVotes(prev => {
                         const copy = { ...prev };
                         delete copy[elec.id];
                         return copy;
+                      });
+                      logVoteStateTrace({
+                        eventId: resolvedEventId,
+                        voteType: 'ELECTION',
+                        voteId: elec.id,
+                        learnerId: student.id,
+                        participantId: student.access_code || student.id,
+                        previous: true,
+                        incoming: false,
+                        source: 'RESET'
                       });
                       onShowToast('Vote Failed', err?.message || 'Vote failed.', 'error');
                     } finally {

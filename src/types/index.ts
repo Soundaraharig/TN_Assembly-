@@ -351,6 +351,18 @@ export interface BillVote {
   cast_method?: 'delegate' | 'admin';
 }
 
+export interface StudentVoteRecord {
+  eventId: string;
+  voteType: 'BILL' | 'ELECTION' | 'FLASH_VOTE' | 'FLASH';
+  itemId: string;
+  studentId: string;
+  decision?: 'YES' | 'NO' | 'ABSTAIN' | 'AYE';
+  candidateId?: string;
+  candidateName?: string;
+  timestamp: number | string;
+  serverConfirmed: boolean;
+}
+
 export interface BillProceeding {
   id: string;
   event_id: string;
