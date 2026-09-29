@@ -30,4 +30,7 @@ dist-ssr
 
 # Supabase Production Backups
 supabase-production-backup*
-scratch/*.mjs
+
+# Scratch & diagnostic scripts
+scratch/
+scratch/**/*
