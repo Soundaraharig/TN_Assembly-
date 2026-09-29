@@ -836,12 +836,19 @@ class StorageService {
     this.isHydrated = true;
     if (isSupabaseEnabled) {
       this.setupRealtimeSync();
-      // Always trigger an initial background fetch so events are populated from Supabase
-      // even on first visit with empty localStorage (INITIAL_EVENTS is [])
       setTimeout(() => {
-        this.fetchAllEvents(false).catch(err =>
-          console.warn('[StorageService] Initial background sync warning:', err)
+        const isAuthOrDisplay = typeof window !== 'undefined' && (
+          window.location.pathname.startsWith('/join') ||
+          window.location.pathname.startsWith('/volunteer') ||
+          window.location.pathname.startsWith('/jury') ||
+          window.location.pathname.startsWith('/display') ||
+          window.location.pathname.startsWith('/projector')
         );
+        if (!isAuthOrDisplay) {
+          this.fetchAllEvents(false).catch(err =>
+            console.warn('[StorageService] Initial background sync warning:', err)
+          );
+        }
       }, 0);
     }
     if (typeof window !== 'undefined') {
@@ -6254,17 +6261,53 @@ class StorageService {
     const clean = accessCode.trim().replace(/\s+/g, '').toUpperCase();
     if (!clean) return null;
     const normClean = clean.replace(/-/g, '');
+
+    // Step 0: Check memory and local storage cache first for instant entry (0ms)
+    try {
+      const localLearners = this.getLearners();
+      const localStudent = localLearners.find(l => {
+        const c = (l.access_code || '').trim().toUpperCase().replace(/[\s-]/g, '');
+        return c === clean || c === normClean;
+      });
+      if (localStudent && localStudent.event_id) {
+        let localEvent = this.getEvents().find(e => e.id === localStudent.event_id);
+        if (!localEvent) {
+          localEvent = {
+            id: localStudent.event_id,
+            college_name: 'TN Assembly Session',
+            event_stage: 'ACTIVE',
+            status: 'ACTIVE',
+            chapter: 'TN Assembly'
+          } as unknown as CollegeEvent;
+        }
+        console.log(`[JOIN-TRACE] Student authenticated instantly from local cache: ${localStudent.full_name} (${localStudent.access_code})`);
+        return {
+          role: 'student',
+          user: localStudent,
+          eventId: localStudent.event_id,
+          event: localEvent
+        };
+      }
+    } catch (cacheErr) {
+      console.warn('[StorageService] Local student cache lookup warning:', cacheErr);
+    }
+
     if (!supabase) return null;
 
     try {
+      console.log(`[JOIN-TRACE] LEARNER REQUEST START for code: ${clean}`);
       // Step 1: Fetch ONLY single learner row
       let studentRow: any = null;
-      const { data: exactMatch } = await supabase
+      const { data: exactMatch, error: matchErr } = await supabase
         .from('learners')
         .select('id, event_id, full_name, roll_no:constituency_number, department, year:academic_year, academic_year, party:party_name, party_name, party_id, access_code, bench, role, constituency_number, constituency_name, committee_name, committee_id')
         .eq('access_code', clean)
         .limit(1)
         .maybeSingle();
+
+      if (matchErr) {
+        console.warn('[StorageService] Learners lookup error:', matchErr);
+      }
 
       if (exactMatch) {
         studentRow = exactMatch;
@@ -6278,24 +6321,45 @@ class StorageService {
         studentRow = normMatch;
       }
 
+      console.log(`[JOIN-TRACE] LEARNER REQUEST END. Found: ${!!studentRow}`);
+
       if (!studentRow) return null;
 
       const student = studentRow as unknown as Learner;
       if (!student.event_id) return null;
 
-      // Step 2: Extract student.event_id and fetch ONLY that event's metadata
-      const { data: eventRow, error: evErr } = await supabase
-        .from('college_events')
-        .select('id, college_name, event_stage, status, chapter, social_coverage')
-        .eq('id', student.event_id)
-        .single();
+      // Step 2: Extract student.event_id and get event metadata WITHOUT heavy social_coverage
+      console.log(`[JOIN-TRACE] EVENT REQUEST START for event: ${student.event_id}`);
+      let event = this.getEvents().find(e => e.id === student.event_id);
+      if (!event) {
+        try {
+          const { data: eventRow, error: evErr } = await supabase
+            .from('college_events')
+            .select('id, college_name, event_stage, status, chapter, level, slug')
+            .eq('id', student.event_id)
+            .single();
 
-      if (evErr || !eventRow) {
-        console.warn('[StorageService] Student event metadata fetch error:', evErr);
-        return null;
+          if (!evErr && eventRow) {
+            event = eventRow as unknown as CollegeEvent;
+          } else {
+            console.warn('[StorageService] Student event metadata fetch warning:', evErr);
+          }
+        } catch (evFetchErr) {
+          console.warn('[StorageService] Student event metadata fetch exception:', evFetchErr);
+        }
       }
+      console.log(`[JOIN-TRACE] EVENT REQUEST END. Found: ${!!event}`);
 
-      const event = eventRow as unknown as CollegeEvent;
+      // Safe fallback if college_events fetch is slow or locked by bill voting - DO NOT BLOCK THE STUDENT FROM JOINING!
+      if (!event) {
+        event = {
+          id: student.event_id,
+          college_name: 'TN Assembly Session',
+          event_stage: 'ACTIVE',
+          status: 'ACTIVE',
+          chapter: 'TN Assembly'
+        } as unknown as CollegeEvent;
+      }
 
       // Cache learner and event in memory/local storage for instant UI hydration
       const curLearners = this.getLearners();
@@ -6304,26 +6368,33 @@ class StorageService {
       const curEvents = this.getEvents();
       this.setItem(STORAGE_KEYS.EVENTS, [...curEvents.filter(e => e.id !== event.id), event]);
       this.restoreJkkncetEvent();
-      this.unpackAndApplyEventState([event], event.id);
+      if ((event as any).social_coverage) {
+        this.unpackAndApplyEventState([event], event.id);
+      }
 
-      // Audit and login logs (zero full-table egress)
-      this.logAudit({
-        event_id: student.event_id,
-        action: 'ACCESS_CODE_LOGIN_SUCCESS',
-        actor_role: 'student',
-        actor_name: student.full_name,
-        details: `Delegate login: ${student.full_name} (${student.access_code})`
-      });
-      this.recordLogin({
-        event_id: student.event_id,
-        user_id: student.id,
-        user_name: student.full_name,
-        role: 'student',
-        access_code: student.access_code,
-        details: `Delegate App Login (${student.bench || 'Delegate'} Bench • ${student.party_name || 'Independent'})`
-      });
-      this.fetchStudentAllocationConfirmation(student.id, student.event_id).catch(() => {});
-      console.log(`[Auth Trace] Code: "${accessCode}" -> Matched Learner ID: "${student.id}" -> Event ID: "${student.event_id}" -> Role: "student" (Name: ${student.full_name})`);
+      // Audit and login logs (zero full-table egress, non-blocking)
+      try {
+        this.logAudit({
+          event_id: student.event_id,
+          action: 'ACCESS_CODE_LOGIN_SUCCESS',
+          actor_role: 'student',
+          actor_name: student.full_name,
+          details: `Delegate login: ${student.full_name} (${student.access_code})`
+        });
+        this.recordLogin({
+          event_id: student.event_id,
+          user_id: student.id,
+          user_name: student.full_name,
+          role: 'student',
+          access_code: student.access_code,
+          details: `Delegate App Login (${student.bench || 'Delegate'} Bench • ${student.party_name || 'Independent'})`
+        });
+        this.fetchStudentAllocationConfirmation(student.id, student.event_id).catch(() => {});
+      } catch (logErr) {
+        console.warn('[StorageService] Non-blocking login log warning:', logErr);
+      }
+
+      console.log(`[JOIN-TRACE] JOIN SUCCESS for: "${student.full_name}" (${student.access_code})`);
 
       return {
         role: 'student',
@@ -6348,15 +6419,15 @@ class StorageService {
     const isVolunteerCode = clean.startsWith('VOL') || normClean.startsWith('VOL');
     const isJuryCode = clean.startsWith('JURY') || normClean.startsWith('JURY');
 
+    // 1. Try local cache FIRST (instant 0ms if already loaded or previously authenticated)
+    const localRes = this.authenticateAccessCode(clean, targetEventId);
+    if (localRes) return localRes;
+
     // If code is not explicitly volunteer or jury, authenticate student directly (isolating Step 1 & Step 2)
     if (!isVolunteerCode && !isJuryCode) {
       const studentRes = await this.authenticateStudentAccessCode(clean);
       if (studentRes) return studentRes;
     }
-
-    // 1. Try local cache
-    const localRes = this.authenticateAccessCode(clean, targetEventId);
-    if (localRes) return localRes;
 
     if (!supabase) return null;
 

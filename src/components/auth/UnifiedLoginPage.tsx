@@ -128,6 +128,7 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
 
   const handleAccessCodeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isCodeLoading) return;
     if (lockoutUntil && Date.now() < lockoutUntil) {
       setCodeError(`Too many failed attempts. Code verification temporarily locked. Try again in ${lockoutRemaining}s.`);
       return;
@@ -135,39 +136,65 @@ export const UnifiedLoginPage: React.FC<UnifiedLoginPageProps> = ({
     const clean = accessCode.trim().replace(/\s+/g, '').toUpperCase();
     if (!clean) return;
     setIsCodeLoading(true);
-    await new Promise(r => setTimeout(r, 400));
-    const res = await onLoginAccessCode(clean);
-    setIsCodeLoading(false);
-    if (!res) {
-      const nextFailed = failedAttempts + 1;
-      setFailedAttempts(nextFailed);
-      try {
-        sessionStorage.setItem(FAILED_COUNT_KEY, String(nextFailed));
-      } catch { }
+    setCodeError('');
 
-      if (nextFailed >= 5) {
-        const lockDuration = 180000; // 3 minutes lockout
-        const lockExpiry = Date.now() + lockDuration;
-        setLockoutUntil(lockExpiry);
-        setLockoutRemaining(180);
-        try {
-          sessionStorage.setItem(LOCKOUT_KEY, String(lockExpiry));
-        } catch { }
-        setCodeError('Security Lockout: 5 failed attempts reached. Access code verification suspended for 3 minutes.');
+    try {
+      console.log(`[JOIN-TRACE] JOIN CLICK for access code "${clean}"`);
+      // Deterministic 15s timeout protection so the join button NEVER gets permanently stuck
+      const timeoutPromise = new Promise<{ timeout: true }>((resolve) =>
+        setTimeout(() => resolve({ timeout: true }), 15000)
+      );
+
+      const loginPromise = onLoginAccessCode(clean);
+      const result = await Promise.race([loginPromise, timeoutPromise]);
+
+      if (result && typeof result === 'object' && 'timeout' in result) {
+        setIsCodeLoading(false);
+        setCodeError('Connection timed out. Please check your network connection and try again.');
+        console.warn(`[JOIN-TRACE] JOIN TIMEOUT after 15s for code "${clean}"`);
         return;
       }
-      setCodeError(`Invalid access code. (${5 - nextFailed} attempt${5 - nextFailed === 1 ? '' : 's'} remaining before temporary security lockout)`);
-    } else {
-      setFailedAttempts(0);
-      setLockoutUntil(null);
-      try {
-        sessionStorage.removeItem(FAILED_COUNT_KEY);
-        sessionStorage.removeItem(LOCKOUT_KEY);
-      } catch { }
-      setCodeError('');
-      const name = (res as any).full_name || (res as any).name || 'User';
-      const roleStr = (res as any).role === 'volunteer' ? 'Volunteer' : (res as any).role === 'jury' ? 'Jury' : 'Delegate';
-      onShowToast(`${roleStr} Access Verified`, `Welcome, ${name}`, 'success');
+
+      const res = result;
+      setIsCodeLoading(false);
+
+      if (!res) {
+        const nextFailed = failedAttempts + 1;
+        setFailedAttempts(nextFailed);
+        try {
+          sessionStorage.setItem(FAILED_COUNT_KEY, String(nextFailed));
+        } catch { }
+
+        if (nextFailed >= 5) {
+          const lockDuration = 180000; // 3 minutes lockout
+          const lockExpiry = Date.now() + lockDuration;
+          setLockoutUntil(lockExpiry);
+          setLockoutRemaining(180);
+          try {
+            sessionStorage.setItem(LOCKOUT_KEY, String(lockExpiry));
+          } catch { }
+          setCodeError('Security Lockout: 5 failed attempts reached. Access code verification suspended for 3 minutes.');
+          return;
+        }
+        setCodeError(`Invalid access code. (${5 - nextFailed} attempt${5 - nextFailed === 1 ? '' : 's'} remaining before temporary security lockout)`);
+      } else {
+        setFailedAttempts(0);
+        setLockoutUntil(null);
+        try {
+          sessionStorage.removeItem(FAILED_COUNT_KEY);
+          sessionStorage.removeItem(LOCKOUT_KEY);
+        } catch { }
+        setCodeError('');
+        const name = (res as any).full_name || (res as any).name || 'User';
+        const roleStr = (res as any).role === 'volunteer' ? 'Volunteer' : (res as any).role === 'jury' ? 'Jury' : 'Delegate';
+        onShowToast(`${roleStr} Access Verified`, `Welcome, ${name}`, 'success');
+      }
+    } catch (err: any) {
+      console.error('[JOIN-TRACE] Access code login exception:', err);
+      setIsCodeLoading(false);
+      setCodeError(err?.message || 'Access code verification failed. Please try again.');
+    } finally {
+      setIsCodeLoading(false);
     }
   };
 

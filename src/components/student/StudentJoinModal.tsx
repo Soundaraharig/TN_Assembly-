@@ -22,6 +22,7 @@ export const StudentJoinView: React.FC<StudentJoinViewProps> = ({ onLoginSuccess
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     const cleanCode = accessCode.trim().replace(/\s+/g, '').toUpperCase();
     if (!cleanCode) {
       setError('Please enter your access code.');
@@ -32,7 +33,22 @@ export const StudentJoinView: React.FC<StudentJoinViewProps> = ({ onLoginSuccess
     setError('');
 
     try {
-      const authResult = await storageService.authenticateAccessCodeAsync(cleanCode, targetEventId);
+      console.log(`[JOIN-TRACE] StudentJoinModal submit for code: "${cleanCode}"`);
+      const timeoutPromise = new Promise<{ timeout: true }>((resolve) =>
+        setTimeout(() => resolve({ timeout: true }), 15000)
+      );
+
+      const loginPromise = storageService.authenticateAccessCodeAsync(cleanCode, targetEventId);
+      const result = await Promise.race([loginPromise, timeoutPromise]);
+
+      if (result && typeof result === 'object' && 'timeout' in result) {
+        setIsSubmitting(false);
+        setError('Connection timed out. Please check your network connection and try again.');
+        onShowToast('Connection Timeout', 'Request timed out. Please try again.', 'error');
+        return;
+      }
+
+      const authResult = result as any;
       setIsSubmitting(false);
 
       if (authResult) {
@@ -48,6 +64,8 @@ export const StudentJoinView: React.FC<StudentJoinViewProps> = ({ onLoginSuccess
       setIsSubmitting(false);
       setError('Authentication error occurred. Please try again.');
       onShowToast('Authentication Error', 'Could not verify access code.', 'error');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 

@@ -24,9 +24,9 @@
     "semantic_hash": ""
   },
   "src/App.tsx": {
-    "mtime": 1790674472.1495454,
-    "seen": 1790674713.8004336,
-    "ast_hash": "cfb8ae7dae3e0153a3125e6836cf5934",
+    "mtime": 1790579760.587587,
+    "seen": 1790580055.9142008,
+    "ast_hash": "c37a4081b7451c9fa31fe575b1de28c1",
     "semantic_hash": ""
   },
   "src/components/admin/CreateEventModal.tsx": {
@@ -84,9 +84,9 @@
     "semantic_hash": ""
   },
   "src/components/auth/UnifiedLoginPage.tsx": {
-    "mtime": 1790674420.1238601,
-    "seen": 1790674713.8082967,
-    "ast_hash": "d1615ab135d3e55b40f5f4c76265874d",
+    "mtime": 1790515136.8208783,
+    "seen": 1790527932.8941252,
+    "ast_hash": "0d33e72c09d4ca4265d86945b9ef9026",
     "semantic_hash": ""
   },
   "src/components/common/Header.tsx": {
@@ -102,9 +102,9 @@
     "semantic_hash": ""
   },
   "src/components/common/StandaloneProjectorDisplay.tsx": {
-    "mtime": 1790672911.2853212,
-    "seen": 1790674713.8096652,
-    "ast_hash": "58b1f88edb3ffd248279c7aa02fc7fe1",
+    "mtime": 1790613536.8798728,
+    "seen": 1790613715.2850509,
+    "ast_hash": "6a510139146c1068dca2f95d60cf3da2",
     "semantic_hash": ""
   },
   "src/components/common/Toast.tsx": {
@@ -180,9 +180,9 @@
     "semantic_hash": "3d1db61d896d7a7ddbe19b109b93c6bc"
   },
   "src/components/coordinator/ControlTab.tsx": {
-    "mtime": 1790673043.1662257,
-    "seen": 1790674713.8186529,
-    "ast_hash": "79df71d0eb37d4e3c2b320dd35b12086",
+    "mtime": 1790613475.0006056,
+    "seen": 1790613715.300459,
+    "ast_hash": "3a27e562f8b92bccaa941f82f6364411",
     "semantic_hash": ""
   },
   "src/components/coordinator/CoordinatorDashboard.tsx": {
@@ -258,9 +258,9 @@
     "semantic_hash": ""
   },
   "src/components/coordinator/ProjectorTab.tsx": {
-    "mtime": 1790672930.9796803,
-    "seen": 1790674713.8288758,
-    "ast_hash": "be7e474eb76945bf55bccd8342de6e36",
+    "mtime": 1790507422.4980476,
+    "seen": 1790507947.817457,
+    "ast_hash": "b90f39ab49fd021bded7e0df7512baeb",
     "semantic_hash": ""
   },
   "src/components/coordinator/QuestionnaireTab.tsx": {
@@ -306,9 +306,9 @@
     "semantic_hash": ""
   },
   "src/components/student/StudentJoinModal.tsx": {
-    "mtime": 1790674622.6425197,
-    "seen": 1790674713.8367481,
-    "ast_hash": "9a46e6aae5e3862125250c08e447362e",
+    "mtime": 1789554903.5696754,
+    "seen": 1789569814.0666971,
+    "ast_hash": "e7ff6602b3386c7191b50b4aba70faf9",
     "semantic_hash": ""
   },
   "src/components/student/StudentLoginGateway.tsx": {
@@ -354,15 +354,15 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1790674516.6801825,
-    "seen": 1790674713.8428388,
-    "ast_hash": "af32afbc33a816e3e18293a1a8bc3724",
+    "mtime": 1790613584.0735314,
+    "seen": 1790613715.3407285,
+    "ast_hash": "a36134d59ef33faf8874a5150214cc37",
     "semantic_hash": ""
   },
   "src/types/index.ts": {
-    "mtime": 1790672303.0202394,
-    "seen": 1790674713.8428469,
-    "ast_hash": "cb3d2f9f84e14a7a772f1ba67ced36e9",
+    "mtime": 1790605627.5979984,
+    "seen": 1790606177.2403414,
+    "ast_hash": "644ac8295a3a877e5d5c86ed2e669f9c",
     "semantic_hash": ""
   },
   "src/utils/accessCodeGenerator.ts": {
@@ -606,9 +606,9 @@
     "semantic_hash": ""
   },
   "src/components/speaker/SpeakerDashboard.tsx": {
-    "mtime": 1790672968.4657898,
-    "seen": 1790674713.8344882,
-    "ast_hash": "420346929023b17462873a60dd14f87a",
+    "mtime": 1790613563.9269638,
+    "seen": 1790613715.326211,
+    "ast_hash": "c29d66c302cc86843420574c12604c8d",
     "semantic_hash": ""
   },
   "src/utils/memberIdentity.ts": {
@@ -618,9 +618,9 @@
     "semantic_hash": ""
   },
   "src/components/common/QuestionCallingPanel.tsx": {
-    "mtime": 1790647249.7775388,
-    "seen": 1790674713.8087268,
-    "ast_hash": "0de5fe767bcd60e38e148cbe8f826e6f",
+    "mtime": 1790610357.9367042,
+    "seen": 1790612129.2214894,
+    "ast_hash": "9b55a620861a102ea6deaa9a91622dca",
     "semantic_hash": ""
   },
   "scratch/enriched_questions.json": {
@@ -678,123 +678,15 @@
     "semantic_hash": ""
   },
   "src/utils/audioAlert.ts": {
-    "mtime": 1790654058.9947877,
-    "seen": 1790674713.844494,
-    "ast_hash": "f94383535c34eff37f20fca83f881bcb",
+    "mtime": 1790608912.057665,
+    "seen": 1790609636.815282,
+    "ast_hash": "a0847ca71a9e47262670839683183af1",
     "semantic_hash": ""
   },
   "src/utils/audioStorage.ts": {
     "mtime": 1790608926.59716,
     "seen": 1790609636.8152885,
     "ast_hash": "bf98ae7c191cc5b3a14a9185dfebb5ea",
-    "semantic_hash": ""
-  },
-  "data/question-backups/05fb9c3e-af0d-4b0e-b48a-1ca4c0671cb8/proceedings_questions.latest.json": {
-    "mtime": 1790614673.382634,
-    "seen": 1790674713.7903693,
-    "ast_hash": "b8aed9e9dba2e8219f7502ef39f678c7",
-    "semantic_hash": ""
-  },
-  "data/question-backups/200fdd74-4d21-44d5-9f63-9a07bf267824/proceedings_questions.latest.json": {
-    "mtime": 1790614673.376681,
-    "seen": 1790674713.7903821,
-    "ast_hash": "8f5ec8686b7ee16e67c4d0c22be216bf",
-    "semantic_hash": ""
-  },
-  "data/question-backups/35f87a38-62de-4e0c-bffb-59c394f987b1/proceedings_questions.latest.json": {
-    "mtime": 1790614673.3726766,
-    "seen": 1790674713.7903893,
-    "ast_hash": "69836d8b6e3f25910a9aadf287330596",
-    "semantic_hash": ""
-  },
-  "data/question-backups/648790e1-0836-4a29-8a53-74929e7404f3/proceedings_questions.latest.json": {
-    "mtime": 1790614673.3437724,
-    "seen": 1790674713.7903943,
-    "ast_hash": "fb5f1401026393212366ab9f0c76560c",
-    "semantic_hash": ""
-  },
-  "data/question-backups/ahs/proceedings_questions.latest.json": {
-    "mtime": 1790614673.3447697,
-    "seen": 1790674713.7903993,
-    "ast_hash": "fb5f1401026393212366ab9f0c76560c",
-    "semantic_hash": ""
-  },
-  "data/question-backups/all_events_questions_manifest.json": {
-    "mtime": 1790614673.3864598,
-    "seen": 1790674713.790404,
-    "ast_hash": "649971c520987bbc24a7592cba656597",
-    "semantic_hash": ""
-  },
-  "data/question-backups/arts/proceedings_questions.latest.json": {
-    "mtime": 1790614673.3841076,
-    "seen": 1790674713.7904093,
-    "ast_hash": "b8aed9e9dba2e8219f7502ef39f678c7",
-    "semantic_hash": ""
-  },
-  "data/question-backups/cnr/proceedings_questions.latest.json": {
-    "mtime": 1790614673.3746793,
-    "seen": 1790674713.790414,
-    "ast_hash": "69836d8b6e3f25910a9aadf287330596",
-    "semantic_hash": ""
-  },
-  "data/question-backups/jkkncet/proceedings_questions.latest.json": {
-    "mtime": 1790614673.3791974,
-    "seen": 1790674713.7904198,
-    "ast_hash": "8f5ec8686b7ee16e67c4d0c22be216bf",
-    "semantic_hash": ""
-  },
-  "public/data/question-backups/05fb9c3e-af0d-4b0e-b48a-1ca4c0671cb8/proceedings_questions.latest.json": {
-    "mtime": 1790614673.3847892,
-    "seen": 1790674713.7913456,
-    "ast_hash": "b8aed9e9dba2e8219f7502ef39f678c7",
-    "semantic_hash": ""
-  },
-  "public/data/question-backups/200fdd74-4d21-44d5-9f63-9a07bf267824/proceedings_questions.latest.json": {
-    "mtime": 1790614673.3801908,
-    "seen": 1790674713.7913527,
-    "ast_hash": "8f5ec8686b7ee16e67c4d0c22be216bf",
-    "semantic_hash": ""
-  },
-  "public/data/question-backups/35f87a38-62de-4e0c-bffb-59c394f987b1/proceedings_questions.latest.json": {
-    "mtime": 1790614673.3746793,
-    "seen": 1790674713.7913578,
-    "ast_hash": "69836d8b6e3f25910a9aadf287330596",
-    "semantic_hash": ""
-  },
-  "public/data/question-backups/648790e1-0836-4a29-8a53-74929e7404f3/proceedings_questions.latest.json": {
-    "mtime": 1790614673.345769,
-    "seen": 1790674713.7913625,
-    "ast_hash": "fb5f1401026393212366ab9f0c76560c",
-    "semantic_hash": ""
-  },
-  "public/data/question-backups/ahs/proceedings_questions.latest.json": {
-    "mtime": 1790614673.345769,
-    "seen": 1790674713.791368,
-    "ast_hash": "fb5f1401026393212366ab9f0c76560c",
-    "semantic_hash": ""
-  },
-  "public/data/question-backups/all_events_questions_manifest.json": {
-    "mtime": 1790614673.3864598,
-    "seen": 1790674713.7913728,
-    "ast_hash": "649971c520987bbc24a7592cba656597",
-    "semantic_hash": ""
-  },
-  "public/data/question-backups/arts/proceedings_questions.latest.json": {
-    "mtime": 1790614673.3858833,
-    "seen": 1790674713.7913778,
-    "ast_hash": "b8aed9e9dba2e8219f7502ef39f678c7",
-    "semantic_hash": ""
-  },
-  "public/data/question-backups/cnr/proceedings_questions.latest.json": {
-    "mtime": 1790614673.3756747,
-    "seen": 1790674713.7913823,
-    "ast_hash": "69836d8b6e3f25910a9aadf287330596",
-    "semantic_hash": ""
-  },
-  "public/data/question-backups/jkkncet/proceedings_questions.latest.json": {
-    "mtime": 1790614673.3821235,
-    "seen": 1790674713.7913864,
-    "ast_hash": "8f5ec8686b7ee16e67c4d0c22be216bf",
     "semantic_hash": ""
   }
 }

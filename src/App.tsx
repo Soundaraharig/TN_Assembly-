@@ -1328,10 +1328,13 @@ export function App() {
     const search = typeof window !== 'undefined' ? window.location.search : '';
     const isDisplay = isStandaloneDisplayPath(pathname, search);
 
+    const isAuthPath = pathname.startsWith('/join') || pathname.startsWith('/volunteer') || pathname.startsWith('/jury');
+
     // Unconditional initial sync: fetch events list ONLY on mount
     // Child tables are strictly NOT fetched on the Event Hub or initial load
     // Display screens only fetch their active event via fetchDisplayPortalData
-    if (!isDisplay && isSupabaseEnabled && !hasMountedEventsRef.current) {
+    // Auth paths (/join, /volunteer, /jury) do not fetch events on mount to prevent request queue congestion
+    if (!isDisplay && !isAuthPath && isSupabaseEnabled && !hasMountedEventsRef.current) {
       hasMountedEventsRef.current = true;
       const saved = localStorage.getItem(SESSION_KEY);
       const sess: SavedAuthSession | null = saved ? JSON.parse(saved) : null;
