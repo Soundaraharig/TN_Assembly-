@@ -205,26 +205,33 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   }, [currentAgendaList, currentEvent?.id, activeDayTab]);
 
   const activeAgendaItem = useMemo(() => {
-    // 1. Authoritative active item in the current tab's agenda list
+    // 1. Authoritative active item from agendaProgress (persisted backend state)
+    const prog = currentEvent?.id ? storageService.getAgendaProgress(currentEvent.id) : null;
+    const activeId = prog?.active_agenda_id;
+    if (activeId) {
+      const matchInTab = currentAgendaList.find(a => a.id === activeId);
+      if (matchInTab) return matchInTab;
+      const matchInAll = allEventAgenda.find(a => a.id === activeId);
+      if (matchInAll) return matchInAll;
+    }
+
+    // 2. Authoritative active item with is_current flag in current tab
     const currentInTab = currentAgendaList.find(a => a.is_current);
     if (currentInTab) return currentInTab;
 
-    // 2. Authoritative active item across all days for this event
-    const prog = currentEvent?.id ? storageService.getAgendaProgress(currentEvent.id) : null;
-    if (prog?.active_agenda_id) {
-      const activeInAll = allEventAgenda.find(a => a.id === prog.active_agenda_id);
-      if (activeInAll) return activeInAll;
-    }
+    // 3. Authoritative active item with is_current flag across all days
     const currentInAll = allEventAgenda.find(a => a.is_current);
     if (currentInAll) return currentInAll;
 
-    // 3. If in progress item exists in current tab, return it
+    // 4. In progress item in current tab or all days
     if (currentAgendaList.length > 0) {
       const inProg = currentAgendaList.find(a => a.status === 'In Progress');
       if (inProg) return inProg;
     }
+    const inProgAll = allEventAgenda.find(a => a.status === 'In Progress');
+    if (inProgAll) return inProgAll;
 
-    // 4. Default only if no active item has ever been set
+    // 5. Default only if no active item has ever been set
     return currentAgendaList[0] || allEventAgenda[0] || {
       id: 'ag_curr',
       event_id: currentEvent?.id || '',
@@ -248,6 +255,12 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   const [timerDurationSec, setTimerDurationSec] = useState(() => {
     return storageService.getTimerDurationConfig(currentEvent?.id);
   });
+  // Local draft state for custom timer seconds input to allow smooth multi-digit typing
+  const [customDraft, setCustomDraft] = useState<string>(() => timerDurationSec.toString());
+
+  useEffect(() => {
+    setCustomDraft(timerDurationSec.toString());
+  }, [timerDurationSec]);
   const [secondsLeft, setSecondsLeft] = useState(() => {
     const s = storageService.getLiveTimerState(currentEvent?.id);
     const configured = storageService.getTimerDurationConfig(currentEvent?.id);
@@ -368,13 +381,14 @@ export const ControlTab: React.FC<ControlTabProps> = ({
           } else if (remaining === 0 && !hasAlarmTriggeredRef.current) {
             hasAlarmTriggeredRef.current = true;
             setIsAlarmSounding(true);
+            setTimeout(() => setIsAlarmSounding(false), 4000);
             const activeCfg = storageService.getTimerAudioConfig(currentEvent?.id);
             if (!activeCfg.is_muted) {
               playTimerAlarm(activeCfg);
             }
           }
         } else {
-          const validSec = (state.secondsLeft !== undefined && state.secondsLeft > 0) ? state.secondsLeft : (state.durationSec || configured);
+          const validSec = (state.secondsLeft !== undefined) ? state.secondsLeft : (state.durationSec || configured);
           setSecondsLeft(validSec);
           if (validSec > 0) {
             hasAlarmTriggeredRef.current = false;
@@ -417,6 +431,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
             if (!hasAlarmTriggeredRef.current) {
               hasAlarmTriggeredRef.current = true;
               setIsAlarmSounding(true);
+              setTimeout(() => setIsAlarmSounding(false), 4000);
               const activeCfg = storageService.getTimerAudioConfig(currentEvent?.id);
               if (!activeCfg.is_muted) {
                 playTimerAlarm(activeCfg);
@@ -901,7 +916,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     }
 
     // 3. Reset session timer and stop any playing alarm
-    const configuredDur = (currentEvent?.id ? storageService.getTimerDurationConfig(currentEvent.id) : null) || timerDurationSec || 600;
+    const configuredDur = timerDurationSec || (currentEvent?.id ? storageService.getTimerDurationConfig(currentEvent.id) : null) || 75;
     setTimerDurationSec(configuredDur);
     setSecondsLeft(configuredDur);
     setIsTimerRunning(false);
@@ -1014,7 +1029,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   };
 
   const handleResetTimer = () => {
-    const configuredDur = (currentEvent?.id ? storageService.getTimerDurationConfig(currentEvent.id) : null) || timerDurationSec || 600;
+    const configuredDur = timerDurationSec || (currentEvent?.id ? storageService.getTimerDurationConfig(currentEvent.id) : null) || 75;
     setIsTimerRunning(false);
     setTimerDurationSec(configuredDur);
     setSecondsLeft(configuredDur);
@@ -1635,16 +1650,6 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
             {/* Primary Action Buttons (Enlarged & Prominent) */}
             <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
-              {isAlarmSounding && (
-                <button
-                  type="button"
-                  onClick={handleStopAlarm}
-                  className="px-8 py-3.5 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-black text-sm md:text-base flex items-center justify-center gap-2.5 transition-all shadow-lg shadow-rose-600/40 animate-bounce cursor-pointer ring-4 ring-rose-400/50"
-                >
-                  <BellOff className="w-5 h-5 animate-spin" />
-                  <span>STOP ALARM NOW</span>
-                </button>
-              )}
               <button
                 type="button"
                 onClick={handleToggleTimer}
@@ -1729,13 +1734,32 @@ export const ControlTab: React.FC<ControlTabProps> = ({
               <div className="flex items-center gap-2">
                 <span className="text-slate-400 dark:text-slate-500 font-semibold">Custom:</span>
                 <input
-                  type="number"
-                  min="10"
-                  step="10"
-                  value={timerDurationSec}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={customDraft}
                   onChange={(e) => {
-                    const val = parseInt(e.target.value) || 600;
-                    handleDurationChange(val);
+                    const raw = e.target.value.replace(/\D/g, '');
+                    setCustomDraft(raw);
+                  }}
+                  onBlur={() => {
+                    const parsed = parseInt(customDraft, 10);
+                    if (!isNaN(parsed) && parsed >= 5 && parsed <= 7200) {
+                      handleDurationChange(parsed);
+                    } else {
+                      setCustomDraft(timerDurationSec.toString());
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const parsed = parseInt(customDraft, 10);
+                      if (!isNaN(parsed) && parsed >= 5 && parsed <= 7200) {
+                        handleDurationChange(parsed);
+                      } else {
+                        setCustomDraft(timerDurationSec.toString());
+                      }
+                      (e.target as HTMLInputElement).blur();
+                    }
                   }}
                   className="w-20 px-2.5 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-center font-mono font-bold text-xs text-slate-900 dark:text-white focus:outline-none focus:border-amber-500"
                 />
@@ -2278,10 +2302,6 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                     key={item.id}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (isCompleted) {
-                        setResetConfirmItem(item);
-                        return;
-                      }
                       handleSelectAgendaItem(item);
                     }}
                     className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 ${

@@ -41,6 +41,9 @@ export const QuestionCallingPanel: React.FC<QuestionCallingPanelProps> = ({
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(() =>
     eventId ? storageService.getActiveQuestionId(eventId) : null
   );
+  const [isProjectorOn, setIsProjectorOn] = useState<boolean>(() =>
+    eventId ? storageService.getProjectorSettings(eventId)?.questionProjectorEnabled === true : false
+  );
   const [isLoading, setIsLoading] = useState<boolean>(() => questionsList.length === 0);
   const [inspectQuestion, setInspectQuestion] = useState<ProceedingsQuestion | null>(null);
   const [isCallingNextQ, setIsCallingNextQ] = useState<boolean>(false);
@@ -60,6 +63,7 @@ export const QuestionCallingPanel: React.FC<QuestionCallingPanelProps> = ({
     );
     setQuestionsList(qs);
     setActiveQuestionId(storageService.getActiveQuestionId(eventId));
+    setIsProjectorOn(storageService.getProjectorSettings(eventId)?.questionProjectorEnabled === true);
   }, [eventId]);
 
   useEffect(() => {
@@ -88,11 +92,19 @@ export const QuestionCallingPanel: React.FC<QuestionCallingPanelProps> = ({
         syncQuestions();
       }
     };
+    const handleProjUpdate = (e: any) => {
+      const detail = e.detail;
+      if (!detail?.eventId || detail.eventId === eventId) {
+        setIsProjectorOn(detail?.settings?.questionProjectorEnabled === true);
+      }
+    };
     window.addEventListener('tn_assembly_proceedings_question_update', handleQUpdate as EventListener);
+    window.addEventListener('tn_assembly_projector_update', handleProjUpdate as EventListener);
     window.addEventListener('storage', syncQuestions);
     return () => {
       unsub();
       window.removeEventListener('tn_assembly_proceedings_question_update', handleQUpdate as EventListener);
+      window.removeEventListener('tn_assembly_projector_update', handleProjUpdate as EventListener);
       window.removeEventListener('storage', syncQuestions);
     };
   }, [eventId, syncQuestions]);
@@ -215,6 +227,7 @@ export const QuestionCallingPanel: React.FC<QuestionCallingPanelProps> = ({
   const handleSkipQuestion = async (q: ProceedingsQuestion) => {
     if (!eventId) return;
     try {
+      setIsProjectorOn(false);
       await storageService.skipActiveQuestion(eventId, q.id, {
         role: userRole,
         name: userName
@@ -226,13 +239,29 @@ export const QuestionCallingPanel: React.FC<QuestionCallingPanelProps> = ({
     }
   };
 
+  // Action: TOGGLE SHOW ON PROJECTOR
+  const handleToggleProjector = async () => {
+    if (!eventId) return;
+    const nextState = !isProjectorOn;
+    setIsProjectorOn(nextState);
+    const ps = storageService.getProjectorSettings(eventId);
+    await storageService.saveProjectorSettings(eventId, {
+      ...ps,
+      questionProjectorEnabled: nextState,
+      ...(nextState && activeQuestion ? { activeQuestionId: activeQuestion.id, displayScene: 'question_hour' } : {})
+    });
+    onShowToast('Projector Updated', nextState ? 'Question is now displayed on projector' : 'Projector switched to session/agenda view', 'info');
+  };
+
   // Action: PROJECT SLIDE
   const handleProjectSlide = (q: ProceedingsQuestion) => {
     if (!eventId) return;
+    setIsProjectorOn(true);
     const ps = storageService.getProjectorSettings(eventId);
     storageService.saveProjectorSettings(eventId, {
       ...ps,
       activeQuestionId: q.id,
+      questionProjectorEnabled: true,
       displayScene: 'question_hour'
     });
     onShowToast('Projector Updated', 'Displaying Question Hour slide on auditorium projector', 'info');
@@ -256,9 +285,23 @@ export const QuestionCallingPanel: React.FC<QuestionCallingPanelProps> = ({
           )}
         </div>
 
-        {/* Admin-only Arrange Order Trigger */}
-        {isMainAdmin && onOpenArrangeModal && (
-          <div className="flex items-center gap-2">
+        {/* Admin and Projector Controls */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={handleToggleProjector}
+            className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer transition-all border shadow-xs ${
+              isProjectorOn
+                ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400 shadow-emerald-950/20'
+                : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'
+            }`}
+            title={isProjectorOn ? 'Question display is ON. Click to switch projector to session display.' : 'Question display is OFF. Click to display current question on projector.'}
+          >
+            <span className={`w-2 h-2 rounded-full ${isProjectorOn ? 'bg-white animate-pulse' : 'bg-slate-400'}`} />
+            <span>{isProjectorOn ? '● SHOW ON PROJECTOR ON' : '○ SHOW ON PROJECTOR OFF'}</span>
+          </button>
+
+          {isMainAdmin && onOpenArrangeModal && (
             <button
               type="button"
               onClick={onOpenArrangeModal}
@@ -267,8 +310,8 @@ export const QuestionCallingPanel: React.FC<QuestionCallingPanelProps> = ({
               <ArrowUpDown className="w-3.5 h-3.5 text-amber-500" />
               <span>Arrange Order</span>
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* ── CURRENT ACTIVE QUESTION BANNER (When a question is active) ── */}
@@ -293,6 +336,21 @@ export const QuestionCallingPanel: React.FC<QuestionCallingPanelProps> = ({
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                {/* SHOW ON PROJECTOR Switch in active question bar */}
+                <button
+                  type="button"
+                  onClick={handleToggleProjector}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer transition-all border shadow-xs ${
+                    isProjectorOn
+                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400 shadow-emerald-950/20'
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                  }`}
+                  title={isProjectorOn ? 'Question currently visible on projector. Click to hide.' : 'Click to display question on auditorium projector.'}
+                >
+                  <span className={`w-2 h-2 rounded-full ${isProjectorOn ? 'bg-white animate-pulse' : 'bg-slate-400'}`} />
+                  <span>{isProjectorOn ? '● SHOW ON PROJECTOR ON' : '○ SHOW ON PROJECTOR OFF'}</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => handleProjectSlide(activeQuestion)}

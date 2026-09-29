@@ -488,6 +488,7 @@ export interface ProjectorStudioSettings {
   revealedFlashVoteId?: string;
   activeFlashVoteId?: string;
   activeQuestionId?: string | null;
+  questionProjectorEnabled?: boolean;
   timer?: LiveTimerState;
   tickerMessage: string;
   isTickerActive: boolean;

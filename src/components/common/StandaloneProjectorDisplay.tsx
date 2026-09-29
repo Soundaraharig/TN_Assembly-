@@ -312,9 +312,13 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
   // Authoritative Question Hour State
   const activeQuestionId = settings.activeQuestionId || storageService.getActiveQuestionId(currentEvent?.id);
   const activeQuestion = questions.find(q => q.id === activeQuestionId) || (settings.displayScene === 'question_hour' ? questions.find(q => q.called_status === 'calling') : null);
+  // Question is shown on projector ONLY when questionProjectorEnabled is explicitly true
+  const isQuestionProjectorOn = settings.questionProjectorEnabled === true;
   const isQuestionHourScene = !!(
-    (settings.displayScene === 'question_hour' && activeQuestion) ||
-    (settings.displayScene === 'auto' && activeQuestion && activeQuestion.called_status === 'calling')
+    isQuestionProjectorOn && activeQuestion && (
+      settings.displayScene === 'question_hour' ||
+      (settings.displayScene === 'auto' && activeQuestion.called_status === 'calling')
+    )
   );
 
   const isBillUpcoming = !!(

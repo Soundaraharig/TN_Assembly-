@@ -9167,6 +9167,13 @@ class StorageService {
   public getActiveAgendaDay(eventId?: string): 'Pre-Event' | 'Day 1' | 'Day 2' | string {
     if (!eventId) return 'Day 1';
     const prog = this.getAgendaProgress(eventId);
+    if (prog.active_agenda_id) {
+      const all = this.getAgenda(eventId);
+      const activeItem = all.find(a => a.id === prog.active_agenda_id);
+      if (activeItem?.day) {
+        return activeItem.day;
+      }
+    }
     if (prog.active_day) {
       return prog.active_day;
     }
@@ -9198,6 +9205,7 @@ class StorageService {
     };
     if (eventId) {
       const prog = this.getAgendaProgress(eventId);
+      const activeId = prog.active_agenda_id || this.getItem<string | null>(`tn_assembly_current_agenda_${eventId}`, null);
       const eventItems = all.filter(a => a.event_id === eventId).map(item => {
         let status = item.status;
         let is_current = item.is_current;
@@ -9206,9 +9214,9 @@ class StorageService {
         } else if (Array.isArray(prog.completed_agenda_ids) && prog.completed_agenda_ids.includes(item.id)) {
           status = 'Completed';
         }
-        if (prog.active_agenda_id) {
-          is_current = item.id === prog.active_agenda_id;
-          if (is_current && status !== 'Completed') status = 'In Progress';
+        if (activeId) {
+          is_current = item.id === activeId;
+          if (is_current) status = 'In Progress';
         }
         if (!status) {
           status = is_current ? 'In Progress' : 'Upcoming';
@@ -9602,26 +9610,32 @@ class StorageService {
   }
 
   public setCurrentAgendaItem(eventId: string, itemId: string) {
+    if (!eventId || !itemId) return;
+
+    // Immediately persist explicit key in localStorage for synchronous survival across rapid reloads
+    this.setItem(`tn_assembly_current_agenda_${eventId}`, itemId);
+
     const currentAgenda = this.getAgenda(eventId);
-    const priorItem = currentAgenda.find(a => a.is_current);
-    if (priorItem && priorItem.id !== itemId) {
+    const priorItem = currentAgenda.find(a => a.is_current && a.id !== itemId);
+    if (priorItem) {
       this.lowerAllSpeakingRequests(eventId, priorItem.id).catch(() => {});
     }
 
-    const all = this.getAgenda().map(a => {
+    let all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, []);
+    if (!all.some(a => a.event_id === eventId) && currentAgenda.length > 0) {
+      all = [...all.filter(a => a.event_id !== eventId), ...currentAgenda];
+    }
+
+    const updated = all.map(a => {
       if (a.event_id === eventId) {
         const wasCurrent = a.is_current;
         const isCurrent = a.id === itemId;
         const itemStatus: AgendaStatus = isCurrent ? 'In Progress' : (wasCurrent ? 'Completed' : a.status || 'Upcoming');
-        const updated = { ...a, is_current: isCurrent, status: itemStatus, updated_at: new Date().toISOString() };
-        if (isCurrent || wasCurrent) {
-          this.sbUpsert('session_agenda', updated as unknown as Record<string, unknown>);
-        }
-        return updated;
+        return { ...a, is_current: isCurrent, status: itemStatus, updated_at: new Date().toISOString() };
       }
       return a;
     });
-    this.setItem(STORAGE_KEYS.AGENDA, all);
+    this.setItem(STORAGE_KEYS.AGENDA, updated);
 
     // Clean up any stale multiple is_current flags in Supabase session_agenda table
     if (supabase && isValidUuid(eventId)) {
@@ -9635,7 +9649,7 @@ class StorageService {
       })().catch(() => {});
     }
 
-    const targetItem = all.find(a => a.id === itemId);
+    const targetItem = updated.find(a => a.id === itemId) || currentAgenda.find(a => a.id === itemId);
     const key = `tn_assembly_started_days_${eventId}`;
     const startedDays = this.getItem<Record<string, boolean>>(key, {});
     if (targetItem && targetItem.day) {
@@ -9643,12 +9657,13 @@ class StorageService {
       this.setItem(key, startedDays);
     }
 
-    // Persist authoritative agenda_progress to Supabase
-    const eventItems = all.filter(a => a.event_id === eventId);
-    const completedIds = eventItems.filter(a => a.status === 'Completed').map(a => a.id);
+    // Persist authoritative agenda_progress to Supabase (current active item must NOT be in completed_agenda_ids)
+    const eventItems = updated.filter(a => a.event_id === eventId);
+    const completedIds = eventItems.filter(a => a.status === 'Completed' && a.id !== itemId).map(a => a.id);
     const statuses: Record<string, AgendaStatus> = {};
     eventItems.forEach(a => {
-      if (a.status) statuses[a.id] = a.status;
+      if (a.id === itemId) statuses[a.id] = 'In Progress';
+      else if (a.status) statuses[a.id] = a.status;
     });
 
     this.saveAgendaProgress(eventId, {
@@ -16530,6 +16545,7 @@ class StorageService {
     this.saveProjectorSettings(syncId, {
       ...curPs,
       activeQuestionId: null,
+      questionProjectorEnabled: false,
       displayScene: curPs.displayScene === 'question_hour' ? 'agenda' : curPs.displayScene
     });
 
