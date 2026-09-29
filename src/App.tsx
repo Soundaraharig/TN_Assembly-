@@ -26,7 +26,7 @@ import type {
   DayAttendanceRecord,
   DayAttendanceStatus
 } from './types';
-import { storageService, isSpeakerRole, isDeputySpeakerRole } from './services/storageService';
+import { storageService, isSpeakerRole, isDeputySpeakerRole, areJsonbObjectsEqual } from './services/storageService';
 import { Header } from './components/common/Header';
 import { Sidebar, type ActiveNavTab } from './components/common/Sidebar';
 import { ToastContainer, type ToastMessage } from './components/common/Toast';
@@ -1243,14 +1243,16 @@ export function App() {
         // NEVER fetches: volunteers, dayAttendance, eventDays, elections, flashVotes, nominations
         const eventLearners = storageService.getLearners(activeEv.id);
         setLearners(eventLearners);
-        setAgenda(storageService.getAgenda(activeEv.id));
+        const freshJuryAgenda = storageService.getAgenda(activeEv.id);
+        setAgenda(prev => (areJsonbObjectsEqual(prev, freshJuryAgenda) ? prev : freshJuryAgenda));
         setScores(storageService.getScores(activeEv.id));
       } else {
         const eventLearners = storageService.getLearners(activeEv.id);
         setLearners(eventLearners);
         setParties(storageService.getParties(activeEv.id));
         setCommittees(storageService.getCommittees(activeEv.id));
-        setAgenda(storageService.getAgenda(activeEv.id));
+        const freshAgenda = storageService.getAgenda(activeEv.id);
+        setAgenda(prev => (areJsonbObjectsEqual(prev, freshAgenda) ? prev : freshAgenda));
         setJury(storageService.getJury(activeEv.id));
         setVolunteers(storageService.getVolunteers(activeEv.id));
         setNominations(storageService.getNominations(activeEv.id));

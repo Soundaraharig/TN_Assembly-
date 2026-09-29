@@ -9481,7 +9481,18 @@ class StorageService {
     const sc = (ev?.social_coverage || {}) as Record<string, any>;
     if (sc.agenda_progress && typeof sc.agenda_progress === 'object') {
       const prog = sc.agenda_progress as EventAgendaProgress;
-      this.setItem(`tn_assembly_agenda_progress_${eventId}`, prog);
+      // Read-only hydration: Return remote authoritative progress directly.
+      // Update local storage cache silently ONLY if missing/different, without triggering this.notify()
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          const key = `tn_assembly_agenda_progress_${eventId}`;
+          const cached = localStorage.getItem(key);
+          const stringified = JSON.stringify(prog);
+          if (cached !== stringified) {
+            localStorage.setItem(key, stringified);
+          }
+        }
+      } catch { }
       return prog;
     }
 
@@ -13794,10 +13805,16 @@ class StorageService {
       const sc = (ev?.social_coverage || {}) as Record<string, any>;
       if (typeof sc.timer_config?.durationSec === 'number' && sc.timer_config.durationSec > 0) {
         const dur = sc.timer_config.durationSec;
-        const local = this.getItem<number | null>(`tn_assembly_timer_config_${eventId}`, null);
-        if (local !== dur) {
-          this.setItem(`tn_assembly_timer_config_${eventId}`, dur);
-        }
+        try {
+          if (typeof window !== 'undefined' && window.localStorage) {
+            const key = `tn_assembly_timer_config_${eventId}`;
+            const cached = localStorage.getItem(key);
+            const stringified = JSON.stringify(dur);
+            if (cached !== stringified) {
+              localStorage.setItem(key, stringified);
+            }
+          }
+        } catch { }
         return dur;
       }
       const local = this.getItem<number | null>(`tn_assembly_timer_config_${eventId}`, null);
@@ -14008,7 +14025,16 @@ class StorageService {
       if (sc.timer_audio_config && typeof sc.timer_audio_config === 'object') {
         const merged = { ...defaultConfig, ...sc.timer_audio_config };
         this.timerAudioMemoryCache.set(eventId, merged);
-        this.setItemSafe(`tn_assembly_timer_audio_${eventId}`, merged);
+        try {
+          if (typeof window !== 'undefined' && window.localStorage) {
+            const key = `tn_assembly_timer_audio_${eventId}`;
+            const cached = localStorage.getItem(key);
+            const stringified = JSON.stringify(merged);
+            if (cached !== stringified) {
+              localStorage.setItem(key, stringified);
+            }
+          }
+        } catch { }
         return merged;
       }
       const local = this.getItem<TimerAudioConfig | null>(`tn_assembly_timer_audio_${eventId}`, null);
@@ -14767,7 +14793,16 @@ class StorageService {
       const ev = this.getEvents().find(e => e.id === eventId);
       const sc = (ev?.social_coverage || {}) as Record<string, any>;
       if (sc.projector_settings) {
-        this.setItem(`tn_assembly_projector_studio_${eventId}`, sc.projector_settings);
+        try {
+          if (typeof window !== 'undefined' && window.localStorage) {
+            const key = `tn_assembly_projector_studio_${eventId}`;
+            const cached = localStorage.getItem(key);
+            const stringified = JSON.stringify(sc.projector_settings);
+            if (cached !== stringified) {
+              localStorage.setItem(key, stringified);
+            }
+          }
+        } catch { }
         return sc.projector_settings;
       }
       const local = this.getItem<ProjectorStudioSettings | null>(`tn_assembly_projector_studio_${eventId}`, null);

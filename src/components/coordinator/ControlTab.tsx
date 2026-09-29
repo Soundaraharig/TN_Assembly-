@@ -47,7 +47,7 @@ import {
   Radio
 } from 'lucide-react';
 
-import { storageService } from '../../services/storageService';
+import { storageService, areJsonbObjectsEqual } from '../../services/storageService';
 import { playTimerAlarm, stopAllAlertAudio, unlockAudioContext, playStartChirp } from '../../utils/audioAlert';
 import { getEventSlug } from '../../utils/slug';
 import { ArrangeQuestionOrderModal } from './ArrangeQuestionOrderModal';
@@ -109,9 +109,9 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   useEffect(() => {
     const fresh = storageService.getAgenda(currentEvent?.id);
     if (fresh && fresh.length > 0) {
-      setLocalAgenda(fresh);
+      setLocalAgenda(prev => (areJsonbObjectsEqual(prev, fresh) ? prev : fresh));
     } else if (agenda && agenda.length > 0) {
-      setLocalAgenda(agenda);
+      setLocalAgenda(prev => (areJsonbObjectsEqual(prev, agenda) ? prev : agenda));
     }
   }, [currentEvent?.id, agenda]);
 
@@ -121,7 +121,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     const syncAgenda = () => {
       const fresh = storageService.getAgenda(currentEvent.id);
       if (fresh && fresh.length > 0) {
-        setLocalAgenda(fresh);
+        setLocalAgenda(prev => (areJsonbObjectsEqual(prev, fresh) ? prev : fresh));
       }
     };
     const unsub = storageService.subscribe(syncAgenda);
