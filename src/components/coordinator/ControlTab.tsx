@@ -205,19 +205,12 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   }, [currentAgendaList, currentEvent?.id, activeDayTab]);
 
   const activeAgendaItem = useMemo(() => {
-    // 1. Authoritative active item from session_agenda is_current (Supabase table)
+    // 1. Authoritative active item strictly from session_agenda is_current (Supabase table)
     const currentInAll = allEventAgenda.find(a => a.is_current);
     if (currentInAll) return currentInAll;
 
-    // 2. Authoritative active item from agendaProgress (persisted backend state)
-    const prog = currentEvent?.id ? storageService.getAgendaProgress(currentEvent.id) : null;
-    const activeId = prog?.active_agenda_id;
-    if (activeId) {
-      const matchInAll = allEventAgenda.find(a => a.id === activeId);
-      if (matchInAll) return matchInAll;
-    }
-
-    // CRITICAL: NEVER invent currentAgendaList[0]! If no session is current, display NOT STARTED
+    // CRITICAL: NEVER invent currentAgendaList[0] or use downstream prog cache!
+    // If no session is current, display NOT STARTED
     return {
       id: 'not_started',
       event_id: currentEvent?.id || '',
@@ -1056,6 +1049,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
   const handleResetTimer = () => {
     const configuredDur = (currentEvent?.id ? storageService.getTimerDurationConfig(currentEvent.id) : null) || timerDurationSec || 75;
+    console.log(`[TIMER-CONFIG-TRACE] timestamp=${Date.now()} eventId=${currentEvent?.id} durationSec=${configuredDur} source=handleResetTimer reason=RESET_CLICK explicitUserAction=false`);
     setIsTimerRunning(false);
     setTimerDurationSec(configuredDur);
     setSecondsLeft(configuredDur);
@@ -1074,6 +1068,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
   const handleSetPreset = (presetSec: number) => {
     const dur = Math.max(1, Math.min(3600, presetSec));
+    console.log(`[TIMER-CONFIG-TRACE] timestamp=${Date.now()} eventId=${currentEvent?.id} durationSec=${dur} source=handleSetPreset reason=PRESET_CLICK explicitUserAction=true`);
     setTimerDurationSec(dur);
     setSecondsLeft(dur);
     hasAlarmTriggeredRef.current = false;
@@ -1114,6 +1109,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
   const handleDurationChange = (val: number) => {
     const dur = Math.max(1, Math.min(3600, val));
+    console.log(`[TIMER-CONFIG-TRACE] timestamp=${Date.now()} eventId=${currentEvent?.id} durationSec=${dur} source=handleDurationChange reason=CUSTOM_SET explicitUserAction=true`);
     setTimerDurationSec(dur);
     if (currentEvent?.id) {
       storageService.saveTimerDurationConfig(currentEvent.id, dur);

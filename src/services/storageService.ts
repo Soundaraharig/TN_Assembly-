@@ -540,6 +540,7 @@ class StorageService {
   private coordinatorEventsCache = new Map<string, CollegeEvent[]>();
   private timerAudioMemoryCache = new Map<string, TimerAudioConfig>();
   private connectionStatus: 'connected' | 'reconnecting' | 'offline' = (typeof navigator !== 'undefined' && !navigator.onLine) ? 'offline' : 'connected';
+  private instanceClientId: string = 'inst_' + Math.random().toString(36).substring(2, 10) + '_' + Date.now();
 
   public getConnectionStatus(): 'connected' | 'reconnecting' | 'offline' {
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -1552,6 +1553,25 @@ class StorageService {
       if (sc.timer) {
         this.setItem(`tn_assembly_live_timer_${ev.id}`, sc.timer);
       }
+      if (sc.timer_config && typeof sc.timer_config === 'object') {
+        const durSec = typeof sc.timer_config.durationSec === 'number'
+          ? sc.timer_config.durationSec
+          : Number(sc.timer_config);
+        const remoteUpdated = Number(sc.timer_config.updated_at) || 0;
+        const localSavedTimestamp = this.getItem<number>(`tn_assembly_timer_config_updated_at_${ev.id}`, 0) || 0;
+        if (durSec > 0 && (remoteUpdated >= localSavedTimestamp || localSavedTimestamp === 0)) {
+          this.setItem(`tn_assembly_timer_config_${ev.id}`, durSec);
+          if (remoteUpdated > 0) {
+            this.setItem(`tn_assembly_timer_config_updated_at_${ev.id}`, remoteUpdated);
+          }
+          console.log(`[TIMER-CONFIG-TRACE] timestamp=${Date.now()} eventId=${ev.id} durationSec=${durSec} source=unpackEventState reason=SUPABASE_UNPACK explicitUserAction=false`);
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('tn_assembly_timer_config_update', {
+              detail: { eventId: ev.id, durationSec: durSec, updatedAt: remoteUpdated }
+            }));
+          }
+        }
+      }
       if (sc.timer_audio_config && typeof sc.timer_audio_config === 'object') {
         const audioCfg = sc.timer_audio_config as TimerAudioConfig;
         this.timerAudioMemoryCache.set(ev.id, audioCfg);
@@ -1571,23 +1591,18 @@ class StorageService {
         }
         const deletedAgendaIds = this.getDeletedAgendaIds();
         const allAgenda = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, []).filter(a => !deletedAgendaIds.has(a.id));
+        console.log(`[AGENDA-TRACE] timestamp=${Date.now()} eventId=${ev.id} agendaId=${allAgenda.find(a => a.event_id === ev.id && a.is_current)?.id || 'none'} source=unpackEventState reason=HYDRATION dbWrite=false broadcast=false`);
         let hasAgendaChanges = false;
         const updatedAgenda = allAgenda.map(item => {
           if (item.event_id === ev.id) {
             let nextStatus = item.status;
-            let nextCurrent = item.is_current;
+            const nextCurrent = item.is_current;
             if (prog.item_statuses && prog.item_statuses[item.id]) {
               nextStatus = prog.item_statuses[item.id];
             } else if (Array.isArray(prog.completed_agenda_ids) && prog.completed_agenda_ids.includes(item.id)) {
               nextStatus = 'Completed';
             }
-            // CRITICAL: Do NOT stomp item.is_current if already defined in session_agenda records
-            const hasCurrentInLocal = allAgenda.some(a => a.event_id === ev.id && a.is_current);
-            if (!hasCurrentInLocal && prog.active_agenda_id) {
-              nextCurrent = item.id === prog.active_agenda_id;
-              if (nextCurrent) nextStatus = 'In Progress';
-            }
-            if (nextStatus !== item.status || nextCurrent !== item.is_current) {
+            if (nextStatus !== item.status) {
               hasAgendaChanges = true;
               return { ...item, status: nextStatus, is_current: nextCurrent };
             }
@@ -3667,28 +3682,24 @@ class StorageService {
           return (a.created_at || '').localeCompare(b.created_at || '');
         });
         const prog = this.getAgendaProgress(activeEventId);
-        const hasCurrentInSorted = sortedAgenda.some((a: any) => a.is_current);
         const resolvedAgenda = sortedAgenda.map((item: any) => {
-          let is_current = item.is_current;
+          const is_current = !!item.is_current;
           let status = item.status;
           if (prog.item_statuses && prog.item_statuses[item.id]) {
             status = prog.item_statuses[item.id];
-          }
-          // Do NOT stomp session_agenda.is_current if already marked
-          if (!hasCurrentInSorted && prog.active_agenda_id) {
-            is_current = item.id === prog.active_agenda_id;
-            if (is_current && status !== 'Completed') status = 'In Progress';
           }
           return { ...item, is_current, status };
         });
         this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...resolvedAgenda]);
 
+        const currentActiveItem = resolvedAgenda.find((a: any) => a.is_current);
+        console.log(`[AGENDA-TRACE] timestamp=${Date.now()} eventId=${activeEventId} agendaId=${currentActiveItem?.id || 'none'} source=executeDisplayPortalFetch reason=PROJECTOR_FETCH dbWrite=false broadcast=false`);
+
         // Reconcile projector selectedAgendaId with authoritative is_current
-        const activeItemId = (resolvedAgenda.find((a: any) => a.is_current)?.id) || prog.active_agenda_id;
-        if (activeItemId) {
+        if (currentActiveItem) {
           const proj = this.getProjectorSettings(activeEventId);
-          if (proj.selectedAgendaId !== activeItemId) {
-            proj.selectedAgendaId = activeItemId;
+          if (proj.selectedAgendaId !== currentActiveItem.id) {
+            proj.selectedAgendaId = currentActiveItem.id;
             this.setItem(`tn_assembly_projector_studio_${activeEventId}`, proj);
           }
         }
@@ -4228,14 +4239,38 @@ class StorageService {
           if (msg?.payload?.eventId && typeof msg?.payload?.durationSec === 'number') {
             const evId = msg.payload.eventId;
             const dur = msg.payload.durationSec;
-            this.setItem(`tn_assembly_timer_config_${evId}`, dur);
+            const incomingClientId = msg.payload.clientId;
+            const incomingUpdatedAt = Number(msg.payload.updatedAt) || 0;
 
+            // 1. Ignore echo from our own client instance
+            if (incomingClientId && incomingClientId === this.instanceClientId) {
+              return;
+            }
+
+            // 2. Monotonic timestamp check against existing local & event config
             const curEvs = this.getEvents();
             const ev = curEvs.find(e => e.id === evId);
+            const localSavedTimestamp = this.getItem<number>(`tn_assembly_timer_config_updated_at_${evId}`, 0) || 0;
+            const evTimestamp = Number(ev?.social_coverage?.timer_config?.updated_at) || 0;
+            const currentUpdatedAt = Math.max(localSavedTimestamp, evTimestamp);
+
+            if (incomingUpdatedAt > 0 && currentUpdatedAt > 0 && incomingUpdatedAt < currentUpdatedAt) {
+              console.log(`[TIMER-CONFIG-TRACE] Ignored stale broadcast: incomingUpdatedAt=${incomingUpdatedAt} < currentUpdatedAt=${currentUpdatedAt}`);
+              return;
+            }
+            if (!incomingUpdatedAt && currentUpdatedAt > 0) {
+              console.log(`[TIMER-CONFIG-TRACE] Ignored untimestamped broadcast when currentUpdatedAt=${currentUpdatedAt}`);
+              return;
+            }
+
+            console.log(`[TIMER-CONFIG-TRACE] timestamp=${Date.now()} eventId=${evId} durationSec=${dur} source=setupRealtimeSync reason=REALTIME_BROADCAST explicitUserAction=false`);
+            this.setItem(`tn_assembly_timer_config_${evId}`, dur);
+            this.setItem(`tn_assembly_timer_config_updated_at_${evId}`, incomingUpdatedAt || Date.now());
+
             if (ev) {
               ev.social_coverage = {
                 ...(ev.social_coverage || {}),
-                timer_config: { durationSec: dur, updated_at: msg.payload.updatedAt || Date.now() }
+                timer_config: { durationSec: dur, updated_at: incomingUpdatedAt || Date.now() }
               };
               this.setItem(STORAGE_KEYS.EVENTS, curEvs);
             }
@@ -4401,6 +4436,7 @@ class StorageService {
               this.setItem(STORAGE_KEYS.AGENDA, updated);
               incomingAgenda = updated.filter(a => a.event_id === evId);
             }
+            console.log(`[AGENDA-TRACE] timestamp=${Date.now()} eventId=${evId} agendaId=${incomingAgenda?.find(a => a.is_current)?.id || 'none'} source=setupRealtimeSync reason=REALTIME dbWrite=false broadcast=false`);
 
             // Reconcile projector selectedAgendaId with the authoritative is_current from the broadcast.
             // This is a belt-and-suspenders fix: even if projector_update broadcast is delayed or lost,
@@ -4435,6 +4471,7 @@ class StorageService {
           if (msg?.payload?.eventId && msg?.payload?.progress) {
             const evId = msg.payload.eventId;
             const prog = msg.payload.progress as EventAgendaProgress;
+            console.log(`[AGENDA-TRACE] timestamp=${Date.now()} eventId=${evId} agendaId=${prog.active_agenda_id || 'none'} source=setupRealtimeSync reason=AGENDA_PROGRESS dbWrite=false broadcast=false`);
             this.setItem(`tn_assembly_agenda_progress_${evId}`, prog);
             if (prog.started_days) {
               const key = `tn_assembly_started_days_${evId}`;
@@ -9140,6 +9177,7 @@ class StorageService {
 
   public async saveAgendaProgress(eventId: string, patch: Partial<EventAgendaProgress>): Promise<void> {
     if (!eventId) return;
+    console.log(`[AGENDA-TRACE] timestamp=${Date.now()} eventId=${eventId} agendaId=${patch.active_agenda_id || 'none'} source=saveAgendaProgress reason=AGENDA_PROGRESS_SYNC dbWrite=true broadcast=true`);
     const existing = this.getAgendaProgress(eventId);
     const merged: EventAgendaProgress = {
       ...existing,
@@ -9248,22 +9286,16 @@ class StorageService {
     if (eventId) {
       const prog = this.getAgendaProgress(eventId);
       const eventItems = all.filter(a => a.event_id === eventId);
-      const hasCurrent = eventItems.some(a => a.is_current);
-      const activeId = hasCurrent
-        ? undefined
-        : (prog.active_agenda_id || this.getItem<string | null>(`tn_assembly_current_agenda_${eventId}`, null));
+      const currentActiveItem = eventItems.find(a => a.is_current);
+      console.log(`[AGENDA-TRACE] timestamp=${Date.now()} eventId=${eventId} agendaId=${currentActiveItem?.id || 'none'} source=getAgenda reason=HYDRATION_OR_READ dbWrite=false broadcast=false`);
 
       const resolved = eventItems.map(item => {
         let status = item.status;
-        let is_current = item.is_current;
+        const is_current = !!item.is_current;
         if (prog.item_statuses && prog.item_statuses[item.id]) {
           status = prog.item_statuses[item.id];
         } else if (Array.isArray(prog.completed_agenda_ids) && prog.completed_agenda_ids.includes(item.id)) {
           status = 'Completed';
-        }
-        if (activeId) {
-          is_current = item.id === activeId;
-          if (is_current) status = 'In Progress';
         }
         if (!status) {
           status = is_current ? 'In Progress' : 'Upcoming';
@@ -9658,6 +9690,7 @@ class StorageService {
 
   public async setCurrentAgendaItem(eventId: string, itemId: string): Promise<void> {
     if (!eventId || !itemId) return;
+    console.log(`[AGENDA-TRACE] timestamp=${Date.now()} eventId=${eventId} agendaId=${itemId} source=setCurrentAgendaItem reason=ADMIN_CLICK dbWrite=true broadcast=true`);
 
     // Immediately persist explicit key in localStorage for synchronous survival across rapid reloads
     this.setItem(`tn_assembly_current_agenda_${eventId}`, itemId);
@@ -13206,7 +13239,12 @@ class StorageService {
       const ev = this.getEvents().find(e => e.id === eventId);
       const sc = (ev?.social_coverage || {}) as Record<string, any>;
       if (typeof sc.timer_config?.durationSec === 'number' && sc.timer_config.durationSec > 0) {
-        return sc.timer_config.durationSec;
+        const dur = sc.timer_config.durationSec;
+        const local = this.getItem<number | null>(`tn_assembly_timer_config_${eventId}`, null);
+        if (local !== dur) {
+          this.setItem(`tn_assembly_timer_config_${eventId}`, dur);
+        }
+        return dur;
       }
       const local = this.getItem<number | null>(`tn_assembly_timer_config_${eventId}`, null);
       if (typeof local === 'number' && local > 0) return local;
@@ -13217,20 +13255,25 @@ class StorageService {
 
   public async saveTimerDurationConfig(eventId: string, durationSec: number): Promise<void> {
     if (!eventId || durationSec <= 0) return;
+    const now = Date.now();
+    console.log(`[TIMER-CONFIG-TRACE] timestamp=${now} eventId=${eventId} durationSec=${durationSec} source=saveTimerDurationConfig reason=EXPLICIT_USER_ACTION explicitUserAction=true`);
     this.setItem(`tn_assembly_timer_config_${eventId}`, durationSec);
+    this.setItem(`tn_assembly_timer_config_updated_at_${eventId}`, now);
     const evs = this.getEvents();
     const ev = evs.find(e => e.id === eventId);
     if (ev) {
       ev.social_coverage = {
         ...(ev.social_coverage || {}),
-        timer_config: { durationSec, updated_at: Date.now() }
+        timer_config: { durationSec, updated_at: now }
       };
       this.setItem(STORAGE_KEYS.EVENTS, evs);
     }
 
     this.notify();
     if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('tn_assembly_timer_config_update', { detail: { eventId, durationSec } }));
+      window.dispatchEvent(new CustomEvent('tn_assembly_timer_config_update', {
+        detail: { eventId, durationSec, updatedAt: now, clientId: this.instanceClientId }
+      }));
       window.dispatchEvent(new Event('storage'));
     }
 
@@ -13243,7 +13286,7 @@ class StorageService {
           await this.realtimeChannel.send({
             type: 'broadcast',
             event: 'timer_config_update',
-            payload: { eventId, durationSec, updatedAt: Date.now() }
+            payload: { eventId, durationSec, updatedAt: now, clientId: this.instanceClientId }
           });
         }
       } catch (e) {
@@ -13252,7 +13295,7 @@ class StorageService {
     }
 
     this.patchSocialCoverageSafe(eventId, {
-      timer_config: { durationSec, updated_at: Date.now() }
+      timer_config: { durationSec, updated_at: now }
     }).catch(err => console.warn('[saveTimerDurationConfig] err:', err));
   }
 
@@ -13292,6 +13335,7 @@ class StorageService {
   }
 
   public async saveLiveTimerState(eventId: string, timerState: LiveTimerState): Promise<void> {
+    console.log(`[TIMER-CONFIG-TRACE] timestamp=${Date.now()} eventId=${eventId} durationSec=${timerState.durationSec} source=saveLiveTimerState reason=LIVE_TIMER_STATE explicitUserAction=false`);
     const key = eventId ? `tn_assembly_live_timer_${eventId}` : 'tn_assembly_live_timer_global';
     this.setItem(key, timerState);
 
@@ -14125,6 +14169,9 @@ class StorageService {
   }
 
   public async saveProjectorSettings(eventId: string, settings: ProjectorStudioSettings): Promise<void> {
+    if (settings?.selectedAgendaId) {
+      console.log(`[AGENDA-TRACE] timestamp=${Date.now()} eventId=${eventId} agendaId=${settings.selectedAgendaId} source=saveProjectorSettings reason=PROJECTOR_SETTINGS_SYNC dbWrite=true broadcast=true`);
+    }
     const key = eventId ? `tn_assembly_projector_studio_${eventId}` : 'tn_assembly_projector_studio_v1';
     this.setItem(key, settings);
     this.setItem('tn_assembly_projector_studio_v1', settings);
@@ -14170,7 +14217,7 @@ class StorageService {
   public captureReturnAgendaContext(eventId: string, existingSettings?: ProjectorStudioSettings): ProjectorStudioSettings {
     const proj = existingSettings ? { ...existingSettings } : this.getProjectorSettings(eventId);
     const agenda = this.getAgenda(eventId);
-    const currentAgenda = agenda.find(a => a.is_current) || (proj.selectedAgendaId ? agenda.find(a => a.id === proj.selectedAgendaId) : undefined) || agenda[0];
+    const currentAgenda = agenda.find(a => a.is_current) || (proj.selectedAgendaId ? agenda.find(a => a.id === proj.selectedAgendaId) : undefined);
     if (currentAgenda) {
       proj.return_agenda_item_id = currentAgenda.id;
       proj.return_agenda_event_id = eventId;
@@ -14199,6 +14246,7 @@ class StorageService {
         proj.selectedAgendaId = current.id;
       }
     }
+    console.log(`[AGENDA-TRACE] timestamp=${Date.now()} eventId=${eventId} agendaId=${proj.selectedAgendaId || 'none'} source=restoreReturnAgendaContext reason=RESTORE_CONTEXT dbWrite=false broadcast=false`);
     // CRITICAL: NEVER mutate session_agenda.is_current in restoreReturnAgendaContext!
     return proj;
   }

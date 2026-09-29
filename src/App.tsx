@@ -2141,6 +2141,7 @@ export function App() {
     const activeEv = extractEventFromUrl(events) || currentEvent;
     const targetEventId = arg2 ? arg1 : (activeEv?.id || '');
     const itemId = arg2 || arg1;
+    console.log(`[AGENDA-TRACE] timestamp=${Date.now()} eventId=${targetEventId} agendaId=${itemId} source=handleSetCurrentAgendaItem reason=ADMIN_CLICK dbWrite=true broadcast=true`);
     if (targetEventId && itemId) {
       await storageService.setCurrentAgendaItem(targetEventId, itemId);
       setAgenda(storageService.getAgenda(targetEventId));

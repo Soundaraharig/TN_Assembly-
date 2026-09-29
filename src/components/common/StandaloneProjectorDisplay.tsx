@@ -237,15 +237,19 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
   const selectedAgenda =
     (settings.selectedAgendaId ? agenda.find(a => a.id === settings.selectedAgendaId) : null) ||
     (settings.return_agenda_item_id ? agenda.find(a => a.id === settings.return_agenda_item_id) : null) ||
-    agenda.find(a => a.is_current) ||
-    agenda[0] || {
-      title: 'Speaker Election & Floor Proceedings',
+    agenda.find(a => a.is_current) || ({
+      id: 'not_started',
+      event_id: currentEvent?.id || '',
+      title: 'NOT STARTED',
       description: 'Legislative Assembly Floor Proceedings',
       day: 'Day 1',
-      time: '10:00 AM',
-      speaker_role: 'CURRENT SESSION',
-      duration_minutes: 10
-    };
+      time: '--:--',
+      speaker_role: 'NOT STARTED',
+      duration_minutes: 0,
+      category: 'Special',
+      status: 'Upcoming',
+      is_current: false
+    } as AgendaItem);
 
   // Authoritative Election State
   const activeElection = elections.find(e => (e.status === 'Live' || e.status === 'live') && !e.is_archived);
