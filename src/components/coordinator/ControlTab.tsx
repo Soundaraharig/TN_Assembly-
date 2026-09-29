@@ -205,44 +205,34 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   }, [currentAgendaList, currentEvent?.id, activeDayTab]);
 
   const activeAgendaItem = useMemo(() => {
-    // 1. Authoritative active item from agendaProgress (persisted backend state)
+    // 1. Authoritative active item from session_agenda is_current (Supabase table)
+    const currentInAll = allEventAgenda.find(a => a.is_current);
+    if (currentInAll) return currentInAll;
+
+    // 2. Authoritative active item from agendaProgress (persisted backend state)
     const prog = currentEvent?.id ? storageService.getAgendaProgress(currentEvent.id) : null;
     const activeId = prog?.active_agenda_id;
     if (activeId) {
-      const matchInTab = currentAgendaList.find(a => a.id === activeId);
-      if (matchInTab) return matchInTab;
       const matchInAll = allEventAgenda.find(a => a.id === activeId);
       if (matchInAll) return matchInAll;
     }
 
-    // 2. Authoritative active item with is_current flag in current tab
-    const currentInTab = currentAgendaList.find(a => a.is_current);
-    if (currentInTab) return currentInTab;
-
-    // 3. Authoritative active item with is_current flag across all days
-    const currentInAll = allEventAgenda.find(a => a.is_current);
-    if (currentInAll) return currentInAll;
-
-    // 4. In progress item in current tab or all days
-    if (currentAgendaList.length > 0) {
-      const inProg = currentAgendaList.find(a => a.status === 'In Progress');
-      if (inProg) return inProg;
+    // 3. Fallback to first item ONLY IF day has been explicitly started
+    if (isDayStarted && currentAgendaList.length > 0) {
+      return currentAgendaList[0];
     }
-    const inProgAll = allEventAgenda.find(a => a.status === 'In Progress');
-    if (inProgAll) return inProgAll;
 
-    // 5. Default only if no active item has ever been set
     return currentAgendaList[0] || allEventAgenda[0] || {
       id: 'ag_curr',
       event_id: currentEvent?.id || '',
       day: activeDayTab,
       time: '09:00 AM',
-      title: 'Registration Opens',
-      description: '30 min',
+      title: 'Session Not Started',
+      description: 'Click START DAY to activate agenda',
       speaker_role: 'Registration Desk',
       is_current: false
     };
-  }, [currentAgendaList, allEventAgenda, activeDayTab, currentEvent?.id]);
+  }, [allEventAgenda, currentAgendaList, currentEvent?.id, isDayStarted, activeDayTab]);
 
   const currentAgendaIndex = useMemo(() => {
     if (!activeAgendaItem) return 0;
@@ -257,10 +247,38 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   });
   // Local draft state for custom timer seconds input to allow smooth multi-digit typing
   const [customDraft, setCustomDraft] = useState<string>(() => timerDurationSec.toString());
+  const isCustomDraftFocusedRef = useRef(false);
+  const [, setAudioReady] = useState(false);
+  const pendingAlarmRef = useRef(false);
 
   useEffect(() => {
-    setCustomDraft(timerDurationSec.toString());
+    if (!isCustomDraftFocusedRef.current) {
+      setCustomDraft(timerDurationSec.toString());
+    }
   }, [timerDurationSec]);
+
+  // Audio readiness & gesture unlock
+  useEffect(() => {
+    const handleGesture = () => {
+      unlockAudioContext();
+      setAudioReady(true);
+      if (pendingAlarmRef.current) {
+        pendingAlarmRef.current = false;
+        const activeCfg = storageService.getTimerAudioConfig(currentEvent?.id);
+        if (!activeCfg.is_muted) {
+          playTimerAlarm(activeCfg).catch(() => {});
+        }
+      }
+    };
+    window.addEventListener('pointerdown', handleGesture, { passive: true });
+    window.addEventListener('keydown', handleGesture, { passive: true });
+    window.addEventListener('touchstart', handleGesture, { passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', handleGesture);
+      window.removeEventListener('keydown', handleGesture);
+      window.removeEventListener('touchstart', handleGesture);
+    };
+  }, [currentEvent?.id]);
   const [secondsLeft, setSecondsLeft] = useState(() => {
     const s = storageService.getLiveTimerState(currentEvent?.id);
     const configured = storageService.getTimerDurationConfig(currentEvent?.id);
@@ -371,7 +389,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
       const state = storageService.getLiveTimerState(currentEvent?.id);
       const configured = storageService.getTimerDurationConfig(currentEvent?.id);
       if (state) {
-        setTimerDurationSec(state.durationSec || configured);
+        setTimerDurationSec(configured);
         if (state.isRunning && state.startedAt) {
           const elapsed = Math.floor((Date.now() - state.startedAt) / 1000);
           const remaining = Math.max(0, state.secondsLeft - elapsed);
@@ -384,11 +402,13 @@ export const ControlTab: React.FC<ControlTabProps> = ({
             setTimeout(() => setIsAlarmSounding(false), 4000);
             const activeCfg = storageService.getTimerAudioConfig(currentEvent?.id);
             if (!activeCfg.is_muted) {
-              playTimerAlarm(activeCfg);
+              playTimerAlarm(activeCfg).catch(() => {
+                pendingAlarmRef.current = true;
+              });
             }
           }
         } else {
-          const validSec = (state.secondsLeft !== undefined) ? state.secondsLeft : (state.durationSec || configured);
+          const validSec = (state.secondsLeft !== undefined) ? state.secondsLeft : configured;
           setSecondsLeft(validSec);
           if (validSec > 0) {
             hasAlarmTriggeredRef.current = false;
@@ -414,6 +434,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     if (isTimerRunning) {
       interval = setInterval(() => {
         const live = storageService.getLiveTimerState(currentEvent?.id);
+        const configured = storageService.getTimerDurationConfig(currentEvent?.id);
         if (live.isRunning && live.startedAt) {
           const elapsed = Math.floor((Date.now() - live.startedAt) / 1000);
           const remaining = Math.max(0, live.secondsLeft - elapsed);
@@ -422,7 +443,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
             setIsTimerRunning(false);
             if (currentEvent?.id) {
               storageService.saveLiveTimerState(currentEvent.id, {
-                durationSec: timerDurationSec,
+                durationSec: configured,
                 secondsLeft: 0,
                 isRunning: false,
                 updatedAt: Date.now()
@@ -434,7 +455,9 @@ export const ControlTab: React.FC<ControlTabProps> = ({
               setTimeout(() => setIsAlarmSounding(false), 4000);
               const activeCfg = storageService.getTimerAudioConfig(currentEvent?.id);
               if (!activeCfg.is_muted) {
-                playTimerAlarm(activeCfg);
+                playTimerAlarm(activeCfg).catch(() => {
+                  pendingAlarmRef.current = true;
+                });
               }
               if (currentEvent?.id) {
                 storageService.broadcastTimerAlarm(currentEvent.id, 'trigger', windowSessionId).catch(console.warn);
@@ -456,7 +479,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isTimerRunning, activeAgendaItem?.title, currentEvent?.id, timerDurationSec, onShowToast, windowSessionId]);
+  }, [isTimerRunning, activeAgendaItem?.title, currentEvent?.id, onShowToast, windowSessionId]);
 
   const handleStopAlarm = () => {
     stopAllAlertAudio();
@@ -915,29 +938,14 @@ export const ControlTab: React.FC<ControlTabProps> = ({
       lastUserSelectedDayRef.current = { day: targetItem.day as any, timestamp: Date.now() };
     }
 
-    // 3. Reset session timer and stop any playing alarm
-    const configuredDur = timerDurationSec || (currentEvent?.id ? storageService.getTimerDurationConfig(currentEvent.id) : null) || 75;
-    setTimerDurationSec(configuredDur);
-    setSecondsLeft(configuredDur);
-    setIsTimerRunning(false);
-    hasAlarmTriggeredRef.current = false;
-    stopAllAlertAudio();
-    setIsAlarmSounding(false);
-
-    // 4. Durably persist to backend storage and trigger listeners
+    // 3. Durably persist to backend storage and trigger listeners (timer state is completely untouched)
     if (currentEvent?.id) {
       storageService.setCurrentAgendaItem(currentEvent.id, targetItem.id);
       if (onSetCurrentAgendaItem) {
         onSetCurrentAgendaItem(currentEvent.id, targetItem.id);
       }
-      storageService.saveLiveTimerState(currentEvent.id, {
-        durationSec: configuredDur,
-        secondsLeft: configuredDur,
-        isRunning: false,
-        updatedAt: Date.now()
-      });
     }
-  }, [currentEvent?.id, onSetCurrentAgendaItem, timerDurationSec]);
+  }, [currentEvent?.id, onSetCurrentAgendaItem]);
 
   // ── Individual Agenda Item Reset State ────────────────────────────────────
   const [resetConfirmItem, setResetConfirmItem] = useState<AgendaItem | null>(null);
@@ -1029,7 +1037,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   };
 
   const handleResetTimer = () => {
-    const configuredDur = timerDurationSec || (currentEvent?.id ? storageService.getTimerDurationConfig(currentEvent.id) : null) || 75;
+    const configuredDur = (currentEvent?.id ? storageService.getTimerDurationConfig(currentEvent.id) : null) || timerDurationSec || 75;
     setIsTimerRunning(false);
     setTimerDurationSec(configuredDur);
     setSecondsLeft(configuredDur);
@@ -1047,7 +1055,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   };
 
   const handleSetPreset = (presetSec: number) => {
-    const dur = Math.max(10, presetSec);
+    const dur = Math.max(1, Math.min(3600, presetSec));
     setTimerDurationSec(dur);
     setSecondsLeft(dur);
     hasAlarmTriggeredRef.current = false;
@@ -1075,7 +1083,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
       }
       if (currentEvent?.id) {
         storageService.saveLiveTimerState(currentEvent.id, {
-          durationSec: Math.max(timerDurationSec, nextSec),
+          durationSec: timerDurationSec,
           secondsLeft: nextSec,
           isRunning: isTimerRunning,
           startedAt: isTimerRunning ? Date.now() : undefined,
@@ -1087,7 +1095,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   };
 
   const handleDurationChange = (val: number) => {
-    const dur = Math.max(10, val);
+    const dur = Math.max(1, Math.min(3600, val));
     setTimerDurationSec(dur);
     if (currentEvent?.id) {
       storageService.saveTimerDurationConfig(currentEvent.id, dur);
@@ -1738,13 +1746,17 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   inputMode="numeric"
                   pattern="[0-9]*"
                   value={customDraft}
+                  onFocus={() => {
+                    isCustomDraftFocusedRef.current = true;
+                  }}
                   onChange={(e) => {
                     const raw = e.target.value.replace(/\D/g, '');
                     setCustomDraft(raw);
                   }}
                   onBlur={() => {
+                    isCustomDraftFocusedRef.current = false;
                     const parsed = parseInt(customDraft, 10);
-                    if (!isNaN(parsed) && parsed >= 5 && parsed <= 7200) {
+                    if (!isNaN(parsed) && parsed >= 1 && parsed <= 3600) {
                       handleDurationChange(parsed);
                     } else {
                       setCustomDraft(timerDurationSec.toString());
@@ -1752,8 +1764,9 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                   }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
+                      isCustomDraftFocusedRef.current = false;
                       const parsed = parseInt(customDraft, 10);
-                      if (!isNaN(parsed) && parsed >= 5 && parsed <= 7200) {
+                      if (!isNaN(parsed) && parsed >= 1 && parsed <= 3600) {
                         handleDurationChange(parsed);
                       } else {
                         setCustomDraft(timerDurationSec.toString());

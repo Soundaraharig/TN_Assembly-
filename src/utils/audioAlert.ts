@@ -206,7 +206,9 @@ export function playCustomAudio(audioSource: string, volume = 1): Promise<void> 
       if (playPromise !== undefined) {
         playPromise.then(() => resolve()).catch(err => {
           activeAudioElement = null;
-          console.warn('[audioAlert] Audio play promise rejected:', err);
+          if (err?.name !== 'NotAllowedError') {
+            console.warn('[audioAlert] Audio play promise rejected:', err);
+          }
           reject(err);
         });
       }
@@ -232,8 +234,10 @@ export async function playTimerAlarm(config?: TimerAudioConfig | null): Promise<
     try {
       await playCustomAudio(config.custom_audio_data, vol);
       return;
-    } catch (err) {
-      console.warn('[audioAlert] Falling back to default chime due to custom audio error:', err);
+    } catch (err: any) {
+      if (err?.name === 'NotAllowedError') {
+        throw err;
+      }
       playChimeSequence(vol);
       return;
     }

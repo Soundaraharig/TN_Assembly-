@@ -54,6 +54,7 @@ import type {
 
 export const CANONICAL_QUESTION_TARGETS: string[] = [
   'Chief Minister',
+  'Ministry of Chief Minister',
   'Ministry of Education',
   'Ministry of Finance',
   'Ministry of Health & Family Welfare',
@@ -2712,13 +2713,16 @@ class StorageService {
       return defaultList;
     }
 
-    // Filter out 'Chief Minister' from ministries if present to avoid duplication
+    // Filter out 'Chief Minister' variants from ministries if present to avoid duplication
     const otherMinistries = ministries.filter(
-      m => m.toLowerCase().trim() !== 'chief minister' && m.toLowerCase().trim() !== 'cm'
+      m => {
+        const lower = m.toLowerCase().trim();
+        return lower !== 'chief minister' && lower !== 'cm' && lower !== 'ministry of chief minister';
+      }
     );
 
-    // Chief Minister ALWAYS at index 0 at the top of the target list
-    return ['Chief Minister', ...(otherMinistries.length > 0 ? otherMinistries : defaultList.slice(1))];
+    // Chief Minister ALWAYS at top of the target list
+    return ['Chief Minister', 'Ministry of Chief Minister', ...(otherMinistries.length > 0 ? otherMinistries : defaultList.slice(2))];
   }
 
   public getCabinetMinistries(eventId: string): string[] {
@@ -4652,6 +4656,16 @@ class StorageService {
           const remoteAgenda = agendaRes.data as unknown as AgendaItem[];
           const otherAgenda = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, []).filter(a => a.event_id !== eventId);
           this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...remoteAgenda]);
+
+          // Authoritative row in session_agenda with is_current = true defines the current active item
+          const remoteCurrent = remoteAgenda.find(a => a.is_current);
+          if (remoteCurrent) {
+            this.setItem(`tn_assembly_current_agenda_${eventId}`, remoteCurrent.id);
+            if (sc.agenda_progress) {
+              sc.agenda_progress.active_agenda_id = remoteCurrent.id;
+              sc.agenda_progress.completed_agenda_ids = (sc.agenda_progress.completed_agenda_ids || []).filter((id: string) => id !== remoteCurrent.id);
+            }
+          }
         }
         if (sc.agenda_progress) {
           this.setItem(`tn_assembly_agenda_progress_${eventId}`, sc.agenda_progress);
@@ -13158,9 +13172,6 @@ class StorageService {
       if (typeof sc.timer_config?.durationSec === 'number' && sc.timer_config.durationSec > 0) {
         return sc.timer_config.durationSec;
       }
-      if (typeof sc.timer?.durationSec === 'number' && sc.timer.durationSec > 0) {
-        return sc.timer.durationSec;
-      }
       const local = this.getItem<number | null>(`tn_assembly_timer_config_${eventId}`, null);
       if (typeof local === 'number' && local > 0) return local;
     }
@@ -13223,9 +13234,6 @@ class StorageService {
   public async saveLiveTimerState(eventId: string, timerState: LiveTimerState): Promise<void> {
     const key = eventId ? `tn_assembly_live_timer_${eventId}` : 'tn_assembly_live_timer_global';
     this.setItem(key, timerState);
-    if (eventId && timerState.durationSec > 0) {
-      this.setItem(`tn_assembly_timer_config_${eventId}`, timerState.durationSec);
-    }
 
     const events = this.getEvents();
     const ev = events.find(e => e.id === eventId);
@@ -13233,8 +13241,7 @@ class StorageService {
       const sc = (ev.social_coverage || {}) as Record<string, any>;
       ev.social_coverage = {
         ...sc,
-        timer: timerState,
-        timer_config: { durationSec: timerState.durationSec, updated_at: Date.now() }
+        timer: timerState
       };
       this.setItem(STORAGE_KEYS.EVENTS, events);
     }
@@ -13263,8 +13270,7 @@ class StorageService {
 
     if (eventId) {
       this.patchSocialCoverageSafe(eventId, {
-        timer: timerState,
-        timer_config: { durationSec: timerState.durationSec, updated_at: Date.now() }
+        timer: timerState
       }).catch(err => {
         console.warn('[StorageService] Error patching timer to social_coverage:', err);
       });
@@ -16542,12 +16548,21 @@ class StorageService {
     }
 
     const curPs = this.getProjectorSettings(syncId);
-    this.saveProjectorSettings(syncId, {
+    const curAgenda = this.getAgenda(syncId);
+    const activeItem = curAgenda.find(a => a.is_current);
+    const updatedPs: ProjectorStudioSettings = {
       ...curPs,
       activeQuestionId: null,
       questionProjectorEnabled: false,
+      selectedAgendaId: activeItem?.id || curPs.selectedAgendaId,
       displayScene: curPs.displayScene === 'question_hour' ? 'agenda' : curPs.displayScene
-    });
+    };
+
+    this.saveProjectorSettings(syncId, updatedPs);
+    this.patchSocialCoverageSafe(syncId, {
+      active_question_id: null,
+      projector_settings: updatedPs
+    }).catch(err => console.warn('[skipActiveQuestion] patch error:', err));
 
     this.notify();
     if (typeof window !== 'undefined') {
