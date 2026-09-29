@@ -237,6 +237,79 @@ function sortLearnersStably(list: Learner[]): Learner[] {
 }
 
 // ---------------------------------------------------------------------------
+// Database Disk I/O Optimization: JSONB Deep Equality & Suppression Engine
+// ---------------------------------------------------------------------------
+
+/**
+ * Normalizes timer state to exclude volatile countdown tick churn.
+ * Live countdown seconds (remainingSec, secondsLeft, updatedAt) must not
+ * cause database writes; only structural status, durationSec, or runId changes matter.
+ */
+export function getComparableTimerState(timer: any): any {
+  if (!timer || typeof timer !== 'object') return timer;
+  return {
+    status: timer.status,
+    isRunning: Boolean(timer.isRunning),
+    durationSec: timer.durationSec,
+    runId: timer.runId,
+    targetEndTime: timer.targetEndTime,
+    startedAt: timer.startedAt
+  };
+}
+
+/**
+ * High-performance semantic equality comparison for JSONB objects/arrays.
+ * Recursively checks if two values represent the exact same state,
+ * ignoring non-functional volatile keys (such as `updated_at`).
+ */
+export function areJsonbObjectsEqual(a: any, b: any, ignoredKeys: string[] = ['updated_at']): boolean {
+  if (a === b) return true;
+  if (a === null || a === undefined || b === null || b === undefined) {
+    return a === b;
+  }
+  if (typeof a !== typeof b) return false;
+
+  if (typeof a !== 'object') {
+    return a === b;
+  }
+
+  // Handle Arrays
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b)) return false;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!areJsonbObjectsEqual(a[i], b[i], ignoredKeys)) return false;
+    }
+    return true;
+  }
+  if (Array.isArray(b)) return false;
+
+  // Handle Objects
+  const aKeys = Object.keys(a).filter(k => !ignoredKeys.includes(k));
+  const bKeys = Object.keys(b).filter(k => !ignoredKeys.includes(k));
+
+  if (aKeys.length !== bKeys.length) return false;
+
+  for (const key of aKeys) {
+    if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
+    let valA = a[key];
+    let valB = b[key];
+
+    // Special handling for timer property to ignore countdown second churn
+    if (key === 'timer') {
+      valA = getComparableTimerState(valA);
+      valB = getComparableTimerState(valB);
+    }
+
+    if (!areJsonbObjectsEqual(valA, valB, ignoredKeys)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // Student Allocation Confirmation & Integrity Engine
 // ---------------------------------------------------------------------------
 
@@ -5143,7 +5216,21 @@ class StorageService {
         updated_at: new Date().toISOString()
       };
 
-      // 4. Update Supabase
+      // 4. DATABASE DISK I/O OPTIMIZATION: No-Op Suppression Guard
+      // If the merged state is semantically identical to the existing remote state,
+      // skip the database write completely!
+      if (areJsonbObjectsEqual(mergedSc, remoteSc, ['updated_at'])) {
+        // Update local memory event so local state remains consistent
+        const allEvs = this.getEvents();
+        const targetEv = allEvs.find(e => e.id === eventId);
+        if (targetEv) {
+          targetEv.social_coverage = mergedSc;
+          this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === eventId ? targetEv : e));
+        }
+        return { success: true };
+      }
+
+      // 5. Update Supabase
       const { error: updateErr } = await supabase
         .from('college_events')
         .update({
@@ -5605,6 +5692,14 @@ class StorageService {
         this.setItem(STORAGE_KEYS.EVENTS, allEvents);
       }
 
+      // DATABASE DISK I/O OPTIMIZATION: No-Op Suppression Guard
+      // If the prepared payload is semantically identical to the authoritative existing remote social_coverage,
+      // skip the database write completely!
+      if (areJsonbObjectsEqual(payload, existingSC, ['updated_at'])) {
+        this.invalidateCache(eventId);
+        return;
+      }
+
       let writeConfirmed = false;
       const nowIso = new Date().toISOString();
       if (readUpdatedAt) {
@@ -5621,6 +5716,7 @@ class StorageService {
 
       if (!writeConfirmed) {
         // Optimistic concurrency conflict or initial write: re-fetch and re-union to ensure no lost votes
+        let freshConflictSC: Record<string, any> | null = null;
         try {
           const { data: conflictData } = await supabase
             .from('college_events')
@@ -5628,7 +5724,8 @@ class StorageService {
             .eq('id', eventId)
             .single();
           if (conflictData?.social_coverage) {
-            const freshSC = conflictData.social_coverage as Record<string, any>;
+            freshConflictSC = conflictData.social_coverage as Record<string, any>;
+            const freshSC = freshConflictSC;
             if (Array.isArray(freshSC.cabinet_ministries)) {
               payload.cabinet_ministries = freshSC.cabinet_ministries;
             }
@@ -5695,7 +5792,10 @@ class StorageService {
             }
           }
         } catch {}
-        await supabase.from('college_events').update({ social_coverage: payload, updated_at: new Date().toISOString() }).eq('id', eventId);
+
+        if (!areJsonbObjectsEqual(payload, freshConflictSC || existingSC, ['updated_at'])) {
+          await supabase.from('college_events').update({ social_coverage: payload, updated_at: new Date().toISOString() }).eq('id', eventId);
+        }
       }
       this.invalidateCache(eventId);
     } catch (e) {
@@ -8867,12 +8967,15 @@ class StorageService {
       const att = attOverride || this.getDayAttendance(eventId);
 
       const sc = (targetEv.social_coverage || {}) as any;
+      const isDaysEqual = areJsonbObjectsEqual(days, sc.event_days, ['updated_at']);
+      const isAttEqual = areJsonbObjectsEqual(att, sc.day_attendance, ['updated_at']);
+
       sc.event_days = days;
       sc.day_attendance = att;
       targetEv.social_coverage = sc;
 
       this.setItem(STORAGE_KEYS.EVENTS, events);
-      if (supabase && isValidUuid(eventId)) {
+      if (supabase && isValidUuid(eventId) && (!isDaysEqual || !isAttEqual)) {
         this.patchSocialCoverageSafe(eventId, {
           event_days: days,
           day_attendance: att
@@ -9460,9 +9563,14 @@ class StorageService {
       }
     }
 
-    this.patchSocialCoverageSafe(eventId, { agenda_progress: merged }).catch(err => {
-      console.warn('[StorageService] Error patching agenda_progress to social_coverage:', err);
-    });
+    // DATABASE DISK I/O OPTIMIZATION: Stop Redundant Agenda Writes
+    // If agenda progress has not meaningfully changed from authoritative event social_coverage, skip write.
+    const scProgress = (ev?.social_coverage as any)?.agenda_progress;
+    if (!areJsonbObjectsEqual(merged, scProgress, ['updated_at'])) {
+      this.patchSocialCoverageSafe(eventId, { agenda_progress: merged }).catch(err => {
+        console.warn('[StorageService] Error patching agenda_progress to social_coverage:', err);
+      });
+    }
   }
 
   public getActiveAgendaDay(eventId?: string): 'Pre-Event' | 'Day 1' | 'Day 2' | string {
@@ -13860,11 +13968,24 @@ class StorageService {
     }
 
     if (eventId) {
-      this.patchSocialCoverageSafe(eventId, {
-        timer: normalized
-      }).catch(err => {
-        console.warn('[StorageService] Error patching timer to social_coverage:', err);
-      });
+      // DATABASE DISK I/O OPTIMIZATION: Stop Timer Tick Writes
+      // A running timer must NOT update college_events.social_coverage on every countdown second.
+      // Persist only meaningful timer state transitions (RUNNING, PAUSED, STOPPED, EXPIRED, durationSec change).
+      const prevTimer = this.getItem<LiveTimerState | null>(`tn_assembly_live_timer_persisted_${eventId}`, null);
+      const isMeaningfulChange = !prevTimer ||
+        prevTimer.status !== normalized.status ||
+        prevTimer.isRunning !== normalized.isRunning ||
+        prevTimer.durationSec !== normalized.durationSec ||
+        prevTimer.runId !== normalized.runId;
+
+      if (isMeaningfulChange) {
+        this.setItem(`tn_assembly_live_timer_persisted_${eventId}`, normalized);
+        this.patchSocialCoverageSafe(eventId, {
+          timer: normalized
+        }).catch(err => {
+          console.warn('[StorageService] Error patching timer to social_coverage:', err);
+        });
+      }
     }
   }
 
@@ -14697,7 +14818,6 @@ class StorageService {
       this.patchSocialCoverageSafe(eventId, { projector_settings: settings }).catch(err => {
         console.warn('[StorageService] Error patching projector_settings to social_coverage:', err);
       });
-      await this.syncEventStateToSupabase(eventId);
     }
   }
 
