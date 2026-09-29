@@ -17619,4 +17619,6 @@ export function isQuestionForMinister(
   );
 }
 
-
+if (typeof window !== 'undefined') {
+  (window as any).storageService = storageService;
+}
