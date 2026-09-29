@@ -376,13 +376,19 @@ export interface BillProceeding {
   updated_at?: string;
 }
 
+export type LiveTimerStatus = 'RUNNING' | 'PAUSED' | 'STOPPED' | 'EXPIRED';
+
 export interface LiveTimerState {
   durationSec: number;
   secondsLeft: number;
+  remainingSec?: number;
+  status?: LiveTimerStatus;
   isRunning: boolean;
   startedAt?: number;
   pausedAt?: number;
+  runId?: string;
   updatedAt: number;
+  version?: number;
 }
 
 export type TimerToneType = 'default' | 'bell' | 'chime' | 'gavel' | 'custom';

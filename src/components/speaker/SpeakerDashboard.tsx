@@ -219,23 +219,14 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
   const [timerState, setTimerState] = useState(() => storageService.getLiveTimerState(eventId));
   const [timerSecondsLeft, setTimerSecondsLeft] = useState<number>(() => {
     const ts = storageService.getLiveTimerState(eventId);
-    if (ts.isRunning && ts.startedAt) {
-      const elapsed = Math.floor((Date.now() - ts.startedAt) / 1000);
-      return Math.max(0, ts.secondsLeft - elapsed);
-    }
-    return ts.secondsLeft !== undefined ? ts.secondsLeft : 600;
+    return storageService.calculateCurrentRemainingSec(ts);
   });
 
   useEffect(() => {
     const handleTimerSync = () => {
       const ts = storageService.getLiveTimerState(eventId);
       setTimerState(ts);
-      if (ts.isRunning && ts.startedAt) {
-        const elapsed = Math.floor((Date.now() - ts.startedAt) / 1000);
-        setTimerSecondsLeft(Math.max(0, ts.secondsLeft - elapsed));
-      } else {
-        setTimerSecondsLeft(ts.secondsLeft !== undefined ? ts.secondsLeft : 600);
-      }
+      setTimerSecondsLeft(storageService.calculateCurrentRemainingSec(ts));
     };
 
     const handleAlarmEvent = (e: any) => {
@@ -268,27 +259,26 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
 
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
-    if (timerState.isRunning && timerSecondsLeft > 0) {
+    if (timerState.isRunning) {
       interval = setInterval(() => {
-        setTimerSecondsLeft(prev => {
-          const next = Math.max(0, prev - 1);
-          if (next === 0 && !hasAlarmTriggeredRef.current) {
-            hasAlarmTriggeredRef.current = true;
-            const audioCfg = storageService.getTimerAudioConfig(eventId);
-            if (!audioCfg.is_muted) {
-              playTimerAlarm(audioCfg);
-            }
-          } else if (next > 0) {
-            hasAlarmTriggeredRef.current = false;
+        const live = storageService.getLiveTimerState(eventId);
+        const rem = storageService.calculateCurrentRemainingSec(live);
+        setTimerSecondsLeft(rem);
+        if (live.isRunning && rem === 0 && !hasAlarmTriggeredRef.current) {
+          hasAlarmTriggeredRef.current = true;
+          const audioCfg = storageService.getTimerAudioConfig(eventId);
+          if (!audioCfg.is_muted) {
+            playTimerAlarm(audioCfg);
           }
-          return next;
-        });
-      }, 1000);
+        } else if (rem > 0) {
+          hasAlarmTriggeredRef.current = false;
+        }
+      }, 500);
     }
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [timerState.isRunning, timerSecondsLeft, eventId]);
+  }, [timerState.isRunning, eventId]);
 
   // Initial load & listeners (compact realtime event bindings, zero aggressive polling)
   useEffect(() => {

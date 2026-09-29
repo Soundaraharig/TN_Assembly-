@@ -290,12 +290,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   }, [currentEvent?.id]);
   const [secondsLeft, setSecondsLeft] = useState(() => {
     const s = storageService.getLiveTimerState(currentEvent?.id);
-    const configured = storageService.getTimerDurationConfig(currentEvent?.id);
-    if (s.isRunning && s.startedAt) {
-      const elapsed = Math.floor((Date.now() - s.startedAt) / 1000);
-      return Math.max(0, s.secondsLeft - elapsed);
-    }
-    return (s.secondsLeft !== undefined && s.secondsLeft > 0) ? s.secondsLeft : configured;
+    return storageService.calculateCurrentRemainingSec(s);
   });
   const [isTimerRunning, setIsTimerRunning] = useState(() => {
     return !!storageService.getLiveTimerState(currentEvent?.id)?.isRunning;
@@ -399,10 +394,11 @@ export const ControlTab: React.FC<ControlTabProps> = ({
       const configured = storageService.getTimerDurationConfig(currentEvent?.id);
       if (state) {
         setTimerDurationSec(configured);
+        const remaining = storageService.calculateCurrentRemainingSec(state);
+        setSecondsLeft(remaining);
+        setIsTimerRunning(state.isRunning);
+
         if (state.isRunning && state.startedAt) {
-          const elapsed = Math.floor((Date.now() - state.startedAt) / 1000);
-          const remaining = Math.max(0, state.secondsLeft - elapsed);
-          setSecondsLeft(remaining);
           if (remaining > 0) {
             hasAlarmTriggeredRef.current = false;
           } else if (remaining === 0 && !hasAlarmTriggeredRef.current) {
@@ -417,13 +413,10 @@ export const ControlTab: React.FC<ControlTabProps> = ({
             }
           }
         } else {
-          const validSec = (state.secondsLeft !== undefined) ? state.secondsLeft : configured;
-          setSecondsLeft(validSec);
-          if (validSec > 0) {
+          if (remaining > 0) {
             hasAlarmTriggeredRef.current = false;
           }
         }
-        setIsTimerRunning(state.isRunning);
       }
     };
     handleTimerSync();
@@ -444,17 +437,19 @@ export const ControlTab: React.FC<ControlTabProps> = ({
       interval = setInterval(() => {
         const live = storageService.getLiveTimerState(currentEvent?.id);
         const configured = storageService.getTimerDurationConfig(currentEvent?.id);
-        if (live.isRunning && live.startedAt) {
-          const elapsed = Math.floor((Date.now() - live.startedAt) / 1000);
-          const remaining = Math.max(0, live.secondsLeft - elapsed);
-          setSecondsLeft(remaining);
+        const remaining = storageService.calculateCurrentRemainingSec(live);
+        setSecondsLeft(remaining);
+
+        if (live.isRunning) {
           if (remaining <= 0) {
             setIsTimerRunning(false);
             if (currentEvent?.id) {
               storageService.saveLiveTimerState(currentEvent.id, {
                 durationSec: configured,
+                remainingSec: 0,
                 secondsLeft: 0,
                 isRunning: false,
+                status: 'EXPIRED',
                 updatedAt: Date.now()
               });
             }
@@ -477,11 +472,10 @@ export const ControlTab: React.FC<ControlTabProps> = ({
             hasAlarmTriggeredRef.current = false;
           }
         } else {
-          setSecondsLeft(live.secondsLeft);
-          if (live.secondsLeft > 0) {
+          if (remaining > 0) {
             hasAlarmTriggeredRef.current = false;
           }
-          setIsTimerRunning(live.isRunning);
+          setIsTimerRunning(false);
         }
       }, 500);
     }
@@ -928,14 +922,14 @@ export const ControlTab: React.FC<ControlTabProps> = ({
   const handleSelectAgendaItem = useCallback((targetItem: AgendaItem) => {
     if (!targetItem) return;
 
-    // 1. Immediate optimistic local agenda update for instant UI feedback
+    // 1. Immediate optimistic local agenda update: ONLY changes is_current, strictly preserves status & completion
     setLocalAgenda(prevList => {
       return prevList.map(item => {
         if (item.id === targetItem.id) {
-          return { ...item, is_current: true, status: 'In Progress' };
+          return { ...item, is_current: true };
         }
         if (item.is_current && item.id !== targetItem.id) {
-          return { ...item, is_current: false, status: 'Completed' };
+          return { ...item, is_current: false };
         }
         return item;
       });
@@ -968,8 +962,11 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     try {
       const res = storageService.resetIndividualAgendaItem(currentEvent.id, resetConfirmItem.id);
       if (res.success) {
-        handleSelectAgendaItem(resetConfirmItem);
-        onShowToast('Session Re-Opened', `"${resetConfirmItem.title}" is now active on floor and projector.`, 'success');
+        // Authoritative Rule 3: Reset removes completed status only. It does NOT make it current, does NOT navigate, does NOT change timer.
+        setLocalAgenda(prevList =>
+          prevList.map(item => (item.id === resetConfirmItem.id ? { ...item, status: 'Upcoming' } : item))
+        );
+        onShowToast('Completion Reset', `"${resetConfirmItem.title}" completion cleared. Current session remains unchanged.`, 'info');
       } else {
         onShowToast('Reset Failed', res.error || 'Could not reset agenda session.', 'error');
       }
@@ -1018,7 +1015,8 @@ export const ControlTab: React.FC<ControlTabProps> = ({
 
 
   const handleToggleTimer = () => {
-    let currentSec = secondsLeft;
+    const live = storageService.getLiveTimerState(currentEvent?.id);
+    let currentSec = storageService.calculateCurrentRemainingSec(live);
     if (currentSec <= 0) {
       currentSec = timerDurationSec;
       setSecondsLeft(currentSec);
@@ -1027,6 +1025,11 @@ export const ControlTab: React.FC<ControlTabProps> = ({
       setIsAlarmSounding(false);
     }
     const nextRunning = !isTimerRunning;
+    const now = Date.now();
+    const runId = nextRunning
+      ? (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `run_${now}_${Math.random().toString(36).substring(2, 7)}`)
+      : (live.runId || undefined);
+
     if (nextRunning) {
       unlockAudioContext();
       hasAlarmTriggeredRef.current = false;
@@ -1039,17 +1042,19 @@ export const ControlTab: React.FC<ControlTabProps> = ({
       storageService.saveLiveTimerState(currentEvent.id, {
         durationSec: timerDurationSec,
         secondsLeft: currentSec,
+        remainingSec: currentSec,
         isRunning: nextRunning,
-        startedAt: nextRunning ? Date.now() : undefined,
-        pausedAt: !nextRunning ? Date.now() : undefined,
-        updatedAt: Date.now()
+        status: nextRunning ? 'RUNNING' : 'PAUSED',
+        startedAt: nextRunning ? now : undefined,
+        pausedAt: !nextRunning ? now : undefined,
+        runId,
+        updatedAt: now
       });
     }
   };
 
   const handleResetTimer = () => {
     const configuredDur = (currentEvent?.id ? storageService.getTimerDurationConfig(currentEvent.id) : null) || timerDurationSec || 75;
-    console.log(`[TIMER-CONFIG-TRACE] timestamp=${Date.now()} eventId=${currentEvent?.id} durationSec=${configuredDur} source=handleResetTimer reason=RESET_CLICK explicitUserAction=false`);
     setIsTimerRunning(false);
     setTimerDurationSec(configuredDur);
     setSecondsLeft(configuredDur);
@@ -1057,18 +1062,23 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     stopAllAlertAudio();
     setIsAlarmSounding(false);
     if (currentEvent?.id) {
+      const now = Date.now();
       storageService.saveLiveTimerState(currentEvent.id, {
         durationSec: configuredDur,
         secondsLeft: configuredDur,
+        remainingSec: configuredDur,
         isRunning: false,
-        updatedAt: Date.now()
+        status: 'STOPPED',
+        startedAt: undefined,
+        pausedAt: undefined,
+        runId: undefined,
+        updatedAt: now
       });
     }
   };
 
   const handleSetPreset = (presetSec: number) => {
     const dur = Math.max(1, Math.min(3600, presetSec));
-    console.log(`[TIMER-CONFIG-TRACE] timestamp=${Date.now()} eventId=${currentEvent?.id} durationSec=${dur} source=handleSetPreset reason=PRESET_CLICK explicitUserAction=true`);
     setTimerDurationSec(dur);
     setSecondsLeft(dur);
     hasAlarmTriggeredRef.current = false;
@@ -1076,40 +1086,49 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     setIsAlarmSounding(false);
     setIsTimerRunning(false);
     if (currentEvent?.id) {
+      const now = Date.now();
       storageService.saveTimerDurationConfig(currentEvent.id, dur);
       storageService.saveLiveTimerState(currentEvent.id, {
         durationSec: dur,
         secondsLeft: dur,
+        remainingSec: dur,
         isRunning: false,
-        updatedAt: Date.now()
+        status: 'STOPPED',
+        startedAt: undefined,
+        pausedAt: undefined,
+        runId: undefined,
+        updatedAt: now
       });
     }
   };
 
   const handleAdjustSeconds = (delta: number) => {
-    setSecondsLeft(prev => {
-      const nextSec = Math.max(0, prev + delta);
-      if (nextSec > 0) {
-        hasAlarmTriggeredRef.current = false;
-        stopAllAlertAudio();
-        setIsAlarmSounding(false);
-      }
-      if (currentEvent?.id) {
-        storageService.saveLiveTimerState(currentEvent.id, {
-          durationSec: timerDurationSec,
-          secondsLeft: nextSec,
-          isRunning: isTimerRunning,
-          startedAt: isTimerRunning ? Date.now() : undefined,
-          updatedAt: Date.now()
-        });
-      }
-      return nextSec;
-    });
+    const live = storageService.getLiveTimerState(currentEvent?.id);
+    const curRemaining = storageService.calculateCurrentRemainingSec(live);
+    const nextSec = Math.max(0, curRemaining + delta);
+    if (nextSec > 0) {
+      hasAlarmTriggeredRef.current = false;
+      stopAllAlertAudio();
+      setIsAlarmSounding(false);
+    }
+    setSecondsLeft(nextSec);
+    if (currentEvent?.id) {
+      const now = Date.now();
+      storageService.saveLiveTimerState(currentEvent.id, {
+        durationSec: timerDurationSec,
+        secondsLeft: nextSec,
+        remainingSec: nextSec,
+        isRunning: isTimerRunning,
+        status: isTimerRunning ? 'RUNNING' : (nextSec === 0 ? 'EXPIRED' : 'PAUSED'),
+        startedAt: isTimerRunning ? now : undefined,
+        runId: live.runId,
+        updatedAt: now
+      });
+    }
   };
 
   const handleDurationChange = (val: number) => {
     const dur = Math.max(1, Math.min(3600, val));
-    console.log(`[TIMER-CONFIG-TRACE] timestamp=${Date.now()} eventId=${currentEvent?.id} durationSec=${dur} source=handleDurationChange reason=CUSTOM_SET explicitUserAction=true`);
     setTimerDurationSec(dur);
     if (currentEvent?.id) {
       storageService.saveTimerDurationConfig(currentEvent.id, dur);
@@ -1117,11 +1136,14 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     if (!isTimerRunning) {
       setSecondsLeft(dur);
       if (currentEvent?.id) {
+        const now = Date.now();
         storageService.saveLiveTimerState(currentEvent.id, {
           durationSec: dur,
           secondsLeft: dur,
+          remainingSec: dur,
           isRunning: false,
-          updatedAt: Date.now()
+          status: 'STOPPED',
+          updatedAt: now
         });
       }
     }
@@ -1344,22 +1366,37 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                 <h2 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
                   {activeAgendaItem.title}
                 </h2>
-                {activeAgendaItem.status === 'Completed' && (
-                  <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-300/80 dark:border-slate-700">
-                    COMPLETED
-                  </span>
-                )}
-                {activeAgendaItem.status === 'Completed' && (
+                {activeAgendaItem.status === 'Completed' ? (
+                  <>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-300/80 dark:border-slate-700">
+                      COMPLETED
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setResetConfirmItem(activeAgendaItem)}
+                      className="px-2.5 py-1 rounded-xl text-xs font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 hover:bg-amber-100 dark:hover:bg-amber-900/60 flex items-center gap-1 cursor-pointer transition-all shadow-sm active:scale-95"
+                      title="Reset completed status for this agenda item"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                      <span>Reset</span>
+                    </button>
+                  </>
+                ) : activeAgendaItem.id !== 'not_started' ? (
                   <button
                     type="button"
-                    onClick={() => setResetConfirmItem(activeAgendaItem)}
-                    className="px-2.5 py-1 rounded-xl text-xs font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 hover:bg-amber-100 dark:hover:bg-amber-900/60 flex items-center gap-1 cursor-pointer transition-all shadow-sm active:scale-95"
-                    title="Reset this completed agenda item"
+                    onClick={async () => {
+                      if (!activeAgendaItem?.id) return;
+                      await storageService.setAgendaItemStatus(activeAgendaItem.id, 'Completed');
+                      setLocalAgenda(prev => prev.map(a => a.id === activeAgendaItem.id ? { ...a, status: 'Completed' } : a));
+                      onShowToast('Session Marked Completed', `"${activeAgendaItem.title}" marked as completed. Current selection is unchanged.`, 'success');
+                    }}
+                    className="px-2.5 py-1 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center gap-1 cursor-pointer transition-all shadow-sm active:scale-95"
+                    title="Mark active session as completed without changing current selection"
                   >
-                    <RotateCcw className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
-                    <span>Reset</span>
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                    <span>Mark Completed</span>
                   </button>
-                )}
+                ) : null}
               </div>
               <div className="flex items-center gap-2 mt-1.5 text-xs">
                 <span className="text-slate-500 dark:text-slate-400">
@@ -2352,18 +2389,20 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                       e.stopPropagation();
                       handleSelectAgendaItem(item);
                     }}
-                    className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 ${
-                      isCompleted
-                        ? 'opacity-85 bg-slate-50/80 dark:bg-slate-900/60 border-slate-200/80 dark:border-slate-800'
-                        : isSelected
-                          ? 'bg-emerald-50/90 dark:bg-emerald-950/40 border-emerald-400/80 dark:border-emerald-600/80 shadow-sm cursor-pointer'
-                          : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800/80 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer'
+                    className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 cursor-pointer ${
+                      isSelected
+                        ? isCompleted
+                          ? 'bg-emerald-50/80 dark:bg-emerald-950/30 border-2 border-emerald-500 shadow-sm'
+                          : 'bg-emerald-50/90 dark:bg-emerald-950/40 border-2 border-emerald-400/80 dark:border-emerald-600/80 shadow-sm'
+                        : isCompleted
+                          ? 'opacity-85 bg-slate-50/80 dark:bg-slate-900/60 border-slate-200/80 dark:border-slate-800 hover:bg-slate-100/70 dark:hover:bg-slate-800/70'
+                          : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800/80 hover:bg-slate-50 dark:hover:bg-slate-800/50'
                     }`}
                   >
                     <div className="flex items-start gap-3 min-w-0 flex-1">
-                      {/* Status Bullet: Green solid dot if selected, check icon if completed, Circle outline if unselected */}
+                      {/* Status Bullet: Green ring/dot if selected, check icon if completed, Circle outline if unselected */}
                       {isSelected ? (
-                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 mt-1.5 shrink-0 animate-pulse" />
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 mt-1.5 shrink-0 animate-pulse ring-2 ring-emerald-300 dark:ring-emerald-700" title="Current Active Session" />
                       ) : isCompleted ? (
                         <span className="w-3.5 h-3.5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 mt-0.5 shrink-0 flex items-center justify-center text-[9px] font-black">
                           ✓
@@ -2378,11 +2417,16 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                             isSelected
                               ? 'text-emerald-800 dark:text-emerald-300 font-extrabold'
                               : isCompleted
-                                ? 'text-slate-500 dark:text-slate-400 font-semibold line-through'
+                                ? 'text-slate-600 dark:text-slate-400 font-semibold'
                                 : 'text-slate-900 dark:text-white font-bold'
                           }`}>
                             {item.title}
                           </h5>
+                          {isSelected && (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-emerald-100 dark:bg-emerald-900/80 text-emerald-800 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-700">
+                              CURRENT
+                            </span>
+                          )}
                           {isCompleted && (
                             <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-300/80 dark:border-slate-700">
                               COMPLETED
@@ -2405,7 +2449,7 @@ export const ControlTab: React.FC<ControlTabProps> = ({
                             setResetConfirmItem(item);
                           }}
                           className="px-2 py-1 rounded-lg text-[11px] font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 hover:bg-amber-100 dark:hover:bg-amber-900/60 flex items-center gap-1 cursor-pointer transition-all shadow-sm active:scale-95"
-                          title="Reset this completed agenda item"
+                          title="Reset completed status for this agenda item"
                         >
                           <RotateCcw className="w-3 h-3 text-amber-600 dark:text-amber-400" />
                           <span>Reset</span>

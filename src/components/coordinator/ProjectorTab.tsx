@@ -104,19 +104,21 @@ export const ProjectorTab: React.FC<ProjectorTabProps> = ({
     : `https://tnassembly.vercel.app/events/${eventSlug}/display`;
 
   // Selected or active agenda item
-  const selectedAgenda = agenda.find(a => a.id === settings.selectedAgendaId) || agenda.find(a => a.is_current) || ({
-    id: 'not_started',
-    event_id: currentEvent?.id || '',
-    title: 'NOT STARTED',
-    description: 'No active session currently selected',
-    day: 'Day 1',
-    time: '--:--',
-    speaker_role: 'NOT STARTED',
-    duration_minutes: 0,
-    category: 'Special',
-    status: 'Upcoming',
-    is_current: false
-  } as AgendaItem);
+  const selectedAgenda =
+    agenda.find(a => a.is_current) ||
+    (settings.selectedAgendaId ? agenda.find(a => a.id === settings.selectedAgendaId) : null) || ({
+      id: 'not_started',
+      event_id: currentEvent?.id || '',
+      title: 'NOT STARTED',
+      description: 'No active session currently selected',
+      day: 'Day 1',
+      time: '--:--',
+      speaker_role: 'NOT STARTED',
+      duration_minutes: 0,
+      category: 'Special',
+      status: 'Upcoming',
+      is_current: false
+    } as AgendaItem);
 
   // Active Live Election
   const activeElection = elections.find(e => e.status === 'Live');

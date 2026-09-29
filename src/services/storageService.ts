@@ -1550,8 +1550,13 @@ class StorageService {
         this.setItem(`tn_assembly_projector_studio_${ev.id}`, sc.projector_settings);
         this.setItem('tn_assembly_projector_studio_v1', sc.projector_settings);
       }
-      if (sc.timer) {
-        this.setItem(`tn_assembly_live_timer_${ev.id}`, sc.timer);
+      if (sc.timer && typeof sc.timer === 'object') {
+        const incomingUpdated = Number(sc.timer.updatedAt) || 0;
+        const localTimer = this.getItem<LiveTimerState | null>(`tn_assembly_live_timer_${ev.id}`, null);
+        const localUpdated = Number(localTimer?.updatedAt) || 0;
+        if (!localTimer || incomingUpdated >= localUpdated) {
+          this.setItem(`tn_assembly_live_timer_${ev.id}`, sc.timer);
+        }
       }
       if (sc.timer_config && typeof sc.timer_config === 'object') {
         const durSec = typeof sc.timer_config.durationSec === 'number'
@@ -4218,7 +4223,15 @@ class StorageService {
         .on('broadcast', { event: 'timer_update' }, (msg: any) => {
           if (msg?.payload?.eventId && msg?.payload?.timerState) {
             const evId = msg.payload.eventId;
-            const newTimer = msg.payload.timerState;
+            const newTimer = msg.payload.timerState as LiveTimerState;
+            const incomingUpdatedAt = Number(newTimer.updatedAt) || 0;
+            const curTimer = this.getItem<LiveTimerState | null>(`tn_assembly_live_timer_${evId}`, null);
+            const currentUpdatedAt = Number(curTimer?.updatedAt) || 0;
+
+            if (curTimer && incomingUpdatedAt > 0 && incomingUpdatedAt < currentUpdatedAt) {
+              return; // Stale event; reject
+            }
+
             this.setItem(`tn_assembly_live_timer_${evId}`, newTimer);
 
             const curEvs = this.getEvents();
@@ -4231,6 +4244,36 @@ class StorageService {
             this.notify();
             if (typeof window !== 'undefined') {
               window.dispatchEvent(new CustomEvent('tn_assembly_timer_update', { detail: msg.payload }));
+              window.dispatchEvent(new CustomEvent('tn_assembly_timer_state_update', { detail: msg.payload }));
+              window.dispatchEvent(new Event('storage'));
+            }
+          }
+        })
+        .on('broadcast', { event: 'timer_state_update' }, (msg: any) => {
+          if (msg?.payload?.eventId && msg?.payload?.timerState) {
+            const evId = msg.payload.eventId;
+            const newTimer = msg.payload.timerState as LiveTimerState;
+            const incomingUpdatedAt = Number(newTimer.updatedAt) || 0;
+            const curTimer = this.getItem<LiveTimerState | null>(`tn_assembly_live_timer_${evId}`, null);
+            const currentUpdatedAt = Number(curTimer?.updatedAt) || 0;
+
+            if (curTimer && incomingUpdatedAt > 0 && incomingUpdatedAt < currentUpdatedAt) {
+              return; // Stale event; reject
+            }
+
+            this.setItem(`tn_assembly_live_timer_${evId}`, newTimer);
+
+            const curEvs = this.getEvents();
+            const ev = curEvs.find(e => e.id === evId);
+            if (ev) {
+              ev.social_coverage = { ...(ev.social_coverage || {}), timer: newTimer };
+              this.setItem(STORAGE_KEYS.EVENTS, curEvs);
+            }
+
+            this.notify();
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_timer_update', { detail: msg.payload }));
+              window.dispatchEvent(new CustomEvent('tn_assembly_timer_state_update', { detail: msg.payload }));
               window.dispatchEvent(new Event('storage'));
             }
           }
@@ -4421,6 +4464,17 @@ class StorageService {
         .on('broadcast', { event: 'agenda_update' }, (msg: any) => {
           if (msg?.payload?.eventId) {
             const evId = msg.payload.eventId;
+            const incomingUpdated = Number(msg.payload.updatedAt || msg.payload.timestamp) || 0;
+            const localAgendaUpdated = this.getItem<number>(`tn_assembly_agenda_updated_at_${evId}`, 0) || 0;
+
+            if (incomingUpdated > 0 && incomingUpdated < localAgendaUpdated) {
+              console.log(`[AGENDA-TRACE] Ignored stale agenda_update broadcast: incoming=${incomingUpdated} < local=${localAgendaUpdated}`);
+              return;
+            }
+            if (incomingUpdated > 0) {
+              this.setItem(`tn_assembly_agenda_updated_at_${evId}`, incomingUpdated);
+            }
+
             let incomingAgenda: AgendaItem[] | null = null;
             if (Array.isArray(msg.payload.agenda)) {
               incomingAgenda = msg.payload.agenda;
@@ -4439,8 +4493,6 @@ class StorageService {
             console.log(`[AGENDA-TRACE] timestamp=${Date.now()} eventId=${evId} agendaId=${incomingAgenda?.find(a => a.is_current)?.id || 'none'} source=setupRealtimeSync reason=REALTIME dbWrite=false broadcast=false`);
 
             // Reconcile projector selectedAgendaId with the authoritative is_current from the broadcast.
-            // This is a belt-and-suspenders fix: even if projector_update broadcast is delayed or lost,
-            // the agenda_update broadcast carries the correct is_current flag, so we reconcile here.
             if (incomingAgenda) {
               const currentItem = incomingAgenda.find(a => a.is_current);
               if (currentItem) {
@@ -4471,6 +4523,17 @@ class StorageService {
           if (msg?.payload?.eventId && msg?.payload?.progress) {
             const evId = msg.payload.eventId;
             const prog = msg.payload.progress as EventAgendaProgress;
+            const incomingUpdated = Number(msg.payload.updatedAt || msg.payload.timestamp || (prog as any).updatedAt) || 0;
+            const localProgUpdated = this.getItem<number>(`tn_assembly_agenda_progress_updated_at_${evId}`, 0) || 0;
+
+            if (incomingUpdated > 0 && incomingUpdated < localProgUpdated) {
+              console.log(`[AGENDA-TRACE] Ignored stale agenda_progress_update broadcast: incoming=${incomingUpdated} < local=${localProgUpdated}`);
+              return;
+            }
+            if (incomingUpdated > 0) {
+              this.setItem(`tn_assembly_agenda_progress_updated_at_${evId}`, incomingUpdated);
+            }
+
             console.log(`[AGENDA-TRACE] timestamp=${Date.now()} eventId=${evId} agendaId=${prog.active_agenda_id || 'none'} source=setupRealtimeSync reason=AGENDA_PROGRESS dbWrite=false broadcast=false`);
             this.setItem(`tn_assembly_agenda_progress_${evId}`, prog);
             if (prog.started_days) {
@@ -4728,7 +4791,6 @@ class StorageService {
             this.setItem(`tn_assembly_current_agenda_${eventId}`, remoteCurrent.id);
             if (sc.agenda_progress) {
               sc.agenda_progress.active_agenda_id = remoteCurrent.id;
-              sc.agenda_progress.completed_agenda_ids = (sc.agenda_progress.completed_agenda_ids || []).filter((id: string) => id !== remoteCurrent.id);
             }
           }
         }
@@ -4748,9 +4810,14 @@ class StorageService {
         const allPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []).filter(q => q.event_id !== eventId);
         this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, [...allPQs, ...remotePQs]);
 
-        // 4. Reconcile Timer State
-        if (sc.timer) {
-          this.setItem(`tn_assembly_live_timer_${eventId}`, sc.timer);
+        // 4. Reconcile Timer State (Monotonic timestamp check)
+        if (sc.timer && typeof sc.timer === 'object') {
+          const incomingUpdated = Number(sc.timer.updatedAt) || 0;
+          const localTimer = this.getItem<LiveTimerState | null>(`tn_assembly_live_timer_${eventId}`, null);
+          const localUpdated = Number(localTimer?.updatedAt) || 0;
+          if (!localTimer || incomingUpdated >= localUpdated) {
+            this.setItem(`tn_assembly_live_timer_${eventId}`, sc.timer);
+          }
         }
         if (sc.timer_config?.durationSec) {
           this.setItem(`tn_assembly_timer_config_${eventId}`, sc.timer_config.durationSec);
@@ -5390,8 +5457,8 @@ class StorageService {
       const payload = {
         ...existingSC,
         projector_settings: projSettings || existingSC.projector_settings,
-        timer: this.getLiveTimerState(eventId) || existingSC.timer,
-        timer_audio_config: this.getTimerAudioConfig(eventId) || existingSC.timer_audio_config,
+        timer: existingSC.timer || this.getLiveTimerState(eventId),
+        timer_audio_config: existingSC.timer_audio_config || this.getTimerAudioConfig(eventId),
         agenda_progress: this.getAgendaProgress(eventId),
         last_bell_ring: lastBell || existingSC.last_bell_ring,
         open_nominations: openNoms,
@@ -9177,15 +9244,15 @@ class StorageService {
 
   public async saveAgendaProgress(eventId: string, patch: Partial<EventAgendaProgress>): Promise<void> {
     if (!eventId) return;
-    console.log(`[AGENDA-TRACE] timestamp=${Date.now()} eventId=${eventId} agendaId=${patch.active_agenda_id || 'none'} source=saveAgendaProgress reason=AGENDA_PROGRESS_SYNC dbWrite=true broadcast=true`);
+    const now = Date.now();
+    console.log(`[AGENDA-TRACE] timestamp=${now} eventId=${eventId} agendaId=${patch.active_agenda_id || 'none'} source=saveAgendaProgress reason=AGENDA_PROGRESS_SYNC dbWrite=true broadcast=true`);
     const existing = this.getAgendaProgress(eventId);
     const merged: EventAgendaProgress = {
       ...existing,
       ...patch,
-      completed_agenda_ids: Array.from(new Set([
-        ...(existing.completed_agenda_ids || []),
-        ...(patch.completed_agenda_ids || [])
-      ])),
+      completed_agenda_ids: patch.completed_agenda_ids !== undefined
+        ? patch.completed_agenda_ids
+        : (existing.completed_agenda_ids || []),
       item_statuses: {
         ...(existing.item_statuses || {}),
         ...(patch.item_statuses || {})
@@ -9205,6 +9272,7 @@ class StorageService {
     }
 
     this.setItem(`tn_assembly_agenda_progress_${eventId}`, merged);
+    this.setItem(`tn_assembly_agenda_progress_updated_at_${eventId}`, now);
     if (merged.started_days) {
       this.setItem(`tn_assembly_started_days_${eventId}`, merged.started_days);
     }
@@ -9218,7 +9286,7 @@ class StorageService {
 
     this.notify();
     if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('tn_assembly_agenda_progress_update', { detail: { eventId, progress: merged } }));
+      window.dispatchEvent(new CustomEvent('tn_assembly_agenda_progress_update', { detail: { eventId, progress: merged, updatedAt: now } }));
       window.dispatchEvent(new Event('storage'));
     }
 
@@ -9231,7 +9299,7 @@ class StorageService {
           await this.realtimeChannel.send({
             type: 'broadcast',
             event: 'agenda_progress_update',
-            payload: { eventId, progress: merged }
+            payload: { eventId, progress: merged, updatedAt: now }
           });
         }
       } catch (e) {
@@ -9547,12 +9615,14 @@ class StorageService {
   public resetIndividualAgendaItem(eventId: string, itemId: string): { success: boolean; item?: AgendaItem; error?: string } {
     const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA);
     let target: AgendaItem | undefined;
+    const now = Date.now();
     const updated = all.map(a => {
       if (a.id === itemId && (a.event_id === eventId || !a.event_id)) {
         target = {
           ...a,
           status: 'Upcoming',
-          is_current: false,
+          // Preserve is_current exactly as it was:
+          is_current: !!a.is_current,
           updated_at: new Date().toISOString()
         };
         return target;
@@ -9565,6 +9635,7 @@ class StorageService {
     }
 
     this.setItem(STORAGE_KEYS.AGENDA, updated);
+    this.setItem(`tn_assembly_agenda_updated_at_${eventId}`, now);
     this.sbUpsert('session_agenda', target as unknown as Record<string, unknown>);
     if (target.event_id) {
       this.sessionAgendaCache.delete(target.event_id);
@@ -9574,7 +9645,7 @@ class StorageService {
       this.saveAgendaProgress(target.event_id, {
         completed_agenda_ids: nextCompleted,
         item_statuses: nextStatuses,
-        active_agenda_id: curProg.active_agenda_id === itemId ? undefined : curProg.active_agenda_id
+        active_agenda_id: curProg.active_agenda_id // Preserved!
       });
     }
     this.notify();
@@ -9585,7 +9656,7 @@ class StorageService {
       this.realtimeChannel.send({
         type: 'broadcast',
         event: 'agenda_update',
-        payload: { eventId, agenda: eventAgenda }
+        payload: { eventId, agenda: eventAgenda, updatedAt: now }
       }).catch(() => {});
     }
 
@@ -9629,24 +9700,25 @@ class StorageService {
   public setAgendaItemStatus(itemId: string, status: AgendaStatus) {
     const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA);
     let target: AgendaItem | undefined;
+    const now = Date.now();
     const updated = all.map(a => {
       if (a.id === itemId) {
         target = {
           ...a,
           status,
-          is_current: status === 'In Progress',
+          // PRESERVE a.is_current! Setting status MUST NOT change is_current!
+          is_current: !!a.is_current,
           updated_at: new Date().toISOString()
         };
         return target;
-      }
-      // If marking status as In Progress, clear is_current on other items for this event
-      if (status === 'In Progress' && a.event_id === target?.event_id) {
-        return { ...a, is_current: false };
       }
       return a;
     });
     this.setItem(STORAGE_KEYS.AGENDA, updated);
     if (target) {
+      if (target.event_id) {
+        this.setItem(`tn_assembly_agenda_updated_at_${target.event_id}`, now);
+      }
       this.sbUpsert('session_agenda', target as unknown as Record<string, unknown>);
       if (target.event_id) {
         const evId = target.event_id;
@@ -9659,10 +9731,19 @@ class StorageService {
           nextCompleted = nextCompleted.filter(id => id !== itemId);
         }
         this.saveAgendaProgress(evId, {
-          active_agenda_id: status === 'In Progress' ? itemId : (curProg.active_agenda_id === itemId ? undefined : curProg.active_agenda_id),
+          active_agenda_id: curProg.active_agenda_id, // Preserved!
           completed_agenda_ids: nextCompleted,
           item_statuses: nextStatuses
         });
+
+        if (supabase && this.realtimeChannel) {
+          const eventAgenda = updated.filter(a => a.event_id === evId);
+          this.realtimeChannel.send({
+            type: 'broadcast',
+            event: 'agenda_update',
+            payload: { eventId: evId, agenda: eventAgenda, updatedAt: now }
+          }).catch(() => {});
+        }
       }
     }
     this.notify();
@@ -9690,10 +9771,12 @@ class StorageService {
 
   public async setCurrentAgendaItem(eventId: string, itemId: string): Promise<void> {
     if (!eventId || !itemId) return;
-    console.log(`[AGENDA-TRACE] timestamp=${Date.now()} eventId=${eventId} agendaId=${itemId} source=setCurrentAgendaItem reason=ADMIN_CLICK dbWrite=true broadcast=true`);
+    const now = Date.now();
+    console.log(`[AGENDA-TRACE] timestamp=${now} eventId=${eventId} agendaId=${itemId} source=setCurrentAgendaItem reason=ADMIN_CLICK dbWrite=true broadcast=true`);
 
     // Immediately persist explicit key in localStorage for synchronous survival across rapid reloads
     this.setItem(`tn_assembly_current_agenda_${eventId}`, itemId);
+    this.setItem(`tn_assembly_agenda_updated_at_${eventId}`, now);
 
     const currentAgenda = this.getAgenda(eventId);
     const priorItem = currentAgenda.find(a => a.is_current && a.id !== itemId);
@@ -9706,12 +9789,12 @@ class StorageService {
       all = [...all.filter(a => a.event_id !== eventId), ...currentAgenda];
     }
 
+    // RULE 2: Selecting a session changes ONLY current session.
+    // Preserve all existing completion statuses! Do NOT mark prior as Completed, do NOT change status of target!
     const updated = all.map(a => {
       if (a.event_id === eventId) {
-        const wasCurrent = a.is_current;
         const isCurrent = a.id === itemId;
-        const itemStatus: AgendaStatus = isCurrent ? 'In Progress' : (wasCurrent ? 'Completed' : a.status || 'Upcoming');
-        return { ...a, is_current: isCurrent, status: itemStatus, updated_at: new Date().toISOString() };
+        return { ...a, is_current: isCurrent, updated_at: new Date().toISOString() };
       }
       return a;
     });
@@ -9735,20 +9818,13 @@ class StorageService {
       this.setItem(key, startedDays);
     }
 
-    // Persist authoritative agenda_progress to Supabase (current active item must NOT be in completed_agenda_ids)
-    const eventItems = updated.filter(a => a.event_id === eventId);
-    const completedIds = eventItems.filter(a => a.status === 'Completed' && a.id !== itemId).map(a => a.id);
-    const statuses: Record<string, AgendaStatus> = {};
-    eventItems.forEach(a => {
-      if (a.id === itemId) statuses[a.id] = 'In Progress';
-      else if (a.status) statuses[a.id] = a.status;
-    });
-
+    // Persist authoritative agenda_progress to Supabase (preserving existing completed_agenda_ids and item_statuses)
+    const curProg = this.getAgendaProgress(eventId);
     await this.saveAgendaProgress(eventId, {
       active_agenda_id: itemId,
-      active_day: targetItem?.day || 'Day 1',
-      completed_agenda_ids: completedIds,
-      item_statuses: statuses,
+      active_day: targetItem?.day || curProg.active_day || 'Day 1',
+      completed_agenda_ids: curProg.completed_agenda_ids || [],
+      item_statuses: curProg.item_statuses || {},
       started_days: startedDays
     });
 
@@ -9773,7 +9849,7 @@ class StorageService {
           await this.realtimeChannel.send({
             type: 'broadcast',
             event: 'agenda_update',
-            payload: { eventId, activeAgendaId: itemId, agenda: eventAgenda, timestamp: Date.now() }
+            payload: { eventId, activeAgendaId: itemId, agenda: eventAgenda, timestamp: now, updatedAt: now }
           });
         }
       } catch (err: any) {
@@ -13299,33 +13375,60 @@ class StorageService {
     }).catch(err => console.warn('[saveTimerDurationConfig] err:', err));
   }
 
+  public calculateCurrentRemainingSec(timer?: LiveTimerState | null): number {
+    if (!timer) return 75;
+    const configured = timer.durationSec || 75;
+    const isRunning = timer.status === 'RUNNING' || (timer.isRunning && timer.status !== 'PAUSED' && timer.status !== 'STOPPED' && timer.status !== 'EXPIRED');
+    if (isRunning) {
+      if (timer.startedAt) {
+        const base = timer.remainingSec !== undefined ? timer.remainingSec : (timer.secondsLeft !== undefined ? timer.secondsLeft : configured);
+        const elapsed = Math.floor((Date.now() - timer.startedAt) / 1000);
+        return Math.max(0, base - elapsed);
+      }
+    }
+    if (timer.status === 'EXPIRED') return 0;
+    const sec = timer.remainingSec !== undefined ? timer.remainingSec : timer.secondsLeft;
+    return sec !== undefined ? sec : configured;
+  }
+
   public getLiveTimerState(eventId?: string): LiveTimerState {
     const configuredDur = this.getTimerDurationConfig(eventId);
     const defaultTimer: LiveTimerState = {
+      status: 'STOPPED',
       durationSec: configuredDur,
       secondsLeft: configuredDur,
+      remainingSec: configuredDur,
       isRunning: false,
-      updatedAt: Date.now()
+      updatedAt: 0
     };
     if (eventId) {
-      // Authoritative Supabase social_coverage is primary source of truth across all windows
+      const local = this.getItem<LiveTimerState | null>(`tn_assembly_live_timer_${eventId}`, null);
       const ev = this.getEvents().find(e => e.id === eventId);
       const sc = (ev?.social_coverage || {}) as Record<string, any>;
-      if (sc.timer) {
-        const merged: LiveTimerState = {
-          ...defaultTimer,
-          ...sc.timer,
-          durationSec: sc.timer.durationSec || configuredDur
-        };
-        this.setItem(`tn_assembly_live_timer_${eventId}`, merged);
-        return merged;
+      const remoteTimer = sc?.timer as LiveTimerState | undefined;
+
+      // Deterministic monotonic reconciliation between local and remote timer
+      let chosen = local;
+      if (remoteTimer && typeof remoteTimer === 'object') {
+        const remoteUpdated = Number(remoteTimer.updatedAt) || 0;
+        const localUpdated = Number(local?.updatedAt) || 0;
+        if (!chosen || remoteUpdated >= localUpdated) {
+          chosen = remoteTimer;
+        }
       }
-      const local = this.getItem<LiveTimerState | null>(`tn_assembly_live_timer_${eventId}`, null);
-      if (local) {
+
+      if (chosen) {
+        const isRunning = chosen.status === 'RUNNING' || (chosen.isRunning && chosen.status !== 'PAUSED' && chosen.status !== 'STOPPED' && chosen.status !== 'EXPIRED');
+        const status = chosen.status || (isRunning ? 'RUNNING' : 'STOPPED');
+        const remaining = chosen.remainingSec !== undefined ? chosen.remainingSec : (chosen.secondsLeft !== undefined ? chosen.secondsLeft : configuredDur);
         return {
           ...defaultTimer,
-          ...local,
-          durationSec: local.durationSec || configuredDur
+          ...chosen,
+          status,
+          isRunning,
+          durationSec: chosen.durationSec || configuredDur,
+          remainingSec: remaining,
+          secondsLeft: remaining
         };
       }
       return defaultTimer;
@@ -13335,9 +13438,24 @@ class StorageService {
   }
 
   public async saveLiveTimerState(eventId: string, timerState: LiveTimerState): Promise<void> {
-    console.log(`[TIMER-CONFIG-TRACE] timestamp=${Date.now()} eventId=${eventId} durationSec=${timerState.durationSec} source=saveLiveTimerState reason=LIVE_TIMER_STATE explicitUserAction=false`);
+    const isRunning = timerState.status === 'RUNNING' || (timerState.isRunning && timerState.status !== 'PAUSED' && timerState.status !== 'STOPPED' && timerState.status !== 'EXPIRED');
+    const status = timerState.status || (isRunning ? 'RUNNING' : 'STOPPED');
+    const now = timerState.updatedAt || Date.now();
+    const remaining = timerState.remainingSec !== undefined ? timerState.remainingSec : timerState.secondsLeft;
+
+    const normalized: LiveTimerState = {
+      ...timerState,
+      status,
+      isRunning,
+      remainingSec: remaining,
+      secondsLeft: remaining,
+      updatedAt: now,
+      runId: timerState.runId || (isRunning ? ('run_' + now + '_' + Math.random().toString(36).substring(2, 7)) : undefined)
+    };
+
+    console.log(`[TIMER-CONFIG-TRACE] timestamp=${now} eventId=${eventId} durationSec=${normalized.durationSec} status=${normalized.status} isRunning=${normalized.isRunning} source=saveLiveTimerState`);
     const key = eventId ? `tn_assembly_live_timer_${eventId}` : 'tn_assembly_live_timer_global';
-    this.setItem(key, timerState);
+    this.setItem(key, normalized);
 
     const events = this.getEvents();
     const ev = events.find(e => e.id === eventId);
@@ -13345,13 +13463,14 @@ class StorageService {
       const sc = (ev.social_coverage || {}) as Record<string, any>;
       ev.social_coverage = {
         ...sc,
-        timer: timerState
+        timer: normalized
       };
       this.setItem(STORAGE_KEYS.EVENTS, events);
     }
     this.notify();
     if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('tn_assembly_timer_update', { detail: { eventId, timerState } }));
+      window.dispatchEvent(new CustomEvent('tn_assembly_timer_update', { detail: { eventId, timerState: normalized } }));
+      window.dispatchEvent(new CustomEvent('tn_assembly_timer_state_update', { detail: { eventId, timerState: normalized } }));
       window.dispatchEvent(new Event('storage'));
     }
 
@@ -13364,7 +13483,12 @@ class StorageService {
           await this.realtimeChannel.send({
             type: 'broadcast',
             event: 'timer_update',
-            payload: { eventId, timerState }
+            payload: { eventId, timerState: normalized }
+          });
+          await this.realtimeChannel.send({
+            type: 'broadcast',
+            event: 'timer_state_update',
+            payload: { eventId, timerState: normalized }
           });
         }
       } catch (e) {
@@ -13374,7 +13498,7 @@ class StorageService {
 
     if (eventId) {
       this.patchSocialCoverageSafe(eventId, {
-        timer: timerState
+        timer: normalized
       }).catch(err => {
         console.warn('[StorageService] Error patching timer to social_coverage:', err);
       });

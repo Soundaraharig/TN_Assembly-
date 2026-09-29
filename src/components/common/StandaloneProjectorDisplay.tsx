@@ -44,11 +44,7 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
   );
   const [displaySeconds, setDisplaySeconds] = useState<number>(() => {
     const ts = storageService.getLiveTimerState(initialEvent?.id);
-    if (ts.isRunning && ts.startedAt) {
-      const elapsed = Math.floor((Date.now() - ts.startedAt) / 1000);
-      return Math.max(0, ts.secondsLeft - elapsed);
-    }
-    return ts.secondsLeft;
+    return storageService.calculateCurrentRemainingSec(ts);
   });
 
   const hasProjectorAlarmTriggeredRef = useRef(false);
@@ -107,21 +103,13 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
     }
   }, [currentEvent?.id, initialEvent?.id]);
 
-  // Client-side 1-second countdown tick: 0 network egress
+  // Client-side countdown tick calculated from authoritative timestamps: 0 network egress
   useEffect(() => {
     const timerInterval = setInterval(() => {
       setTimerState(currentTs => {
-        if (!currentTs.isRunning) {
-          setDisplaySeconds(currentTs.secondsLeft);
-          if (currentTs.secondsLeft > 0) {
-            hasProjectorAlarmTriggeredRef.current = false;
-          }
-          return currentTs;
-        }
-        if (currentTs.startedAt) {
-          const elapsed = Math.floor((Date.now() - currentTs.startedAt) / 1000);
-          const remaining = Math.max(0, currentTs.secondsLeft - elapsed);
-          setDisplaySeconds(remaining);
+        const remaining = storageService.calculateCurrentRemainingSec(currentTs);
+        setDisplaySeconds(remaining);
+        if (currentTs.isRunning) {
           if (remaining <= 0 && !hasProjectorAlarmTriggeredRef.current) {
             hasProjectorAlarmTriggeredRef.current = true;
             const targetId = currentEvent?.id || initialEvent?.id;
@@ -133,11 +121,13 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
             hasProjectorAlarmTriggeredRef.current = false;
           }
         } else {
-          setDisplaySeconds(prev => Math.max(0, prev - 1));
+          if (remaining > 0) {
+            hasProjectorAlarmTriggeredRef.current = false;
+          }
         }
         return currentTs;
       });
-    }, 1000);
+    }, 500);
 
     return () => clearInterval(timerInterval);
   }, [currentEvent?.id, initialEvent?.id]);
@@ -175,12 +165,8 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
 
         const freshTimer = storageService.getLiveTimerState(ev.id);
         setTimerState(freshTimer);
-        if (freshTimer.isRunning && freshTimer.startedAt) {
-          const elapsed = Math.floor((Date.now() - freshTimer.startedAt) / 1000);
-          setDisplaySeconds(Math.max(0, freshTimer.secondsLeft - elapsed));
-        } else {
-          setDisplaySeconds(freshTimer.secondsLeft);
-        }
+        const rem = storageService.calculateCurrentRemainingSec(freshTimer);
+        setDisplaySeconds(rem);
       }
     };
 
@@ -234,10 +220,11 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
   }, [currentEvent?.id, initialEvent?.id]);
 
   // Authoritative Current Agenda Item
+  const currentItem = agenda.find(a => a.is_current);
   const selectedAgenda =
+    currentItem ||
     (settings.selectedAgendaId ? agenda.find(a => a.id === settings.selectedAgendaId) : null) ||
-    (settings.return_agenda_item_id ? agenda.find(a => a.id === settings.return_agenda_item_id) : null) ||
-    agenda.find(a => a.is_current) || ({
+    (settings.return_agenda_item_id ? agenda.find(a => a.id === settings.return_agenda_item_id) : null) || ({
       id: 'not_started',
       event_id: currentEvent?.id || '',
       title: 'NOT STARTED',
