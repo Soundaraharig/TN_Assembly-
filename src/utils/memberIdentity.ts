@@ -256,47 +256,72 @@ export function isLearnerQuestionMatch(
     return { matches: false, reason: 'EVENT_MISMATCH' };
   }
 
-  // 1. Authoritative primary & alias ID matches
+  // 1. Exact event-scoped student/member ID
   const qStudentId = question.student_id;
+  if (qStudentId && learner.id && qStudentId === learner.id) {
+    return { matches: true, matchedBy: 'student_id' };
+  }
+
+  // 2. Exact learner/delegate/member/participant/user ID
   const qLearnerId = (question as any).learner_id;
   const qDelegateId = (question as any).delegate_id;
   const qMemberId = (question as any).member_id;
   const qParticipantId = (question as any).participant_id;
   const qUserId = (question as any).user_id;
 
-  if (qStudentId && learner.id && qStudentId === learner.id) return { matches: true, matchedBy: 'student_id' };
   if (qLearnerId && learner.id && qLearnerId === learner.id) return { matches: true, matchedBy: 'learner_id' };
   if (qDelegateId && learner.id && qDelegateId === learner.id) return { matches: true, matchedBy: 'delegate_id' };
   if (qMemberId && learner.id && qMemberId === learner.id) return { matches: true, matchedBy: 'member_id' };
   if (qParticipantId && learner.id && qParticipantId === learner.id) return { matches: true, matchedBy: 'participant_id' };
   if (qUserId && learner.id && qUserId === learner.id) return { matches: true, matchedBy: 'user_id' };
 
-  // 2. Access code match (case-insensitive)
+  // 3. Exact access code (case-insensitive)
   const qAccessCode = (question as any).access_code;
   if (qAccessCode && learner.access_code && String(qAccessCode).trim().toUpperCase() === String(learner.access_code).trim().toUpperCase()) {
     return { matches: true, matchedBy: 'access_code' };
   }
 
-  // 3. Name comparisons (exact and token-normalized)
   const qName = question.student_name || (question as any).learner_name || (question as any).delegate_name || (question as any).member_name;
   const lName = learner.full_name || (learner as any).name;
+
+  const rawQConst = question.constituency_number !== undefined && question.constituency_number !== null
+    ? question.constituency_number
+    : (question as any).constituency_no;
+  const qConstNum = rawQConst !== undefined && rawQConst !== null && !isNaN(Number(rawQConst))
+    ? Number(rawQConst)
+    : undefined;
+  const lConstNum = learner.constituency_number !== undefined && learner.constituency_number !== null && !isNaN(Number(learner.constituency_number))
+    ? Number(learner.constituency_number)
+    : undefined;
+
+  const hasConstNumMatch = qConstNum !== undefined && lConstNum !== undefined && qConstNum > 0 && qConstNum === lConstNum;
+
+  // 4. Exact constituency number + event (with validation that name is not an explicit conflict with another person)
+  if (hasConstNumMatch && (qEvId === lEvId || targetEventId)) {
+    if (!qName || areNamesMatching(qName, lName)) {
+      return { matches: true, matchedBy: 'constituency_and_name' };
+    }
+  }
+
+  // 5. Normalized name + constituency number
+  if (hasConstNumMatch && qName && lName) {
+    if (areNamesMatching(qName, lName)) {
+      return { matches: true, matchedBy: 'constituency_and_name' };
+    }
+    const qTokens = normalizeNameTokens(qName).filter(t => t.length > 2);
+    const lTokens = normalizeNameTokens(lName).filter(t => t.length > 2);
+    if (qTokens.length > 0 && lTokens.length > 0 && qTokens.some(t => lTokens.includes(t))) {
+      return { matches: true, matchedBy: 'constituency_and_name' };
+    }
+  }
+
+  // 6. Normalized name token / permutation match fallback (with strict initial differentiation)
   if (qName && lName) {
     if (qName.trim().toLowerCase() === lName.trim().toLowerCase()) {
       return { matches: true, matchedBy: 'exact_name' };
     }
     if (areNamesMatching(qName, lName)) {
       return { matches: true, matchedBy: 'normalized_name' };
-    }
-  }
-
-  // 4. Constituency number + partial name token match
-  const qConstNum = question.constituency_number || (question as any).constituency_no;
-  const lConstNum = learner.constituency_number;
-  if (qConstNum && lConstNum && Number(qConstNum) === Number(lConstNum) && qName && lName) {
-    const qTokens = normalizeNameTokens(qName).filter(t => t.length > 2);
-    const lTokens = normalizeNameTokens(lName).filter(t => t.length > 2);
-    if (qTokens.some(t => lTokens.includes(t))) {
-      return { matches: true, matchedBy: 'constituency_and_name' };
     }
   }
 

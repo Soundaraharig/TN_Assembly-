@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { BillProceeding, Learner, EventDeadline, ProceedingsQuestion, ProceedingsMotion, UserRole, UserSession } from '../../types';
 import { getCanonicalQuestionStatus } from '../../types';
 import { storageService } from '../../services/storageService';
+import { supabase } from '../../lib/supabase';
 import { getEventSlug } from '../../utils/slug';
 import {
   FileText,
@@ -30,7 +31,7 @@ import {
 } from 'lucide-react';
 import { ArrangeQuestionOrderModal } from './ArrangeQuestionOrderModal';
 import { SubmissionListModal, type SubmittedMemberRecord } from './SubmissionListModal';
-import { isLearnerQuestion, isLearnerQuestionMatch } from '../../utils/memberIdentity';
+import { isLearnerQuestion, isLearnerQuestionMatch, areNamesMatching } from '../../utils/memberIdentity';
 
 interface ProceedingsTabProps {
   proceedings: BillProceeding[];
@@ -100,6 +101,12 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   // Question Hour Submission Roster Modal
   const [isSubmissionModalOpen, setIsSubmissionModalOpen] = useState(false);
   const [submissionModalTab, setSubmissionModalTab] = useState<'all' | 'submitted' | 'not_submitted'>('not_submitted');
+
+  // Recheck Submission Status State
+  const [isRechecking, setIsRechecking] = useState(false);
+  const [recheckMessage, setRecheckMessage] = useState<string | null>(null);
+  const [recheckedLearners, setRecheckedLearners] = useState<Learner[] | null>(null);
+  const recheckRequestIdRef = useRef<number>(0);
 
   // Sync data on tab or storage updates
   const refreshData = () => {
@@ -325,13 +332,14 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   // ── FILTER-AWARE PARTICIPANT SUBMISSION PROGRESS ───────────────────────────
   // Effective event participants
   const effectiveLearners = useMemo(() => {
+    if (recheckedLearners && recheckedLearners.length > 0) return recheckedLearners;
     if (learners && learners.length > 0) return learners;
     if (authoritativeEventId || eventId) {
       const cached = storageService.getLearners(authoritativeEventId || eventId);
       if (cached.length > 0) return cached;
     }
     return [];
-  }, [learners, authoritativeEventId, eventId]);
+  }, [recheckedLearners, learners, authoritativeEventId, eventId]);
 
   const getLearnerBench = (l: Learner): 'Ruling' | 'Opposition' | string => {
     if (l.bench) return l.bench;
@@ -377,12 +385,14 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
 
         let relevantQs = allLearnerQs;
         if (ministryFilter !== 'All') {
-          relevantQs = allLearnerQs.filter(q => q.ministry === ministryFilter);
+          const matchingMinistryQs = allLearnerQs.filter(q => q.ministry === ministryFilter);
+          if (matchingMinistryQs.length > 0) {
+            relevantQs = matchingMinistryQs;
+          }
         }
 
-        if (ministryFilter === 'All' || relevantQs.length > 0) {
-          sub.push({ learner: l, questions: relevantQs.length > 0 ? relevantQs : allLearnerQs });
-        }
+        // Student has submitted ANY question for this event -> ALWAYS marked SUBMITTED
+        sub.push({ learner: l, questions: relevantQs });
       } else {
         // Learner has NOT submitted ANY question for this event/session
         notSub.push(l);
@@ -550,6 +560,221 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   });
 
   const passedBills = proceedings.filter(p => p.status === 'Passed');
+
+  // Phase 11: Authoritative READ-ONLY Recheck Submission Status handler
+  const handleRecheckSubmissionStatus = async () => {
+    if (isRechecking) return;
+    setIsRechecking(true);
+    const currentRequestId = ++recheckRequestIdRef.current;
+    const targetId = authoritativeEventId || eventId || targetSlug || '';
+
+    try {
+      const isUuid = Boolean(targetId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetId));
+
+      // 1. Authoritative READ ONLY: Fetch learners directly from Supabase
+      let freshLearners: Learner[] = [];
+      if (supabase && isUuid) {
+        try {
+          const { data: dbLearners, error: lErr } = await supabase
+            .from('learners')
+            .select('*')
+            .eq('event_id', targetId);
+          if (!lErr && Array.isArray(dbLearners) && dbLearners.length > 0) {
+            freshLearners = dbLearners as Learner[];
+          }
+        } catch (err) {
+          console.warn('[Recheck] Error fetching fresh learners:', err);
+        }
+      }
+      if (freshLearners.length === 0) {
+        freshLearners = learners && learners.length > 0 ? learners : storageService.getLearners(targetId);
+      }
+
+      // 2. Authoritative READ ONLY: Fetch proceedings_questions directly from Supabase
+      const freshQuestions = await storageService.fetchProceedingsQuestionsOnDemand(targetId, true);
+
+      // Stale request protection
+      if (currentRequestId !== recheckRequestIdRef.current) {
+        return;
+      }
+
+      // 3. Atomically update UI state
+      setRecheckedLearners(freshLearners);
+      setQuestions(freshQuestions);
+
+      // 4. Fresh calculation
+      const deletedIds = storageService.getAllDeletedQuestionIds();
+      const validFreshQs = freshQuestions.filter(q => {
+        if (deletedIds.has(q.id)) return false;
+        if ((q as any).deleted || (q.status as any) === 'Deleted') return false;
+        return true;
+      });
+
+      const activeEligible = freshLearners.filter(l => {
+        if (l.is_active === false || l.status === 'Inactive') return false;
+        if (benchFilter === 'All') return true;
+        return getLearnerBench(l).toLowerCase() === benchFilter.toLowerCase();
+      });
+
+      const freshSubmitterIds = new Set<string>();
+      const freshSubList: SubmittedMemberRecord[] = [];
+      const freshNotSubList: Learner[] = [];
+
+      activeEligible.forEach(l => {
+        const allLearnerQs = validFreshQs.filter(q => isLearnerQuestion(l, q, targetId));
+        if (allLearnerQs.length > 0) {
+          freshSubmitterIds.add(l.id);
+          let relevantQs = allLearnerQs;
+          if (ministryFilter !== 'All') {
+            const matchingMinistryQs = allLearnerQs.filter(q => q.ministry === ministryFilter);
+            if (matchingMinistryQs.length > 0) {
+              relevantQs = matchingMinistryQs;
+            }
+          }
+          freshSubList.push({ learner: l, questions: relevantQs });
+        } else {
+          freshNotSubList.push(l);
+        }
+      });
+
+      // 5. Diagnostics
+      console.info('[SUBMISSION-RECHECK]', {
+        eventId: targetId,
+        eligibleLearners: activeEligible.length,
+        questionCount: validFreshQs.length,
+        uniqueSubmitters: freshSubmitterIds.size,
+        submittedCount: freshSubList.length,
+        notSubmittedCount: freshNotSubList.length,
+        timestamp: new Date().toISOString()
+      });
+
+      const kDhanushLearner = freshLearners.find(l =>
+        areNamesMatching(l.full_name, 'K. Dhanush') ||
+        (l.constituency_number === 120 && targetId === '200fdd74-4d21-44d5-9f63-9a07bf267824')
+      );
+      const kDhanushQs = kDhanushLearner
+        ? validFreshQs.filter(q => isLearnerQuestion(kDhanushLearner, q, targetId))
+        : [];
+      const kDhanushMatchedBy = kDhanushLearner && kDhanushQs[0]
+        ? isLearnerQuestionMatch(kDhanushLearner, kDhanushQs[0], targetId).matchedBy
+        : null;
+
+      console.info('[K-DHANUSH-RECHECK]', {
+        learnerFound: Boolean(kDhanushLearner),
+        learnerId: kDhanushLearner?.id || null,
+        questionFound: kDhanushQs.length > 0,
+        questionIds: kDhanushQs.map(q => q.id),
+        matchedBy: kDhanushMatchedBy,
+        submitted: kDhanushQs.length > 0,
+        notSubmitted: kDhanushQs.length === 0
+      });
+
+      if (kDhanushLearner) {
+        console.info('[LEARNER-IDENTITY-TRACE]', {
+          learnerId: kDhanushLearner.id,
+          full_name: kDhanushLearner.full_name,
+          access_code: kDhanushLearner.access_code,
+          constituency: kDhanushLearner.constituency_name,
+          constituency_number: kDhanushLearner.constituency_number,
+          party: kDhanushLearner.party_name,
+          bench: kDhanushLearner.bench,
+          eventId: targetId,
+          aliases: ['K. Dhanush', 'K Dhanush', 'Dhanush K', 'Dhanush', 'k. dhanush']
+        });
+      }
+
+      if (kDhanushQs.length > 0) {
+        kDhanushQs.forEach(q => {
+          console.info('[QUESTION-DB-TRACE]', {
+            eventId: targetId,
+            questionId: q.id,
+            student_id: q.student_id,
+            learner_id: (q as any).learner_id,
+            delegate_id: (q as any).delegate_id,
+            member_id: (q as any).member_id,
+            participant_id: (q as any).participant_id,
+            user_id: (q as any).user_id,
+            access_code: (q as any).access_code,
+            student_name: q.student_name,
+            target_ministry: q.ministry,
+            question_type: q.question_type,
+            question_status: q.status,
+            deleted_flag: (q as any).deleted || false,
+            submitted_at: q.created_at,
+            approved_at: q.approved_at,
+            created_at: q.created_at,
+            updated_at: q.updated_at,
+            constituency: q.constituency || q.constituency_name,
+            constituency_number: q.constituency_number,
+            bench: q.bench,
+            party: kDhanushLearner?.party_name,
+            full_question_text_length: (q.question_text || '').length
+          });
+        });
+      } else {
+        console.info('[QUESTION-DB-TRACE]', {
+          eventId: targetId,
+          targetMember: 'K. Dhanush',
+          matchFound: false,
+          message: 'K. Dhanush submission is not currently persisted in authoritative DB.'
+        });
+      }
+
+      const msg = `Submission status rechecked — ${activeEligible.length} eligible members`;
+      setRecheckMessage(msg);
+      onShowToast('Status Rechecked', msg, 'success');
+    } catch (err: any) {
+      console.error('[Recheck] Error during recheck:', err);
+      onShowToast('Recheck Failed', err?.message || 'Could not recheck submission status.', 'error');
+    } finally {
+      if (currentRequestId === recheckRequestIdRef.current) {
+        setIsRechecking(false);
+      }
+    }
+  };
+
+  // Phase 4: Diagnostic logging for question list and K. Dhanush tracing
+  useEffect(() => {
+    const targetId = authoritativeEventId || eventId || targetSlug || '';
+    if (!targetId) return;
+
+    const kDhanushInAll = questions.find(q =>
+      areNamesMatching(q.student_name, 'K. Dhanush') ||
+      q.student_id === 'cf05e4af-28ef-4f0d-9d0b-303e4391341f' ||
+      ((q as any).learner_id === 'cf05e4af-28ef-4f0d-9d0b-303e4391341f') ||
+      (q.constituency_number === 120 && (q.event_id === targetId || !q.event_id))
+    );
+
+    const kDhanushInFiltered = filteredQuestions.find(q =>
+      areNamesMatching(q.student_name, 'K. Dhanush') ||
+      q.student_id === 'cf05e4af-28ef-4f0d-9d0b-303e4391341f' ||
+      ((q as any).learner_id === 'cf05e4af-28ef-4f0d-9d0b-303e4391341f') ||
+      (q.constituency_number === 120 && (q.event_id === targetId || !q.event_id))
+    );
+
+    const deletedIds = storageService.getAllDeletedQuestionIds();
+
+    console.info('[QUESTION-LIST-TRACE]', {
+      eventId: targetId,
+      queryFilter: { statusFilter, benchFilter, ministryFilter },
+      recordsFetchedFromDB: questions.length,
+      recordsAfterDeletedFiltering: validProceedingsQuestions.length,
+      recordsAfterEventFiltering: questions.filter(q => !q.event_id || q.event_id === targetId || q.event_slug === targetSlug).length,
+      recordsAfterStatusFiltering: questions.filter(q => statusFilter === 'All' || getCanonicalQuestionStatus(q) === statusFilter).length,
+      recordsAfterIdentityNormalization: validProceedingsQuestions.length,
+      finalDisplayedCount: filteredQuestions.length
+    });
+
+    console.info('[QUESTION-K-DHANUSH-LIST-TRACE]', {
+      questionFoundInDB: Boolean(kDhanushInAll),
+      questionReturnedByQuery: Boolean(kDhanushInAll),
+      removedByEventFilter: Boolean(kDhanushInAll && kDhanushInAll.event_id && kDhanushInAll.event_id !== targetId),
+      removedByStatusFilter: Boolean(kDhanushInAll && statusFilter !== 'All' && getCanonicalQuestionStatus(kDhanushInAll) !== statusFilter),
+      removedByDeletedFilter: Boolean(kDhanushInAll && (deletedIds.has(kDhanushInAll.id) || (kDhanushInAll as any).deleted || (kDhanushInAll.status as any) === 'Deleted')),
+      removedByIdentityFilter: false,
+      displayed: Boolean(kDhanushInFiltered)
+    });
+  }, [authoritativeEventId, eventId, targetSlug, statusFilter, benchFilter, ministryFilter, questions, filteredQuestions.length, validProceedingsQuestions.length]);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -794,6 +1019,29 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                     <XCircle className="w-3.5 h-3.5" />
                     <span>Not Submitted: {notSubmittedLearnersList.length}</span>
                   </button>
+
+                  {/* RECHECK SUBMISSION STATUS BUTTON */}
+                  <button
+                    type="button"
+                    id="recheck-submission-status-btn"
+                    disabled={isRechecking}
+                    onClick={handleRecheckSubmissionStatus}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all flex items-center gap-1.5 shadow-xs cursor-pointer ${
+                      isRechecking
+                        ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/40 cursor-not-allowed opacity-75'
+                        : 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 font-black hover:from-amber-400 hover:to-amber-500 border border-amber-400/50 hover:shadow-md active:scale-95'
+                    }`}
+                    title="Query authoritative Supabase database to recheck submission status for all members"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isRechecking ? 'animate-spin' : ''}`} />
+                    <span>{isRechecking ? 'Rechecking...' : 'RECHECK SUBMISSION STATUS'}</span>
+                  </button>
+
+                  {recheckMessage && (
+                    <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-lg animate-fade-in">
+                      ✓ {recheckMessage}
+                    </span>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap">

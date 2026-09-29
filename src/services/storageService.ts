@@ -16244,7 +16244,7 @@ class StorageService {
     });
   }
 
-  public async fetchProceedingsQuestionsOnDemand(eventKey?: string): Promise<ProceedingsQuestion[]> {
+  public async fetchProceedingsQuestionsOnDemand(eventKey?: string, _forceFresh?: boolean): Promise<ProceedingsQuestion[]> {
     const sb = supabase;
     if (!sb || !isSupabaseEnabled) {
       return this.getProceedingsQuestions(eventKey);
@@ -16607,11 +16607,75 @@ class StorageService {
     });
 
     try {
-      await this.syncEventStateToSupabase(eventId);
+      await this.syncEventStateToSupabase(eventId, true);
+
+      // Authoritative database read verification
+      let dbPersisted = false;
+      let dbReturnedId: string | null = null;
+      let dbOpResult = 'pending';
+
+      if (supabase && isValidUuid(eventId)) {
+        try {
+          const { data: verifyData, error: verifyErr } = await supabase
+            .from('college_events')
+            .select('social_coverage')
+            .eq('id', eventId)
+            .single();
+
+          if (!verifyErr && verifyData?.social_coverage) {
+            const sc = verifyData.social_coverage as Record<string, any>;
+            const pqs = Array.isArray(sc.proceedings_questions)
+              ? sc.proceedings_questions
+              : (Array.isArray(sc.questions) ? sc.questions : []);
+            const persistedQ = pqs.find((q: any) => q.id === newQuestion.id);
+            if (persistedQ) {
+              dbPersisted = true;
+              dbReturnedId = persistedQ.id;
+              dbOpResult = 'CONFIRMED_PERSISTED_IN_REMOTE_SUPABASE';
+            } else {
+              dbOpResult = 'NOT_FOUND_IN_REMOTE_SUPABASE_AFTER_WRITE';
+            }
+          } else {
+            dbOpResult = `READ_VERIFY_ERROR: ${verifyErr?.message || 'unknown'}`;
+          }
+        } catch (vErr: any) {
+          dbOpResult = `READ_VERIFY_EXCEPTION: ${vErr?.message || String(vErr)}`;
+        }
+      } else {
+        dbOpResult = 'OFFLINE_OR_NON_UUID_EVENT';
+      }
+
+      console.info('[QUESTION-SUBMIT-TRACE]', {
+        student: newQuestion.student_name,
+        eventId: eventId,
+        resolvedLearnerId: newQuestion.student_id,
+        generatedQuestionId: newQuestion.id,
+        targetMinistry: newQuestion.ministry,
+        questionType: newQuestion.question_type,
+        submissionTimestamp: newQuestion.created_at,
+        databaseOperation: 'syncEventStateToSupabase(forceImmediate=true)',
+        databaseResult: dbOpResult,
+        databaseReturnedQuestionId: dbReturnedId,
+        actuallyPersistedInSupabase: dbPersisted
+      });
+
       this.updateQuestionSnapshot(eventId).catch(() => {});
       return { success: true, question: newQuestion };
     } catch (err: any) {
       console.warn('[Supabase] submitProceedingsQuestion sync error:', err);
+      console.info('[QUESTION-SUBMIT-TRACE]', {
+        student: newQuestion.student_name,
+        eventId: eventId,
+        resolvedLearnerId: newQuestion.student_id,
+        generatedQuestionId: newQuestion.id,
+        targetMinistry: newQuestion.ministry,
+        questionType: newQuestion.question_type,
+        submissionTimestamp: newQuestion.created_at,
+        databaseOperation: 'syncEventStateToSupabase(forceImmediate=true)',
+        databaseResult: `SYNC_FAILED: ${err?.message || String(err)}`,
+        databaseReturnedQuestionId: null,
+        actuallyPersistedInSupabase: false
+      });
       this.updateQuestionSnapshot(eventId).catch(() => {});
       return { success: true, question: newQuestion };
     }
