@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { ArrangeQuestionOrderModal } from './ArrangeQuestionOrderModal';
 import { SubmissionListModal, type SubmittedMemberRecord } from './SubmissionListModal';
+import { isLearnerQuestion, isLearnerQuestionMatch } from '../../utils/memberIdentity';
 
 interface ProceedingsTabProps {
   proceedings: BillProceeding[];
@@ -73,12 +74,12 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   const [benchFilter, setBenchFilter] = useState<'All' | 'Ruling' | 'Opposition'>('All');
   const [ministryFilter, setMinistryFilter] = useState<string>('All');
 
-  // Dynamic ministries from Cabinet configuration and submitted questions
+  // Dynamic ministries and targets from Cabinet configuration and submitted questions
   const availableMinistries = useMemo(() => {
-    const fromConfig = authoritativeEventId ? storageService.getCabinetMinistries(authoritativeEventId) : [];
+    const fromConfig = (authoritativeEventId || eventId) ? storageService.getQuestionTargets(authoritativeEventId || eventId) : storageService.getQuestionTargets();
     const fromQuestions = questions.map(q => q.ministry).filter(Boolean);
     return Array.from(new Set([...fromConfig, ...fromQuestions]));
-  }, [authoritativeEventId, questions]);
+  }, [authoritativeEventId, eventId, questions]);
 
   // Modals & Inputs
   const [isAddBillOpen, setIsAddBillOpen] = useState(false);
@@ -274,7 +275,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
     ];
     const rows = questions.map((q, idx) => {
       const submitter = learners.find(
-        l => l.id === q.student_id || l.full_name?.toLowerCase() === q.student_name?.toLowerCase()
+        l => isLearnerQuestion(l, q, authoritativeEventId || eventId)
       );
       return [
         idx + 1,
@@ -342,12 +343,6 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
     return '';
   };
 
-  const isLearnerQuestion = (l: Learner, q: ProceedingsQuestion) => {
-    if (q.student_id && l.id && q.student_id === l.id) return true;
-    if (q.student_name && l.full_name && q.student_name.trim().toLowerCase() === l.full_name.trim().toLowerCase()) return true;
-    return false;
-  };
-
   // Filter-aware eligible participants for the current bench selection
   const eligibleLearners = useMemo(() => {
     return effectiveLearners.filter(l => {
@@ -367,28 +362,61 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
     });
   }, [questions, authoritativeEventId, eventId, targetSlug]);
 
-  // Partition eligible learners into submitted vs not-submitted (respecting bench and ministry filters)
-  const { submittedLearnersList, notSubmittedLearnersList } = useMemo(() => {
+  // Partition eligible learners into submitted vs not-submitted (authoritative and filter-aware)
+  const { submittedLearnersList, notSubmittedLearnersList, uniqueSubmittersCount } = useMemo(() => {
     const sub: SubmittedMemberRecord[] = [];
     const notSub: Learner[] = [];
+    const submitterIds = new Set<string>();
 
     eligibleLearners.forEach(l => {
-      let lQs = validProceedingsQuestions.filter(q => isLearnerQuestion(l, q));
-      if (ministryFilter !== 'All') {
-        lQs = lQs.filter(q => q.ministry === ministryFilter);
-      }
+      const allLearnerQs = validProceedingsQuestions.filter(q => isLearnerQuestion(l, q, authoritativeEventId || eventId));
+      const hasSubmittedAny = allLearnerQs.length > 0;
 
-      if (lQs.length > 0) {
-        sub.push({ learner: l, questions: lQs });
+      if (hasSubmittedAny) {
+        submitterIds.add(l.id);
+
+        let relevantQs = allLearnerQs;
+        if (ministryFilter !== 'All') {
+          relevantQs = allLearnerQs.filter(q => q.ministry === ministryFilter);
+        }
+
+        if (ministryFilter === 'All' || relevantQs.length > 0) {
+          sub.push({ learner: l, questions: relevantQs.length > 0 ? relevantQs : allLearnerQs });
+        }
       } else {
+        // Learner has NOT submitted ANY question for this event/session
         notSub.push(l);
       }
     });
 
-    return { submittedLearnersList: sub, notSubmittedLearnersList: notSub };
-  }, [eligibleLearners, validProceedingsQuestions, ministryFilter]);
+    return {
+      submittedLearnersList: sub,
+      notSubmittedLearnersList: notSub,
+      uniqueSubmittersCount: submitterIds.size
+    };
+  }, [eligibleLearners, validProceedingsQuestions, ministryFilter, authoritativeEventId, eventId]);
 
-  const uniqueSubmittersCount = submittedLearnersList.length;
+  // Diagnostic status logging required by prompt specification
+  useEffect(() => {
+    const targetId = authoritativeEventId || eventId || targetSlug;
+    if (targetId) {
+      console.log(
+        `[QUESTION-SUBMISSION-STATUS] eventId=${targetId} totalLearners=${eligibleLearners.length} totalQuestions=${validProceedingsQuestions.length} uniqueSubmittedLearnerIds=${uniqueSubmittersCount} submittedCount=${submittedLearnersList.length} notSubmittedCount=${notSubmittedLearnersList.length}`
+      );
+
+      // Log trace for each submitted delegate
+      submittedLearnersList.forEach(({ learner: l, questions: lQs }) => {
+        const q = lQs[0];
+        if (q) {
+          const matchResult = isLearnerQuestionMatch(l, q, targetId);
+          console.log(
+            `[QUESTION-SUBMISSION-TRACE] eventId=${targetId} learnerId=${l.id} learnerName="${l.full_name}" questionId=${q.id} questionText="${(q.question_text || '').substring(0, 40).replace(/[\r\n]+/g, ' ')}..." questionStatus=${q.status} targetMinister="${q.ministry}" createdAt=${q.created_at} updatedAt=${q.updated_at || ''} submissionSource=proceedings_questions submissionEventId=${q.event_id || ''} questionLearnerId=${(q as any).learner_id || ''} questionStudentId=${q.student_id || ''} questionDelegateId=${(q as any).delegate_id || ''} questionMemberId=${(q as any).member_id || ''} resolvedLearnerId=${l.id} matchedBy=${matchResult.matchedBy || ''}`
+          );
+        }
+      });
+    }
+  }, [authoritativeEventId, eventId, targetSlug, eligibleLearners.length, validProceedingsQuestions.length, uniqueSubmittersCount, submittedLearnersList, notSubmittedLearnersList.length]);
+
   const totalMembersCount = eligibleLearners.length;
   const progressPct = totalMembersCount > 0
     ? Math.round((uniqueSubmittersCount / totalMembersCount) * 1000) / 10

@@ -30,6 +30,7 @@ import {
 } from '../../services/storageService';
 import { AllocationVerificationModal } from './AllocationVerificationModal';
 import { getEventSlug } from '../../utils/slug';
+import { isLearnerQuestion } from '../../utils/memberIdentity';
 import {
   Landmark,
   MapPin,
@@ -358,11 +359,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [approvedHouseQuestions, setApprovedHouseQuestions] = useState<ProceedingsQuestion[]>([]);
   const [ministerQuestions, setMinisterQuestions] = useState<ProceedingsQuestion[]>([]);
   const [eventMinistries, setEventMinistries] = useState<string[]>(() => {
-    return resolvedEventId ? storageService.getCabinetMinistries(resolvedEventId) : [];
+    return resolvedEventId ? storageService.getQuestionTargets(resolvedEventId) : storageService.getQuestionTargets();
   });
   const [isMinistriesLoading, setIsMinistriesLoading] = useState<boolean>(() => false);
   const [questionMinistry, setQuestionMinistry] = useState<string>(() => {
-    const mins = resolvedEventId ? storageService.getCabinetMinistries(resolvedEventId) : [];
+    const mins = resolvedEventId ? storageService.getQuestionTargets(resolvedEventId) : storageService.getQuestionTargets();
     return mins.length > 0 ? mins[0] : '';
   });
   const [questionType, setQuestionType] = useState<ProceedingsQuestion['question_type']>('Standard');
@@ -544,7 +545,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         setDeadline(freshDeadline);
         const allQ = [...storageService.getProceedingsQuestions(eventSlug), ...storageService.getProceedingsQuestions(activeId)];
         const uniqueQ = Array.from(new Map(allQ.map(q => [q.id, q])).values());
-        setStudentQuestions(uniqueQ.filter(q => q.student_id === student.id || q.student_name === student.full_name));
+        setStudentQuestions(uniqueQ.filter(q => isLearnerQuestion(student, q, activeId || eventSlug)));
         const approvedAndStarred = uniqueQ
           .filter(q => q.status === 'Approved' || q.status === 'Starred')
           .sort((a, b) => (a.calling_order ?? a.queue_order ?? 999999) - (b.calling_order ?? b.queue_order ?? 999999));
@@ -555,8 +556,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           setMinisterQuestions([]);
         }
 
-        // Refresh configured ministries from Cabinet & Shadow Ministry system
-        const activeMins = activeId ? storageService.getCabinetMinistries(activeId) : [];
+        // Refresh configured ministries and targets for Question Hour
+        const activeMins = activeId ? storageService.getQuestionTargets(activeId) : storageService.getQuestionTargets();
         setEventMinistries(activeMins);
         setIsMinistriesLoading(false);
         setQuestionMinistry(prev => {
@@ -690,9 +691,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         event_id: resolvedEventId,
         event_slug: eventSlug,
         student_id: student.id,
+        learner_id: student.id,
+        access_code: student.access_code,
         student_name: student.full_name,
         bench: studentBench,
         constituency: student.constituency_name || (student.constituency_number ? `#${student.constituency_number}` : 'Assembly Delegate'),
+        constituency_name: student.constituency_name || undefined,
+        constituency_number: student.constituency_number !== undefined ? student.constituency_number : null,
+        target: questionMinistry,
+        target_name: questionMinistry,
         ministry: questionMinistry,
         target_ministry_id: questionMinistry.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
         target_ministry_name: questionMinistry,
@@ -707,7 +714,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         onShowToast('Question Submitted', 'Question submitted successfully and is awaiting approval.', 'success');
         const allQ = [...storageService.getProceedingsQuestions(eventSlug), ...storageService.getProceedingsQuestions(resolvedEventId)];
         const uniqueQ = Array.from(new Map(allQ.map(q => [q.id, q])).values());
-        setStudentQuestions(uniqueQ.filter(q => q.student_id === student.id || q.student_name === student.full_name));
+        setStudentQuestions(uniqueQ.filter(q => isLearnerQuestion(student, q, resolvedEventId || eventSlug)));
       } else {
         onShowToast('Submission Failed', result.error || 'Failed to submit question to the database.', 'error');
       }

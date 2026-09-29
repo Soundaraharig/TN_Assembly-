@@ -546,6 +546,8 @@ export interface ProceedingsQuestion {
   event_id: string;
   event_slug: string;
   student_id?: string;
+  learner_id?: string;
+  access_code?: string;
   student_name: string;
   bench: 'Ruling' | 'Opposition';
   constituency?: string;

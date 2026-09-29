@@ -55,7 +55,6 @@ import type {
 
 export const CANONICAL_QUESTION_TARGETS: string[] = [
   'Chief Minister',
-  'Ministry of Chief Minister',
   'Ministry of Education',
   'Ministry of Finance',
   'Ministry of Health & Family Welfare',
@@ -2821,12 +2820,12 @@ class StorageService {
     const otherMinistries = ministries.filter(
       m => {
         const lower = m.toLowerCase().trim();
-        return lower !== 'chief minister' && lower !== 'cm' && lower !== 'ministry of chief minister';
+        return lower !== 'chief minister' && lower !== 'cm' && lower !== 'ministry of chief minister' && lower !== "chief minister's office" && lower !== 'office of chief minister';
       }
     );
 
     // Chief Minister ALWAYS at top of the target list
-    return ['Chief Minister', 'Ministry of Chief Minister', ...(otherMinistries.length > 0 ? otherMinistries : defaultList.slice(2))];
+    return ['Chief Minister', ...(otherMinistries.length > 0 ? otherMinistries : defaultList.slice(1))];
   }
 
   public getCabinetMinistries(eventId: string): string[] {
@@ -2933,7 +2932,10 @@ class StorageService {
         }
 
         this.notify();
-        const targets = ['Chief Minister', ...ministries.filter(m => m.toLowerCase().trim() !== 'chief minister' && m.toLowerCase().trim() !== 'cm')];
+        const targets = ['Chief Minister', ...ministries.filter(m => {
+          const l = m.toLowerCase().trim();
+          return l !== 'chief minister' && l !== 'cm' && l !== 'ministry of chief minister' && l !== "chief minister's office" && l !== 'office of chief minister';
+        })];
         return targets;
       }
     } catch (err) {
@@ -16572,8 +16574,9 @@ class StorageService {
       id: question.id || `q-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       event_id: eventId,
       event_slug: resolvedEvent ? getEventSlug(resolvedEvent) : eventSlug,
-      student_id: question.student_id,
-      student_name: question.student_name || 'Hon. Member',
+      student_id: question.student_id || (question as any).learner_id || (question as any).delegate_id || (question as any).member_id || (question as any).participant_id || (question as any).user_id,
+      student_name: question.student_name || (question as any).learner_name || (question as any).delegate_name || 'Hon. Member',
+      access_code: (question as any).access_code || undefined,
       bench: question.bench || 'Ruling',
       constituency: question.constituency || 'Assembly Delegate',
       constituency_name: question.constituency_name || question.constituency || 'Assembly Delegate',
@@ -16628,8 +16631,9 @@ class StorageService {
       id: question.id || `q-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       event_id: eventId,
       event_slug: resolvedEvent ? getEventSlug(resolvedEvent) : eventSlug,
-      student_id: question.student_id,
-      student_name: question.student_name || 'Hon. Member',
+      student_id: question.student_id || (question as any).learner_id || (question as any).delegate_id || (question as any).member_id || (question as any).participant_id || (question as any).user_id,
+      student_name: question.student_name || (question as any).learner_name || (question as any).delegate_name || 'Hon. Member',
+      access_code: (question as any).access_code || undefined,
       bench: question.bench || 'Ruling',
       constituency: question.constituency || 'Assembly Delegate',
       constituency_name: question.constituency_name || question.constituency || 'Assembly Delegate',
