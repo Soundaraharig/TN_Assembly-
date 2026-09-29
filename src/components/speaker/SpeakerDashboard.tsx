@@ -12,7 +12,8 @@ import type {
 import {
   storageService,
   isSpeakerRole,
-  isDeputySpeakerRole
+  isDeputySpeakerRole,
+  areJsonbObjectsEqual
 } from '../../services/storageService';
 import {
   Crown,
@@ -140,7 +141,8 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
     if (!eventId) return;
     const currentSession = storageService.getActiveSession(eventId);
     setActiveSession(currentSession);
-    setAgenda(storageService.getAgenda(eventId));
+    const freshAgenda = storageService.getAgenda(eventId);
+    setAgenda(prev => (areJsonbObjectsEqual(prev, freshAgenda) ? prev : freshAgenda));
     setSpeakingRequests(storageService.getSpeakingRequests(eventId));
     setSpeakingTurns(storageService.getSpeakingTurns(eventId));
     setBills(storageService.getBills(eventId));

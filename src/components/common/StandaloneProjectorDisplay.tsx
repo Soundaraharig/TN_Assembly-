@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import type { CollegeEvent, AgendaItem, Election, LiveFlashVote, Learner, BillProceeding, LiveTimerState, ProceedingsQuestion } from '../../types';
 import { Radio, Maximize2, Minimize2, Clock, Sparkles, Trophy, Crown, Shield, FileText, CheckCircle2, XCircle, Volume2, WifiOff } from 'lucide-react';
 import type { ProjectorStudioSettings } from '../../types';
-import { storageService } from '../../services/storageService';
+import { storageService, areJsonbObjectsEqual } from '../../services/storageService';
 import { extractEventFromUrl, extractEventSlugCandidateFromUrl } from '../../utils/slug';
 import { formatMemberConstituency } from '../../utils/memberIdentity';
 import { playTimerAlarm, stopAllAlertAudio, unlockAudioContext, playStartChirp } from '../../utils/audioAlert';
@@ -156,7 +156,8 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
       if (ev) {
         setCurrentEvent(ev);
         setSettings(storageService.getProjectorSettings(ev.id));
-        setAgenda(storageService.getAgenda(ev.id));
+        const freshAgenda = storageService.getAgenda(ev.id);
+        setAgenda(prev => (areJsonbObjectsEqual(prev, freshAgenda) ? prev : freshAgenda));
         setElections(storageService.getElections(ev.id));
         setFlashVotes(storageService.getFlashVotes(ev.id));
         setLearners(storageService.getLearners(ev.id));
