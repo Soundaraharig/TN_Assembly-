@@ -1941,9 +1941,15 @@ class StorageService {
         if (!existing) {
           procMap.set(p.id, p);
         } else {
-          const finalStatus = (isTerminalBillStatus(existing.status) && !isTerminalBillStatus(p.status))
-            ? existing.status
-            : (p.status || existing.status);
+          const existingT = new Date(existing.updated_at || existing.created_at || 0).getTime();
+          const remoteT = new Date(p.updated_at || p.created_at || 0).getTime();
+          const finalStatus = remoteT > existingT
+            ? (p.status || existing.status)
+            : (existingT > remoteT
+              ? (existing.status || p.status)
+              : ((isTerminalBillStatus(existing.status) && !isTerminalBillStatus(p.status))
+                ? existing.status
+                : (p.status || existing.status)));
 
           const votesByDelegate = new Map<string, any>();
           (existing.votes || []).forEach((v: any) => votesByDelegate.set(v.delegate_id || v.learner_id, v));
@@ -5975,7 +5981,13 @@ class StorageService {
                   if (k && !retryVotesMap.has(k)) retryVotesMap.set(k, v);
                 });
                 const rVotes = Array.from(retryVotesMap.values());
-                const rStatus = isTerminalBillStatus(remoteProc.status) ? remoteProc.status : (isTerminalBillStatus(localProc.status) ? localProc.status : (localProc.status || remoteProc.status));
+                const localT = new Date(localProc.updated_at || localProc.created_at || 0).getTime();
+                const remoteT = new Date(remoteProc.updated_at || remoteProc.created_at || 0).getTime();
+                const rStatus = remoteT > localT
+                  ? (remoteProc.status || localProc.status)
+                  : (localT > remoteT
+                    ? (localProc.status || remoteProc.status)
+                    : (isTerminalBillStatus(remoteProc.status) ? remoteProc.status : (isTerminalBillStatus(localProc.status) ? localProc.status : (localProc.status || remoteProc.status))));
                 const counts = deriveBillVoteCounts({
                   ...remoteProc,
                   ...localProc,
