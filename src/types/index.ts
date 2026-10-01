@@ -388,6 +388,18 @@ export interface BillProceeding {
   updated_at?: string;
 }
 
+export interface DerivedBillVoteCounts {
+  ayes: number;
+  noes: number;
+  abstain: number;
+  totalVotes: number;
+  eligibleCount: number;
+  notVotedCount: number;
+  turnoutPct: number;
+  result: 'PASSED' | 'FAILED';
+  effectiveVoterIds: string[];
+}
+
 export type LiveTimerStatus = 'RUNNING' | 'PAUSED' | 'STOPPED' | 'EXPIRED';
 
 export interface LiveTimerState {

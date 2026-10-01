@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import type { CollegeEvent, AgendaItem, Election, LiveFlashVote, Learner, BillProceeding, LiveTimerState, ProceedingsQuestion } from '../../types';
 import { Radio, Maximize2, Minimize2, Clock, Sparkles, Trophy, Crown, Shield, FileText, CheckCircle2, XCircle, Volume2, WifiOff } from 'lucide-react';
 import type { ProjectorStudioSettings } from '../../types';
-import { storageService, areJsonbObjectsEqual } from '../../services/storageService';
+import { storageService, areJsonbObjectsEqual, deriveBillVoteCounts } from '../../services/storageService';
 import { extractEventFromUrl, extractEventSlugCandidateFromUrl } from '../../utils/slug';
 import { formatMemberConstituency } from '../../utils/memberIdentity';
 import { playTimerAlarm, stopAllAlertAudio, unlockAudioContext, playStartChirp } from '../../utils/audioAlert';
@@ -561,69 +561,76 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
               )}
             </div>
 
-            {/* Vote Totals Breakdown Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mx-auto pt-2">
-              <div className="p-6 rounded-3xl bg-emerald-950/50 border-2 border-emerald-500/60 shadow-xl text-center space-y-1">
-                <span className="text-xs md:text-sm uppercase font-black text-emerald-400 tracking-wider block">
-                  AYES (YES)
-                </span>
-                <span className="text-4xl md:text-6xl font-mono font-black text-white">
-                  {targetBill.ayes}
-                </span>
-              </div>
+            {(() => {
+              const counts = deriveBillVoteCounts(targetBill, learners.length);
+              return (
+                <>
+                  {/* Vote Totals Breakdown Grid */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mx-auto pt-2">
+                    <div className="p-6 rounded-3xl bg-emerald-950/50 border-2 border-emerald-500/60 shadow-xl text-center space-y-1">
+                      <span className="text-xs md:text-sm uppercase font-black text-emerald-400 tracking-wider block">
+                        AYES (YES)
+                      </span>
+                      <span className="text-4xl md:text-6xl font-mono font-black text-white">
+                        {counts.ayes}
+                      </span>
+                    </div>
 
-              <div className="p-6 rounded-3xl bg-rose-950/50 border-2 border-rose-500/60 shadow-xl text-center space-y-1">
-                <span className="text-xs md:text-sm uppercase font-black text-rose-400 tracking-wider block">
-                  NOES (NO)
-                </span>
-                <span className="text-4xl md:text-6xl font-mono font-black text-white">
-                  {targetBill.noes}
-                </span>
-              </div>
+                    <div className="p-6 rounded-3xl bg-rose-950/50 border-2 border-rose-500/60 shadow-xl text-center space-y-1">
+                      <span className="text-xs md:text-sm uppercase font-black text-rose-400 tracking-wider block">
+                        NOES (NO)
+                      </span>
+                      <span className="text-4xl md:text-6xl font-mono font-black text-white">
+                        {counts.noes}
+                      </span>
+                    </div>
 
-              <div className="p-6 rounded-3xl bg-slate-900/80 border-2 border-slate-700/60 shadow-xl text-center space-y-1">
-                <span className="text-xs md:text-sm uppercase font-black text-slate-400 tracking-wider block">
-                  ABSTAIN
-                </span>
-                <span className="text-4xl md:text-6xl font-mono font-black text-white">
-                  {targetBill.abstain || 0}
-                </span>
-              </div>
+                    <div className="p-6 rounded-3xl bg-slate-900/80 border-2 border-slate-700/60 shadow-xl text-center space-y-1">
+                      <span className="text-xs md:text-sm uppercase font-black text-slate-400 tracking-wider block">
+                        ABSTAIN
+                      </span>
+                      <span className="text-4xl md:text-6xl font-mono font-black text-white">
+                        {counts.abstain}
+                      </span>
+                    </div>
 
-              <div className="p-6 rounded-3xl bg-amber-950/50 border-2 border-amber-500/60 shadow-xl text-center space-y-1">
-                <span className="text-xs md:text-sm uppercase font-black text-amber-400 tracking-wider block">
-                  TOTAL VOTES
-                </span>
-                <span className="text-4xl md:text-6xl font-mono font-black text-amber-300">
-                  {targetBill.total_votes || (targetBill.ayes + targetBill.noes + (targetBill.abstain || 0))}
-                </span>
-              </div>
-            </div>
+                    <div className="p-6 rounded-3xl bg-amber-950/50 border-2 border-amber-500/60 shadow-xl text-center space-y-1">
+                      <span className="text-xs md:text-sm uppercase font-black text-amber-400 tracking-wider block">
+                        TOTAL VOTES
+                      </span>
+                      <span className="text-4xl md:text-6xl font-mono font-black text-amber-300">
+                        {counts.totalVotes}
+                      </span>
+                    </div>
+                  </div>
 
-            {/* GIANT BILL PASSED / BILL FAILED BANNER */}
-            <div className="pt-4 max-w-4xl mx-auto">
-              {targetBill.result === 'PASSED' ? (
-                <div className="p-8 md:p-12 rounded-3xl bg-gradient-to-b from-emerald-950/90 via-slate-900 to-emerald-950/90 border-4 border-emerald-400 text-emerald-400 shadow-2xl shadow-emerald-950/80 animate-gold-glow flex flex-col items-center justify-center gap-4">
-                  <CheckCircle2 className="w-16 h-16 md:w-20 md:h-20 text-emerald-400 animate-bounce" />
-                  <span className="text-5xl md:text-8xl font-black tracking-tight text-white drop-shadow-2xl">
-                    BILL PASSED
-                  </span>
-                  <p className="text-lg md:text-2xl text-emerald-300 font-semibold">
-                    The House has resolved in affirmative by majority division.
-                  </p>
-                </div>
-              ) : (
-                <div className="p-8 md:p-12 rounded-3xl bg-gradient-to-b from-rose-950/90 via-slate-900 to-rose-950/90 border-4 border-rose-500 text-rose-400 shadow-2xl shadow-rose-950/80 flex flex-col items-center justify-center gap-4">
-                  <XCircle className="w-16 h-16 md:w-20 md:h-20 text-rose-500 animate-bounce" />
-                  <span className="text-5xl md:text-8xl font-black tracking-tight text-white drop-shadow-2xl">
-                    BILL FAILED
-                  </span>
-                  <p className="text-lg md:text-2xl text-rose-300 font-semibold">
-                    The House has declined the motion. Division vote defeated.
-                  </p>
-                </div>
-              )}
-            </div>
+                  {/* GIANT BILL PASSED / BILL FAILED BANNER */}
+                  <div className="pt-4 max-w-4xl mx-auto">
+                    {counts.result === 'PASSED' ? (
+                      <div className="p-8 md:p-12 rounded-3xl bg-gradient-to-b from-emerald-950/90 via-slate-900 to-emerald-950/90 border-4 border-emerald-400 text-emerald-400 shadow-2xl shadow-emerald-950/80 animate-gold-glow flex flex-col items-center justify-center gap-4">
+                        <CheckCircle2 className="w-16 h-16 md:w-20 md:h-20 text-emerald-400 animate-bounce" />
+                        <span className="text-5xl md:text-8xl font-black tracking-tight text-white drop-shadow-2xl">
+                          BILL PASSED
+                        </span>
+                        <p className="text-lg md:text-2xl text-emerald-300 font-semibold">
+                          The House has resolved in affirmative by majority division.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="p-8 md:p-12 rounded-3xl bg-gradient-to-b from-rose-950/90 via-slate-900 to-rose-950/90 border-4 border-rose-500 text-rose-400 shadow-2xl shadow-rose-950/80 flex flex-col items-center justify-center gap-4">
+                        <XCircle className="w-16 h-16 md:w-20 md:h-20 text-rose-500 animate-bounce" />
+                        <span className="text-5xl md:text-8xl font-black tracking-tight text-white drop-shadow-2xl">
+                          BILL FAILED
+                        </span>
+                        <p className="text-lg md:text-2xl text-rose-300 font-semibold">
+                          The House has declined the motion. Division vote defeated.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
 
           </div>
 
@@ -661,7 +668,7 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
                   Cast your vote (AYE / NO / ABSTAIN)
                 </p>
                 <div className="px-6 py-2 rounded-2xl bg-slate-900/80 border border-slate-800 text-xs md:text-sm text-slate-400 font-mono inline-block">
-                  Votes Submitted: <span className="text-purple-400 font-bold">{targetBill.voted_delegate_ids?.length || targetBill.total_votes || 0}</span>
+                  Votes Submitted: <span className="text-purple-400 font-bold">{deriveBillVoteCounts(targetBill, learners.length).totalVotes}</span>
                 </div>
               </div>
             ) : isBillClosedUnrevealed ? (

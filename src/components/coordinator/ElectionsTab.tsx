@@ -38,7 +38,7 @@ import {
   FileText
 } from 'lucide-react';
 import { getProjectorSettings, saveProjectorSettings } from './ProjectorTab';
-import { storageService, getResolvedPartyName, deduplicateElectionList } from '../../services/storageService';
+import { storageService, getResolvedPartyName, deduplicateElectionList, deriveBillVoteCounts } from '../../services/storageService';
 import { RevealResultControls } from '../common/RevealResultControls';
 
 interface ElectionsTabProps {
@@ -232,7 +232,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
         return;
       }
 
-      const res = storageService.castBillVoteOnBehalfOfDelegate(
+      const res = await storageService.castBillVoteOnBehalfOfDelegate(
         adminVoteTargetBill.id,
         eventId,
         adminVoteDelegate.id,
@@ -2141,7 +2141,8 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                 const isVotingOpen = bill.status === 'Vote Open' || bill.status === 'Voting';
                 const isVotingClosed = bill.status === 'Vote Closed' || bill.status === 'Result Hidden' || bill.status === 'Result Revealed';
                 const isRevealed = bill.is_result_revealed || bill.status === 'Result Revealed';
-                const totalVotes = bill.total_votes || (bill.ayes + bill.noes + (bill.abstain || 0));
+                const billCounts = deriveBillVoteCounts(bill, learners.length);
+                const totalVotes = billCounts.totalVotes;
 
                 return (
                   <div
@@ -2213,8 +2214,8 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                         {/* 2. Close Vote Button */}
                         {isVotingOpen && (
                           <button
-                            onClick={() => {
-                              storageService.closeBillVote(bill.id, eventId);
+                            onClick={async () => {
+                              await storageService.closeBillVote(bill.id, eventId);
                               setBills(storageService.getBills(eventId));
                               onShowToast('Bill Voting Closed', `${bill.bill_number} voting has closed. Result is hidden.`, 'info');
                             }}
@@ -2271,8 +2272,8 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                         totalEligible={learners.length}
                         isRevealed={Boolean(isRevealed)}
                         isDismissed={Boolean(bill.is_dismissed)}
-                        onReveal={() => {
-                          storageService.revealBillResult(bill.id, eventId);
+                        onReveal={async () => {
+                          await storageService.revealBillResult(bill.id, eventId);
                           setBills(storageService.getBills(eventId));
                           onShowToast('Result Revealed', `${bill.bill_number} result transmitted to projector screen`, 'success');
                         }}
@@ -2291,7 +2292,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                           YES (AYES)
                         </span>
                         <span className="text-xl md:text-2xl font-mono font-black text-emerald-700 dark:text-emerald-300">
-                          {bill.ayes}
+                          {billCounts.ayes}
                         </span>
                       </div>
                       <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/20 border border-rose-500/30 text-center">
@@ -2299,7 +2300,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                           NO (NOES)
                         </span>
                         <span className="text-xl md:text-2xl font-mono font-black text-rose-700 dark:text-rose-300">
-                          {bill.noes}
+                          {billCounts.noes}
                         </span>
                       </div>
                       <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 text-center">
@@ -2307,7 +2308,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                           ABSTAIN
                         </span>
                         <span className="text-xl md:text-2xl font-mono font-black text-slate-700 dark:text-slate-300">
-                          {bill.abstain || 0}
+                          {billCounts.abstain}
                         </span>
                       </div>
                       <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-500/30 text-center">
@@ -2315,7 +2316,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                           TOTAL VOTES
                         </span>
                         <span className="text-xl md:text-2xl font-mono font-black text-amber-700 dark:text-amber-300">
-                          {totalVotes}
+                          {billCounts.totalVotes}
                         </span>
                       </div>
                     </div>

@@ -1386,87 +1386,35 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
               <div className="space-y-4">
                 {liveBills.map(bill => {
-                  const ledgerVote = storageService.getStudentVote(resolvedEventId, 'BILL', bill.id, student.id);
-                  const persistedVote = bill.votes?.find(v => v.delegate_id === student.id || v.learner_id === student.id)?.vote;
-                  const hasPersistedVoted = bill.voted_delegate_ids?.includes(student.id) || !!ledgerVote;
-                  const authoritativeVote = ledgerVote?.decision || persistedVote || localBillVotes[bill.id];
-                  const hasVoted = hasPersistedVoted || !!authoritativeVote;
+                  const hasServerVoted = storageService.hasStudentVotedOnBill(resolvedEventId, bill.id, student.id);
+                  const recordedDecision = storageService.getStudentBillVoteDecision(resolvedEventId, bill.id, student.id);
+                  const authoritativeVote = recordedDecision || localBillVotes[bill.id];
+                  const hasVoted = hasServerVoted || !!authoritativeVote;
                   const isPending = !!billVotePending[bill.id];
 
-                  const handleBillVoteClick = (decision: 'YES' | 'NO' | 'ABSTAIN') => {
+                  const handleBillVoteClick = async (decision: 'YES' | 'NO' | 'ABSTAIN') => {
                     if (hasVoted || isPending) return;
-                    logVoteStateTrace({
-                      eventId: resolvedEventId,
-                      voteType: 'BILL',
-                      voteId: bill.id,
-                      learnerId: student.id,
-                      participantId: student.access_code || student.id,
-                      previous: false,
-                      incoming: true,
-                      source: 'OPTIMISTIC_UPDATE'
-                    });
-                    setLocalBillVotes(prev => ({ ...prev, [bill.id]: decision }));
                     setBillVotePending(prev => ({ ...prev, [bill.id]: true }));
-                    storageService.recordStudentVote({
-                      eventId: resolvedEventId,
-                      voteType: 'BILL',
-                      itemId: bill.id,
-                      studentId: student.id,
-                      decision,
-                      timestamp: Date.now(),
-                      serverConfirmed: true
-                    });
                     try {
-                      const res = storageService.castBillVote(bill.id, resolvedEventId, student, decision);
+                      const res = await storageService.castBillVote(bill.id, resolvedEventId, student, decision);
                       if (res.success) {
+                        setLocalBillVotes(prev => ({ ...prev, [bill.id]: decision }));
                         logVoteStateTrace({
                           eventId: resolvedEventId,
                           voteType: 'BILL',
                           voteId: bill.id,
                           learnerId: student.id,
                           participantId: student.access_code || student.id,
-                          previous: true,
+                          previous: false,
                           incoming: true,
                           source: 'DB_CONFIRMATION'
                         });
                         setSyncedBills(storageService.getBills(resolvedEventId));
                         onShowToast('Bill Vote Cast', `Your vote on ${bill.bill_number} was recorded as ${decision === 'YES' ? 'YES (AYE)' : decision}.`, 'success');
                       } else {
-                        storageService.clearStudentVote(resolvedEventId, 'BILL', bill.id, student.id);
-                        setLocalBillVotes(prev => {
-                          const copy = { ...prev };
-                          delete copy[bill.id];
-                          return copy;
-                        });
-                        logVoteStateTrace({
-                          eventId: resolvedEventId,
-                          voteType: 'BILL',
-                          voteId: bill.id,
-                          learnerId: student.id,
-                          participantId: student.access_code || student.id,
-                          previous: true,
-                          incoming: false,
-                          source: 'RESET'
-                        });
                         onShowToast('Vote Failed', res.error || 'You may have already voted or voting has closed.', 'error');
                       }
                     } catch (err: any) {
-                      storageService.clearStudentVote(resolvedEventId, 'BILL', bill.id, student.id);
-                      setLocalBillVotes(prev => {
-                        const copy = { ...prev };
-                        delete copy[bill.id];
-                        return copy;
-                      });
-                      logVoteStateTrace({
-                        eventId: resolvedEventId,
-                        voteType: 'BILL',
-                        voteId: bill.id,
-                        learnerId: student.id,
-                        participantId: student.access_code || student.id,
-                        previous: true,
-                        incoming: false,
-                        source: 'RESET'
-                      });
                       onShowToast('Vote Failed', err?.message || 'Vote failed.', 'error');
                     } finally {
                       setBillVotePending(prev => ({ ...prev, [bill.id]: false }));

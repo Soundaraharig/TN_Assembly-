@@ -13,7 +13,8 @@ import {
   storageService,
   isSpeakerRole,
   isDeputySpeakerRole,
-  areJsonbObjectsEqual
+  areJsonbObjectsEqual,
+  deriveBillVoteCounts
 } from '../../services/storageService';
 import {
   Crown,
@@ -1172,10 +1173,11 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
               <div className="p-5 space-y-4">
                 {liveBill ? (
                   (() => {
-                    const votesCast = liveBill.voted_delegate_ids?.length || liveBill.votes?.length || liveBill.total_votes || 0;
-                    const eligible = totalEligibleDelegates;
-                    const notVoted = Math.max(0, eligible - votesCast);
-                    const turnoutPct = eligible > 0 ? Math.round((votesCast / eligible) * 100) : 0;
+                    const counts = deriveBillVoteCounts(liveBill, totalEligibleDelegates);
+                    const votesCast = counts.totalVotes;
+                    const eligible = counts.eligibleCount;
+                    const notVoted = counts.notVotedCount;
+                    const turnoutPct = counts.turnoutPct;
                     const isRevealed = Boolean(liveBill.is_result_revealed || liveBill.status === 'Result Revealed' || liveBill.status === 'Finalized');
 
                     return (
@@ -1240,27 +1242,27 @@ export const SpeakerDashboard: React.FC<SpeakerDashboardProps> = ({
                               </span>
                               <span
                                 className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
-                                  (liveBill.ayes || 0) >= (liveBill.noes || 0)
+                                  counts.ayes >= counts.noes
                                     ? 'bg-emerald-500/15 dark:bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 border border-emerald-500/30 dark:border-emerald-500/40'
                                     : 'bg-rose-500/15 dark:bg-rose-500/20 text-rose-800 dark:text-rose-300 border border-rose-500/30 dark:border-rose-500/40'
                                 }`}
                               >
-                                {liveBill.result || ((liveBill.ayes || 0) >= (liveBill.noes || 0) ? 'PASSED' : 'REJECTED')}
+                                {counts.result}
                               </span>
                             </div>
 
                             <div className="grid grid-cols-3 gap-2 text-center">
                               <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
                                 <div className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 uppercase">YES (AYES)</div>
-                                <div className="text-lg font-black text-slate-900 dark:text-white font-mono mt-0.5">{liveBill.ayes || 0}</div>
+                                <div className="text-lg font-black text-slate-900 dark:text-white font-mono mt-0.5">{counts.ayes}</div>
                               </div>
                               <div className="p-2 rounded-lg bg-rose-500/10 border border-rose-500/20">
                                 <div className="text-[10px] font-bold text-rose-700 dark:text-rose-400 uppercase">NO (NOES)</div>
-                                <div className="text-lg font-black text-slate-900 dark:text-white font-mono mt-0.5">{liveBill.noes || 0}</div>
+                                <div className="text-lg font-black text-slate-900 dark:text-white font-mono mt-0.5">{counts.noes}</div>
                               </div>
                               <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
                                 <div className="text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase">ABSTAIN</div>
-                                <div className="text-lg font-black text-slate-800 dark:text-slate-300 font-mono mt-0.5">{liveBill.abstain || 0}</div>
+                                <div className="text-lg font-black text-slate-800 dark:text-slate-300 font-mono mt-0.5">{counts.abstain}</div>
                               </div>
                             </div>
                           </div>

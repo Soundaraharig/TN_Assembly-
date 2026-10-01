@@ -50,8 +50,85 @@ import type {
   SpeakingTurn,
   SpeakingTurnStatus,
   QuestionSnapshot,
-  StudentVoteRecord
+  StudentVoteRecord,
+  DerivedBillVoteCounts
 } from '../types';
+
+export function deriveBillVoteCounts(
+  bill: BillProceeding | null | undefined,
+  eligibleLearnersCountOrList: number | Learner[] = 0
+): DerivedBillVoteCounts {
+  const eligibleCount = typeof eligibleLearnersCountOrList === 'number'
+    ? eligibleLearnersCountOrList
+    : (Array.isArray(eligibleLearnersCountOrList) ? eligibleLearnersCountOrList.length : 0);
+
+  if (!bill) {
+    return {
+      ayes: 0,
+      noes: 0,
+      abstain: 0,
+      totalVotes: 0,
+      eligibleCount,
+      notVotedCount: eligibleCount,
+      turnoutPct: 0,
+      result: 'FAILED',
+      effectiveVoterIds: []
+    };
+  }
+
+  // Deduplicate votes by effective vote identity: eventId + billId + learnerId
+  const voteMap = new Map<string, BillVote>();
+  const effectiveVoterSet = new Set<string>();
+
+  (bill.votes || []).forEach(v => {
+    const voterId = v.learner_id || v.delegate_id;
+    if (voterId) {
+      if (!voteMap.has(voterId)) {
+        voteMap.set(voterId, v);
+        effectiveVoterSet.add(voterId);
+      } else {
+        const existing = voteMap.get(voterId)!;
+        if (v.cast_by === 'Admin' && existing.cast_by !== 'Admin') {
+          voteMap.set(voterId, v);
+        }
+      }
+    }
+  });
+
+  (bill.voted_delegate_ids || []).forEach(id => {
+    if (id) effectiveVoterSet.add(id);
+  });
+
+  const effectiveVotes = Array.from(voteMap.values());
+  let ayes = effectiveVotes.filter(v => v.vote === 'YES').length;
+  let noes = effectiveVotes.filter(v => v.vote === 'NO').length;
+  let abstain = effectiveVotes.filter(v => v.vote === 'ABSTAIN').length;
+  let totalVotes = ayes + noes + abstain;
+
+  // Fallback for historical/legacy bill records where votes array was not populated
+  if (effectiveVotes.length === 0 && (bill.ayes > 0 || bill.noes > 0 || (bill.total_votes || 0) > 0)) {
+    ayes = bill.ayes || 0;
+    noes = bill.noes || 0;
+    abstain = bill.abstain || 0;
+    totalVotes = ayes + noes + abstain;
+  }
+
+  const notVotedCount = Math.max(0, eligibleCount - totalVotes);
+  const turnoutPct = eligibleCount > 0 ? Math.round((totalVotes / eligibleCount) * 100) : 0;
+  const result: 'PASSED' | 'FAILED' = ayes > noes ? 'PASSED' : 'FAILED';
+
+  return {
+    ayes,
+    noes,
+    abstain,
+    totalVotes,
+    eligibleCount,
+    notVotedCount,
+    turnoutPct,
+    result,
+    effectiveVoterIds: Array.from(effectiveVoterSet)
+  };
+}
 
 export const CANONICAL_QUESTION_TARGETS: string[] = [
   'Chief Minister',
@@ -1875,23 +1952,20 @@ class StorageService {
             if (!votesByDelegate.has(k)) votesByDelegate.set(k, v);
           });
           const mergedVotes = Array.from(votesByDelegate.values());
-          const mergedVotedIds = Array.from(new Set([...(existing.voted_delegate_ids || []), ...(p.voted_delegate_ids || []), ...Array.from(votesByDelegate.keys())]));
-          const ayes = mergedVotes.filter((v: any) => v.vote === 'YES').length;
-          const noes = mergedVotes.filter((v: any) => v.vote === 'NO').length;
-          const abstain = mergedVotes.filter((v: any) => v.vote === 'ABSTAIN').length;
-          const total = ayes + noes + abstain;
-
+          const mergedVotedIds = Array.from(new Set([...(existing.voted_delegate_ids || []), ...(p.voted_delegate_ids || []), ...Array.from(votesByDelegate.keys())])).filter(Boolean);
+          const counts = deriveBillVoteCounts({ ...existing, ...p, votes: mergedVotes, voted_delegate_ids: mergedVotedIds }, 0);
           procMap.set(p.id, {
-            ...p,
             ...existing,
+            ...p,
             status: finalStatus,
             is_result_revealed: existing.is_result_revealed ?? p.is_result_revealed,
-            ayes: Math.max(ayes, existing.ayes || 0, p.ayes || 0),
-            noes: Math.max(noes, existing.noes || 0, p.noes || 0),
-            abstain: Math.max(abstain, existing.abstain || 0, p.abstain || 0),
-            total_votes: Math.max(total, existing.total_votes || 0, p.total_votes || 0),
+            ayes: counts.ayes,
+            noes: counts.noes,
+            abstain: counts.abstain,
+            total_votes: counts.totalVotes,
+            result: counts.result,
             votes: mergedVotes,
-            voted_delegate_ids: mergedVotedIds
+            voted_delegate_ids: counts.effectiveVoterIds
           });
         }
       });
@@ -2341,7 +2415,51 @@ class StorageService {
           });
           this.setItem(STORAGE_KEYS.FLASH_VOTES, Array.from(fvoteMap.values()));
 
-          this.setItem(STORAGE_KEYS.PROCEEDINGS, allProcs);
+          // Smart merge local and remote proceedings (bills) preserving all confirmed votes
+          const localProcsForSync = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, []).filter(b => !deletedIds.has(b.id));
+          const procSyncMap = new Map<string, BillProceeding>();
+          localProcsForSync.forEach(p => procSyncMap.set(p.id, p));
+          const isTermStatus = (s?: string) => s === 'Vote Closed' || s === 'Result Revealed' || s === 'Result Hidden' || s === 'Passed' || s === 'Failed';
+          allProcs.filter(remoteP => !deletedIds.has(remoteP.id)).forEach(remoteP => {
+            const localP = procSyncMap.get(remoteP.id);
+            if (!localP) {
+              procSyncMap.set(remoteP.id, remoteP);
+            } else {
+              const finalStatus = (isTermStatus(localP.status) && !isTermStatus(remoteP.status))
+                ? localP.status
+                : (remoteP.status || localP.status);
+              const vMap = new Map<string, BillVote>();
+              (remoteP.votes || []).forEach(v => {
+                const k = v.learner_id || v.delegate_id || '';
+                if (k) vMap.set(k, v);
+              });
+              (localP.votes || []).forEach(v => {
+                const k = v.learner_id || v.delegate_id || '';
+                if (k && !vMap.has(k)) vMap.set(k, v);
+              });
+              const mergedVotes = Array.from(vMap.values());
+              const mergedVotedIds = Array.from(new Set([
+                ...(remoteP.voted_delegate_ids || []),
+                ...(localP.voted_delegate_ids || []),
+                ...mergedVotes.map(v => v.learner_id || v.delegate_id || '')
+              ])).filter(Boolean);
+              const counts = deriveBillVoteCounts({ ...remoteP, votes: mergedVotes, voted_delegate_ids: mergedVotedIds }, 0);
+              procSyncMap.set(remoteP.id, {
+                ...localP,
+                ...remoteP,
+                status: finalStatus,
+                is_result_revealed: (localP.is_result_revealed ?? remoteP.is_result_revealed) || finalStatus === 'Result Revealed',
+                ayes: counts.ayes,
+                noes: counts.noes,
+                abstain: counts.abstain,
+                total_votes: counts.totalVotes,
+                result: counts.result,
+                votes: mergedVotes,
+                voted_delegate_ids: counts.effectiveVoterIds
+              });
+            }
+          });
+          this.setItem(STORAGE_KEYS.PROCEEDINGS, Array.from(procSyncMap.values()).filter(b => !deletedIds.has(b.id)));
           this.setItem(STORAGE_KEYS.QUESTIONS, allQs);
 
           // Smart merge local and remote proceedings questions by unique ID
@@ -4498,6 +4616,72 @@ class StorageService {
             if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
           }
         })
+        .on('broadcast', { event: 'bill_vote_cast' }, (msg: any) => {
+          if (msg?.payload?.eventId && msg?.payload?.billId && msg?.payload?.vote) {
+            const evId = msg.payload.eventId;
+            const bId = msg.payload.billId;
+            const inVote = msg.payload.vote as BillVote;
+            const vLearnerId = inVote.learner_id || inVote.delegate_id;
+            if (vLearnerId) {
+              const currentBills = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, []);
+              const updatedBills = currentBills.map(b => {
+                if (b.id === bId) {
+                  const existingVotes = b.votes || [];
+                  const existingIndex = existingVotes.findIndex(v => (v.learner_id === vLearnerId || v.delegate_id === vLearnerId));
+                  let newVotes: BillVote[];
+                  if (existingIndex >= 0) {
+                    if (inVote.cast_by === 'Admin' || !existingVotes[existingIndex].cast_by) {
+                      newVotes = existingVotes.map((v, idx) => idx === existingIndex ? { ...v, ...inVote } : v);
+                    } else {
+                      return b;
+                    }
+                  } else {
+                    newVotes = [...existingVotes, inVote];
+                  }
+                  const newVotedIds = Array.from(new Set([...(b.voted_delegate_ids || []), vLearnerId]));
+                  const learners = this.getLearners(evId);
+                  const counts = deriveBillVoteCounts({ ...b, votes: newVotes, voted_delegate_ids: newVotedIds }, learners.length);
+                  return {
+                    ...b,
+                    votes: newVotes,
+                    voted_delegate_ids: counts.effectiveVoterIds,
+                    ayes: counts.ayes,
+                    noes: counts.noes,
+                    abstain: counts.abstain,
+                    total_votes: counts.totalVotes,
+                    result: counts.result,
+                    updated_at: new Date().toISOString()
+                  };
+                }
+                return b;
+              });
+              this.setItem(STORAGE_KEYS.PROCEEDINGS, updatedBills);
+
+              // Update in-memory social_coverage
+              const allEvs = this.getEvents();
+              const matched = allEvs.find(e => e.id === evId);
+              if (matched) {
+                const sc = (matched.social_coverage || {}) as Record<string, any>;
+                const curProcs = Array.isArray(sc.proceedings) ? sc.proceedings : [];
+                const updatedProc = updatedBills.find(b => b.id === bId);
+                if (updatedProc) {
+                  matched.social_coverage = {
+                    ...sc,
+                    proceedings: curProcs.map((b: any) => b.id === bId ? updatedProc : b),
+                    updated_at: new Date().toISOString()
+                  };
+                  this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
+                }
+              }
+
+              this.notify();
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new Event('storage'));
+                window.dispatchEvent(new CustomEvent('tn_assembly_bill_update', { detail: { eventId: evId, billId: bId } }));
+              }
+            }
+          }
+        })
         .on('broadcast', { event: 'bill_update' }, (msg: any) => {
           if (msg?.payload?.eventId) {
             const evId = msg.payload.eventId;
@@ -4546,25 +4730,21 @@ class StorageService {
                   ...mergedVotes.map(v => v.learner_id || v.delegate_id || '')
                 ])).filter(Boolean);
 
-                const ayes = mergedVotes.filter(v => v.vote === 'YES').length;
-                const noes = mergedVotes.filter(v => v.vote === 'NO').length;
-                const abstain = mergedVotes.filter(v => v.vote === 'ABSTAIN').length;
-                const total = ayes + noes + abstain;
-                const result: 'PASSED' | 'FAILED' = ayes > noes ? 'PASSED' : 'FAILED';
+                const counts = deriveBillVoteCounts({ ...curB, ...inB, votes: mergedVotes, voted_delegate_ids: mergedVotedIds }, 0);
                 const isRevealed = (curB.is_result_revealed ?? inB.is_result_revealed) || finalStatus === 'Result Revealed';
 
                 return {
-                  ...inB,
                   ...curB,
+                  ...inB,
                   status: finalStatus,
                   is_result_revealed: isRevealed,
-                  ayes,
-                  noes,
-                  abstain,
-                  total_votes: total,
-                  result,
+                  ayes: counts.ayes,
+                  noes: counts.noes,
+                  abstain: counts.abstain,
+                  total_votes: counts.totalVotes,
+                  result: counts.result,
                   votes: mergedVotes,
-                  voted_delegate_ids: mergedVotedIds
+                  voted_delegate_ids: counts.effectiveVoterIds
                 };
               });
 
@@ -4603,16 +4783,20 @@ class StorageService {
                     if (!votesMap.has(k) || v.cast_by === 'Admin') votesMap.set(k, v);
                   });
 
+                  const mergedVotes = Array.from(votesMap.values());
+                  const counts = deriveBillVoteCounts({ ...b, ...inB, votes: mergedVotes, voted_delegate_ids: mergedVotedIds }, 0);
+
                   return {
                     ...b,
                     ...inB,
                     status: finalStatus,
-                    voted_delegate_ids: mergedVotedIds,
-                    votes: Array.from(votesMap.values()),
-                    ayes: Math.max(b.ayes || 0, inB.ayes || 0),
-                    noes: Math.max(b.noes || 0, inB.noes || 0),
-                    abstain: Math.max(b.abstain || 0, inB.abstain || 0),
-                    total_votes: Math.max(b.total_votes || 0, inB.total_votes || 0)
+                    voted_delegate_ids: counts.effectiveVoterIds,
+                    votes: mergedVotes,
+                    ayes: counts.ayes,
+                    noes: counts.noes,
+                    abstain: counts.abstain,
+                    total_votes: counts.totalVotes,
+                    result: counts.result
                   };
                 }
                 return b;
@@ -4623,7 +4807,10 @@ class StorageService {
               this.setItem(STORAGE_KEYS.PROCEEDINGS, updated);
             }
             this.notify();
-            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new Event('storage'));
+              window.dispatchEvent(new CustomEvent('tn_assembly_bill_update', { detail: msg.payload }));
+            }
           }
         })
         .on('broadcast', { event: 'agenda_update' }, (msg: any) => {
@@ -5561,25 +5748,21 @@ class StorageService {
             ...mergedVotes.map(v => v.learner_id || v.delegate_id || '')
           ])).filter(Boolean);
 
-          const ayes = mergedVotes.filter(v => v.vote === 'YES').length;
-          const noes = mergedVotes.filter(v => v.vote === 'NO').length;
-          const abstain = mergedVotes.filter(v => v.vote === 'ABSTAIN').length;
-          const total = ayes + noes + abstain;
-          const result: 'PASSED' | 'FAILED' = ayes > noes ? 'PASSED' : 'FAILED';
           const isRevealed = (localB.is_result_revealed ?? remoteB.is_result_revealed) || finalStatus === 'Result Revealed';
+          const counts = deriveBillVoteCounts({ ...remoteB, ...localB, votes: mergedVotes, voted_delegate_ids: mergedVotedIds }, 0);
 
           procMap.set(localB.id, {
-            ...remoteB,
             ...localB,
+            ...remoteB,
             status: finalStatus,
             is_result_revealed: isRevealed,
-            ayes,
-            noes,
-            abstain,
-            total_votes: total,
-            result,
+            ayes: counts.ayes,
+            noes: counts.noes,
+            abstain: counts.abstain,
+            total_votes: counts.totalVotes,
+            result: counts.result,
             votes: mergedVotes,
-            voted_delegate_ids: mergedVotedIds,
+            voted_delegate_ids: counts.effectiveVoterIds,
             updated_at: new Date().toISOString()
           });
         }
@@ -5720,6 +5903,7 @@ class StorageService {
       if (!writeConfirmed) {
         // Optimistic concurrency conflict or initial write: re-fetch and re-union to ensure no lost votes
         let freshConflictSC: Record<string, any> | null = null;
+        let conflictUpdatedAt: string | undefined;
         try {
           const { data: conflictData } = await supabase
             .from('college_events')
@@ -5728,6 +5912,7 @@ class StorageService {
             .single();
           if (conflictData?.social_coverage) {
             freshConflictSC = conflictData.social_coverage as Record<string, any>;
+            conflictUpdatedAt = conflictData.updated_at;
             const freshSC = freshConflictSC;
             if (Array.isArray(freshSC.cabinet_ministries)) {
               payload.cabinet_ministries = freshSC.cabinet_ministries;
@@ -5750,21 +5935,25 @@ class StorageService {
                   if (k && !retryVotesMap.has(k)) retryVotesMap.set(k, v);
                 });
                 const rVotes = Array.from(retryVotesMap.values());
-                const rAyes = rVotes.filter(v => v.vote === 'YES').length;
-                const rNoes = rVotes.filter(v => v.vote === 'NO').length;
-                const rAbs = rVotes.filter(v => v.vote === 'ABSTAIN').length;
                 const rStatus = isTerminalBillStatus(remoteProc.status) ? remoteProc.status : (isTerminalBillStatus(localProc.status) ? localProc.status : (localProc.status || remoteProc.status));
+                const counts = deriveBillVoteCounts({
+                  ...remoteProc,
+                  ...localProc,
+                  status: rStatus,
+                  votes: rVotes,
+                  voted_delegate_ids: Array.from(new Set([...(remoteProc.voted_delegate_ids || []), ...(localProc.voted_delegate_ids || []), ...rVotes.map(v => v.learner_id || v.delegate_id || '')])).filter(Boolean)
+                });
                 freshProcMap.set(localProc.id, {
                   ...remoteProc,
                   ...localProc,
                   status: rStatus,
                   votes: rVotes,
-                  ayes: rAyes,
-                  noes: rNoes,
-                  abstain: rAbs,
-                  total_votes: rAyes + rNoes + rAbs,
-                  result: rAyes > rNoes ? 'PASSED' : 'FAILED',
-                  voted_delegate_ids: Array.from(new Set([...(remoteProc.voted_delegate_ids || []), ...(localProc.voted_delegate_ids || []), ...rVotes.map(v => v.learner_id || v.delegate_id || '')])).filter(Boolean)
+                  ayes: counts.ayes,
+                  noes: counts.noes,
+                  abstain: counts.abstain,
+                  total_votes: counts.totalVotes,
+                  result: counts.result,
+                  voted_delegate_ids: counts.effectiveVoterIds
                 });
               }
             });
@@ -5797,7 +5986,11 @@ class StorageService {
         } catch {}
 
         if (!areJsonbObjectsEqual(payload, freshConflictSC || existingSC, ['updated_at'])) {
-          await supabase.from('college_events').update({ social_coverage: payload, updated_at: new Date().toISOString() }).eq('id', eventId);
+          let retryQuery = supabase.from('college_events').update({ social_coverage: payload, updated_at: new Date().toISOString() }).eq('id', eventId);
+          if (conflictUpdatedAt) {
+            retryQuery = retryQuery.eq('updated_at', conflictUpdatedAt);
+          }
+          await retryQuery;
         }
       }
       this.invalidateCache(eventId);
@@ -13086,7 +13279,7 @@ class StorageService {
           total_votes: b.is_result_revealed ? b.total_votes : 0,
           result: b.is_result_revealed ? b.result : undefined,
           votes: b.is_result_revealed ? (b.votes || []) : (studentVote ? [studentVote] : []),
-          voted_delegate_ids: hasVoted && studentId ? [studentId] : (b.voted_delegate_ids || []),
+          voted_delegate_ids: hasVoted && studentId ? Array.from(new Set([...(b.voted_delegate_ids || []), studentId])) : (b.voted_delegate_ids || []),
           is_result_revealed: !!b.is_result_revealed
         };
       });
@@ -13265,45 +13458,91 @@ class StorageService {
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
   }
 
-  public closeBillVote(billId: string, eventId: string): void {
-    const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS).map(b => {
-      if (b.id === billId) {
-        const votes = b.votes || [];
-        const ayes = votes.filter(v => v.vote === 'YES').length;
-        const noes = votes.filter(v => v.vote === 'NO').length;
-        const abstain = votes.filter(v => v.vote === 'ABSTAIN').length;
-        const total = ayes + noes + abstain;
-        const result: 'PASSED' | 'FAILED' = ayes > noes ? 'PASSED' : 'FAILED';
-        return {
-          ...b,
-          status: 'Vote Closed' as const,
-          ayes,
-          noes,
-          abstain,
-          total_votes: total,
-          result,
-          is_result_revealed: false,
-          updated_at: new Date().toISOString()
-        };
-      }
-      return b;
-    });
-    this.setItem(STORAGE_KEYS.PROCEEDINGS, all);
+  public async closeBillVote(billId: string, eventId: string): Promise<void> {
+    // 1. Fetch latest authoritative bill state from Supabase
+    let remoteBill: BillProceeding | undefined;
+    let freshSC: Record<string, any> | null = null;
+    let readUpdatedAt: string | undefined;
 
+    if (supabase && eventId) {
+      try {
+        const { data } = await supabase
+          .from('college_events')
+          .select('social_coverage, updated_at')
+          .eq('id', eventId)
+          .single();
+        if (data?.social_coverage) {
+          freshSC = data.social_coverage as Record<string, any>;
+          readUpdatedAt = data.updated_at;
+          const procs = Array.isArray(freshSC.proceedings) ? (freshSC.proceedings as BillProceeding[]) : [];
+          remoteBill = procs.find((b: any) => b.id === billId);
+        }
+      } catch (e) {
+        console.warn('Failed to fetch remote bill state in closeBillVote:', e);
+      }
+    }
+
+    const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS);
+    const localBill = all.find(b => b.id === billId);
+    if (!localBill && !remoteBill) return;
+
+    // Union remote and local votes to ensure zero lost votes
+    const votesMap = new Map<string, BillVote>();
+    (remoteBill?.votes || []).forEach(v => {
+      const k = v.learner_id || v.delegate_id || '';
+      if (k) votesMap.set(k, v);
+    });
+    (localBill?.votes || []).forEach(v => {
+      const k = v.learner_id || v.delegate_id || '';
+      if (k && !votesMap.has(k)) votesMap.set(k, v);
+    });
+
+    const mergedVotes = Array.from(votesMap.values());
+    const mergedVotedIds = Array.from(new Set([
+      ...(remoteBill?.voted_delegate_ids || []),
+      ...(localBill?.voted_delegate_ids || []),
+      ...mergedVotes.map(v => v.learner_id || v.delegate_id || '')
+    ])).filter(Boolean);
+
+    const learners = this.getLearners(eventId);
+    const counts = deriveBillVoteCounts({
+      ...(remoteBill || localBill!),
+      votes: mergedVotes,
+      voted_delegate_ids: mergedVotedIds
+    }, learners.length);
+
+    const now = new Date().toISOString();
+    const updatedBill: BillProceeding = {
+      ...(remoteBill || localBill!),
+      status: 'Vote Closed',
+      votes: mergedVotes,
+      voted_delegate_ids: counts.effectiveVoterIds,
+      ayes: counts.ayes,
+      noes: counts.noes,
+      abstain: counts.abstain,
+      total_votes: counts.totalVotes,
+      result: counts.result,
+      is_result_revealed: false,
+      updated_at: now
+    };
+
+    // Update local storage
+    const updatedAll = all.map(b => b.id === billId ? updatedBill : b);
+    if (!updatedAll.some(b => b.id === billId)) updatedAll.push(updatedBill);
+    this.setItem(STORAGE_KEYS.PROCEEDINGS, updatedAll);
+
+    // Update in-memory event
     const allEvs = this.getEvents();
     const matched = allEvs.find(e => e.id === eventId);
     if (matched) {
       const sc = (matched.social_coverage || {}) as Record<string, any>;
       const curProcs = Array.isArray(sc.proceedings) ? sc.proceedings : [];
-      const updatedProc = all.find(b => b.id === billId);
-      if (updatedProc) {
-        matched.social_coverage = {
-          ...sc,
-          proceedings: curProcs.map((b: any) => b.id === billId ? updatedProc : b),
-          updated_at: new Date().toISOString()
-        };
-        this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
-      }
+      matched.social_coverage = {
+        ...sc,
+        proceedings: curProcs.map((b: any) => b.id === billId ? updatedBill : b),
+        updated_at: now
+      };
+      this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
     }
 
     // Keep projector in bill_voting scene with result hidden until admin explicitly reveals it
@@ -13313,51 +13552,119 @@ class StorageService {
     proj.displayScene = 'bill_voting';
     this.saveProjectorSettings(eventId, proj);
 
-    this.broadcastBills(eventId, all.filter(b => b.event_id === eventId));
-    this.syncEventStateToSupabase(eventId, true).catch(() => {});
+    // Persist directly to Supabase with OCC if available
+    if (supabase && freshSC && readUpdatedAt) {
+      try {
+        const curProcs = Array.isArray(freshSC.proceedings) ? (freshSC.proceedings as BillProceeding[]) : [];
+        const newProcs = curProcs.map((b: any) => b.id === billId ? updatedBill : b);
+        if (!newProcs.some((b: any) => b.id === billId)) newProcs.push(updatedBill);
+
+        await supabase
+          .from('college_events')
+          .update({
+            social_coverage: { ...freshSC, proceedings: newProcs },
+            updated_at: now
+          })
+          .eq('id', eventId)
+          .eq('updated_at', readUpdatedAt);
+      } catch (e) {
+        console.warn('Direct closeBillVote Supabase write failed, falling back to syncEventStateToSupabase:', e);
+        this.syncEventStateToSupabase(eventId, true).catch(() => {});
+      }
+    } else {
+      this.syncEventStateToSupabase(eventId, true).catch(() => {});
+    }
+
+    await this.broadcastBills(eventId, updatedAll.filter(b => b.event_id === eventId));
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
   }
 
-  public revealBillResult(billId: string, eventId: string): void {
-    const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS).map(b => {
-      if (b.id === billId) {
-        const votes = b.votes || [];
-        const ayes = votes.filter(v => v.vote === 'YES').length;
-        const noes = votes.filter(v => v.vote === 'NO').length;
-        const abstain = votes.filter(v => v.vote === 'ABSTAIN').length;
-        const total = ayes + noes + abstain;
-        const result: 'PASSED' | 'FAILED' = ayes > noes ? 'PASSED' : 'FAILED';
-        return {
-          ...b,
-          status: 'Result Revealed' as const,
-          ayes,
-          noes,
-          abstain,
-          total_votes: total,
-          result,
-          is_result_revealed: true,
-          updated_at: new Date().toISOString()
-        };
-      }
-      return b;
-    });
-    this.setItem(STORAGE_KEYS.PROCEEDINGS, all);
+  public async revealBillResult(billId: string, eventId: string): Promise<void> {
+    // 1. Fetch latest authoritative bill state from Supabase
+    let remoteBill: BillProceeding | undefined;
+    let freshSC: Record<string, any> | null = null;
+    let readUpdatedAt: string | undefined;
 
+    if (supabase && eventId) {
+      try {
+        const { data } = await supabase
+          .from('college_events')
+          .select('social_coverage, updated_at')
+          .eq('id', eventId)
+          .single();
+        if (data?.social_coverage) {
+          freshSC = data.social_coverage as Record<string, any>;
+          readUpdatedAt = data.updated_at;
+          const procs = Array.isArray(freshSC.proceedings) ? (freshSC.proceedings as BillProceeding[]) : [];
+          remoteBill = procs.find((b: any) => b.id === billId);
+        }
+      } catch (e) {
+        console.warn('Failed to fetch remote bill state in revealBillResult:', e);
+      }
+    }
+
+    const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS);
+    const localBill = all.find(b => b.id === billId);
+    if (!localBill && !remoteBill) return;
+
+    // Union remote and local votes to ensure zero lost votes
+    const votesMap = new Map<string, BillVote>();
+    (remoteBill?.votes || []).forEach(v => {
+      const k = v.learner_id || v.delegate_id || '';
+      if (k) votesMap.set(k, v);
+    });
+    (localBill?.votes || []).forEach(v => {
+      const k = v.learner_id || v.delegate_id || '';
+      if (k && !votesMap.has(k)) votesMap.set(k, v);
+    });
+
+    const mergedVotes = Array.from(votesMap.values());
+    const mergedVotedIds = Array.from(new Set([
+      ...(remoteBill?.voted_delegate_ids || []),
+      ...(localBill?.voted_delegate_ids || []),
+      ...mergedVotes.map(v => v.learner_id || v.delegate_id || '')
+    ])).filter(Boolean);
+
+    const learners = this.getLearners(eventId);
+    const counts = deriveBillVoteCounts({
+      ...(remoteBill || localBill!),
+      votes: mergedVotes,
+      voted_delegate_ids: mergedVotedIds
+    }, learners.length);
+
+    const now = new Date().toISOString();
+    const updatedBill: BillProceeding = {
+      ...(remoteBill || localBill!),
+      status: 'Result Revealed',
+      votes: mergedVotes,
+      voted_delegate_ids: counts.effectiveVoterIds,
+      ayes: counts.ayes,
+      noes: counts.noes,
+      abstain: counts.abstain,
+      total_votes: counts.totalVotes,
+      result: counts.result,
+      is_result_revealed: true,
+      updated_at: now
+    };
+
+    // Update local storage
+    const updatedAll = all.map(b => b.id === billId ? updatedBill : b);
+    if (!updatedAll.some(b => b.id === billId)) updatedAll.push(updatedBill);
+    this.setItem(STORAGE_KEYS.PROCEEDINGS, updatedAll);
+
+    // Update in-memory event
     const allEvs = this.getEvents();
     const matched = allEvs.find(e => e.id === eventId);
     if (matched) {
       const sc = (matched.social_coverage || {}) as Record<string, any>;
       const curProcs = Array.isArray(sc.proceedings) ? sc.proceedings : [];
-      const updatedProc = all.find(b => b.id === billId);
-      if (updatedProc) {
-        matched.social_coverage = {
-          ...sc,
-          proceedings: curProcs.map((b: any) => b.id === billId ? updatedProc : b),
-          updated_at: new Date().toISOString()
-        };
-        this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
-      }
+      matched.social_coverage = {
+        ...sc,
+        proceedings: curProcs.map((b: any) => b.id === billId ? updatedBill : b),
+        updated_at: now
+      };
+      this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
     }
 
     // Direct projector to bill_result scene
@@ -13367,8 +13674,30 @@ class StorageService {
     proj.displayScene = 'bill_result';
     this.saveProjectorSettings(eventId, proj);
 
-    this.broadcastBills(eventId, all.filter(b => b.event_id === eventId));
-    this.syncEventStateToSupabase(eventId, true).catch(() => {});
+    // Persist directly to Supabase with OCC if available
+    if (supabase && freshSC && readUpdatedAt) {
+      try {
+        const curProcs = Array.isArray(freshSC.proceedings) ? (freshSC.proceedings as BillProceeding[]) : [];
+        const newProcs = curProcs.map((b: any) => b.id === billId ? updatedBill : b);
+        if (!newProcs.some((b: any) => b.id === billId)) newProcs.push(updatedBill);
+
+        await supabase
+          .from('college_events')
+          .update({
+            social_coverage: { ...freshSC, proceedings: newProcs },
+            updated_at: now
+          })
+          .eq('id', eventId)
+          .eq('updated_at', readUpdatedAt);
+      } catch (e) {
+        console.warn('Direct revealBillResult Supabase write failed, falling back to syncEventStateToSupabase:', e);
+        this.syncEventStateToSupabase(eventId, true).catch(() => {});
+      }
+    } else {
+      this.syncEventStateToSupabase(eventId, true).catch(() => {});
+    }
+
+    await this.broadcastBills(eventId, updatedAll.filter(b => b.event_id === eventId));
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
   }
@@ -13543,12 +13872,62 @@ class StorageService {
     }
   }
 
-  public castBillVote(
+  public hasStudentVotedOnBill(eventId: string, billId: string, learnerId: string): boolean {
+    if (!eventId || !billId || !learnerId) return false;
+    // 1. Authoritative Student Vote Ledger (server-confirmed or local decision)
+    const ledger = this.getStudentVote(eventId, 'BILL', billId, learnerId);
+    if (ledger?.serverConfirmed || ledger?.decision) return true;
+
+    // 2. Bill votes collection
+    const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, []);
+    const bill = all.find(b => b.id === billId);
+    if (bill) {
+      if (bill.votes?.some(v => v.learner_id === learnerId || v.delegate_id === learnerId)) return true;
+      if (bill.voted_delegate_ids?.includes(learnerId)) return true;
+    }
+
+    // 3. In-memory events social_coverage
+    const ev = this.getEvents().find(e => e.id === eventId);
+    const sc = (ev?.social_coverage || {}) as Record<string, any>;
+    const procs = Array.isArray(sc.proceedings) ? sc.proceedings : [];
+    const evBill = procs.find((b: any) => b.id === billId);
+    if (evBill) {
+      if (evBill.votes?.some((v: any) => v.learner_id === learnerId || v.delegate_id === learnerId)) return true;
+      if (evBill.voted_delegate_ids?.includes(learnerId)) return true;
+    }
+
+    return false;
+  }
+
+  public getStudentBillVoteDecision(eventId: string, billId: string, learnerId: string): 'YES' | 'NO' | 'ABSTAIN' | null {
+    if (!eventId || !billId || !learnerId) return null;
+    const ledger = this.getStudentVote(eventId, 'BILL', billId, learnerId);
+    if (ledger?.decision) {
+      const d = ledger.decision === 'AYE' ? 'YES' : ledger.decision;
+      return d as 'YES' | 'NO' | 'ABSTAIN';
+    }
+
+    const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, []);
+    const bill = all.find(b => b.id === billId);
+    const vote = bill?.votes?.find(v => v.learner_id === learnerId || v.delegate_id === learnerId);
+    if (vote?.vote) return vote.vote;
+
+    const ev = this.getEvents().find(e => e.id === eventId);
+    const sc = (ev?.social_coverage || {}) as Record<string, any>;
+    const procs = Array.isArray(sc.proceedings) ? sc.proceedings : [];
+    const evBill = procs.find((b: any) => b.id === billId);
+    const evVote = evBill?.votes?.find((v: any) => v.learner_id === learnerId || v.delegate_id === learnerId);
+    if (evVote?.vote) return evVote.vote;
+
+    return null;
+  }
+
+  public async castBillVote(
     billId: string,
     eventId: string,
     learnerOrId: Learner | string,
     vote: 'YES' | 'NO' | 'ABSTAIN'
-  ): { success: boolean; error?: string } {
+  ): Promise<{ success: boolean; error?: string }> {
     const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS);
     const bill = all.find(b => b.id === billId);
     if (!bill) return { success: false, error: 'Bill not found.' };
@@ -13561,17 +13940,6 @@ class StorageService {
       return { success: false, error: 'Voting is not open for this bill.' };
     }
 
-    // Secondary guard: Check in-memory event state in case local proceedings is lagging
-    const currentEvs = this.getEvents();
-    const matchedEv = currentEvs.find(e => e.id === eventId);
-    if (matchedEv?.social_coverage?.proceedings) {
-      const remoteProc = (matchedEv.social_coverage.proceedings as any[]).find((b: any) => b.id === billId);
-      if (remoteProc && isTerminal(remoteProc.status)) {
-        bill.status = remoteProc.status;
-        this.setItem(STORAGE_KEYS.PROCEEDINGS, all.map(b => b.id === billId ? { ...b, status: remoteProc.status } : b));
-        return { success: false, error: 'Voting has closed for this bill.' };
-      }
-    }
     const learnerId = typeof learnerOrId === 'string' ? learnerOrId : learnerOrId.id;
     const learners = this.getLearners(eventId);
     const learner = typeof learnerOrId === 'object' ? learnerOrId : (learners.find(l => l.id === learnerId) || {
@@ -13583,12 +13951,9 @@ class StorageService {
     } as any);
 
     // Double-vote guard: eventId + billId + learnerId
-    const votedIds = new Set(bill.voted_delegate_ids || []);
-    const hasAlreadyVoted = votedIds.has(learnerId) || (bill.votes && bill.votes.some(v => v.delegate_id === learnerId || v.learner_id === learnerId));
-    if (hasAlreadyVoted) {
+    if (this.hasStudentVotedOnBill(eventId, billId, learnerId)) {
       return { success: false, error: 'You have already voted on this bill.' };
     }
-    votedIds.add(learnerId);
 
     const now = new Date().toISOString();
     const newVote: BillVote = {
@@ -13606,29 +13971,126 @@ class StorageService {
       cast_method: 'delegate'
     };
 
-    const votes = [...(bill.votes || []), newVote];
-    const ayes = votes.filter(v => v.vote === 'YES').length;
-    const noes = votes.filter(v => v.vote === 'NO').length;
-    const abstain = votes.filter(v => v.vote === 'ABSTAIN').length;
-    const total = ayes + noes + abstain;
-    const result: 'PASSED' | 'FAILED' = ayes > noes ? 'PASSED' : 'FAILED';
+    let serverConfirmed = false;
+    let remoteBillUpdated: BillProceeding | null = null;
 
-    const updatedBill: BillProceeding = {
+    // Authoritative Supabase write with OCC retry loop
+    if (supabase && eventId) {
+      let attempts = 0;
+      const maxAttempts = 3;
+
+      while (attempts < maxAttempts && !serverConfirmed) {
+        attempts++;
+        try {
+          const { data: eventData, error: readErr } = await supabase
+            .from('college_events')
+            .select('social_coverage, updated_at')
+            .eq('id', eventId)
+            .single();
+
+          if (readErr || !eventData?.social_coverage) {
+            console.warn(`[Supabase] castBillVote read attempt ${attempts} failed:`, readErr);
+            continue;
+          }
+
+          const freshSC = (eventData.social_coverage || {}) as Record<string, any>;
+          const procs = Array.isArray(freshSC.proceedings) ? (freshSC.proceedings as BillProceeding[]) : [];
+          const remoteBill = procs.find((b: any) => b.id === billId);
+
+          if (!remoteBill) {
+            return { success: false, error: 'Bill not found on server.' };
+          }
+          if (isTerminal(remoteBill.status)) {
+            return { success: false, error: 'Voting has closed for this bill.' };
+          }
+
+          // Remote double-vote check
+          const remoteAlreadyVoted = (remoteBill.votes || []).some(v => (v.learner_id === learnerId || v.delegate_id === learnerId)) ||
+            (remoteBill.voted_delegate_ids || []).includes(learnerId);
+
+          if (remoteAlreadyVoted) {
+            // Already confirmed in remote
+            serverConfirmed = true;
+            break;
+          }
+
+          const existingVotes = remoteBill.votes || [];
+          const mergedVotes = [...existingVotes.filter(v => (v.learner_id !== learnerId && v.delegate_id !== learnerId)), newVote];
+          const mergedVotedIds = Array.from(new Set([...(remoteBill.voted_delegate_ids || []), learnerId]));
+          const counts = deriveBillVoteCounts({
+            ...remoteBill,
+            votes: mergedVotes,
+            voted_delegate_ids: mergedVotedIds
+          }, learners.length);
+
+          const updatedRemote: BillProceeding = {
+            ...remoteBill,
+            votes: mergedVotes,
+            voted_delegate_ids: counts.effectiveVoterIds,
+            ayes: counts.ayes,
+            noes: counts.noes,
+            abstain: counts.abstain,
+            total_votes: counts.totalVotes,
+            result: counts.result,
+            updated_at: now
+          };
+
+          const newProcs = procs.map((b: any) => b.id === billId ? updatedRemote : b);
+          const newSC = { ...freshSC, proceedings: newProcs, updated_at: now };
+
+          // OCC write
+          const { data: updateData, error: updateErr } = await supabase
+            .from('college_events')
+            .update({ social_coverage: newSC, updated_at: now })
+            .eq('id', eventId)
+            .eq('updated_at', eventData.updated_at)
+            .select('id');
+
+          if (!updateErr && updateData && updateData.length > 0) {
+            serverConfirmed = true;
+            remoteBillUpdated = updatedRemote;
+          } else {
+            console.warn(`[Supabase] castBillVote OCC conflict on attempt ${attempts}, retrying...`);
+          }
+        } catch (e) {
+          console.warn(`[Supabase] castBillVote attempt ${attempts} error:`, e);
+        }
+      }
+    } else {
+      // Offline fallback
+      serverConfirmed = true;
+    }
+
+    if (!serverConfirmed && supabase) {
+      return { success: false, error: 'Database confirmation failed. Please check network connection and try again.' };
+    }
+
+    // Build local updated bill
+    const existingVotes = bill.votes || [];
+    const mergedVotes = [...existingVotes.filter(v => (v.learner_id !== learnerId && v.delegate_id !== learnerId)), newVote];
+    const mergedVotedIds = Array.from(new Set([...(bill.voted_delegate_ids || []), learnerId]));
+    const counts = deriveBillVoteCounts({
       ...bill,
-      ayes,
-      noes,
-      abstain,
-      total_votes: total,
-      result,
-      voted_delegate_ids: Array.from(votedIds),
-      votes,
+      votes: mergedVotes,
+      voted_delegate_ids: mergedVotedIds
+    }, learners.length);
+
+    const updatedBill: BillProceeding = remoteBillUpdated || {
+      ...bill,
+      votes: mergedVotes,
+      voted_delegate_ids: counts.effectiveVoterIds,
+      ayes: counts.ayes,
+      noes: counts.noes,
+      abstain: counts.abstain,
+      total_votes: counts.totalVotes,
+      result: counts.result,
       updated_at: now
     };
 
     const updatedAll = all.map(b => b.id === billId ? updatedBill : b);
     this.setItem(STORAGE_KEYS.PROCEEDINGS, updatedAll);
 
-    // Synchronously update in-memory social_coverage
+    // Update in-memory social_coverage
     const allEvs = this.getEvents();
     const matched = allEvs.find(e => e.id === eventId);
     if (matched) {
@@ -13642,8 +14104,7 @@ class StorageService {
       this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
     }
 
-    this.broadcastBill(eventId, updatedBill);
-    this.syncEventStateToSupabase(eventId).catch(() => {});
+    // Record verified student vote
     this.recordStudentVote({
       eventId,
       voteType: 'BILL',
@@ -13653,24 +14114,25 @@ class StorageService {
       timestamp: Date.now(),
       serverConfirmed: true
     });
+
+    // Broadcast compact vote event
+    await this.broadcastBillVoteCast(eventId, billId, newVote);
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
     return { success: true };
   }
 
-  public castBillVoteOnBehalfOfDelegate(
+  public async castBillVoteOnBehalfOfDelegate(
     billId: string,
     eventId: string,
     learnerId: string,
     vote: 'YES' | 'NO' | 'ABSTAIN',
     adminUserId?: string
-  ): { success: boolean; error?: string } {
+  ): Promise<{ success: boolean; error?: string }> {
     const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS);
     const bill = all.find(b => b.id === billId);
     if (!bill) return { success: false, error: 'Bill not found.' };
 
-    // Authoritative Admin Authorization Guard:
-    // Non-admins (Student, Volunteer, unauthenticated) cannot cast votes on behalf of delegates
     let isAuthorized = false;
     let effectiveAdminId = adminUserId || 'Admin';
     try {
@@ -13694,13 +14156,9 @@ class StorageService {
     const learner = learners.find(l => l.id === learnerId);
     if (!learner) return { success: false, error: 'Delegate not found in event roster.' };
 
-    // Authoritative double-vote existence check: event_id + voting_id + learner_id
-    const votedIds = new Set(bill.voted_delegate_ids || []);
-    const hasAlreadyVoted = votedIds.has(learnerId) || (bill.votes && bill.votes.some(v => (v.delegate_id === learnerId || v.learner_id === learnerId)));
-    if (hasAlreadyVoted) {
+    if (this.hasStudentVotedOnBill(eventId, billId, learnerId)) {
       return { success: false, error: 'This delegate has already voted.' };
     }
-    votedIds.add(learnerId);
 
     const now = new Date().toISOString();
     const newVote: BillVote = {
@@ -13719,29 +14177,114 @@ class StorageService {
       cast_method: 'admin'
     };
 
-    const votes = [...(bill.votes || []), newVote];
-    const ayes = votes.filter(v => v.vote === 'YES').length;
-    const noes = votes.filter(v => v.vote === 'NO').length;
-    const abstain = votes.filter(v => v.vote === 'ABSTAIN').length;
-    const total = ayes + noes + abstain;
-    const result: 'PASSED' | 'FAILED' = ayes > noes ? 'PASSED' : 'FAILED';
+    let serverConfirmed = false;
+    let remoteBillUpdated: BillProceeding | null = null;
 
-    const updatedBill: BillProceeding = {
+    if (supabase && eventId) {
+      let attempts = 0;
+      const maxAttempts = 3;
+
+      while (attempts < maxAttempts && !serverConfirmed) {
+        attempts++;
+        try {
+          const { data: eventData, error: readErr } = await supabase
+            .from('college_events')
+            .select('social_coverage, updated_at')
+            .eq('id', eventId)
+            .single();
+
+          if (readErr || !eventData?.social_coverage) {
+            console.warn(`[Supabase] castBillVoteOnBehalf read attempt ${attempts} failed:`, readErr);
+            continue;
+          }
+
+          const freshSC = (eventData.social_coverage || {}) as Record<string, any>;
+          const procs = Array.isArray(freshSC.proceedings) ? (freshSC.proceedings as BillProceeding[]) : [];
+          const remoteBill = procs.find((b: any) => b.id === billId);
+
+          if (!remoteBill) {
+            return { success: false, error: 'Bill not found on server.' };
+          }
+
+          const remoteAlreadyVoted = (remoteBill.votes || []).some(v => (v.learner_id === learnerId || v.delegate_id === learnerId)) ||
+            (remoteBill.voted_delegate_ids || []).includes(learnerId);
+
+          if (remoteAlreadyVoted) {
+            serverConfirmed = true;
+            break;
+          }
+
+          const existingVotes = remoteBill.votes || [];
+          const mergedVotes = [...existingVotes.filter(v => (v.learner_id !== learnerId && v.delegate_id !== learnerId)), newVote];
+          const mergedVotedIds = Array.from(new Set([...(remoteBill.voted_delegate_ids || []), learnerId]));
+          const counts = deriveBillVoteCounts({
+            ...remoteBill,
+            votes: mergedVotes,
+            voted_delegate_ids: mergedVotedIds
+          }, learners.length);
+
+          const updatedRemote: BillProceeding = {
+            ...remoteBill,
+            votes: mergedVotes,
+            voted_delegate_ids: counts.effectiveVoterIds,
+            ayes: counts.ayes,
+            noes: counts.noes,
+            abstain: counts.abstain,
+            total_votes: counts.totalVotes,
+            result: counts.result,
+            updated_at: now
+          };
+
+          const newProcs = procs.map((b: any) => b.id === billId ? updatedRemote : b);
+          const newSC = { ...freshSC, proceedings: newProcs, updated_at: now };
+
+          const { data: updateData, error: updateErr } = await supabase
+            .from('college_events')
+            .update({ social_coverage: newSC, updated_at: now })
+            .eq('id', eventId)
+            .eq('updated_at', eventData.updated_at)
+            .select('id');
+
+          if (!updateErr && updateData && updateData.length > 0) {
+            serverConfirmed = true;
+            remoteBillUpdated = updatedRemote;
+          }
+        } catch (e) {
+          console.warn(`[Supabase] castBillVoteOnBehalf attempt ${attempts} error:`, e);
+        }
+      }
+    } else {
+      serverConfirmed = true;
+    }
+
+    if (!serverConfirmed && supabase) {
+      return { success: false, error: 'Database confirmation failed. Please check network connection and try again.' };
+    }
+
+    const existingVotes = bill.votes || [];
+    const mergedVotes = [...existingVotes.filter(v => (v.learner_id !== learnerId && v.delegate_id !== learnerId)), newVote];
+    const mergedVotedIds = Array.from(new Set([...(bill.voted_delegate_ids || []), learnerId]));
+    const counts = deriveBillVoteCounts({
       ...bill,
-      ayes,
-      noes,
-      abstain,
-      total_votes: total,
-      result,
-      voted_delegate_ids: Array.from(votedIds),
-      votes,
+      votes: mergedVotes,
+      voted_delegate_ids: mergedVotedIds
+    }, learners.length);
+
+    const updatedBill: BillProceeding = remoteBillUpdated || {
+      ...bill,
+      votes: mergedVotes,
+      voted_delegate_ids: counts.effectiveVoterIds,
+      ayes: counts.ayes,
+      noes: counts.noes,
+      abstain: counts.abstain,
+      total_votes: counts.totalVotes,
+      result: counts.result,
       updated_at: now
     };
 
     const updatedAll = all.map(b => b.id === billId ? updatedBill : b);
     this.setItem(STORAGE_KEYS.PROCEEDINGS, updatedAll);
 
-    // Update in-memory social_coverage
     const allEvs = this.getEvents();
     const matched = allEvs.find(e => e.id === eventId);
     if (matched) {
@@ -13755,8 +14298,6 @@ class StorageService {
       this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
     }
 
-    this.broadcastBill(eventId, updatedBill);
-    this.syncEventStateToSupabase(eventId).catch(() => {});
     this.recordStudentVote({
       eventId,
       voteType: 'BILL',
@@ -13766,6 +14307,8 @@ class StorageService {
       timestamp: Date.now(),
       serverConfirmed: true
     });
+
+    await this.broadcastBillVoteCast(eventId, billId, newVote);
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
     return { success: true };
@@ -13774,11 +14317,10 @@ class StorageService {
   public async broadcastBill(eventId: string, bill: BillProceeding): Promise<void> {
     if (supabase && this.realtimeChannel) {
       try {
-        const { votes, ...compactBill } = bill;
         await this.realtimeChannel.send({
           type: 'broadcast',
           event: 'bill_update',
-          payload: { eventId, bill: compactBill }
+          payload: { eventId, bill }
         });
       } catch (e) {
         console.warn('Realtime broadcast bill_update failed:', e);
@@ -13789,14 +14331,41 @@ class StorageService {
   public async broadcastBills(eventId: string, bills: BillProceeding[]): Promise<void> {
     if (supabase && this.realtimeChannel) {
       try {
-        const compactBills = bills.map(({ votes, ...rest }) => rest);
         await this.realtimeChannel.send({
           type: 'broadcast',
           event: 'bill_update',
-          payload: { eventId, bills: compactBills }
+          payload: { eventId, bills }
         });
       } catch (e) {
         console.warn('Realtime broadcast bill_update failed:', e);
+      }
+    }
+  }
+
+  public async broadcastBillVoteCast(eventId: string, billId: string, vote: BillVote): Promise<void> {
+    if (supabase && this.realtimeChannel) {
+      try {
+        const compactVote = {
+          id: vote.id,
+          learner_id: vote.learner_id || vote.delegate_id,
+          delegate_id: vote.delegate_id || vote.learner_id,
+          vote: vote.vote,
+          timestamp: vote.timestamp || vote.created_at,
+          created_at: vote.created_at || vote.timestamp,
+          cast_by: vote.cast_by
+        };
+        await this.realtimeChannel.send({
+          type: 'broadcast',
+          event: 'bill_vote_cast',
+          payload: {
+            eventId,
+            billId,
+            vote: compactVote,
+            revision: Date.now()
+          }
+        });
+      } catch (e) {
+        console.warn('Realtime broadcast bill_vote_cast failed:', e);
       }
     }
   }
