@@ -1393,10 +1393,41 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   const isPending = !!billVotePending[bill.id];
 
                   const handleBillVoteClick = async (decision: 'YES' | 'NO' | 'ABSTAIN') => {
-                    if (hasVoted || isPending) return;
+                    const clickStartTime = Date.now();
+                    console.log(`[VOTE-CLICK-TRACE] [CLICK_RECEIVED]`, {
+                      eventId: resolvedEventId,
+                      billId: bill.id,
+                      learnerId: student.id,
+                      voteChoice: decision,
+                      timestamp: new Date().toISOString(),
+                      functionName: 'handleBillVoteClick',
+                      hasVoted,
+                      hasServerVoted,
+                      isPending
+                    });
+                    if (hasVoted || isPending) {
+                      console.log(`[VOTE-CLICK-TRACE] [CLICK_ABORTED_PRECONDITION]`, {
+                        eventId: resolvedEventId,
+                        billId: bill.id,
+                        learnerId: student.id,
+                        reason: hasVoted ? 'ALREADY_VOTED' : 'PENDING'
+                      });
+                      return;
+                    }
                     setBillVotePending(prev => ({ ...prev, [bill.id]: true }));
                     try {
                       const res = await storageService.castBillVote(bill.id, resolvedEventId, student, decision);
+                      const duration = Date.now() - clickStartTime;
+                      console.log(`[VOTE-CLICK-TRACE] [VOTE_RESULT]`, {
+                        eventId: resolvedEventId,
+                        billId: bill.id,
+                        learnerId: student.id,
+                        voteChoice: decision,
+                        timestamp: new Date().toISOString(),
+                        durationMs: duration,
+                        success: res.success,
+                        errorMessage: res.error
+                      });
                       if (res.success) {
                         setLocalBillVotes(prev => ({ ...prev, [bill.id]: decision }));
                         logVoteStateTrace({
@@ -1415,6 +1446,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         onShowToast('Vote Failed', res.error || 'You may have already voted or voting has closed.', 'error');
                       }
                     } catch (err: any) {
+                      const duration = Date.now() - clickStartTime;
+                      console.error(`[VOTE-CLICK-TRACE] [VOTE_EXCEPTION]`, {
+                        eventId: resolvedEventId,
+                        billId: bill.id,
+                        learnerId: student.id,
+                        voteChoice: decision,
+                        timestamp: new Date().toISOString(),
+                        durationMs: duration,
+                        errorMessage: err?.message
+                      });
                       onShowToast('Vote Failed', err?.message || 'Vote failed.', 'error');
                     } finally {
                       setBillVotePending(prev => ({ ...prev, [bill.id]: false }));

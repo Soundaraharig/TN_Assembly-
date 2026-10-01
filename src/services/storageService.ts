@@ -5131,6 +5131,15 @@ class StorageService {
           this.setItem(STORAGE_KEYS.EVENTS, allEvs);
         }
 
+        // Unpack authoritative proceedings into local storage
+        if (Array.isArray(sc.proceedings) && sc.proceedings.length > 0) {
+          const deletedIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
+          const currentProcs = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, []);
+          const otherProcs = currentProcs.filter(b => b.event_id && b.event_id !== eventId);
+          const validRemote = (sc.proceedings as BillProceeding[]).filter(b => !deletedIds.has(b.id));
+          this.setItem(STORAGE_KEYS.PROCEEDINGS, [...otherProcs, ...validRemote]);
+        }
+
         // 2. Reconcile Current Agenda
         if (agendaRes.data && Array.isArray(agendaRes.data)) {
           const remoteAgenda = agendaRes.data as unknown as AgendaItem[];
@@ -13878,12 +13887,15 @@ class StorageService {
     const ledger = this.getStudentVote(eventId, 'BILL', billId, learnerId);
     if (ledger?.serverConfirmed || ledger?.decision) return true;
 
+    const isTerminalStatus = (s?: string) => s === 'Vote Closed' || s === 'Result Revealed' || s === 'Result Hidden' || s === 'Passed' || s === 'Failed';
+
     // 2. Bill votes collection
     const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, []);
-    const bill = all.find(b => b.id === billId);
+    let bill = all.find(b => b.id === billId);
     if (bill) {
       if (bill.votes?.some(v => v.learner_id === learnerId || v.delegate_id === learnerId)) return true;
-      if (bill.voted_delegate_ids?.includes(learnerId)) return true;
+      // For terminal/historical bills only (e.g. Publi works bill), unlinked voter IDs are preserved as voted
+      if (isTerminalStatus(bill.status) && bill.voted_delegate_ids?.includes(learnerId)) return true;
     }
 
     // 3. In-memory events social_coverage
@@ -13893,7 +13905,7 @@ class StorageService {
     const evBill = procs.find((b: any) => b.id === billId);
     if (evBill) {
       if (evBill.votes?.some((v: any) => v.learner_id === learnerId || v.delegate_id === learnerId)) return true;
-      if (evBill.voted_delegate_ids?.includes(learnerId)) return true;
+      if (isTerminalStatus(evBill.status) && evBill.voted_delegate_ids?.includes(learnerId)) return true;
     }
 
     return false;
@@ -13928,19 +13940,34 @@ class StorageService {
     learnerOrId: Learner | string,
     vote: 'YES' | 'NO' | 'ABSTAIN'
   ): Promise<{ success: boolean; error?: string }> {
-    const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS);
-    const bill = all.find(b => b.id === billId);
-    if (!bill) return { success: false, error: 'Bill not found.' };
+    const clickStartTime = Date.now();
+    const learnerId = typeof learnerOrId === 'string' ? learnerOrId : learnerOrId.id;
+
+    console.log(`[VOTE-CLICK-TRACE] [VOTE_SUBMIT_START]`, {
+      timestamp: new Date().toISOString(),
+      eventId,
+      billId,
+      learnerId,
+      voteChoice: vote,
+      functionName: 'castBillVote'
+    });
 
     const isTerminal = (s?: string) => s === 'Vote Closed' || s === 'Result Revealed' || s === 'Result Hidden' || s === 'Passed' || s === 'Failed';
-    if (isTerminal(bill.status)) {
-      return { success: false, error: 'Voting has closed for this bill.' };
-    }
-    if (bill.status !== 'Vote Open' && bill.status !== 'Voting') {
-      return { success: false, error: 'Voting is not open for this bill.' };
+
+    const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS);
+    let bill = all.find(b => b.id === billId);
+    if (!bill) {
+      const ev = this.getEvents().find(e => e.id === eventId);
+      const sc = (ev?.social_coverage || {}) as Record<string, any>;
+      const procs = Array.isArray(sc.proceedings) ? (sc.proceedings as BillProceeding[]) : [];
+      bill = procs.find((b: any) => b.id === billId);
     }
 
-    const learnerId = typeof learnerOrId === 'string' ? learnerOrId : learnerOrId.id;
+    if (bill && isTerminal(bill.status)) {
+      console.warn(`[VOTE-CLICK-TRACE] [VOTE_ABORT_LOCAL] Bill already terminal: status=${bill.status}`);
+      return { success: false, error: 'Voting has closed for this bill.' };
+    }
+
     const learners = this.getLearners(eventId);
     const learner = typeof learnerOrId === 'object' ? learnerOrId : (learners.find(l => l.id === learnerId) || {
       id: learnerId,
@@ -13952,6 +13979,7 @@ class StorageService {
 
     // Double-vote guard: eventId + billId + learnerId
     if (this.hasStudentVotedOnBill(eventId, billId, learnerId)) {
+      console.warn(`[VOTE-CLICK-TRACE] [VOTE_ABORT_LOCAL] Double-vote guard blocked: learnerId=${learnerId}`);
       return { success: false, error: 'You have already voted on this bill.' };
     }
 
@@ -13973,23 +14001,36 @@ class StorageService {
 
     let serverConfirmed = false;
     let remoteBillUpdated: BillProceeding | null = null;
+    let lastErrorMsg: string | undefined;
 
-    // Authoritative Supabase write with OCC retry loop
+    // Authoritative Supabase write with OCC retry loop and bounded timeout
     if (supabase && eventId) {
       let attempts = 0;
       const maxAttempts = 3;
+      const VOTE_TIMEOUT_MS = 8000;
 
       while (attempts < maxAttempts && !serverConfirmed) {
         attempts++;
+        const attemptStart = Date.now();
         try {
-          const { data: eventData, error: readErr } = await supabase
+          const timeoutPromise = new Promise<{ data: any; error: any }>((_, reject) =>
+            setTimeout(() => reject(new Error('VOTE_REQUEST_TIMEOUT')), VOTE_TIMEOUT_MS)
+          );
+
+          console.log(`[VOTE-CLICK-TRACE] [SUPABASE_READ_START] attempt=${attempts}`);
+          const readPromise = supabase
             .from('college_events')
             .select('social_coverage, updated_at')
             .eq('id', eventId)
             .single();
 
+          const { data: eventData, error: readErr } = await Promise.race([readPromise, timeoutPromise]);
+          const readDuration = Date.now() - attemptStart;
+          console.log(`[VOTE-CLICK-TRACE] [SUPABASE_READ_DONE] attempt=${attempts} durationMs=${readDuration} success=${!readErr && !!eventData}`);
+
           if (readErr || !eventData?.social_coverage) {
             console.warn(`[Supabase] castBillVote read attempt ${attempts} failed:`, readErr);
+            lastErrorMsg = readErr?.message || 'Database read failed.';
             continue;
           }
 
@@ -14003,10 +14044,14 @@ class StorageService {
           if (isTerminal(remoteBill.status)) {
             return { success: false, error: 'Voting has closed for this bill.' };
           }
+          if (remoteBill.status !== 'Vote Open' && remoteBill.status !== 'Voting') {
+            return { success: false, error: 'Voting is not open for this bill.' };
+          }
 
-          // Remote double-vote check
-          const remoteAlreadyVoted = (remoteBill.votes || []).some(v => (v.learner_id === learnerId || v.delegate_id === learnerId)) ||
-            (remoteBill.voted_delegate_ids || []).includes(learnerId);
+          // Remote double-vote check: for open bills, check if they actually have a cast ballot
+          const hasBallot = (remoteBill.votes || []).some(v => (v.learner_id === learnerId || v.delegate_id === learnerId));
+          const isRemoteTerminal = isTerminal(remoteBill.status);
+          const remoteAlreadyVoted = hasBallot || (isRemoteTerminal && (remoteBill.voted_delegate_ids || []).includes(learnerId));
 
           if (remoteAlreadyVoted) {
             // Already confirmed in remote
@@ -14021,7 +14066,7 @@ class StorageService {
             ...remoteBill,
             votes: mergedVotes,
             voted_delegate_ids: mergedVotedIds
-          }, learners.length);
+          }, learners.length || 0);
 
           const updatedRemote: BillProceeding = {
             ...remoteBill,
@@ -14038,22 +14083,35 @@ class StorageService {
           const newProcs = procs.map((b: any) => b.id === billId ? updatedRemote : b);
           const newSC = { ...freshSC, proceedings: newProcs, updated_at: now };
 
-          // OCC write
-          const { data: updateData, error: updateErr } = await supabase
+          // OCC write with bounded timeout
+          const writeStart = Date.now();
+          console.log(`[VOTE-CLICK-TRACE] [SUPABASE_WRITE_START] attempt=${attempts}`);
+          const writePromise = supabase
             .from('college_events')
             .update({ social_coverage: newSC, updated_at: now })
             .eq('id', eventId)
             .eq('updated_at', eventData.updated_at)
             .select('id');
 
+          const { data: updateData, error: updateErr } = await Promise.race([writePromise, timeoutPromise]);
+          const writeDuration = Date.now() - writeStart;
+          console.log(`[VOTE-CLICK-TRACE] [SUPABASE_WRITE_DONE] attempt=${attempts} durationMs=${writeDuration} success=${!updateErr && !!updateData && updateData.length > 0}`);
+
           if (!updateErr && updateData && updateData.length > 0) {
             serverConfirmed = true;
             remoteBillUpdated = updatedRemote;
           } else {
             console.warn(`[Supabase] castBillVote OCC conflict on attempt ${attempts}, retrying...`);
+            lastErrorMsg = updateErr?.message || 'OCC conflict (concurrent vote). Retrying...';
+            if (attempts < maxAttempts) {
+              await new Promise(r => setTimeout(r, 60 * attempts + Math.random() * 40));
+            }
           }
-        } catch (e) {
-          console.warn(`[Supabase] castBillVote attempt ${attempts} error:`, e);
+        } catch (e: any) {
+          const isTimeout = e?.message === 'VOTE_REQUEST_TIMEOUT';
+          console.warn(`[Supabase] castBillVote attempt ${attempts} error:`, isTimeout ? 'Timed out after 8s' : e?.message);
+          lastErrorMsg = isTimeout ? 'Vote request timed out. Please check network connection and try again.' : (e?.message || 'Vote network error.');
+          if (isTimeout) break;
         }
       }
     } else {
@@ -14062,21 +14120,38 @@ class StorageService {
     }
 
     if (!serverConfirmed && supabase) {
-      return { success: false, error: 'Database confirmation failed. Please check network connection and try again.' };
+      console.error(`[VOTE-CLICK-TRACE] [VOTE_FAILED] Confirmation failed after attempts. Last error: ${lastErrorMsg}`);
+      return { success: false, error: lastErrorMsg || 'Database confirmation failed. Please check network connection and try again.' };
     }
 
-    // Build local updated bill
-    const existingVotes = bill.votes || [];
+    const baseBill: BillProceeding = remoteBillUpdated || bill || {
+      id: billId,
+      event_id: eventId,
+      bill_number: 'BILL',
+      title: 'Bill',
+      summary: '',
+      status: 'Vote Open',
+      ayes: 0,
+      noes: 0,
+      abstain: 0,
+      total_votes: 0,
+      voted_delegate_ids: [],
+      votes: [],
+      created_at: now,
+      updated_at: now
+    };
+
+    const existingVotes = baseBill.votes || [];
     const mergedVotes = [...existingVotes.filter(v => (v.learner_id !== learnerId && v.delegate_id !== learnerId)), newVote];
-    const mergedVotedIds = Array.from(new Set([...(bill.voted_delegate_ids || []), learnerId]));
+    const mergedVotedIds = Array.from(new Set([...(baseBill.voted_delegate_ids || []), learnerId]));
     const counts = deriveBillVoteCounts({
-      ...bill,
+      ...baseBill,
       votes: mergedVotes,
       voted_delegate_ids: mergedVotedIds
-    }, learners.length);
+    }, learners.length || 0);
 
     const updatedBill: BillProceeding = remoteBillUpdated || {
-      ...bill,
+      ...baseBill,
       votes: mergedVotes,
       voted_delegate_ids: counts.effectiveVoterIds,
       ayes: counts.ayes,
@@ -14088,6 +14163,9 @@ class StorageService {
     };
 
     const updatedAll = all.map(b => b.id === billId ? updatedBill : b);
+    if (!updatedAll.some(b => b.id === billId)) {
+      updatedAll.unshift(updatedBill);
+    }
     this.setItem(STORAGE_KEYS.PROCEEDINGS, updatedAll);
 
     // Update in-memory social_coverage
@@ -14108,17 +14186,23 @@ class StorageService {
     this.recordStudentVote({
       eventId,
       voteType: 'BILL',
-      itemId: bill.id,
+      itemId: billId,
       studentId: learnerId,
       decision: vote,
       timestamp: Date.now(),
       serverConfirmed: true
     });
 
-    // Broadcast compact vote event
-    await this.broadcastBillVoteCast(eventId, billId, newVote);
+    // Broadcast compact vote event in background (fire-and-forget, do NOT block user return)
+    this.broadcastBillVoteCast(eventId, billId, newVote).catch(bcErr => {
+      console.warn('[VOTE-CLICK-TRACE] Broadcast warning:', bcErr);
+    });
+
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+
+    const totalDuration = Date.now() - clickStartTime;
+    console.log(`[VOTE-CLICK-TRACE] [VOTE_SUCCESS] Confirmed in ${totalDuration}ms. Choice: ${vote}`);
     return { success: true };
   }
 
