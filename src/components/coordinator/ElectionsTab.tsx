@@ -35,7 +35,8 @@ import {
   Archive,
   ShieldAlert,
   ScrollText,
-  FileText
+  FileText,
+  Loader2
 } from 'lucide-react';
 import { getProjectorSettings, saveProjectorSettings } from './ProjectorTab';
 import { storageService, getResolvedPartyName, deduplicateElectionList, deriveBillVoteCounts } from '../../services/storageService';
@@ -166,6 +167,7 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
   const [adminVoteDelegate, setAdminVoteDelegate] = useState<Learner | null>(null);
   const [adminVoteChoice, setAdminVoteChoice] = useState<'YES' | 'NO' | 'ABSTAIN'>('YES');
   const [isAdminVoteSubmitting, setIsAdminVoteSubmitting] = useState(false);
+  const [billActionPending, setBillActionPending] = useState<Record<string, 'OPENING' | 'CLOSING' | null>>({});
 
   const handleExportBillCSV = (bill: BillProceeding) => {
     const votes = bill.votes || [];
@@ -2200,28 +2202,86 @@ export const ElectionsTab: React.FC<ElectionsTabProps> = ({
                         {/* 1. Open Vote Button */}
                         {!isVotingOpen && !isVotingClosed && (
                           <button
-                            onClick={() => {
-                              storageService.openBillVote(bill.id, eventId);
-                              setBills(storageService.getBills(eventId));
-                              onShowToast('Bill Voting Opened', `${bill.bill_number} is now live for voting`, 'success');
+                            type="button"
+                            disabled={billActionPending[bill.id] === 'OPENING' || billActionPending[bill.id] === 'CLOSING'}
+                            aria-disabled={billActionPending[bill.id] === 'OPENING' || billActionPending[bill.id] === 'CLOSING'}
+                            onClick={async () => {
+                              if (billActionPending[bill.id]) return;
+                              setBillActionPending(prev => ({ ...prev, [bill.id]: 'OPENING' }));
+                              try {
+                                const res = await storageService.openBillVote(bill.id, eventId);
+                                if (res.success) {
+                                  setBills(storageService.getBills(eventId));
+                                  onShowToast('Bill Voting Opened', `${bill.bill_number} is now live for voting`, 'success');
+                                } else {
+                                  onShowToast('Failed to Open Vote', res.error || 'Database confirmation failed. Please try again.', 'error');
+                                }
+                              } catch (err: any) {
+                                onShowToast('Error', err?.message || 'Failed to open vote.', 'error');
+                              } finally {
+                                setBillActionPending(prev => ({ ...prev, [bill.id]: null }));
+                              }
                             }}
-                            className="px-4 py-2 rounded-xl text-xs font-black bg-emerald-600 hover:bg-emerald-500 text-white shadow-md flex items-center gap-1.5 cursor-pointer"
+                            className={`px-4 py-2 rounded-xl text-xs font-black shadow-md flex items-center gap-1.5 transition-all ${
+                              billActionPending[bill.id] === 'OPENING'
+                                ? 'bg-emerald-700 text-white cursor-wait opacity-80'
+                                : billActionPending[bill.id] === 'CLOSING'
+                                  ? 'bg-slate-400 text-slate-200 cursor-not-allowed opacity-50'
+                                  : 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer'
+                            }`}
                           >
-                            <Play className="w-3.5 h-3.5 fill-current" /> Open Vote
+                            {billActionPending[bill.id] === 'OPENING' ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Opening vote...
+                              </>
+                            ) : (
+                              <>
+                                <Play className="w-3.5 h-3.5 fill-current" /> Open Vote
+                              </>
+                            )}
                           </button>
                         )}
 
                         {/* 2. Close Vote Button */}
                         {isVotingOpen && (
                           <button
+                            type="button"
+                            disabled={billActionPending[bill.id] === 'OPENING' || billActionPending[bill.id] === 'CLOSING'}
+                            aria-disabled={billActionPending[bill.id] === 'OPENING' || billActionPending[bill.id] === 'CLOSING'}
                             onClick={async () => {
-                              await storageService.closeBillVote(bill.id, eventId);
-                              setBills(storageService.getBills(eventId));
-                              onShowToast('Bill Voting Closed', `${bill.bill_number} voting has closed. Result is hidden.`, 'info');
+                              if (billActionPending[bill.id]) return;
+                              setBillActionPending(prev => ({ ...prev, [bill.id]: 'CLOSING' }));
+                              try {
+                                const res = await storageService.closeBillVote(bill.id, eventId);
+                                if (res.success) {
+                                  setBills(storageService.getBills(eventId));
+                                  onShowToast('Bill Voting Closed', `${bill.bill_number} voting has closed. Result is hidden.`, 'info');
+                                } else {
+                                  onShowToast('Failed to Close Vote', res.error || 'Database confirmation failed. Please try again.', 'error');
+                                }
+                              } catch (err: any) {
+                                onShowToast('Error', err?.message || 'Failed to close vote.', 'error');
+                              } finally {
+                                setBillActionPending(prev => ({ ...prev, [bill.id]: null }));
+                              }
                             }}
-                            className="px-4 py-2 rounded-xl text-xs font-black bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-md flex items-center gap-1.5 cursor-pointer"
+                            className={`px-4 py-2 rounded-xl text-xs font-black shadow-md flex items-center gap-1.5 transition-all ${
+                              billActionPending[bill.id] === 'CLOSING'
+                                ? 'bg-amber-600 text-white cursor-wait opacity-80'
+                                : billActionPending[bill.id] === 'OPENING'
+                                  ? 'bg-slate-400 text-slate-200 cursor-not-allowed opacity-50'
+                                  : 'bg-amber-500 hover:bg-amber-600 text-slate-950 cursor-pointer'
+                            }`}
                           >
-                            <Lock className="w-3.5 h-3.5" /> Close Vote
+                            {billActionPending[bill.id] === 'CLOSING' ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Closing vote...
+                              </>
+                            ) : (
+                              <>
+                                <Lock className="w-3.5 h-3.5" /> Close Vote
+                              </>
+                            )}
                           </button>
                         )}
 

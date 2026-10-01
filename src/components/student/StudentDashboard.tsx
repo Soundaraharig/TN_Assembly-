@@ -59,7 +59,8 @@ import {
   Eye,
   X,
   Mic,
-  Smartphone
+  Smartphone,
+  Loader2
 } from 'lucide-react';
 
 type StudentDashboardTab = 'desk' | 'voting' | 'agenda';
@@ -404,7 +405,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }
     return map;
   });
-  const [billVotePending, setBillVotePending] = useState<Record<string, boolean>>({});
+  const [billVoteSubmitting, setBillVoteSubmitting] = useState<Record<string, 'YES' | 'NO' | 'ABSTAIN' | null>>({});
+  const billVoteInFlightRef = useRef<Record<string, boolean>>({});
 
   const [localElectionVotes, setLocalElectionVotes] = useState<Record<string, string>>(() => {
     const records = Object.values(storageService.getAllStudentVotes(resolvedEventId, student?.id));
@@ -1390,31 +1392,35 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   const recordedDecision = storageService.getStudentBillVoteDecision(resolvedEventId, bill.id, student.id);
                   const authoritativeVote = recordedDecision || localBillVotes[bill.id];
                   const hasVoted = hasServerVoted || !!authoritativeVote;
-                  const isPending = !!billVotePending[bill.id];
+                  const submittingChoice = billVoteSubmitting[bill.id];
+                  const isSubmitting = Boolean(submittingChoice);
 
                   const handleBillVoteClick = async (decision: 'YES' | 'NO' | 'ABSTAIN') => {
                     const clickStartTime = Date.now();
+                    // Immediate synchronous double-click and state guard
+                    if (hasVoted || isSubmitting || billVoteInFlightRef.current[bill.id]) {
+                      console.log(`[VOTE-CLICK-TRACE] [CLICK_ABORTED_PRECONDITION]`, {
+                        eventId: resolvedEventId,
+                        billId: bill.id,
+                        learnerId: student.id,
+                        reason: hasVoted ? 'ALREADY_VOTED' : 'SUBMITTING_IN_FLIGHT'
+                      });
+                      return;
+                    }
+
+                    // Synchronously set submitting state in the exact click frame
+                    billVoteInFlightRef.current[bill.id] = true;
+                    setBillVoteSubmitting(prev => ({ ...prev, [bill.id]: decision }));
+
                     console.log(`[VOTE-CLICK-TRACE] [CLICK_RECEIVED]`, {
                       eventId: resolvedEventId,
                       billId: bill.id,
                       learnerId: student.id,
                       voteChoice: decision,
                       timestamp: new Date().toISOString(),
-                      functionName: 'handleBillVoteClick',
-                      hasVoted,
-                      hasServerVoted,
-                      isPending
+                      functionName: 'handleBillVoteClick'
                     });
-                    if (hasVoted || isPending) {
-                      console.log(`[VOTE-CLICK-TRACE] [CLICK_ABORTED_PRECONDITION]`, {
-                        eventId: resolvedEventId,
-                        billId: bill.id,
-                        learnerId: student.id,
-                        reason: hasVoted ? 'ALREADY_VOTED' : 'PENDING'
-                      });
-                      return;
-                    }
-                    setBillVotePending(prev => ({ ...prev, [bill.id]: true }));
+
                     try {
                       const res = await storageService.castBillVote(bill.id, resolvedEventId, student, decision);
                       const duration = Date.now() - clickStartTime;
@@ -1428,6 +1434,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         success: res.success,
                         errorMessage: res.error
                       });
+
                       if (res.success) {
                         setLocalBillVotes(prev => ({ ...prev, [bill.id]: decision }));
                         logVoteStateTrace({
@@ -1441,9 +1448,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           source: 'DB_CONFIRMATION'
                         });
                         setSyncedBills(storageService.getBills(resolvedEventId));
-                        onShowToast('Bill Vote Cast', `Your vote on ${bill.bill_number} was recorded as ${decision === 'YES' ? 'YES (AYE)' : decision}.`, 'success');
+                        onShowToast('Bill Vote Cast', `Your vote on ${bill.bill_number} was recorded as ${decision === 'YES' ? 'AYE (YES)' : decision}.`, 'success');
                       } else {
-                        onShowToast('Vote Failed', res.error || 'You may have already voted or voting has closed.', 'error');
+                        // Check if backend actually committed the vote despite response error/timeout
+                        const serverAlreadyVoted = storageService.hasStudentVotedOnBill(resolvedEventId, bill.id, student.id);
+                        if (serverAlreadyVoted) {
+                          const verifiedDecision = storageService.getStudentBillVoteDecision(resolvedEventId, bill.id, student.id) || decision;
+                          setLocalBillVotes(prev => ({ ...prev, [bill.id]: verifiedDecision }));
+                          setSyncedBills(storageService.getBills(resolvedEventId));
+                          onShowToast('Bill Vote Confirmed', `Your vote on ${bill.bill_number} was confirmed as ${verifiedDecision === 'YES' ? 'AYE (YES)' : verifiedDecision}.`, 'success');
+                        } else {
+                          onShowToast('Vote Failed', res.error || 'Vote could not be confirmed. Please check your connection and try again.', 'error');
+                        }
                       }
                     } catch (err: any) {
                       const duration = Date.now() - clickStartTime;
@@ -1456,9 +1472,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         durationMs: duration,
                         errorMessage: err?.message
                       });
-                      onShowToast('Vote Failed', err?.message || 'Vote failed.', 'error');
+                      // Fallback verification check
+                      const serverAlreadyVoted = storageService.hasStudentVotedOnBill(resolvedEventId, bill.id, student.id);
+                      if (serverAlreadyVoted) {
+                        const verifiedDecision = storageService.getStudentBillVoteDecision(resolvedEventId, bill.id, student.id) || decision;
+                        setLocalBillVotes(prev => ({ ...prev, [bill.id]: verifiedDecision }));
+                        setSyncedBills(storageService.getBills(resolvedEventId));
+                      } else {
+                        onShowToast('Vote Failed', err?.message || 'Vote failed. Please try again.', 'error');
+                      }
                     } finally {
-                      setBillVotePending(prev => ({ ...prev, [bill.id]: false }));
+                      billVoteInFlightRef.current[bill.id] = false;
+                      setBillVoteSubmitting(prev => ({ ...prev, [bill.id]: null }));
                     }
                   };
 
@@ -1486,52 +1511,102 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                             <Check className="w-3 h-3 stroke-[3]" /> Voted{authoritativeVote ? `: ${authoritativeVote}` : ''}
                           </span>
                         )}
+                        {isSubmitting && !hasVoted && (
+                          <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 shrink-0 flex items-center gap-1.5 animate-pulse">
+                            <Loader2 className="w-3 h-3 animate-spin" /> Submitting...
+                          </span>
+                        )}
                       </div>
 
                       <div className="grid grid-cols-3 gap-2 pt-2">
                         <button
                           type="button"
-                          disabled={hasVoted || isPending}
+                          disabled={hasVoted || isSubmitting}
+                          aria-disabled={hasVoted || isSubmitting}
                           onClick={() => handleBillVoteClick('YES')}
                           className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
                             authoritativeVote === 'YES'
                               ? 'bg-emerald-500 text-white border-emerald-400 shadow-lg'
                               : hasVoted
                                 ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-50'
-                                : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20 cursor-pointer'
+                                : submittingChoice === 'YES'
+                                  ? 'bg-emerald-600 text-white border-emerald-500 shadow-md animate-pulse cursor-wait'
+                                  : isSubmitting
+                                    ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-40'
+                                    : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20 cursor-pointer'
                           }`}
                         >
-                          AYE (YES) {authoritativeVote === 'YES' && '✓'}
+                          {authoritativeVote === 'YES' ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 stroke-[3]" /> VOTED — YES
+                            </>
+                          ) : submittingChoice === 'YES' ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Voting YES...
+                            </>
+                          ) : (
+                            'AYE (YES)'
+                          )}
                         </button>
 
                         <button
                           type="button"
-                          disabled={hasVoted || isPending}
+                          disabled={hasVoted || isSubmitting}
+                          aria-disabled={hasVoted || isSubmitting}
                           onClick={() => handleBillVoteClick('NO')}
                           className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
                             authoritativeVote === 'NO'
                               ? 'bg-rose-500 text-white border-rose-400 shadow-lg'
                               : hasVoted
                                 ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-50'
-                                : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30 hover:bg-rose-500/20 cursor-pointer'
+                                : submittingChoice === 'NO'
+                                  ? 'bg-rose-600 text-white border-rose-500 shadow-md animate-pulse cursor-wait'
+                                  : isSubmitting
+                                    ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-40'
+                                    : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30 hover:bg-rose-500/20 cursor-pointer'
                           }`}
                         >
-                          NO {authoritativeVote === 'NO' && '✓'}
+                          {authoritativeVote === 'NO' ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 stroke-[3]" /> VOTED — NO
+                            </>
+                          ) : submittingChoice === 'NO' ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Voting NO...
+                            </>
+                          ) : (
+                            'NO'
+                          )}
                         </button>
 
                         <button
                           type="button"
-                          disabled={hasVoted || isPending}
+                          disabled={hasVoted || isSubmitting}
+                          aria-disabled={hasVoted || isSubmitting}
                           onClick={() => handleBillVoteClick('ABSTAIN')}
                           className={`p-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
                             authoritativeVote === 'ABSTAIN'
                               ? 'bg-slate-600 text-white border-slate-500 shadow-lg'
                               : hasVoted
                                 ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-50'
-                                : 'bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/30 hover:bg-slate-500/20 cursor-pointer'
+                                : submittingChoice === 'ABSTAIN'
+                                  ? 'bg-slate-700 text-white border-slate-600 shadow-md animate-pulse cursor-wait'
+                                  : isSubmitting
+                                    ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-700 cursor-not-allowed opacity-40'
+                                    : 'bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/30 hover:bg-slate-500/20 cursor-pointer'
                           }`}
                         >
-                          ABSTAIN {authoritativeVote === 'ABSTAIN' && '✓'}
+                          {authoritativeVote === 'ABSTAIN' ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 stroke-[3]" /> VOTED — ABSTAIN
+                            </>
+                          ) : submittingChoice === 'ABSTAIN' ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Voting ABSTAIN...
+                            </>
+                          ) : (
+                            'ABSTAIN'
+                          )}
                         </button>
                       </div>
 

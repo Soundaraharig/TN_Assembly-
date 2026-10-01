@@ -4697,17 +4697,26 @@ class StorageService {
               const currentMap = new Map<string, BillProceeding>();
               thisEventCurrent.forEach(b => currentMap.set(b.id, b));
 
-              const isTerminalBillStatus = (s?: string) => s === 'Vote Closed' || s === 'Result Revealed' || s === 'Result Hidden' || s === 'Passed' || s === 'Failed';
+              const isTerminalBillStatus = (s?: string) => s === 'Vote Closed' || s === 'Result Revealed' || s === 'Result Hidden' || s === 'Passed' || s === 'Rejected';
 
               const incoming = (msg.payload.bills as BillProceeding[]).filter(b => !deletedIds.has(b.id));
               const mergedThisEvent = incoming.map(inB => {
                 const curB = currentMap.get(inB.id);
                 if (!curB) return inB;
 
-                // Terminal status cannot be downgraded by incoming broadcast
-                const finalStatus = (isTerminalBillStatus(curB.status) && !isTerminalBillStatus(inB.status))
-                  ? curB.status
-                  : (inB.status || curB.status);
+                const curT = new Date(curB.updated_at || curB.created_at || 0).getTime();
+                const inT = new Date(inB.updated_at || inB.created_at || 0).getTime();
+
+                let finalStatus: BillProceeding['status'];
+                if (inT > curT) {
+                  finalStatus = inB.status || curB.status;
+                } else if (curT > inT) {
+                  finalStatus = curB.status || inB.status;
+                } else {
+                  finalStatus = (isTerminalBillStatus(curB.status) && !isTerminalBillStatus(inB.status))
+                    ? curB.status
+                    : (inB.status || curB.status);
+                }
 
                 // Non-destructive union of votes
                 const votesMap = new Map<string, BillVote>();
@@ -4744,7 +4753,8 @@ class StorageService {
                   total_votes: counts.totalVotes,
                   result: counts.result,
                   votes: mergedVotes,
-                  voted_delegate_ids: counts.effectiveVoterIds
+                  voted_delegate_ids: counts.effectiveVoterIds,
+                  updated_at: inT >= curT ? (inB.updated_at || curB.updated_at) : (curB.updated_at || inB.updated_at)
                 };
               });
 
@@ -4760,12 +4770,22 @@ class StorageService {
             } else if (msg.payload.bill && !deletedIds.has(msg.payload.bill.id || msg.payload.billId)) {
               const bId = msg.payload.billId || msg.payload.bill.id;
               const inB = msg.payload.bill;
-              const isTerminalBillStatus = (s?: string) => s === 'Vote Closed' || s === 'Result Revealed' || s === 'Result Hidden' || s === 'Passed' || s === 'Failed';
+              const isTerminalBillStatus = (s?: string) => s === 'Vote Closed' || s === 'Result Revealed' || s === 'Result Hidden' || s === 'Passed' || s === 'Rejected';
               const updated = currentBills.map(b => {
                 if (b.id === bId) {
-                  const finalStatus = (isTerminalBillStatus(b.status) && !isTerminalBillStatus(inB.status))
-                    ? b.status
-                    : (inB.status || b.status);
+                  const curT = new Date(b.updated_at || b.created_at || 0).getTime();
+                  const inT = new Date(inB.updated_at || inB.created_at || 0).getTime();
+
+                  let finalStatus: BillProceeding['status'];
+                  if (inT > curT) {
+                    finalStatus = inB.status || b.status;
+                  } else if (curT > inT) {
+                    finalStatus = b.status || inB.status;
+                  } else {
+                    finalStatus = (isTerminalBillStatus(b.status) && !isTerminalBillStatus(inB.status))
+                      ? b.status
+                      : (inB.status || b.status);
+                  }
 
                   // Non-destructive union of voted_delegate_ids
                   const mergedVotedIds = Array.from(new Set([
@@ -4796,7 +4816,8 @@ class StorageService {
                     noes: counts.noes,
                     abstain: counts.abstain,
                     total_votes: counts.totalVotes,
-                    result: counts.result
+                    result: counts.result,
+                    updated_at: inT >= curT ? (inB.updated_at || b.updated_at) : (b.updated_at || inB.updated_at)
                   };
                 }
                 return b;
@@ -5721,8 +5742,8 @@ class StorageService {
       this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, Array.from(combinedAllPQsMap.values()));
       this.setItem(`tn_assembly_proceedings_questions_${eventId}`, finalMergedPQs);
 
-      // Safe non-destructive merge of proceedings (bills) by unique ID, respecting deletions and protecting terminal status
-      const isTerminalBillStatus = (s?: string) => s === 'Vote Closed' || s === 'Result Revealed' || s === 'Result Hidden' || s === 'Passed' || s === 'Failed';
+      // Safe non-destructive merge of proceedings (bills) by unique ID, respecting deletions and monotonic timestamps
+      const isTerminalBillStatus = (s?: string) => s === 'Vote Closed' || s === 'Result Revealed' || s === 'Result Hidden' || s === 'Passed' || s === 'Rejected';
       const rawRemoteProcs = Array.isArray(existingSC.proceedings) ? (existingSC.proceedings as BillProceeding[]) : [];
       const remoteProcs = rawRemoteProcs.filter(b => !deletedIds.has(b.id));
       const procMap = new Map<string, BillProceeding>();
@@ -5732,10 +5753,20 @@ class StorageService {
         if (!remoteB) {
           procMap.set(localB.id, localB);
         } else {
-          // Terminal status invariant: If either local or remote is terminal, status stays terminal
-          const finalStatus = (isTerminalBillStatus(remoteB.status) && !isTerminalBillStatus(localB.status))
-            ? remoteB.status
-            : (isTerminalBillStatus(localB.status) ? localB.status : (localB.status || remoteB.status));
+          const localT = new Date(localB.updated_at || localB.created_at || 0).getTime();
+          const remoteT = new Date(remoteB.updated_at || remoteB.created_at || 0).getTime();
+
+          // Monotonic timestamp resolution: newer status wins, preventing stale remote state from overwriting open vote
+          let finalStatus: BillProceeding['status'];
+          if (localT > remoteT) {
+            finalStatus = localB.status || remoteB.status;
+          } else if (remoteT > localT) {
+            finalStatus = remoteB.status || localB.status;
+          } else {
+            finalStatus = (isTerminalBillStatus(remoteB.status) && !isTerminalBillStatus(localB.status))
+              ? remoteB.status
+              : (isTerminalBillStatus(localB.status) ? localB.status : (localB.status || remoteB.status));
+          }
 
           // Union votes by delegate/learner ID non-destructively
           // Authoritative remote database state is preserved to ensure exactly 1 vote per delegate
@@ -5761,8 +5792,8 @@ class StorageService {
           const counts = deriveBillVoteCounts({ ...remoteB, ...localB, votes: mergedVotes, voted_delegate_ids: mergedVotedIds }, 0);
 
           procMap.set(localB.id, {
-            ...localB,
             ...remoteB,
+            ...localB,
             status: finalStatus,
             is_result_revealed: isRevealed,
             ayes: counts.ayes,
@@ -5772,7 +5803,7 @@ class StorageService {
             result: counts.result,
             votes: mergedVotes,
             voted_delegate_ids: counts.effectiveVoterIds,
-            updated_at: new Date().toISOString()
+            updated_at: localT >= remoteT ? (localB.updated_at || new Date().toISOString()) : (remoteB.updated_at || new Date().toISOString())
           });
         }
       });
@@ -13414,7 +13445,9 @@ class StorageService {
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
   }
 
-  public openBillVote(billId: string, eventId: string): void {
+  public async openBillVote(billId: string, eventId: string): Promise<{ success: boolean; error?: string }> {
+    const now = new Date().toISOString();
+    console.log(`[VOTE-OPEN-TRACE] openBillVote requested for billId=${billId}, eventId=${eventId}, timestamp=${now}`);
     const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS).map(b => {
       // Single Active Rule: Auto-close any previously active bill for this event
       if (b.event_id === eventId && b.id !== billId && (b.status === 'Vote Open' || b.status === 'Voting')) {
@@ -13422,7 +13455,7 @@ class StorageService {
           ...b,
           status: 'Vote Closed' as const,
           is_result_revealed: false,
-          updated_at: new Date().toISOString()
+          updated_at: now
         };
       }
       if (b.id === billId) {
@@ -13430,7 +13463,7 @@ class StorageService {
           ...b,
           status: 'Vote Open' as const,
           is_result_revealed: false,
-          updated_at: new Date().toISOString()
+          updated_at: now
         };
       }
       return b;
@@ -13449,7 +13482,7 @@ class StorageService {
           const u = all.find(ub => ub.id === b.id);
           return u || b;
         }),
-        updated_at: new Date().toISOString()
+        updated_at: now
       };
       this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
     }
@@ -13461,132 +13494,287 @@ class StorageService {
     proj.displayScene = 'bill_voting';
     this.saveProjectorSettings(eventId, proj);
 
-    this.broadcastBills(eventId, all.filter(b => b.event_id === eventId));
-    this.syncEventStateToSupabase(eventId, true).catch(() => {});
+    let serverConfirmed = false;
+    let lastErrorMsg = '';
+
+    // Direct Authoritative Supabase OCC update with bounded timeout
+    if (supabase && eventId && isValidUuid(eventId)) {
+      let attempts = 0;
+      const maxAttempts = 3;
+      const TIMEOUT_MS = 8000;
+
+      while (attempts < maxAttempts && !serverConfirmed) {
+        attempts++;
+        try {
+          const timeoutPromise = new Promise<{ data: any; error: any }>((_, reject) =>
+            setTimeout(() => reject(new Error('VOTE_REQUEST_TIMEOUT')), TIMEOUT_MS)
+          );
+
+          const readPromise = supabase
+            .from('college_events')
+            .select('social_coverage, updated_at')
+            .eq('id', eventId)
+            .single();
+
+          const { data: eventData, error: readErr } = await Promise.race([readPromise, timeoutPromise]);
+          if (readErr || !eventData?.social_coverage) {
+            lastErrorMsg = readErr?.message || 'Database read failed.';
+            continue;
+          }
+
+          const freshSC = eventData.social_coverage as Record<string, any>;
+          const procs = Array.isArray(freshSC.proceedings) ? (freshSC.proceedings as BillProceeding[]) : [];
+
+          const updatedProcs = procs.map((b: any) => {
+            if (b.id === billId) {
+              return {
+                ...b,
+                status: 'Vote Open' as const,
+                is_result_revealed: false,
+                updated_at: now
+              };
+            }
+            if (b.status === 'Vote Open' || b.status === 'Voting') {
+              return {
+                ...b,
+                status: 'Vote Closed' as const,
+                updated_at: now
+              };
+            }
+            return b;
+          });
+
+          // Ensure the target bill exists in remote proceedings
+          if (!updatedProcs.some((b: any) => b.id === billId)) {
+            const localTarget = all.find(b => b.id === billId);
+            if (localTarget) {
+              updatedProcs.push(localTarget);
+            }
+          }
+
+          const updatedProj = {
+            ...(freshSC.projector_settings || {}),
+            activeBillId: billId,
+            revealedBillId: undefined,
+            displayScene: 'bill_voting'
+          };
+
+          const newSC = {
+            ...freshSC,
+            proceedings: updatedProcs,
+            projector_settings: updatedProj,
+            updated_at: now
+          };
+
+          const writePromise = supabase
+            .from('college_events')
+            .update({ social_coverage: newSC, updated_at: now })
+            .eq('id', eventId)
+            .eq('updated_at', eventData.updated_at)
+            .select('id');
+
+          const { data: updateData, error: updateErr } = await Promise.race([writePromise, timeoutPromise]);
+          if (!updateErr && updateData && updateData.length > 0) {
+            serverConfirmed = true;
+            console.log(`[VOTE-OPEN-TRACE] openBillVote successfully committed to Supabase for billId=${billId}`);
+          } else {
+            lastErrorMsg = updateErr?.message || 'OCC conflict (concurrent modification). Retrying...';
+            if (attempts < maxAttempts) {
+              await new Promise(r => setTimeout(r, 60 * attempts + Math.random() * 40));
+            }
+          }
+        } catch (e: any) {
+          const isTimeout = e?.message === 'VOTE_REQUEST_TIMEOUT';
+          lastErrorMsg = isTimeout ? 'Request timed out after 8s.' : (e?.message || 'Network error.');
+          if (isTimeout) break;
+        }
+      }
+    } else {
+      serverConfirmed = true;
+    }
+
+    if (!serverConfirmed && supabase) {
+      console.warn(`[VOTE-OPEN-TRACE] openBillVote failed after attempts: ${lastErrorMsg}`);
+      return { success: false, error: lastErrorMsg || 'Database confirmation failed. Please try again.' };
+    }
+
+    await this.broadcastBills(eventId, all.filter(b => b.event_id === eventId));
     this.notify();
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+    return { success: true };
   }
 
-  public async closeBillVote(billId: string, eventId: string): Promise<void> {
-    // 1. Fetch latest authoritative bill state from Supabase
+  public async closeBillVote(billId: string, eventId: string): Promise<{ success: boolean; error?: string }> {
+    console.log(`[VOTE-CLOSE-TRACE] closeBillVote requested for billId=${billId}, eventId=${eventId}`);
     let remoteBill: BillProceeding | undefined;
     let freshSC: Record<string, any> | null = null;
     let readUpdatedAt: string | undefined;
+    const TIMEOUT_MS = 8000;
+    let serverConfirmed = false;
+    let lastErrorMsg = '';
 
-    if (supabase && eventId) {
-      try {
-        const { data } = await supabase
-          .from('college_events')
-          .select('social_coverage, updated_at')
-          .eq('id', eventId)
-          .single();
-        if (data?.social_coverage) {
+    if (supabase && eventId && isValidUuid(eventId)) {
+      let attempts = 0;
+      const maxAttempts = 3;
+
+      while (attempts < maxAttempts && !serverConfirmed) {
+        attempts++;
+        try {
+          const timeoutPromise = new Promise<{ data: any; error: any }>((_, reject) =>
+            setTimeout(() => reject(new Error('VOTE_REQUEST_TIMEOUT')), TIMEOUT_MS)
+          );
+
+          const { data, error: readErr } = await Promise.race([
+            supabase
+              .from('college_events')
+              .select('social_coverage, updated_at')
+              .eq('id', eventId)
+              .single(),
+            timeoutPromise
+          ]);
+
+          if (readErr || !data?.social_coverage) {
+            lastErrorMsg = readErr?.message || 'Database read failed.';
+            continue;
+          }
+
           freshSC = data.social_coverage as Record<string, any>;
           readUpdatedAt = data.updated_at;
           const procs = Array.isArray(freshSC.proceedings) ? (freshSC.proceedings as BillProceeding[]) : [];
           remoteBill = procs.find((b: any) => b.id === billId);
-        }
-      } catch (e) {
-        console.warn('Failed to fetch remote bill state in closeBillVote:', e);
-      }
-    }
 
-    const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS);
-    const localBill = all.find(b => b.id === billId);
-    if (!localBill && !remoteBill) return;
+          const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS);
+          const localBill = all.find(b => b.id === billId);
+          if (!localBill && !remoteBill) return { success: false, error: 'Bill not found.' };
 
-    // Union remote and local votes to ensure zero lost votes
-    const votesMap = new Map<string, BillVote>();
-    (remoteBill?.votes || []).forEach(v => {
-      const k = v.learner_id || v.delegate_id || '';
-      if (k) votesMap.set(k, v);
-    });
-    (localBill?.votes || []).forEach(v => {
-      const k = v.learner_id || v.delegate_id || '';
-      if (k && !votesMap.has(k)) votesMap.set(k, v);
-    });
+          // Union remote and local votes to ensure zero lost votes
+          const votesMap = new Map<string, BillVote>();
+          (remoteBill?.votes || []).forEach(v => {
+            const k = v.learner_id || v.delegate_id || '';
+            if (k) votesMap.set(k, v);
+          });
+          (localBill?.votes || []).forEach(v => {
+            const k = v.learner_id || v.delegate_id || '';
+            if (k && !votesMap.has(k)) votesMap.set(k, v);
+          });
 
-    const mergedVotes = Array.from(votesMap.values());
-    const mergedVotedIds = Array.from(new Set([
-      ...(remoteBill?.voted_delegate_ids || []),
-      ...(localBill?.voted_delegate_ids || []),
-      ...mergedVotes.map(v => v.learner_id || v.delegate_id || '')
-    ])).filter(Boolean);
+          const mergedVotes = Array.from(votesMap.values());
+          const mergedVotedIds = Array.from(new Set([
+            ...(remoteBill?.voted_delegate_ids || []),
+            ...(localBill?.voted_delegate_ids || []),
+            ...mergedVotes.map(v => v.learner_id || v.delegate_id || '')
+          ])).filter(Boolean);
 
-    const learners = this.getLearners(eventId);
-    const counts = deriveBillVoteCounts({
-      ...(remoteBill || localBill!),
-      votes: mergedVotes,
-      voted_delegate_ids: mergedVotedIds
-    }, learners.length);
+          const learners = this.getLearners(eventId);
+          const counts = deriveBillVoteCounts({
+            ...(remoteBill || localBill!),
+            votes: mergedVotes,
+            voted_delegate_ids: mergedVotedIds
+          }, learners.length || 0);
 
-    const now = new Date().toISOString();
-    const updatedBill: BillProceeding = {
-      ...(remoteBill || localBill!),
-      status: 'Vote Closed',
-      votes: mergedVotes,
-      voted_delegate_ids: counts.effectiveVoterIds,
-      ayes: counts.ayes,
-      noes: counts.noes,
-      abstain: counts.abstain,
-      total_votes: counts.totalVotes,
-      result: counts.result,
-      is_result_revealed: false,
-      updated_at: now
-    };
-
-    // Update local storage
-    const updatedAll = all.map(b => b.id === billId ? updatedBill : b);
-    if (!updatedAll.some(b => b.id === billId)) updatedAll.push(updatedBill);
-    this.setItem(STORAGE_KEYS.PROCEEDINGS, updatedAll);
-
-    // Update in-memory event
-    const allEvs = this.getEvents();
-    const matched = allEvs.find(e => e.id === eventId);
-    if (matched) {
-      const sc = (matched.social_coverage || {}) as Record<string, any>;
-      const curProcs = Array.isArray(sc.proceedings) ? sc.proceedings : [];
-      matched.social_coverage = {
-        ...sc,
-        proceedings: curProcs.map((b: any) => b.id === billId ? updatedBill : b),
-        updated_at: now
-      };
-      this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
-    }
-
-    // Keep projector in bill_voting scene with result hidden until admin explicitly reveals it
-    const proj = this.getProjectorSettings(eventId);
-    proj.activeBillId = billId;
-    proj.revealedBillId = undefined;
-    proj.displayScene = 'bill_voting';
-    this.saveProjectorSettings(eventId, proj);
-
-    // Persist directly to Supabase with OCC if available
-    if (supabase && freshSC && readUpdatedAt) {
-      try {
-        const curProcs = Array.isArray(freshSC.proceedings) ? (freshSC.proceedings as BillProceeding[]) : [];
-        const newProcs = curProcs.map((b: any) => b.id === billId ? updatedBill : b);
-        if (!newProcs.some((b: any) => b.id === billId)) newProcs.push(updatedBill);
-
-        await supabase
-          .from('college_events')
-          .update({
-            social_coverage: { ...freshSC, proceedings: newProcs },
+          const now = new Date().toISOString();
+          const updatedBill: BillProceeding = {
+            ...(remoteBill || localBill!),
+            status: 'Vote Closed',
+            votes: mergedVotes,
+            voted_delegate_ids: counts.effectiveVoterIds,
+            ayes: counts.ayes,
+            noes: counts.noes,
+            abstain: counts.abstain,
+            total_votes: counts.totalVotes,
+            result: counts.result,
+            is_result_revealed: false,
             updated_at: now
-          })
-          .eq('id', eventId)
-          .eq('updated_at', readUpdatedAt);
-      } catch (e) {
-        console.warn('Direct closeBillVote Supabase write failed, falling back to syncEventStateToSupabase:', e);
-        this.syncEventStateToSupabase(eventId, true).catch(() => {});
+          };
+
+          // Update local storage
+          const updatedAll = all.map(b => b.id === billId ? updatedBill : b);
+          if (!updatedAll.some(b => b.id === billId)) updatedAll.push(updatedBill);
+          this.setItem(STORAGE_KEYS.PROCEEDINGS, updatedAll);
+
+          // Update in-memory event
+          const allEvs = this.getEvents();
+          const matched = allEvs.find(e => e.id === eventId);
+          if (matched) {
+            const sc = (matched.social_coverage || {}) as Record<string, any>;
+            const curProcs = Array.isArray(sc.proceedings) ? sc.proceedings : [];
+            matched.social_coverage = {
+              ...sc,
+              proceedings: curProcs.map((b: any) => b.id === billId ? updatedBill : b),
+              updated_at: now
+            };
+            this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
+          }
+
+          // Keep projector in bill_voting scene with result hidden until admin explicitly reveals it
+          const proj = this.getProjectorSettings(eventId);
+          proj.activeBillId = billId;
+          proj.revealedBillId = undefined;
+          proj.displayScene = 'bill_voting';
+          this.saveProjectorSettings(eventId, proj);
+
+          const curProcs = Array.isArray(freshSC.proceedings) ? (freshSC.proceedings as BillProceeding[]) : [];
+          const newProcs = curProcs.map((b: any) => b.id === billId ? updatedBill : b);
+          if (!newProcs.some((b: any) => b.id === billId)) newProcs.push(updatedBill);
+
+          const { data: updateData, error: updateErr } = await Promise.race([
+            supabase
+              .from('college_events')
+              .update({
+                social_coverage: { ...freshSC, proceedings: newProcs, projector_settings: proj },
+                updated_at: now
+              })
+              .eq('id', eventId)
+              .eq('updated_at', readUpdatedAt)
+              .select('id'),
+            timeoutPromise
+          ]);
+
+          if (!updateErr && updateData && updateData.length > 0) {
+            serverConfirmed = true;
+            console.log(`[VOTE-CLOSE-TRACE] closeBillVote successfully committed to Supabase for billId=${billId}`);
+            await this.broadcastBills(eventId, updatedAll.filter(b => b.event_id === eventId));
+            this.notify();
+            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+            return { success: true };
+          } else {
+            lastErrorMsg = updateErr?.message || 'OCC conflict (concurrent modification). Retrying...';
+            if (attempts < maxAttempts) {
+              await new Promise(r => setTimeout(r, 60 * attempts + Math.random() * 40));
+            }
+          }
+        } catch (e: any) {
+          const isTimeout = e?.message === 'VOTE_REQUEST_TIMEOUT';
+          lastErrorMsg = isTimeout ? 'Request timed out after 8s.' : (e?.message || 'Network error.');
+          if (isTimeout) break;
+        }
+      }
+
+      if (!serverConfirmed) {
+        console.warn(`[VOTE-CLOSE-TRACE] closeBillVote failed after attempts: ${lastErrorMsg}`);
+        return { success: false, error: lastErrorMsg || 'Database confirmation failed. Please try again.' };
       }
     } else {
-      this.syncEventStateToSupabase(eventId, true).catch(() => {});
+      // Local fallback mode
+      const all = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, INITIAL_PROCEEDINGS);
+      const localBill = all.find(b => b.id === billId);
+      if (!localBill) return { success: false, error: 'Bill not found.' };
+
+      const now = new Date().toISOString();
+      const updatedBill: BillProceeding = {
+        ...localBill,
+        status: 'Vote Closed',
+        is_result_revealed: false,
+        updated_at: now
+      };
+      const updatedAll = all.map(b => b.id === billId ? updatedBill : b);
+      this.setItem(STORAGE_KEYS.PROCEEDINGS, updatedAll);
+      this.notify();
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+      return { success: true };
     }
 
-    await this.broadcastBills(eventId, updatedAll.filter(b => b.event_id === eventId));
-    this.notify();
-    if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+    return { success: true };
   }
 
   public async revealBillResult(billId: string, eventId: string): Promise<void> {
