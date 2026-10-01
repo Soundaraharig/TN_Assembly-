@@ -27,11 +27,13 @@ import {
   ArrowUpDown,
   Copy,
   CheckCircle2,
-  XCircle
+  XCircle,
+  Search
 } from 'lucide-react';
 import { ArrangeQuestionOrderModal } from './ArrangeQuestionOrderModal';
 import { SubmissionListModal, type SubmittedMemberRecord } from './SubmissionListModal';
 import { isLearnerQuestion, isLearnerQuestionMatch, areNamesMatching } from '../../utils/memberIdentity';
+import { filterProceedingsQuestions } from '../../utils/questionUtils';
 
 interface ProceedingsTabProps {
   proceedings: BillProceeding[];
@@ -74,6 +76,9 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   const [statusFilter, setStatusFilter] = useState<'All' | 'Submitted' | 'Under Review' | 'Approved' | 'Starred' | 'Rejected'>('All');
   const [benchFilter, setBenchFilter] = useState<'All' | 'Ruling' | 'Opposition'>('All');
   const [ministryFilter, setMinistryFilter] = useState<string>('All');
+  const [questionSearch, setQuestionSearch] = useState('');
+  const [questionNumberFrom, setQuestionNumberFrom] = useState<string>('');
+  const [questionNumberTo, setQuestionNumberTo] = useState<string>('');
 
   // Dynamic ministries and targets from Cabinet configuration and submitted questions
   const availableMinistries = useMemo(() => {
@@ -264,7 +269,8 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   // Export & Action Bar Helpers — Full un-truncated database field with BOM
   const handleExportCSV = () => {
     const headers = [
-      '#',
+      'Question No.',
+      'Question ID',
       'Student Name',
       'Party',
       'Committee',
@@ -274,9 +280,9 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
       'Target Ministry',
       'Question Type',
       'Status',
-      'Queue',
+      'Queue Number',
       'Question Text',
-      'Submitted At',
+      'Created At',
       'Approved At',
       'Approved By'
     ];
@@ -285,13 +291,14 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
         l => isLearnerQuestion(l, q, authoritativeEventId || eventId)
       );
       return [
-        idx + 1,
+        `"${q.question_number || `Q-${String(idx + 1).padStart(4, '0')}`}"`,
+        `"${q.id || ''}"`,
         `"${(q.student_name || '').replace(/"/g, '""')}"`,
         `"${(submitter?.party_name || '').replace(/"/g, '""')}"`,
         `"${(submitter?.committee_name || '').replace(/"/g, '""')}"`,
         `"${(q.bench || '').replace(/"/g, '""')}"`,
         `"${(submitter?.constituency_name || q.constituency || '').replace(/"/g, '""')}"`,
-        `"${submitter?.constituency_number !== undefined ? submitter.constituency_number : ''}"`,
+        `"${submitter?.constituency_number !== undefined ? submitter.constituency_number : (q.constituency_number !== undefined && q.constituency_number !== null ? q.constituency_number : '')}"`,
         `"${(q.ministry || '').replace(/"/g, '""')}"`,
         `"${(q.question_type || '').replace(/"/g, '""')}"`,
         `"${(q.status || '').replace(/"/g, '""')}"`,
@@ -551,13 +558,37 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   const rejectedCount = questions.filter(q => getCanonicalQuestionStatus(q) === 'Rejected').length;
   const readyToPutCount = approvedCount + starredCount;
 
-  const filteredQuestions = questions.filter(q => {
-    const canonicalStatus = getCanonicalQuestionStatus(q);
-    if (statusFilter !== 'All' && canonicalStatus !== statusFilter) return false;
-    if (benchFilter !== 'All' && (q.bench || '').toLowerCase() !== benchFilter.toLowerCase()) return false;
-    if (ministryFilter !== 'All' && q.ministry !== ministryFilter) return false;
-    return true;
-  });
+  const parsedFrom = questionNumberFrom ? parseInt(questionNumberFrom, 10) : null;
+  const parsedTo = questionNumberTo ? parseInt(questionNumberTo, 10) : null;
+
+  const filteredQuestions = useMemo(() => {
+    return filterProceedingsQuestions(questions, {
+      search: questionSearch,
+      statusFilter,
+      benchFilter,
+      ministryFilter,
+      questionNumberFrom: !isNaN(parsedFrom as number) ? parsedFrom : null,
+      questionNumberTo: !isNaN(parsedTo as number) ? parsedTo : null
+    });
+  }, [questions, questionSearch, statusFilter, benchFilter, ministryFilter, parsedFrom, parsedTo]);
+
+  const hasActiveFilterOrSearch = Boolean(
+    questionSearch.trim() ||
+    statusFilter !== 'All' ||
+    benchFilter !== 'All' ||
+    ministryFilter !== 'All' ||
+    questionNumberFrom ||
+    questionNumberTo
+  );
+
+  const handleClearAllFilters = () => {
+    setQuestionSearch('');
+    setStatusFilter('All');
+    setBenchFilter('All');
+    setMinistryFilter('All');
+    setQuestionNumberFrom('');
+    setQuestionNumberTo('');
+  };
 
   const passedBills = proceedings.filter(p => p.status === 'Passed');
 
@@ -1116,6 +1147,80 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
             </div>
           </div>
 
+          {/* Prominent Search & Question Range Bar */}
+          <div className="space-y-2 pt-2">
+            <div className="flex flex-col md:flex-row items-stretch md:items-center gap-3">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={questionSearch}
+                  onChange={(e) => setQuestionSearch(e.target.value)}
+                  placeholder="Search by Question No., ID, student, constituency, ministry, or question..."
+                  className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/90 text-xs font-medium text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/40 focus:border-amber-500 transition-all shadow-xs"
+                />
+                {questionSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setQuestionSearch('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                    title="Clear search"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Question Number Range Filter */}
+              <div className="flex items-center gap-2 shrink-0 bg-slate-100 dark:bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
+                <span className="text-[11px] font-bold text-slate-500 whitespace-nowrap">Q. No Range:</span>
+                <input
+                  type="number"
+                  min="1"
+                  placeholder="From"
+                  value={questionNumberFrom}
+                  onChange={(e) => setQuestionNumberFrom(e.target.value)}
+                  className="w-16 px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-mono text-center text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                />
+                <span className="text-slate-400 font-bold">—</span>
+                <input
+                  type="number"
+                  min="1"
+                  placeholder="To"
+                  value={questionNumberTo}
+                  onChange={(e) => setQuestionNumberTo(e.target.value)}
+                  className="w-16 px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-mono text-center text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                />
+              </div>
+            </div>
+
+            {/* Result Count and Clear Filters indicator */}
+            <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 px-1">
+              <div>
+                {hasActiveFilterOrSearch ? (
+                  <span>
+                    Showing <strong className="text-slate-900 dark:text-white font-bold">{filteredQuestions.length}</strong> of{' '}
+                    <strong className="text-slate-900 dark:text-white font-bold">{questions.length}</strong> questions
+                  </span>
+                ) : (
+                  <span>
+                    <strong className="text-slate-900 dark:text-white font-bold">{questions.length}</strong> questions
+                  </span>
+                )}
+              </div>
+              {hasActiveFilterOrSearch && (
+                <button
+                  type="button"
+                  onClick={handleClearAllFilters}
+                  className="text-amber-600 dark:text-amber-400 hover:underline font-bold text-xs cursor-pointer flex items-center gap-1"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>Clear all filters</span>
+                </button>
+              )}
+            </div>
+          </div>
+
           {/* Action Bar & Filters */}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pt-2">
             
@@ -1251,7 +1356,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-50 dark:bg-slate-950 text-slate-400 font-bold uppercase tracking-wider border-b border-slate-200 dark:border-slate-800">
                   <tr>
-                    <th className="p-3.5">#</th>
+                    <th className="p-3.5">QUESTION NO.</th>
                     <th className="p-3.5">Student Name</th>
                     <th className="p-3.5">Bench</th>
                     <th className="p-3.5">Constituency</th>
@@ -1266,14 +1371,48 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                 <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-medium">
                   {filteredQuestions.length === 0 ? (
                     <tr>
-                      <td colSpan={10} className="p-8 text-center italic text-slate-400">
-                        No questions match the current filters.
+                      <td colSpan={10} className="p-8 text-center text-slate-400">
+                        <div className="max-w-md mx-auto space-y-3 py-4">
+                          <div className="w-12 h-12 mx-auto rounded-2xl bg-amber-500/10 text-amber-500 flex items-center justify-center">
+                            <Search className="w-6 h-6" />
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200">No questions found</h4>
+                            {questionSearch.trim() && (
+                              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                                Search: <span className="font-mono font-bold text-amber-600 dark:text-amber-400">"{questionSearch}"</span>
+                              </p>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/60 p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 text-left space-y-1">
+                            <p className="font-bold text-slate-700 dark:text-slate-300">Try searching by:</p>
+                            <ul className="list-disc pl-4 space-y-0.5">
+                              <li>Question Number (e.g. <span className="font-mono font-bold text-amber-600 dark:text-amber-400">Q-0061</span> or <span className="font-mono font-bold text-amber-600 dark:text-amber-400">61</span>)</li>
+                              <li>Technical Question ID (e.g. <span className="font-mono">q-1790696802309-9zqtj</span>)</li>
+                              <li>Student name (e.g. <span className="font-medium">K. Dhanush</span>)</li>
+                              <li>Constituency name or number</li>
+                              <li>Ministry name (e.g. Chief Minister)</li>
+                              <li>Question text keywords</li>
+                            </ul>
+                          </div>
+                          {hasActiveFilterOrSearch && (
+                            <button
+                              type="button"
+                              onClick={handleClearAllFilters}
+                              className="px-3.5 py-1.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold hover:bg-amber-500/20 text-xs transition-colors cursor-pointer"
+                            >
+                              Clear search &amp; filters
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ) : (
                     filteredQuestions.map((q, idx) => (
                       <tr key={q.id} className="hover:bg-slate-500/5 transition-colors">
-                        <td className="p-3.5 font-mono text-slate-400">{idx + 1}</td>
+                        <td className="p-3.5 font-mono font-bold text-amber-600 dark:text-amber-400">
+                          {q.question_number || `#${idx + 1}`}
+                        </td>
                         <td className="p-3.5 font-bold text-slate-900 dark:text-white">{q.student_name}</td>
                         <td className="p-3.5">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
@@ -1463,6 +1602,11 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                           <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
                             Question Details &amp; Review
                           </h3>
+                          {selectedQuestion.question_number && (
+                            <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-black bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                              {selectedQuestion.question_number}
+                            </span>
+                          )}
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                             {selectedQuestion.calling_order ? `Order #${selectedQuestion.calling_order}` : `Queue #${selectedQuestion.queue_order || '—'}`}
                           </span>
@@ -1484,6 +1628,56 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
 
                   {/* Modal Body */}
                   <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
+                    {/* Permanent Identity & Copy Actions Banner */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 shadow-xs">
+                      <div className="flex items-center gap-4">
+                        <div>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400 block">
+                            Question No.
+                          </span>
+                          <span className="text-xl font-black font-mono text-amber-600 dark:text-amber-400">
+                            {selectedQuestion.question_number || '—'}
+                          </span>
+                        </div>
+                        <div className="h-8 w-px bg-amber-500/20" />
+                        <div>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                            Technical Question ID
+                          </span>
+                          <span className="text-xs font-mono font-medium text-slate-700 dark:text-slate-300 select-all">
+                            {selectedQuestion.id}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {selectedQuestion.question_number && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(selectedQuestion.question_number!);
+                              onShowToast('Copied', `Copied ${selectedQuestion.question_number} to clipboard`, 'success');
+                            }}
+                            className="px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-slate-950 flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>Copy Question No.</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(selectedQuestion.id);
+                            onShowToast('Copied', `Copied Question ID to clipboard`, 'success');
+                          }}
+                          className="px-3 py-1.5 rounded-xl text-xs font-bold border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Copy Question ID</span>
+                        </button>
+                      </div>
+                    </div>
+
                     {/* Metadata Grid */}
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 text-xs">
                       <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
@@ -1494,6 +1688,17 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                           {selectedQuestion.student_name}
                         </p>
                       </div>
+
+                      {(userRole === 'super_admin' || userRole === 'coordinator' || !userRole) && (submitter?.id || selectedQuestion.student_id) && (
+                        <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">
+                            Learner ID
+                          </span>
+                          <p className="font-mono text-slate-700 dark:text-slate-300 text-xs truncate select-all">
+                            {submitter?.id || selectedQuestion.student_id}
+                          </p>
+                        </div>
+                      )}
 
                       <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
                         <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">

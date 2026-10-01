@@ -376,6 +376,12 @@ export const ArrangeQuestionOrderModal: React.FC<ArrangeQuestionOrderModalProps>
                         {q.student_name}
                       </span>
 
+                      {q.question_number && (
+                        <span className="px-2 py-0.5 rounded font-mono font-black text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                          {q.question_number}
+                        </span>
+                      )}
+
                       <span
                         className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                           q.bench === 'Ruling'

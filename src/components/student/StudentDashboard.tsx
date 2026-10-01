@@ -2678,7 +2678,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs space-y-2"
                       >
                         <div className="flex items-center justify-between">
-                          <span className="font-bold text-amber-600 dark:text-amber-400">{q.ministry} • {q.question_type}</span>
+                          <span className="font-bold text-amber-600 dark:text-amber-400">
+                            {q.question_number ? `${q.question_number} • ` : ''}{q.ministry} • {q.question_type}
+                          </span>
                           <div className="flex items-center gap-2">
                             {q.created_at && (
                               <span className="text-[10px] text-slate-400 font-mono">
@@ -2722,7 +2724,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs space-y-2"
                       >
                         <div className="flex items-center justify-between">
-                          <span className="font-bold text-emerald-600 dark:text-emerald-400">{q.ministry} • {q.question_type}</span>
+                          <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                            {q.question_number ? `${q.question_number} • ` : ''}{q.ministry} • {q.question_type}
+                          </span>
                           <div className="flex items-center gap-2">
                             <span className="text-[10px] text-slate-500">By: {q.student_name} ({q.constituency})</span>
                             <button
@@ -2970,6 +2974,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
                   Parliamentary Question
                 </h3>
+                {viewingQuestion.question_number && (
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-black bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                    {viewingQuestion.question_number}
+                  </span>
+                )}
               </div>
               <button
                 type="button"

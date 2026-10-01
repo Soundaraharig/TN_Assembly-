@@ -53,6 +53,19 @@ import type {
   StudentVoteRecord,
   DerivedBillVoteCounts
 } from '../types';
+import {
+  formatQuestionNumber,
+  parseQuestionNumber,
+  getNextQuestionNumber,
+  ensureQuestionNumbers
+} from '../utils/questionUtils';
+
+export {
+  formatQuestionNumber,
+  parseQuestionNumber,
+  getNextQuestionNumber,
+  ensureQuestionNumbers
+};
 
 export function deriveBillVoteCounts(
   bill: BillProceeding | null | undefined,
@@ -5739,6 +5752,8 @@ class StorageService {
         console.warn(`[performSyncEventStateToSupabase] Safety guard: finalMergedPQs was empty but remote had ${rawRemotePQs.length} questions. Preserving rawRemotePQs.`);
         finalMergedPQs = rawRemotePQs;
       }
+      const { questions: numberedFinalMerged } = ensureQuestionNumbers(finalMergedPQs);
+      finalMergedPQs = numberedFinalMerged;
 
       // Update local storage so that all remote questions merged are preserved locally, excluding deleted
       const allPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []).filter(q => !deletedQIds.has(q.id) && (q.status as any) !== 'Deleted' && !(q as any).deleted);
@@ -6023,7 +6038,8 @@ class StorageService {
                 retryPQMap.set(q.id, q);
               }
             });
-            payload.proceedings_questions = Array.from(retryPQMap.values());
+            const { questions: retryNumbered } = ensureQuestionNumbers(Array.from(retryPQMap.values()));
+            payload.proceedings_questions = retryNumbered;
             payload.questions = payload.proceedings_questions;
             if (freshApproved.length > 0) {
               payload.official_approved_questions = freshApproved;
@@ -17057,6 +17073,16 @@ class StorageService {
     const orderIndexMap = new Map<string, number>();
     officialOrderIds.forEach((id, idx) => orderIndexMap.set(id, idx + 1));
 
+    const { questions: numberedFiltered, changed: numbersChanged } = ensureQuestionNumbers(filtered);
+    if (numbersChanged) {
+      filtered = numberedFiltered;
+      const curAll = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+      const curMap = new Map<string, ProceedingsQuestion>();
+      curAll.forEach(q => curMap.set(q.id, q));
+      numberedFiltered.forEach(q => curMap.set(q.id, q));
+      this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, Array.from(curMap.values()));
+    }
+
     const authoritativeActiveQId = (targetEv?.social_coverage as any)?.active_question_id || null;
 
     return filtered.map(q => {
@@ -17423,8 +17449,11 @@ class StorageService {
     const eventId = resolvedEvent?.id || question.event_id || eventSlug;
 
     const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+    const eventQs = list.filter(q => q.event_id === eventId || (resolvedEvent && q.event_slug === getEventSlug(resolvedEvent)));
+    const nextQNum = getNextQuestionNumber(eventQs);
     const newQuestion: ProceedingsQuestion = {
       id: question.id || `q-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      question_number: question.question_number || nextQNum,
       event_id: eventId,
       event_slug: resolvedEvent ? getEventSlug(resolvedEvent) : eventSlug,
       student_id: question.student_id || (question as any).learner_id || (question as any).delegate_id || (question as any).member_id || (question as any).participant_id || (question as any).user_id,

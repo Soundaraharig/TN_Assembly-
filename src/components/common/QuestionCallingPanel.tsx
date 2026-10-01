@@ -331,7 +331,10 @@ export const QuestionCallingPanel: React.FC<QuestionCallingPanelProps> = ({
                   NOW ON FLOOR
                 </span>
                 <span className="font-mono text-sm font-black text-amber-600 dark:text-amber-400">
-                  #{activeQuestion.calling_order || activeQuestion.queue_order || 1}
+                  {activeQuestion.question_number || `Q-${String(activeQuestion.calling_order || activeQuestion.queue_order || 1).padStart(4, '0')}`}
+                </span>
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-500 dark:text-slate-400 border border-slate-300 dark:border-slate-700">
+                  Order #{activeQuestion.calling_order || activeQuestion.queue_order || 1}
                 </span>
               </div>
 
@@ -431,7 +434,10 @@ export const QuestionCallingPanel: React.FC<QuestionCallingPanelProps> = ({
                   NEXT QUESTION
                 </span>
                 <span className="font-mono text-sm font-black text-amber-600 dark:text-amber-400 shrink-0">
-                  #{nextQuestionToCall.calling_order || nextQuestionToCall.queue_order || 1}
+                  {nextQuestionToCall.question_number || `Q-${String(nextQuestionToCall.calling_order || nextQuestionToCall.queue_order || 1).padStart(4, '0')}`}
+                </span>
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-500 dark:text-slate-400 border border-slate-300 dark:border-slate-700">
+                  Order #{nextQuestionToCall.calling_order || nextQuestionToCall.queue_order || 1}
                 </span>
               </div>
               <div className="flex items-center gap-2 flex-wrap pt-0.5">
@@ -519,8 +525,8 @@ export const QuestionCallingPanel: React.FC<QuestionCallingPanelProps> = ({
                   className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-850 flex items-center justify-between gap-2 text-xs"
                 >
                   <div className="flex items-start gap-2.5 min-w-0 flex-1">
-                    <span className="w-6 h-6 rounded-md bg-slate-200 dark:bg-slate-800 font-mono font-bold text-[11px] text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0 mt-0.5">
-                      #{q.calling_order || (idx + (activeQuestion ? 1 : 2))}
+                    <span className="px-1.5 py-0.5 rounded-md bg-slate-200 dark:bg-slate-800 font-mono font-bold text-[11px] text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0 mt-0.5">
+                      {q.question_number || `#${q.calling_order || (idx + (activeQuestion ? 1 : 2))}`}
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
@@ -599,8 +605,8 @@ export const QuestionCallingPanel: React.FC<QuestionCallingPanelProps> = ({
                 >
                   <div className="flex items-center gap-2 min-w-0 flex-wrap">
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                    <span className="w-5 h-5 rounded-md bg-emerald-950 text-emerald-400 font-mono font-bold text-[10px] flex items-center justify-center shrink-0">
-                      #{q.calling_order || q.queue_order || '?'}
+                    <span className="px-1.5 py-0.5 rounded-md bg-emerald-950 text-emerald-400 font-mono font-bold text-[10px] flex items-center justify-center shrink-0">
+                      {q.question_number || `#${q.calling_order || q.queue_order || '?'}`}
                     </span>
                     <span className="font-bold text-slate-700 dark:text-slate-300 break-words">
                       {cid.fullName}
@@ -648,9 +654,16 @@ export const QuestionCallingPanel: React.FC<QuestionCallingPanelProps> = ({
                     <MessageSquare className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="text-base font-black text-slate-900 dark:text-white">Full Parliamentary Question</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-base font-black text-slate-900 dark:text-white">Full Parliamentary Question</h3>
+                      {inspectQuestion.question_number && (
+                        <span className="px-2 py-0.5 rounded-md font-mono font-bold text-xs bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                          {inspectQuestion.question_number}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
-                      Order Position #{questionsList.findIndex(q => q.id === inspectQuestion.id) + 1} of {questionsList.length}
+                      {inspectQuestion.question_number ? `${inspectQuestion.question_number} • ` : ''}Order Position #{questionsList.findIndex(q => q.id === inspectQuestion.id) + 1} of {questionsList.length}
                     </p>
                   </div>
                 </div>

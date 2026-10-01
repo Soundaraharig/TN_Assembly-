@@ -555,6 +555,7 @@ export interface EventAgendaProgress {
 
 export interface ProceedingsQuestion {
   id: string;
+  question_number?: string;
   event_id: string;
   event_slug: string;
   student_id?: string;

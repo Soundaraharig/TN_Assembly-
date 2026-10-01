@@ -493,8 +493,13 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
                 PARLIAMENTARY QUESTION HOUR
               </span>
               <div className="text-2xl md:text-4xl font-mono font-black text-amber-400">
-                QUESTION NO. {activeQuestion.calling_order || activeQuestion.queue_order || 1}
+                QUESTION NO. {activeQuestion.question_number || `Q-${String(activeQuestion.calling_order || activeQuestion.queue_order || 1).padStart(4, '0')}`}
               </div>
+              {activeQuestion.calling_order && (
+                <div className="text-xs md:text-sm font-mono text-slate-400">
+                  Calling Order #{activeQuestion.calling_order}
+                </div>
+              )}
             </div>
 
             {/* Member and Ministry Meta Pill */}
