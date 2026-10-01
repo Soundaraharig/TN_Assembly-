@@ -48,7 +48,7 @@ import { useTheme } from '../../lib/theme';
 import { storageService, getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
 import { presenceService } from '../../services/presenceService';
 import { canReviewQuestions } from '../../utils/permissions';
-import { filterProceedingsQuestions } from '../../utils/questionUtils';
+import { filterProceedingsQuestions, parseQuestionNumber } from '../../utils/questionUtils';
 
 export interface YuvaAssignment {
   id: string;
@@ -163,8 +163,11 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     return storageService.getProceedingsQuestions(eventId);
   });
   const [questionSearch, setQuestionSearch] = useState('');
-  const [questionStatusFilter, setQuestionStatusFilter] = useState<'All' | 'Submitted' | 'Under Review' | 'Approved' | 'Rejected'>('All');
+  const [questionStatusFilter, setQuestionStatusFilter] = useState<'All' | 'Submitted' | 'Under Review' | 'Approved' | 'Starred' | 'Rejected'>('All');
   const [questionMinistryFilter, setQuestionMinistryFilter] = useState<string>('All');
+  const [questionBenchFilter, setQuestionBenchFilter] = useState<'All' | 'Ruling' | 'Opposition'>('All');
+  const [questionNumberFrom, setQuestionNumberFrom] = useState('');
+  const [questionNumberTo, setQuestionNumberTo] = useState('');
   const [selectedQuestionForReview, setSelectedQuestionForReview] = useState<ProceedingsQuestion | null>(null);
   const [reviewNote, setReviewNote] = useState('');
   const [isApproachingAdmin, setIsApproachingAdmin] = useState(false);
@@ -521,11 +524,30 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   const totalQuestionsCount = questions.length;
   const pendingQuestionsCount = questions.filter(q => getCanonicalQuestionStatus(q) === 'Submitted').length;
   const underReviewQuestionsCount = questions.filter(q => getCanonicalQuestionStatus(q) === 'Under Review').length;
-  const approvedQuestionsCount = questions.filter(q => {
-    const s = getCanonicalQuestionStatus(q);
-    return s === 'Approved' || s === 'Starred';
-  }).length;
+  const approvedQuestionsCount = questions.filter(q => getCanonicalQuestionStatus(q) === 'Approved').length;
+  const starredQuestionsCount = questions.filter(q => getCanonicalQuestionStatus(q) === 'Starred').length;
   const rejectedQuestionsCount = questions.filter(q => getCanonicalQuestionStatus(q) === 'Rejected').length;
+
+  const parsedFrom = useMemo(() => parseQuestionNumber(questionNumberFrom), [questionNumberFrom]);
+  const parsedTo = useMemo(() => parseQuestionNumber(questionNumberTo), [questionNumberTo]);
+
+  const hasActiveFilterOrSearch = Boolean(
+    questionSearch.trim() ||
+    questionStatusFilter !== 'All' ||
+    questionMinistryFilter !== 'All' ||
+    questionBenchFilter !== 'All' ||
+    parsedFrom != null ||
+    parsedTo != null
+  );
+
+  const handleClearAllFilters = () => {
+    setQuestionSearch('');
+    setQuestionStatusFilter('All');
+    setQuestionMinistryFilter('All');
+    setQuestionBenchFilter('All');
+    setQuestionNumberFrom('');
+    setQuestionNumberTo('');
+  };
 
   const availableMinistries = useMemo(() => {
     const qMinistries = questions.map(q => q.ministry).filter(Boolean);
@@ -537,9 +559,12 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     return filterProceedingsQuestions(questions, {
       search: questionSearch,
       statusFilter: questionStatusFilter,
-      ministryFilter: questionMinistryFilter
+      benchFilter: questionBenchFilter,
+      ministryFilter: questionMinistryFilter,
+      questionNumberFrom: parsedFrom,
+      questionNumberTo: parsedTo
     });
-  }, [questions, questionStatusFilter, questionMinistryFilter, questionSearch]);
+  }, [questions, questionSearch, questionStatusFilter, questionBenchFilter, questionMinistryFilter, parsedFrom, parsedTo]);
 
   const handleApproachMainAdmin = async (question: ProceedingsQuestion) => {
     if (!volunteer) {
@@ -1280,7 +1305,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
               </div>
 
               {/* Metric Badges */}
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-1">
+              <div className="grid grid-cols-2 sm:grid-cols-6 gap-3 pt-1">
                 <div className="p-3.5 rounded-xl border bg-slate-500/5" style={{ borderColor: 'var(--border)' }}>
                   <span className="text-[10px] font-bold uppercase text-slate-400 block">Total Questions</span>
                   <strong className="text-xl font-black" style={{ color: 'var(--text-primary)' }}>{totalQuestionsCount}</strong>
@@ -1301,69 +1326,166 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                   <strong className="text-xl font-black text-emerald-500">{approvedQuestionsCount}</strong>
                 </div>
 
+                <div className="p-3.5 rounded-xl border bg-amber-500/5 border-amber-500/30">
+                  <span className="text-[10px] font-bold uppercase text-amber-600 dark:text-amber-400 block">Starred</span>
+                  <strong className="text-xl font-black text-amber-500">{starredQuestionsCount}</strong>
+                </div>
+
                 <div className="p-3.5 rounded-xl border bg-rose-500/5 border-rose-500/30">
                   <span className="text-[10px] font-bold uppercase text-rose-600 dark:text-rose-400 block">Rejected</span>
                   <strong className="text-xl font-black text-rose-500">{rejectedQuestionsCount}</strong>
                 </div>
               </div>
 
-              {/* Filters & Search */}
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-2">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {(['All', 'Submitted', 'Under Review', 'Approved', 'Rejected'] as const).map(st => {
-                    const label = st === 'Submitted'
-                      ? `Pending (${pendingQuestionsCount})`
-                      : st === 'Under Review'
-                      ? `Under Review (${underReviewQuestionsCount})`
-                      : st === 'Approved'
-                      ? `Approved (${approvedQuestionsCount})`
-                      : st === 'Rejected'
-                      ? `Rejected (${rejectedQuestionsCount})`
-                      : `All (${totalQuestionsCount})`;
-                    const isSelected = questionStatusFilter === st;
-                    return (
-                      <button
-                        key={st}
-                        onClick={() => setQuestionStatusFilter(st)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                          isSelected
-                            ? 'bg-amber-500 text-white shadow-xs'
-                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <div className="flex items-center gap-2">
-                  {/* Ministry Filter */}
-                  {availableMinistries.length > 0 && (
-                    <select
-                      value={questionMinistryFilter}
-                      onChange={(e) => setQuestionMinistryFilter(e.target.value)}
-                      className="px-3 py-1.5 rounded-xl text-xs font-bold border bg-transparent"
-                      style={{ borderColor: 'var(--border)', color: 'var(--text-primary)' }}
-                    >
-                      <option value="All">All Ministries</option>
-                      {availableMinistries.map(m => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                    </select>
-                  )}
-
-                  {/* Search input */}
-                  <div className="relative">
-                    <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              {/* Prominent Search & Filter Section */}
+              <div className="space-y-3 pt-2">
+                {/* Full-width Search Bar & Question Number Range */}
+                <div className="flex flex-col md:flex-row items-stretch md:items-center gap-3">
+                  <div className="relative flex-1">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
                       type="text"
-                      placeholder="Search questions (e.g. Q-0061, 61, student, ministry)..."
                       value={questionSearch}
                       onChange={(e) => setQuestionSearch(e.target.value)}
-                      className="pl-8 pr-3 py-1.5 rounded-xl text-xs border bg-transparent focus:outline-hidden focus:ring-1 focus:ring-amber-500"
-                      style={{ borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+                      placeholder="Search Question No., student, constituency, ministry, or question..."
+                      className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/90 text-xs font-medium text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500/40 focus:border-amber-500 transition-all shadow-xs"
                     />
+                    {questionSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setQuestionSearch('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                        title="Clear search"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Question Number Range Filter */}
+                  <div className="flex items-center gap-2 shrink-0 bg-slate-100 dark:bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
+                    <span className="text-[11px] font-bold text-slate-500 whitespace-nowrap">Q. No Range:</span>
+                    <input
+                      type="number"
+                      min="1"
+                      placeholder="From"
+                      value={questionNumberFrom}
+                      onChange={(e) => setQuestionNumberFrom(e.target.value)}
+                      className="w-16 px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-mono text-center text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    />
+                    <span className="text-slate-400 font-bold">—</span>
+                    <input
+                      type="number"
+                      min="1"
+                      placeholder="To"
+                      value={questionNumberTo}
+                      onChange={(e) => setQuestionNumberTo(e.target.value)}
+                      className="w-16 px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-mono text-center text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Filter Controls Row */}
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* Status Pills */}
+                    <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
+                      {(['All', 'Submitted', 'Under Review', 'Approved', 'Starred', 'Rejected'] as const).map(st => {
+                        const countLabel = st === 'Submitted'
+                          ? `Pending (${pendingQuestionsCount})`
+                          : st === 'Under Review'
+                          ? `Under Review (${underReviewQuestionsCount})`
+                          : st === 'Approved'
+                          ? `Approved (${approvedQuestionsCount})`
+                          : st === 'Starred'
+                          ? `Starred (${starredQuestionsCount})`
+                          : st === 'Rejected'
+                          ? `Rejected (${rejectedQuestionsCount})`
+                          : `All (${totalQuestionsCount})`;
+                        return (
+                          <button
+                            key={st}
+                            type="button"
+                            onClick={() => setQuestionStatusFilter(st)}
+                            className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                              questionStatusFilter === st
+                                ? 'bg-amber-500 text-white shadow-xs'
+                                : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                            }`}
+                          >
+                            {countLabel}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Bench Filter */}
+                    <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
+                      {(['All', 'Ruling', 'Opposition'] as const).map(bn => (
+                        <button
+                          key={bn}
+                          type="button"
+                          onClick={() => setQuestionBenchFilter(bn)}
+                          className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                            questionBenchFilter === bn
+                              ? 'bg-amber-500 text-white shadow-xs'
+                              : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                          }`}
+                        >
+                          {bn === 'All' ? 'All Benches' : `${bn} Bench`}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Ministry Filter */}
+                    {availableMinistries.length > 0 && (
+                      <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-950 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
+                        <span className="text-[11px] font-bold text-slate-500">Ministry:</span>
+                        <select
+                          value={questionMinistryFilter}
+                          onChange={(e) => setQuestionMinistryFilter(e.target.value)}
+                          className="bg-transparent font-bold text-slate-800 dark:text-slate-200 cursor-pointer focus:outline-none pr-1"
+                        >
+                          <option value="All" className="dark:bg-slate-900">All Ministries ({questions.length})</option>
+                          {availableMinistries.map((min: string) => {
+                            const count = questions.filter(q => q.ministry === min).length;
+                            return (
+                              <option key={min} value={min} className="dark:bg-slate-900">
+                                {min} {count > 0 ? `(${count})` : ''}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Clear all action */}
+                  {hasActiveFilterOrSearch && (
+                    <button
+                      type="button"
+                      onClick={handleClearAllFilters}
+                      className="px-3 py-1.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 font-bold text-xs flex items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      <span>Clear All Filters</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Showing X of 63 questions indicator */}
+                <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 px-1 pt-1 border-t border-slate-200/50 dark:border-slate-800/50">
+                  <div>
+                    {hasActiveFilterOrSearch ? (
+                      <span>
+                        Showing <strong className="text-slate-900 dark:text-white font-bold">{filteredQuestions.length}</strong> of{' '}
+                        <strong className="text-slate-900 dark:text-white font-bold">{questions.length}</strong> questions
+                      </span>
+                    ) : (
+                      <span>
+                        Showing all <strong className="text-slate-900 dark:text-white font-bold">{questions.length}</strong> questions
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1393,8 +1515,29 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                   <tbody className="divide-y divide-slate-500/10">
                     {filteredQuestions.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="p-8 text-center italic text-slate-400">
-                          No questions found matching your filter criteria.
+                        <td colSpan={9} className="p-8 text-center text-slate-400">
+                          <div className="max-w-md mx-auto space-y-3 py-4">
+                            <div className="w-12 h-12 mx-auto rounded-2xl bg-amber-500/10 text-amber-500 flex items-center justify-center">
+                              <Search className="w-6 h-6" />
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200">No questions found for your search.</h4>
+                              {questionSearch.trim() && (
+                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                                  Search: <span className="font-mono font-bold text-amber-600 dark:text-amber-400">"{questionSearch}"</span>
+                                </p>
+                              )}
+                            </div>
+                            {hasActiveFilterOrSearch && (
+                              <button
+                                type="button"
+                                onClick={handleClearAllFilters}
+                                className="px-3.5 py-1.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold hover:bg-amber-500/20 text-xs transition-colors cursor-pointer"
+                              >
+                                Clear Search
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ) : (
@@ -1481,8 +1624,29 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
               {/* Mobile Question Cards */}
               <div className="block md:hidden divide-y divide-slate-500/10">
                 {filteredQuestions.length === 0 ? (
-                  <div className="p-8 text-center italic text-slate-400">
-                    No questions found matching your filter criteria.
+                  <div className="p-8 text-center text-slate-400">
+                    <div className="max-w-md mx-auto space-y-3 py-4">
+                      <div className="w-12 h-12 mx-auto rounded-2xl bg-amber-500/10 text-amber-500 flex items-center justify-center">
+                        <Search className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200">No questions found for your search.</h4>
+                        {questionSearch.trim() && (
+                          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                            Search: <span className="font-mono font-bold text-amber-600 dark:text-amber-400">"{questionSearch}"</span>
+                          </p>
+                        )}
+                      </div>
+                      {hasActiveFilterOrSearch && (
+                        <button
+                          type="button"
+                          onClick={handleClearAllFilters}
+                          className="px-3.5 py-1.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold hover:bg-amber-500/20 text-xs transition-colors cursor-pointer"
+                        >
+                          Clear Search
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   filteredQuestions.map((q) => {
