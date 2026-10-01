@@ -156,8 +156,12 @@ export function filterProceedingsQuestions(
   return questions.filter(q => {
     // 1. Status Filter
     const canonicalStatus = getCanonicalQuestionStatus(q);
-    if (statusFilter !== 'All' && canonicalStatus !== statusFilter) {
-      return false;
+    if (statusFilter !== 'All') {
+      if (statusFilter === 'Approved') {
+        if (canonicalStatus !== 'Approved' && canonicalStatus !== 'Starred') return false;
+      } else if (canonicalStatus !== statusFilter) {
+        return false;
+      }
     }
 
     // 2. Bench Filter

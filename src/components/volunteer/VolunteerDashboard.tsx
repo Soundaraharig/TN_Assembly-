@@ -26,7 +26,8 @@ import {
   Send,
   Eye,
   Clock,
-  ArrowUpRight
+  ArrowUpRight,
+  Copy
 } from 'lucide-react';
 import type {
   Volunteer,
@@ -47,6 +48,7 @@ import { useTheme } from '../../lib/theme';
 import { storageService, getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
 import { presenceService } from '../../services/presenceService';
 import { canReviewQuestions } from '../../utils/permissions';
+import { filterProceedingsQuestions } from '../../utils/questionUtils';
 
 export interface YuvaAssignment {
   id: string;
@@ -532,19 +534,10 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   }, [event?.cabinet_ministries, questions]);
 
   const filteredQuestions = useMemo(() => {
-    return questions.filter(q => {
-      const canonical = getCanonicalQuestionStatus(q);
-      if (questionStatusFilter !== 'All' && canonical !== questionStatusFilter) return false;
-      if (questionMinistryFilter !== 'All' && q.ministry !== questionMinistryFilter) return false;
-      if (questionSearch.trim()) {
-        const query = questionSearch.toLowerCase().trim();
-        const matchesStudent = (q.student_name || '').toLowerCase().includes(query);
-        const matchesText = (q.question_text || '').toLowerCase().includes(query);
-        const matchesConst = (q.constituency || '').toLowerCase().includes(query);
-        const matchesMin = (q.ministry || '').toLowerCase().includes(query);
-        if (!matchesStudent && !matchesText && !matchesConst && !matchesMin) return false;
-      }
-      return true;
+    return filterProceedingsQuestions(questions, {
+      search: questionSearch,
+      statusFilter: questionStatusFilter,
+      ministryFilter: questionMinistryFilter
     });
   }, [questions, questionStatusFilter, questionMinistryFilter, questionSearch]);
 
@@ -1365,7 +1358,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                     <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                     <input
                       type="text"
-                      placeholder="Search questions..."
+                      placeholder="Search questions (e.g. Q-0061, 61, student, ministry)..."
                       value={questionSearch}
                       onChange={(e) => setQuestionSearch(e.target.value)}
                       className="pl-8 pr-3 py-1.5 rounded-xl text-xs border bg-transparent focus:outline-hidden focus:ring-1 focus:ring-amber-500"
@@ -1381,11 +1374,12 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
               className="rounded-2xl border shadow-sm overflow-hidden"
               style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
             >
-              <div className="overflow-x-auto">
+              {/* Desktop Table View */}
+              <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-500/5 uppercase font-bold text-[10px] tracking-wider border-b" style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
                     <tr>
-                      <th className="p-3.5">#</th>
+                      <th className="p-3.5">Question No.</th>
                       <th className="p-3.5">Student Member</th>
                       <th className="p-3.5">Bench</th>
                       <th className="p-3.5">Constituency</th>
@@ -1404,7 +1398,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                         </td>
                       </tr>
                     ) : (
-                      filteredQuestions.map((q, idx) => {
+                      filteredQuestions.map((q) => {
                         const canonical = getCanonicalQuestionStatus(q);
                         const isUnderReview = canonical === 'Under Review';
                         const isApproved = canonical === 'Approved' || canonical === 'Starred';
@@ -1412,7 +1406,9 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
 
                         return (
                           <tr key={q.id} className="hover:bg-slate-500/5 transition-colors">
-                            <td className="p-3.5 font-mono text-slate-400">{idx + 1}</td>
+                            <td className="p-3.5 font-mono font-black text-amber-600 dark:text-amber-400">
+                              {q.question_number || '—'}
+                            </td>
                             <td className="p-3.5 font-bold" style={{ color: 'var(--text-primary)' }}>
                               {q.student_name}
                             </td>
@@ -1480,6 +1476,73 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                     )}
                   </tbody>
                 </table>
+              </div>
+
+              {/* Mobile Question Cards */}
+              <div className="block md:hidden divide-y divide-slate-500/10">
+                {filteredQuestions.length === 0 ? (
+                  <div className="p-8 text-center italic text-slate-400">
+                    No questions found matching your filter criteria.
+                  </div>
+                ) : (
+                  filteredQuestions.map((q) => {
+                    const canonical = getCanonicalQuestionStatus(q);
+                    const isUnderReview = canonical === 'Under Review';
+                    const isApproved = canonical === 'Approved' || canonical === 'Starred';
+                    const isRejected = canonical === 'Rejected';
+
+                    return (
+                      <div
+                        key={q.id}
+                        className="p-4 space-y-2.5 cursor-pointer hover:bg-slate-500/5 transition-colors"
+                        onClick={() => {
+                          setSelectedQuestionForReview(q);
+                          setReviewNote(q.review_note || '');
+                        }}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono font-black text-sm text-amber-600 dark:text-amber-400">
+                            {q.question_number || '—'}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                            isApproved
+                              ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
+                              : isRejected
+                              ? 'bg-rose-500/10 text-rose-600 border-rose-500/30'
+                              : isUnderReview
+                              ? 'bg-blue-500/10 text-blue-600 border-blue-500/30'
+                              : 'bg-amber-500/10 text-amber-600 border-amber-500/30'
+                          }`}>
+                            {canonical === 'Submitted' ? 'Pending' : canonical}
+                          </span>
+                        </div>
+
+                        <div>
+                          <h4 className="font-bold text-sm" style={{ color: 'var(--text-primary)' }}>
+                            {q.student_name}
+                          </h4>
+                          <p className="text-xs text-slate-500 font-mono">
+                            {q.constituency || 'Assembly Member'}
+                          </p>
+                          <p className="text-xs font-semibold text-amber-500 mt-0.5">
+                            {q.ministry}
+                          </p>
+                        </div>
+
+                        <p className="text-xs text-slate-700 dark:text-slate-300 line-clamp-3">
+                          {q.question_text}
+                        </p>
+
+                        <div className="flex items-center justify-between pt-1 text-[11px] text-slate-400">
+                          <span>{q.created_at ? new Date(q.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</span>
+                          <span className="text-amber-500 font-bold flex items-center gap-1">
+                            <Eye className="w-3.5 h-3.5" /> View / Review
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
           </div>
@@ -2682,6 +2745,11 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                       <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
                         Review Parliamentary Question
                       </h3>
+                      {q.question_number && (
+                        <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-black bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                          {q.question_number}
+                        </span>
+                      )}
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                         {q.calling_order ? `Order #${q.calling_order}` : `Queue #${q.queue_order || '—'}`}
                       </span>
@@ -2703,6 +2771,30 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
 
               {/* Modal Body */}
               <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+                {/* Permanent Question Number & Copy Reference */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 shadow-xs">
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400 block">
+                      QUESTION NO.
+                    </span>
+                    <span className="text-2xl font-black font-mono text-amber-600 dark:text-amber-400">
+                      {q.question_number || '—'}
+                    </span>
+                  </div>
+                  {q.question_number && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(q.question_number!);
+                        onShowToast('Copied', `Copied Question Reference: ${q.question_number}`, 'success');
+                      }}
+                      className="px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-slate-950 flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copy Question Reference</span>
+                    </button>
+                  )}
+                </div>
                 {/* Status Notice Banner */}
                 {isApproved && (
                   <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-xs flex items-center justify-between">

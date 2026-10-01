@@ -1352,17 +1352,18 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
             className="rounded-2xl border overflow-hidden shadow-sm"
             style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
           >
-            <div className="overflow-x-auto">
+            {/* Desktop Data Table */}
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-50 dark:bg-slate-950 text-slate-400 font-bold uppercase tracking-wider border-b border-slate-200 dark:border-slate-800">
                   <tr>
-                    <th className="p-3.5">QUESTION NO.</th>
-                    <th className="p-3.5">Student Name</th>
+                    <th className="p-3.5">Question No.</th>
+                    <th className="p-3.5">Student Member</th>
                     <th className="p-3.5">Bench</th>
                     <th className="p-3.5">Constituency</th>
-                    <th className="p-3.5">Ministry</th>
-                    <th className="p-3.5 max-w-xs">Question</th>
-                    <th className="p-3.5">Type</th>
+                    <th className="p-3.5">Target Ministry</th>
+                    <th className="p-3.5 max-w-xs">Question Preview</th>
+                    <th className="p-3.5">Submitted</th>
                     <th className="p-3.5">Status</th>
                     <th className="p-3.5">Queue</th>
                     <th className="p-3.5 text-right">Actions</th>
@@ -1408,10 +1409,10 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                       </td>
                     </tr>
                   ) : (
-                    filteredQuestions.map((q, idx) => (
+                    filteredQuestions.map((q) => (
                       <tr key={q.id} className="hover:bg-slate-500/5 transition-colors">
-                        <td className="p-3.5 font-mono font-bold text-amber-600 dark:text-amber-400">
-                          {q.question_number || `#${idx + 1}`}
+                        <td className="p-3.5 font-mono font-black text-amber-600 dark:text-amber-400">
+                          {q.question_number || '—'}
                         </td>
                         <td className="p-3.5 font-bold text-slate-900 dark:text-white">{q.student_name}</td>
                         <td className="p-3.5">
@@ -1437,7 +1438,9 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                             </span>
                           </div>
                         </td>
-                        <td className="p-3.5 font-semibold text-slate-500">{q.question_type}</td>
+                        <td className="p-3.5 font-mono text-[11px] text-slate-400 whitespace-nowrap">
+                          {q.created_at ? new Date(q.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                        </td>
                         <td className="p-3.5">
                           {(() => {
                             const canonicalStatus = normalizeStatus(q);
@@ -1563,6 +1566,132 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                   )}
                 </tbody>
               </table>
+            </div>
+
+            {/* Mobile Question Cards */}
+            <div className="block md:hidden divide-y divide-slate-200 dark:divide-slate-800">
+              {filteredQuestions.length === 0 ? (
+                <div className="p-8 text-center text-slate-400">
+                  <div className="max-w-md mx-auto space-y-3 py-4">
+                    <div className="w-12 h-12 mx-auto rounded-2xl bg-amber-500/10 text-amber-500 flex items-center justify-center">
+                      <Search className="w-6 h-6" />
+                    </div>
+                    <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200">No questions found</h4>
+                    {questionSearch.trim() && (
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Search: <span className="font-mono font-bold text-amber-600 dark:text-amber-400">"{questionSearch}"</span>
+                      </p>
+                    )}
+                    {hasActiveFilterOrSearch && (
+                      <button
+                        type="button"
+                        onClick={handleClearAllFilters}
+                        className="px-3.5 py-1.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold text-xs"
+                      >
+                        Clear search &amp; filters
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                filteredQuestions.map((q) => {
+                  const canonicalStatus = normalizeStatus(q);
+                  const isUnderReview = canonicalStatus === 'Under Review';
+                  const isApproved = canonicalStatus === 'Approved';
+                  const isStarred = canonicalStatus === 'Starred';
+                  const isRejected = canonicalStatus === 'Rejected';
+
+                  return (
+                    <div key={q.id} className="p-4 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono font-black text-sm text-amber-600 dark:text-amber-400">
+                          {q.question_number || '—'}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            q.bench === 'Ruling' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'
+                          }`}>
+                            {q.bench}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                            isApproved
+                              ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
+                              : isStarred
+                              ? 'bg-amber-500/10 text-amber-600 border-amber-500/30'
+                              : isRejected
+                              ? 'bg-rose-500/10 text-rose-600 border-rose-500/30'
+                              : isUnderReview
+                              ? 'bg-blue-500/10 text-blue-600 border-blue-500/30'
+                              : 'bg-amber-500/10 text-amber-600 border-amber-500/30'
+                          }`}>
+                            {canonicalStatus === 'Submitted' ? 'Pending' : canonicalStatus}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <h4 className="font-bold text-sm text-slate-900 dark:text-white">{q.student_name}</h4>
+                        <p className="text-xs text-slate-500 font-mono">{q.constituency || 'Assembly Delegate'}</p>
+                        <p className="text-xs font-semibold text-amber-600 dark:text-amber-400 mt-0.5">{q.ministry}</p>
+                      </div>
+
+                      <p
+                        className="text-xs text-slate-700 dark:text-slate-300 line-clamp-3 cursor-pointer hover:text-amber-600 transition-colors"
+                        onClick={() => setSelectedQuestion(q)}
+                      >
+                        {q.question_text}
+                      </p>
+
+                      <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+                        <span className="text-[11px] font-mono text-slate-400">
+                          {q.created_at ? new Date(q.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedQuestion(q)}
+                            className="px-2.5 py-1 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 font-bold text-xs flex items-center gap-1 cursor-pointer"
+                          >
+                            <Eye className="w-3 h-3" /> View
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateQuestionStatus(q.id, 'Approved')}
+                            className={`p-1.5 rounded-lg cursor-pointer ${isApproved ? 'bg-emerald-500 text-white' : 'bg-emerald-500/10 text-emerald-600'}`}
+                            title="Approve"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateQuestionStatus(q.id, 'Starred')}
+                            className={`p-1.5 rounded-lg cursor-pointer ${isStarred ? 'bg-amber-500 text-white' : 'bg-amber-500/10 text-amber-500'}`}
+                            title="Star"
+                          >
+                            <Star className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateQuestionStatus(q.id, 'Rejected')}
+                            className={`p-1.5 rounded-lg cursor-pointer ${isRejected ? 'bg-rose-500 text-white' : 'bg-rose-500/10 text-rose-600'}`}
+                            title="Reject"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteQuestion(q.id)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 cursor-pointer"
+                            title="Delete"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
 

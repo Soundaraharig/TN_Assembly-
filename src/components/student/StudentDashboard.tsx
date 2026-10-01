@@ -60,7 +60,8 @@ import {
   X,
   Mic,
   Smartphone,
-  Loader2
+  Loader2,
+  Copy
 } from 'lucide-react';
 
 type StudentDashboardTab = 'desk' | 'voting' | 'agenda';
@@ -2980,13 +2981,28 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   </span>
                 )}
               </div>
-              <button
-                type="button"
-                onClick={() => setViewingQuestion(null)}
-                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                {viewingQuestion.question_number && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(viewingQuestion.question_number!);
+                    }}
+                    className="px-2.5 py-1 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                    title="Copy Question Reference"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Copy Reference</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setViewingQuestion(null)}
+                  className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
