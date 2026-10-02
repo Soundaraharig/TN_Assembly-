@@ -319,8 +319,8 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     const currentKey = `${selectedLearnerId}:::${selectedSession.id}`;
     if (loadedKey === currentKey) return;
 
-    // Check if an official evaluation or score already exists
-    const existing = scores.find(s =>
+    // Check if an official evaluation or score already exists (prioritizing canonical resolution)
+    const existing = currentEvaluation || scores.find(s =>
       s.learner_id === selectedLearnerId &&
       (!event || !s.event_id || s.event_id === event.id) &&
       (s.session_id === selectedSession.id || s.session_name === selectedSession.name) &&
@@ -328,13 +328,13 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     );
 
     if (existing) {
-      setResearchScore(existing.research_constituency ?? existing.policy_knowledge ?? null);
-      setRelevanceScore(existing.relevance_agenda ?? existing.rebuttal_debate ?? null);
-      setCommScore(existing.communication_delivery ?? existing.oratory ?? null);
+      setResearchScore(existing.research_constituency ?? (existing as any).policy_knowledge ?? null);
+      setRelevanceScore(existing.relevance_agenda ?? (existing as any).rebuttal_debate ?? null);
+      setCommScore(existing.communication_delivery ?? (existing as any).oratory ?? null);
       setConductScore(existing.parliamentary_conduct ?? null);
       setOriginalityScore(existing.originality_preparation ?? null);
       setTimeScore(existing.time_management ?? null);
-      setIsLocked(existing.is_locked ?? false);
+      setIsLocked(Boolean((existing as any).is_locked || (existing as any).status === 'LOCKED'));
       setFeedback(existing.feedback || '');
     } else {
       // Check if a local temporary draft exists (never saved to database or official evaluations)
