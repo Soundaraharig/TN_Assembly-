@@ -954,15 +954,17 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
             props.setScores(storageService.getScores(activeEvent.id));
           }}
           onResetScores={() => {
-            props.setScores(storageService.getScores(activeEvent.id));
+            const freshScores = storageService.getScores(activeEvent.id);
+            props.setScores(freshScores);
             props.setCurrentEvent(prev => {
               if (!prev || prev.id !== activeEvent.id) return prev;
               const sc = (prev.social_coverage || {}) as Record<string, any>;
+              const curScores = Array.isArray(sc.scores) ? sc.scores : [];
               return {
                 ...prev,
                 social_coverage: {
                   ...sc,
-                  scores: []
+                  scores: curScores.filter(s => !storageService.isTestScore(s))
                 }
               };
             });

@@ -179,6 +179,18 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
     return scores.filter(s => !s.event_id || !eventId || s.event_id === eventId);
   }, [scores, eventId]);
 
+  // Strictly compute counts of test vs real scores
+  const testScoresCount = useMemo(() => {
+    const rawTest = eventScores.filter(s => storageService.isTestScore(s)).length;
+    const evalTest = storageService.getJuryEvaluations(eventId, undefined, undefined, undefined, true)
+      .filter(e => e.is_test || storageService.isTestScore(e as any)).length;
+    return Math.max(rawTest, evalTest);
+  }, [eventScores, eventId]);
+
+  const realScoresCount = useMemo(() => {
+    return Math.max(0, eventScores.length - testScoresCount);
+  }, [eventScores, testScoresCount]);
+
   // Authorization check for administrative score reset
   const isAuthorized = Boolean(
     isSuperAdmin ||
@@ -347,6 +359,7 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   // ──────────────────────────────────────────────────────────────────────────
   const filteredScoreRecords = useMemo(() => {
     return eventScores
+      .filter(s => !storageService.isTestScore(s))
       .filter(s => {
         // Participant status filter
         if (selectedParticipantStatus !== 'ALL') {
@@ -562,10 +575,11 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
 
   // Stats Summary
   const stats = useMemo(() => {
-    const totalRecords = eventScores.length;
-    const uniqueLearners = new Set(eventScores.map(s => s.learner_id)).size;
-    const uniqueJuries = new Set(eventScores.map(s => s.juror_name || s.jury_id)).size;
-    const uniqueSessions = new Set(eventScores.map(s => s.session_id || s.session_name)).size;
+    const validScores = eventScores.filter(s => !storageService.isTestScore(s));
+    const totalRecords = validScores.length;
+    const uniqueLearners = new Set(validScores.map(s => s.learner_id)).size;
+    const uniqueJuries = new Set(validScores.map(s => s.juror_name || s.jury_id)).size;
+    const uniqueSessions = new Set(validScores.map(s => s.session_id || s.session_name)).size;
     const totalAdjustments = allAdjustmentsLog.length;
     return { totalRecords, uniqueLearners, uniqueJuries, uniqueSessions, totalAdjustments };
   }, [eventScores, allAdjustmentsLog]);
@@ -852,7 +866,15 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
     if (eventScores.length === 0) {
       onShowToast(
         'No Scores Found',
-        'There are no jury score records to reset for this event.',
+        'There are no jury score records for this event.',
+        'info'
+      );
+      return;
+    }
+    if (testScoresCount === 0) {
+      onShowToast(
+        'No Test Scores Found',
+        `All ${eventScores.length} score records for this event are real production scores. Real production scores cannot be reset.`,
         'info'
       );
       return;
@@ -869,17 +891,25 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
     try {
       const res = await storageService.resetTestScores(eventId);
       setIsResetTestModalOpen(false);
-      onShowToast(
-        'Test scores reset successfully.',
-        `${res.deletedCount} test scores were reset. Real production scores were preserved.`,
-        'success'
-      );
+      if (res.deletedCount > 0) {
+        onShowToast(
+          `${res.deletedCount} test score${res.deletedCount > 1 ? 's' : ''} removed`,
+          `${res.deletedCount} test scores were removed. ${res.remainingRealCount} real production scores were preserved.`,
+          'success'
+        );
+      } else {
+        onShowToast(
+          'Reset completed — 0 scores removed',
+          'No test scores were found. All production records remain untouched.',
+          'info'
+        );
+      }
       if (onResetScores) {
         onResetScores();
       }
     } catch (err: any) {
       onShowToast(
-        'Unable to reset test scores. No score data was changed.',
+        'Reset failed — no scores were removed.',
         err?.message || 'Database error occurred.',
         'error'
       );
@@ -1017,16 +1047,15 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
           <button
             type="button"
             onClick={handleOpenResetTestModal}
-            className="px-3.5 py-2 rounded-xl font-bold text-xs border flex items-center gap-1.5 transition cursor-pointer hover:bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-900/50"
+            disabled={isDeletingTestScores}
+            className="px-3.5 py-2 rounded-xl font-bold text-xs border flex items-center gap-1.5 transition cursor-pointer hover:bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-900/50 disabled:opacity-50"
             title="Safely remove test/demo score records without deleting real production scores"
           >
             <Trash2 className="w-4 h-4 text-rose-500" />
-            <span>Reset Test Scores</span>
-            {eventScores.length > 0 && (
-              <span className="font-mono text-[10px] px-1.5 py-0.2 rounded-full bg-rose-500 text-white">
-                {eventScores.length}
-              </span>
-            )}
+            <span>{isDeletingTestScores ? 'Resetting...' : 'Reset Test Scores'}</span>
+            <span className={`font-mono text-[10px] px-1.5 py-0.2 rounded-full ${testScoresCount > 0 ? 'bg-rose-500 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-500'}`}>
+              {testScoresCount}
+            </span>
           </button>
 
           <button
@@ -2161,16 +2190,30 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
               </div>
 
               <div className="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-800 text-xs font-semibold">
-                <span className="text-slate-400">Total Scores in Database:</span>
-                <span className="font-mono font-black text-amber-500 text-sm px-2.5 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20">
-                  {eventScores.length}
+                <span className="text-slate-400">Test Scores to be Removed:</span>
+                <span className="font-mono font-black text-rose-500 text-sm px-2.5 py-0.5 rounded-md bg-rose-500/10 border border-rose-500/20">
+                  {testScoresCount}
                 </span>
               </div>
 
-              <div className="p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/20 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-500" />
-                <span>Production Guardrail Active: Real production scores (is_test: false) will NOT be deleted.</span>
+              <div className="flex items-center justify-between text-xs font-semibold">
+                <span className="text-slate-400">Real Production Scores Preserved:</span>
+                <span className="font-mono font-black text-emerald-500 text-sm px-2.5 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20">
+                  {realScoresCount}
+                </span>
               </div>
+
+              {testScoresCount === 0 ? (
+                <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-amber-500" />
+                  <span>No test scores found for this event. All records are real production scores.</span>
+                </div>
+              ) : (
+                <div className="p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/20 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-500" />
+                  <span>Production Guardrail Active: Real production scores will NOT be deleted or modified.</span>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-2">
@@ -2186,11 +2229,11 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
               <button
                 type="button"
                 onClick={handleConfirmDeleteTestScores}
-                disabled={isDeletingTestScores || eventScores.length === 0}
+                disabled={isDeletingTestScores || testScoresCount === 0}
                 className="px-4 py-2.5 rounded-xl font-bold text-xs text-white bg-rose-600 hover:bg-rose-700 shadow-md cursor-pointer flex items-center gap-1.5 transition disabled:opacity-50"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>{isDeletingTestScores ? 'Resetting...' : 'Reset Test Scores'}</span>
+                <span>{isDeletingTestScores ? 'Resetting...' : 'Confirm Reset Test Scores'}</span>
               </button>
             </div>
           </div>
