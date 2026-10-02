@@ -194,7 +194,13 @@ import type {
 import { supabase, isSupabaseEnabled } from '../lib/supabase';
 import { getEventSlug, findEventBySlug } from '../utils/slug';
 import { ARTS_PROCEEDINGS_QUESTIONS } from '../data/artsProceedingsQuestions';
-import { canManageSessionAttendance } from '../utils/permissions';
+import {
+  canManageSessionAttendance,
+  verifyQuestionReviewAuthorization,
+  resolveCanonicalEventId as resolveCanonicalEventIdUtil,
+  logQuestionAuthDiagnostic,
+  canFinalApproveQuestions
+} from '../utils/permissions';
 import { saveAudioConfigToIDB, getAudioConfigFromIDB } from '../utils/audioStorage';
 
 // ---------------------------------------------------------------------------
@@ -1640,7 +1646,7 @@ class StorageService {
           .filter((q: any) => q.bench !== undefined || q.question_type !== undefined || q.student_name !== undefined)
           .map((q: any) => ({
             ...q,
-            event_id: q.event_id || ev.id,
+            event_id: ev.id || (q.event_id ? this.resolveCanonicalEventId(q.event_id) : undefined) || q.event_id,
             event_slug: q.event_slug || getEventSlug(ev)
           }));
         if (pqFromQs.length > 0) {
@@ -1657,7 +1663,7 @@ class StorageService {
           )
           .map((q: any) => ({
             ...q,
-            event_id: q.event_id || ev.id,
+            event_id: ev.id || (q.event_id ? this.resolveCanonicalEventId(q.event_id) : undefined) || q.event_id,
             event_slug: q.event_slug || getEventSlug(ev)
           }));
         allProceedingsQs = [...allProceedingsQs, ...pqs];
@@ -1666,7 +1672,7 @@ class StorageService {
         const offPQs = sc.official_approved_questions
           .map((q: any) => ({
             ...q,
-            event_id: q.event_id || ev.id,
+            event_id: ev.id || (q.event_id ? this.resolveCanonicalEventId(q.event_id) : undefined) || q.event_id,
             event_slug: q.event_slug || getEventSlug(ev)
           }));
         allProceedingsQs = [...allProceedingsQs, ...offPQs];
@@ -17730,6 +17736,10 @@ class StorageService {
     return union;
   }
 
+  public resolveCanonicalEventId(eventKeyOrSlug?: string): string | undefined {
+    return resolveCanonicalEventIdUtil(eventKeyOrSlug, this.getEvents());
+  }
+
   public getProceedingsQuestions(eventKey?: string): ProceedingsQuestion[] {
     // Always filter out tombstoned (deleted) questions first
     const deletedQIds = this.getAllDeletedQuestionIds();
@@ -17765,9 +17775,12 @@ class StorageService {
     const evSlug = resolvedEvent ? getEventSlug(resolvedEvent).toLowerCase() : undefined;
     const evDbSlug = resolvedEvent?.slug?.toLowerCase();
 
+    const canonicalKey = this.resolveCanonicalEventId(cleanKey) || this.resolveCanonicalEventId(normalizedKey);
+
     let filtered = list.filter(q => {
       const qId = (q.event_id || '').toLowerCase();
       const qSlug = (q.event_slug || '').toLowerCase();
+      const canonicalQ = this.resolveCanonicalEventId(q.event_id || q.event_slug);
       return (
         qId === cleanKey ||
         qId === normalizedKey ||
@@ -17776,6 +17789,7 @@ class StorageService {
         (evId && qId === evId) ||
         (evSlug && qSlug === evSlug) ||
         (evDbSlug && qSlug === evDbSlug) ||
+        (canonicalKey && canonicalQ && canonicalQ === canonicalKey) ||
         (normalizedKey === '05fb9c3e-af0d-4b0e-b48a-1ca4c0671cb8' && (qId.includes('05fb9c3e') || qSlug.includes('jkkn-arts')))
       );
     });
@@ -18423,22 +18437,55 @@ class StorageService {
     status: 'Submitted' | 'Under Review' | 'Approved' | 'Starred' | 'Rejected',
     approvedBy?: string,
     fallbackEventId?: string,
-    userContext?: { role?: string; volunteer?: Volunteer; name?: string }
+    userContext?: { role?: string; volunteer?: Volunteer; name?: string; activeEventId?: string; actorEventId?: string; assignedEventIds?: string[] }
   ): { success: boolean; question?: ProceedingsQuestion; error?: string } {
-    // Backend security enforcement: Only Super Admin, Coordinator, or Presiding Speaker can final approve or star
+    const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+    const targetQ = list.find(q => q.id === questionId);
+    if (!targetQ) {
+      return { success: false, error: 'Question not found.' };
+    }
+
+    const allEvents = this.getEvents();
+    const activeEventId = userContext?.activeEventId || fallbackEventId || targetQ.event_id;
+    const actorRole = userContext?.role || (userContext?.volunteer ? (userContext.volunteer.role || userContext.volunteer.volunteer_type) : undefined);
+    const actorEventId = userContext?.actorEventId || userContext?.volunteer?.event_id;
+    const volunteerType = userContext?.volunteer?.volunteer_type || userContext?.volunteer?.role;
+
+    // Strict Canonical Authorization & Event Isolation check
+    const authDecision = verifyQuestionReviewAuthorization(
+      {
+        role: actorRole,
+        volunteerType,
+        eventId: actorEventId,
+        assignedEventIds: userContext?.assignedEventIds,
+        userId: userContext?.volunteer?.id,
+        name: approvedBy || userContext?.name
+      },
+      targetQ,
+      activeEventId,
+      'ADMIN_REVIEW',
+      allEvents
+    );
+
+    logQuestionAuthDiagnostic(authDecision.diagnostic);
+
+    if (!authDecision.allowed) {
+      return {
+        success: false,
+        error: authDecision.error || 'Event isolation violation: Cannot perform review action on question from another event.'
+      };
+    }
+
+    // Role-specific check for final approval (Approved / Starred)
     if (status === 'Approved' || status === 'Starred') {
-      const callerRole = (userContext?.role || '').toLowerCase().trim();
-      const isAuthorized = !callerRole || callerRole === 'super_admin' || callerRole === 'superadmin' || callerRole === 'coordinator' || callerRole === 'admin' || callerRole === 'speaker';
-      if (!isAuthorized) {
-        console.error(`[Security Check Failed] Role "${callerRole || 'unknown'}" is prohibited from giving final question approval.`);
+      const canApprove = canFinalApproveQuestions(authDecision.diagnostic.actorRole, volunteerType);
+      if (!canApprove) {
         return {
           success: false,
           error: 'Unauthorized: Only Main Admin / Super Admin can perform final approval.'
         };
       }
     }
-
-    const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
     let targetEventId: string | undefined = fallbackEventId;
     let updatedQ: ProceedingsQuestion | undefined;
     const isApproved = status === 'Approved' || status === 'Starred';
@@ -18530,8 +18577,9 @@ class StorageService {
 
   public async reviewAndApproachMainAdmin(
     questionId: string,
-    volunteer: Volunteer,
-    note?: string
+    volunteer: Volunteer | { id?: string; name?: string; role?: string; volunteer_type?: string; event_id?: string },
+    note?: string,
+    userContext?: { role?: string; activeEventId?: string; actorEventId?: string; assignedEventIds?: string[] }
   ): Promise<{ success: boolean; question?: ProceedingsQuestion; error?: string }> {
     const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
     const targetQ = list.find(q => q.id === questionId);
@@ -18539,31 +18587,46 @@ class StorageService {
       return { success: false, error: 'Question not found.' };
     }
 
-    // Role check: Only Administrator or Journalist volunteer types (or admins) can review and approach Main Admin
-    const vType = (volunteer.volunteer_type || '').toLowerCase().trim();
-    const vRole = (volunteer.role || '').toLowerCase().trim();
-    const canReview =
-      vType === 'administrator' || vType === 'journalist' ||
-      vRole === 'administrator' || vRole === 'journalist' ||
-      vRole === 'super_admin' || vRole === 'coordinator';
-    if (!canReview) {
-      return { success: false, error: 'Unauthorized: Volunteer does not have question review privileges.' };
+    const allEvents = this.getEvents();
+    const activeEventId = userContext?.activeEventId || targetQ.event_id;
+    const actorRole = (volunteer.role || userContext?.role || '').toLowerCase().trim();
+    const volunteerType = volunteer.volunteer_type || volunteer.role;
+    const isAdministrator = volunteerType === 'Administrator' || actorRole === 'administrator' || actorRole === 'admin' || actorRole === 'super_admin' || actorRole === 'coordinator';
+
+    const authDecision = verifyQuestionReviewAuthorization(
+      {
+        role: volunteer.role || userContext?.role,
+        volunteerType,
+        eventId: volunteer.event_id || userContext?.actorEventId,
+        assignedEventIds: userContext?.assignedEventIds,
+        userId: volunteer.id,
+        name: volunteer.name
+      },
+      targetQ,
+      activeEventId,
+      isAdministrator ? 'ADMIN_REVIEW' : 'APPROACH_MAIN_ADMIN',
+      allEvents
+    );
+
+    logQuestionAuthDiagnostic(authDecision.diagnostic);
+
+    if (!authDecision.allowed) {
+      return {
+        success: false,
+        error: authDecision.error || 'Event isolation violation: Volunteer cannot review questions from another event.'
+      };
     }
 
-    // Event isolation check: Volunteer can only review questions in their assigned event
-    if (volunteer.event_id && targetQ.event_id && volunteer.event_id !== targetQ.event_id) {
-      return { success: false, error: 'Event isolation violation: Volunteer cannot review questions from another event.' };
-    }
-
-    const reviewerRole = 
-      (volunteer.volunteer_type === 'Administrator' || volunteer.role === 'Administrator') ? 'Administrator' :
-      (volunteer.volunteer_type === 'Journalist' || volunteer.role === 'Journalist') ? 'Journalist' :
-      (volunteer.volunteer_type || (volunteer.role && volunteer.role !== 'volunteer' ? volunteer.role : 'Administrator'));
+    const reviewerRole = authDecision.diagnostic.actorRole === 'Administrator'
+      ? 'Administrator'
+      : (authDecision.diagnostic.actorRole === 'Journalist'
+        ? 'Journalist'
+        : (authDecision.diagnostic.actorRole || 'Administrator'));
 
     const updatedQ: ProceedingsQuestion = {
       ...targetQ,
       status: 'Under Review',
-      flagged_for_admin: true,
+      flagged_for_admin: !isAdministrator,
       reviewed_by: `${volunteer.name} (${reviewerRole})`,
       reviewer_name: volunteer.name,
       reviewer_role: reviewerRole,
@@ -18576,17 +18639,19 @@ class StorageService {
     this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, updated);
     this.notify();
 
-    const targetEventId = targetQ.event_id || volunteer.event_id;
+    const targetEventId = this.resolveCanonicalEventId(targetQ.event_id) || targetQ.event_id || volunteer.event_id;
     if (targetEventId) {
       this.logAudit({
         event_id: targetEventId,
-        action: 'QUESTION_REVIEWED_APPROACHED_ADMIN',
+        action: isAdministrator ? 'QUESTION_REVIEWED_BY_ADMIN' : 'QUESTION_REVIEWED_APPROACHED_ADMIN',
         actor_role: reviewerRole,
         actor_name: volunteer.name,
-        details: `Question #${questionId} reviewed and flagged for Main Admin attention by ${volunteer.name} (${reviewerRole})`
+        details: isAdministrator
+          ? `Question #${questionId} reviewed directly by ${volunteer.name} (${reviewerRole})`
+          : `Question #${questionId} reviewed and flagged for Main Admin attention by ${volunteer.name} (${reviewerRole})`
       });
 
-      this.broadcast('question_update', { eventId: targetEventId, question: updatedQ, approachedAdmin: true }).catch(() => {});
+      this.broadcast('question_update', { eventId: targetEventId, question: updatedQ, approachedAdmin: !isAdministrator }).catch(() => {});
       const allEvs = this.getEvents();
       const matched = findEventBySlug(allEvs, targetEventId) || allEvs.find(e => e.id === targetEventId);
       const syncId = matched?.id || targetEventId;

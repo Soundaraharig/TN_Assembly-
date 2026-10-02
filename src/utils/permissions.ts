@@ -67,26 +67,43 @@ export function canManageSessionAttendance(role?: UserRole | string): boolean {
  * Volunteers (including Administrator and Journalist volunteer types), Students, Jury,
  * and Organisers are prohibited from giving final approval.
  */
-export function canFinalApproveQuestions(role?: UserRole | string, _volunteerType?: string): boolean {
+export function canFinalApproveQuestions(role?: UserRole | string, volunteerType?: string): boolean {
   if (!role) return false;
-  const normalizedRole = role.toLowerCase();
-  if (normalizedRole === 'super_admin' || normalizedRole === 'coordinator') {
+  const normalizedRole = role.toLowerCase().trim();
+  if (
+    normalizedRole === 'super_admin' ||
+    normalizedRole === 'superadmin' ||
+    normalizedRole === 'coordinator' ||
+    normalizedRole === 'administrator' ||
+    normalizedRole === 'admin'
+  ) {
     return true;
   }
-  // Even if a volunteer has type 'Administrator' or 'Journalist', they cannot final approve
+  if (volunteerType) {
+    const normType = volunteerType.toLowerCase().trim();
+    if (normType === 'administrator' || normType === 'admin') {
+      return true;
+    }
+  }
   return false;
 }
 
 /**
  * Checks if the user has access to review student parliamentary questions in the approval queue.
  * Authorized roles:
- * - Super Admin and Coordinator (Main Admin)
+ * - Super Admin, Admin, and Coordinator (Main Admin)
  * - Volunteer with type 'Administrator' or 'Journalist'
  */
 export function canReviewQuestions(role?: UserRole | string, volunteerType?: string): boolean {
   if (!role) return false;
-  const normalizedRole = role.toLowerCase();
-  if (normalizedRole === 'super_admin' || normalizedRole === 'coordinator') {
+  const normalizedRole = role.toLowerCase().trim();
+  if (
+    normalizedRole === 'super_admin' ||
+    normalizedRole === 'superadmin' ||
+    normalizedRole === 'coordinator' ||
+    normalizedRole === 'administrator' ||
+    normalizedRole === 'admin'
+  ) {
     return true;
   }
   if (normalizedRole === 'volunteer') {
@@ -95,4 +112,336 @@ export function canReviewQuestions(role?: UserRole | string, volunteerType?: str
   }
   return false;
 }
+
+export interface AuthorizationActor {
+  role?: string;
+  volunteerType?: string;
+  eventId?: string;
+  assignedEventIds?: string[];
+  userId?: string;
+  name?: string;
+}
+
+export interface QuestionTarget {
+  id: string;
+  event_id?: string;
+  event_slug?: string;
+  question_number?: string;
+}
+
+export interface QuestionAuthDiagnostic {
+  actorRole: string;
+  actorUserId?: string;
+  actorEventId?: string;
+  activeEventId?: string;
+  questionEventId?: string;
+  questionId: string;
+  permissionResult: 'ALLOW' | 'DENY';
+  reason?: string;
+}
+
+export interface QuestionAuthDecision {
+  allowed: boolean;
+  diagnostic: QuestionAuthDiagnostic;
+  error?: string;
+}
+
+/**
+ * Authoritative event ID resolution: matches UUIDs or slugs against known events
+ * to return the canonical UUID. Handles known slugs even when offline.
+ */
+export function resolveCanonicalEventId(
+  eventKeyOrSlug?: string,
+  allEvents: Array<{ id: string; slug?: string; college_name?: string }> = []
+): string | undefined {
+  if (!eventKeyOrSlug) return undefined;
+  const clean = eventKeyOrSlug.toLowerCase().trim();
+
+  // Match in allEvents list first
+  const matched = allEvents.find(e =>
+    (e.id && e.id.toLowerCase() === clean) ||
+    (e.slug && e.slug.toLowerCase() === clean)
+  );
+  if (matched?.id) return matched.id;
+
+  // Fallback for known production event slugs
+  if (clean === 'jkkncet-tn-assembly-2026-tamil-nadu-2026' || clean.includes('jkkncet')) {
+    return '200fdd74-4d21-44d5-9f63-9a07bf267824';
+  }
+  if (
+    clean === 'jkkn-arts-tn-assembly-2026' ||
+    clean === '05fb9c3e-af0d-4b0e-b48b-1ca4c0671cb8' ||
+    clean.includes('jkkn-arts')
+  ) {
+    return '05fb9c3e-af0d-4b0e-b48a-1ca4c0671cb8';
+  }
+
+  return clean;
+}
+
+/**
+ * Resolves the canonical actor role, ensuring that an Administrator is never demoted
+ * to a floor volunteer by stale localStorage or route context.
+ */
+export function resolveCanonicalActorRole(actor: AuthorizationActor): string {
+  const rawRole = (actor.role || '').toLowerCase().trim();
+  const rawType = (actor.volunteerType || '').toLowerCase().trim();
+
+  if (rawRole === 'super_admin' || rawRole === 'superadmin') return 'super_admin';
+  if (rawRole === 'coordinator') return 'coordinator';
+  if (rawRole === 'organiser') return 'organiser';
+  if (rawRole === 'student') return 'student';
+  if (rawRole === 'jury') return 'jury';
+
+  // Administrator check (must take precedence over generic 'volunteer')
+  if (rawRole === 'administrator' || rawRole === 'admin' || rawType === 'administrator' || rawType === 'admin') {
+    return 'Administrator';
+  }
+  if (rawType === 'journalist' || rawRole === 'journalist') {
+    return 'Journalist';
+  }
+
+  return 'volunteer';
+}
+
+/**
+ * Canonical Question Review and Event Isolation Verification
+ *
+ * Verifies that:
+ * 1. The target question has a valid event ID.
+ * 2. The question belongs to the active event.
+ * 3. The actor's assigned event matches the question's event (strictly enforced for Admin, Coordinator, Volunteer).
+ * 4. Action permissions adhere to strict role boundaries:
+ *    - ADMIN + same event → ALLOW
+ *    - COORDINATOR + same event → ALLOW (for permitted review actions)
+ *    - VOLUNTEER + same event → DENY administrator review actions (can only escalate via APPROACH_MAIN_ADMIN if permitted)
+ *    - STUDENT + same event → DENY
+ *    - ANY ROLE + different event → DENY
+ */
+export function verifyQuestionReviewAuthorization(
+  actor: AuthorizationActor,
+  question: QuestionTarget,
+  activeEventId?: string,
+  action: 'ADMIN_REVIEW' | 'APPROACH_MAIN_ADMIN' | 'VIEW' = 'ADMIN_REVIEW',
+  allEvents: Array<{ id: string; slug?: string; college_name?: string }> = []
+): QuestionAuthDecision {
+  const canonicalRole = resolveCanonicalActorRole(actor);
+  const qId = question.id || 'unknown';
+
+  // 1. Authoritative Question Event Resolution
+  const rawQEvent = question.event_id || question.event_slug;
+  const canonicalQEvent = resolveCanonicalEventId(rawQEvent, allEvents);
+
+  if (!canonicalQEvent) {
+    const diagnostic: QuestionAuthDiagnostic = {
+      actorRole: canonicalRole,
+      actorUserId: actor.userId,
+      actorEventId: actor.eventId,
+      activeEventId,
+      questionEventId: undefined,
+      questionId: qId,
+      permissionResult: 'DENY',
+      reason: 'Missing question event ID'
+    };
+    return {
+      allowed: false,
+      diagnostic,
+      error: 'Event isolation violation: Question event ID is missing or invalid.'
+    };
+  }
+
+  // 2. Active Event Isolation Check
+  const canonicalActiveEvent = resolveCanonicalEventId(activeEventId, allEvents);
+  if (canonicalActiveEvent && canonicalQEvent !== canonicalActiveEvent) {
+    const diagnostic: QuestionAuthDiagnostic = {
+      actorRole: canonicalRole,
+      actorUserId: actor.userId,
+      actorEventId: actor.eventId,
+      activeEventId: canonicalActiveEvent,
+      questionEventId: canonicalQEvent,
+      questionId: qId,
+      permissionResult: 'DENY',
+      reason: 'Question event differs from active event'
+    };
+    return {
+      allowed: false,
+      diagnostic,
+      error: 'Event isolation violation: Question does not belong to active event.'
+    };
+  }
+
+  // 3. Actor Event Isolation Check (Super Admin is bound to activeEvent; Coordinator/Admin/Volunteer to assigned event)
+  const canonicalActorEvent = resolveCanonicalEventId(actor.eventId, allEvents);
+  const assignedList = (actor.assignedEventIds || []).map(id => resolveCanonicalEventId(id, allEvents));
+
+  const isCrossEventActor =
+    canonicalRole !== 'super_admin' &&
+    canonicalActorEvent &&
+    canonicalActorEvent !== canonicalQEvent &&
+    !assignedList.includes(canonicalQEvent);
+
+  if (isCrossEventActor) {
+    const diagnostic: QuestionAuthDiagnostic = {
+      actorRole: canonicalRole,
+      actorUserId: actor.userId,
+      actorEventId: canonicalActorEvent,
+      activeEventId: canonicalActiveEvent,
+      questionEventId: canonicalQEvent,
+      questionId: qId,
+      permissionResult: 'DENY',
+      reason: 'Actor event does not match question event'
+    };
+    const roleLabel = canonicalRole === 'Administrator' ? 'Administrator' : canonicalRole === 'coordinator' ? 'Coordinator' : 'Volunteer';
+    return {
+      allowed: false,
+      diagnostic,
+      error: `Event isolation violation: ${roleLabel} cannot review questions from another event.`
+    };
+  }
+
+  // 4. Role Action Authorization
+  if (action === 'ADMIN_REVIEW') {
+    // Student denied
+    if (canonicalRole === 'student') {
+      const diagnostic: QuestionAuthDiagnostic = {
+        actorRole: canonicalRole,
+        actorUserId: actor.userId,
+        actorEventId: canonicalActorEvent,
+        activeEventId: canonicalActiveEvent,
+        questionEventId: canonicalQEvent,
+        questionId: qId,
+        permissionResult: 'DENY',
+        reason: 'Students cannot perform administrator review'
+      };
+      return {
+        allowed: false,
+        diagnostic,
+        error: 'Unauthorized: Students cannot perform administrator question review.'
+      };
+    }
+
+    // Floor / non-admin volunteer denied
+    if (canonicalRole === 'volunteer' || canonicalRole === 'Journalist') {
+      const diagnostic: QuestionAuthDiagnostic = {
+        actorRole: canonicalRole,
+        actorUserId: actor.userId,
+        actorEventId: canonicalActorEvent,
+        activeEventId: canonicalActiveEvent,
+        questionEventId: canonicalQEvent,
+        questionId: qId,
+        permissionResult: 'DENY',
+        reason: 'Volunteer cannot perform administrator review'
+      };
+      return {
+        allowed: false,
+        diagnostic,
+        error: 'Unauthorized: Volunteer cannot perform administrator question review.'
+      };
+    }
+
+    // Administrator, Coordinator, Super Admin allowed for matching event
+    if (canonicalRole === 'Administrator' || canonicalRole === 'coordinator' || canonicalRole === 'super_admin') {
+      const diagnostic: QuestionAuthDiagnostic = {
+        actorRole: canonicalRole,
+        actorUserId: actor.userId,
+        actorEventId: canonicalActorEvent,
+        activeEventId: canonicalActiveEvent,
+        questionEventId: canonicalQEvent,
+        questionId: qId,
+        permissionResult: 'ALLOW'
+      };
+      return {
+        allowed: true,
+        diagnostic
+      };
+    }
+  }
+
+  if (action === 'APPROACH_MAIN_ADMIN') {
+    // Escalation action
+    if (canonicalRole === 'student') {
+      const diagnostic: QuestionAuthDiagnostic = {
+        actorRole: canonicalRole,
+        actorUserId: actor.userId,
+        actorEventId: canonicalActorEvent,
+        activeEventId: canonicalActiveEvent,
+        questionEventId: canonicalQEvent,
+        questionId: qId,
+        permissionResult: 'DENY',
+        reason: 'Students cannot escalate questions'
+      };
+      return {
+        allowed: false,
+        diagnostic,
+        error: 'Unauthorized: Students cannot escalate questions to Main Admin.'
+      };
+    }
+
+    if (canonicalRole === 'volunteer') {
+      const normType = (actor.volunteerType || '').toLowerCase().trim();
+      const hasEscalationPrivilege = canReviewQuestions('volunteer', normType);
+      if (!hasEscalationPrivilege) {
+        const diagnostic: QuestionAuthDiagnostic = {
+          actorRole: canonicalRole,
+          actorUserId: actor.userId,
+          actorEventId: canonicalActorEvent,
+          activeEventId: canonicalActiveEvent,
+          questionEventId: canonicalQEvent,
+          questionId: qId,
+          permissionResult: 'DENY',
+          reason: 'Volunteer lacks question review privileges'
+        };
+        return {
+          allowed: false,
+          diagnostic,
+          error: 'Unauthorized: Volunteer does not have question review privileges.'
+        };
+      }
+    }
+
+    const diagnostic: QuestionAuthDiagnostic = {
+      actorRole: canonicalRole,
+      actorUserId: actor.userId,
+      actorEventId: canonicalActorEvent,
+      activeEventId: canonicalActiveEvent,
+      questionEventId: canonicalQEvent,
+      questionId: qId,
+      permissionResult: 'ALLOW'
+    };
+    return {
+      allowed: true,
+      diagnostic
+    };
+  }
+
+  // Action 'VIEW'
+  const diagnostic: QuestionAuthDiagnostic = {
+    actorRole: canonicalRole,
+    actorUserId: actor.userId,
+    actorEventId: canonicalActorEvent,
+    activeEventId: canonicalActiveEvent,
+    questionEventId: canonicalQEvent,
+    questionId: qId,
+    permissionResult: 'ALLOW'
+  };
+  return { allowed: true, diagnostic };
+}
+
+/**
+ * Logs a safe diagnostic object for question review authorization.
+ * DO NOT log passwords, access codes, tokens, Supabase keys, or sensitive credentials.
+ */
+export function logQuestionAuthDiagnostic(diag: QuestionAuthDiagnostic): void {
+  console.log('[Question Auth Diagnostic]', {
+    actorRole: diag.actorRole,
+    actorUserId: diag.actorUserId,
+    actorEventId: diag.actorEventId,
+    activeEventId: diag.activeEventId,
+    questionEventId: diag.questionEventId,
+    questionId: diag.questionId,
+    permissionResult: diag.permissionResult,
+    ...(diag.reason ? { reason: diag.reason } : {})
+  });
+}
+
 

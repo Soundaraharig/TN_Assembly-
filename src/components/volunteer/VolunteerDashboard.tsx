@@ -47,7 +47,7 @@ import { getRecordSessionStatuses, formatMarkedBy, getCanonicalQuestionStatus } 
 import { useTheme } from '../../lib/theme';
 import { storageService, getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
 import { presenceService } from '../../services/presenceService';
-import { canReviewQuestions } from '../../utils/permissions';
+import { canReviewQuestions, verifyQuestionReviewAuthorization, logQuestionAuthDiagnostic } from '../../utils/permissions';
 import { filterProceedingsQuestions, parseQuestionNumber } from '../../utils/questionUtils';
 
 export interface YuvaAssignment {
@@ -566,6 +566,27 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     });
   }, [questions, questionSearch, questionStatusFilter, questionBenchFilter, questionMinistryFilter, parsedFrom, parsedTo]);
 
+  const openQuestionReview = (q: ProceedingsQuestion) => {
+    setSelectedQuestionForReview(q);
+    setReviewNote(q.review_note || '');
+
+    // Diagnostic logging for Section 2
+    const diag = verifyQuestionReviewAuthorization(
+      {
+        role: volunteer?.role === 'Administrator' ? 'Administrator' : (volunteer?.volunteer_type || 'volunteer'),
+        volunteerType: volunteer?.volunteer_type || volunteer?.role,
+        eventId: volunteer?.event_id,
+        userId: volunteer?.id,
+        name: volunteer?.name
+      },
+      q,
+      eventId,
+      isAdministrator ? 'ADMIN_REVIEW' : 'APPROACH_MAIN_ADMIN',
+      storageService.getEvents()
+    );
+    logQuestionAuthDiagnostic(diag.diagnostic);
+  };
+
   const handleApproachMainAdmin = async (question: ProceedingsQuestion) => {
     if (!volunteer) {
       onShowToast('Error', 'Volunteer identity not found', 'error');
@@ -573,17 +594,105 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     }
     setIsApproachingAdmin(true);
     try {
-      const res = await storageService.reviewAndApproachMainAdmin(question.id, volunteer, reviewNote);
+      const res = await storageService.reviewAndApproachMainAdmin(question.id, volunteer, reviewNote, {
+        role: isAdministrator ? 'Administrator' : volunteer.role,
+        activeEventId: eventId,
+        actorEventId: volunteer.event_id
+      });
       if (res.success) {
-        onShowToast('Forwarded to Main Admin', 'Question has been marked Under Review and brought to the Main Admin attention.', 'success');
+        onShowToast(
+          isAdministrator ? 'Question Reviewed' : 'Forwarded to Main Admin',
+          isAdministrator
+            ? 'Question review status updated.'
+            : 'Question has been marked Under Review and brought to the Main Admin attention.',
+          'success'
+        );
         setQuestions(storageService.getProceedingsQuestions(eventId));
         setSelectedQuestionForReview(null);
         setReviewNote('');
       } else {
-        onShowToast('Error', res.error || 'Failed to forward to Main Admin', 'error');
+        onShowToast('Error', res.error || 'Failed to review question', 'error');
       }
     } catch (err: any) {
-      onShowToast('Error', err?.message || 'Failed to forward question', 'error');
+      onShowToast('Error', err?.message || 'Failed to review question', 'error');
+    } finally {
+      setIsApproachingAdmin(false);
+    }
+  };
+
+  const handleAdminApprove = async (question: ProceedingsQuestion) => {
+    if (!volunteer) {
+      onShowToast('Error', 'Administrator identity not found', 'error');
+      return;
+    }
+    setIsApproachingAdmin(true);
+    try {
+      const res = storageService.updateProceedingsQuestionStatus(
+        question.id,
+        'Approved',
+        volunteer.name,
+        eventId,
+        {
+          role: 'Administrator',
+          volunteer,
+          name: volunteer.name,
+          activeEventId: eventId,
+          actorEventId: volunteer.event_id
+        }
+      );
+      if (res.success) {
+        onShowToast(
+          'Question Approved',
+          `Question #${question.question_number || question.id} approved and published to the Minister dashboard.`,
+          'success'
+        );
+        setQuestions(storageService.getProceedingsQuestions(eventId));
+        setSelectedQuestionForReview(null);
+        setReviewNote('');
+      } else {
+        onShowToast('Error', res.error || 'Failed to approve question', 'error');
+      }
+    } catch (err: any) {
+      onShowToast('Error', err?.message || 'Failed to approve question', 'error');
+    } finally {
+      setIsApproachingAdmin(false);
+    }
+  };
+
+  const handleAdminReject = async (question: ProceedingsQuestion) => {
+    if (!volunteer) {
+      onShowToast('Error', 'Administrator identity not found', 'error');
+      return;
+    }
+    setIsApproachingAdmin(true);
+    try {
+      const res = storageService.updateProceedingsQuestionStatus(
+        question.id,
+        'Rejected',
+        volunteer.name,
+        eventId,
+        {
+          role: 'Administrator',
+          volunteer,
+          name: volunteer.name,
+          activeEventId: eventId,
+          actorEventId: volunteer.event_id
+        }
+      );
+      if (res.success) {
+        onShowToast(
+          'Question Rejected',
+          `Question #${question.question_number || question.id} has been marked as Rejected.`,
+          'info'
+        );
+        setQuestions(storageService.getProceedingsQuestions(eventId));
+        setSelectedQuestionForReview(null);
+        setReviewNote('');
+      } else {
+        onShowToast('Error', res.error || 'Failed to reject question', 'error');
+      }
+    } catch (err: any) {
+      onShowToast('Error', err?.message || 'Failed to reject question', 'error');
     } finally {
       setIsApproachingAdmin(false);
     }
@@ -1570,10 +1679,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                             </td>
                             <td
                               className="p-3.5 max-w-xs cursor-pointer group"
-                              onClick={() => {
-                                setSelectedQuestionForReview(q);
-                                setReviewNote(q.review_note || '');
-                              }}
+                              onClick={() => openQuestionReview(q)}
                             >
                               <p className="truncate font-medium group-hover:text-amber-500 transition-colors" style={{ color: 'var(--text-primary)' }}>
                                 {q.question_text}
@@ -1603,10 +1709,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                             <td className="p-3.5 text-right whitespace-nowrap">
                               <button
                                 type="button"
-                                onClick={() => {
-                                  setSelectedQuestionForReview(q);
-                                  setReviewNote(q.review_note || '');
-                                }}
+                                onClick={() => openQuestionReview(q)}
                                 className="px-3 py-1.5 rounded-lg text-xs font-bold border bg-amber-500/10 hover:bg-amber-500 hover:text-white text-amber-600 dark:text-amber-400 border-amber-500/30 transition-all flex items-center gap-1.5 cursor-pointer ml-auto"
                               >
                                 <Eye className="w-3.5 h-3.5" />
@@ -1659,10 +1762,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                       <div
                         key={q.id}
                         className="p-4 space-y-2.5 cursor-pointer hover:bg-slate-500/5 transition-colors"
-                        onClick={() => {
-                          setSelectedQuestionForReview(q);
-                          setReviewNote(q.review_note || '');
-                        }}
+                        onClick={() => openQuestionReview(q)}
                       >
                         <div className="flex items-center justify-between">
                           <span className="font-mono font-black text-sm text-amber-600 dark:text-amber-400">
@@ -3080,7 +3180,11 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                     style={{ borderColor: 'var(--border)', color: 'var(--text-primary)' }}
                   />
                   <p className="text-[11px] text-slate-400">
-                    ★ Clicking <strong>Approach Main Admin</strong> notifies the Main Admin and flags this question for final decision.
+                    {isAdministrator ? (
+                      <span>★ <strong>Administrator Desk:</strong> You can directly approve, reject, or mark this question under review with reviewer notes.</span>
+                    ) : (
+                      <span>★ Clicking <strong>Approach Main Admin</strong> notifies the Main Admin and flags this question for final decision.</span>
+                    )}
                   </p>
                 </div>
               </div>
@@ -3096,19 +3200,53 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                 </button>
 
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleApproachMainAdmin(q)}
-                    disabled={isApproved || isApproachingAdmin}
-                    className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-sm flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isApproachingAdmin ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Send className="w-4 h-4" />
-                    )}
-                    <span>{isUnderReview ? 'Update / Re-Notify Main Admin' : 'Approach Main Admin'}</span>
-                  </button>
+                  {isAdministrator ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => handleAdminReject(q)}
+                        disabled={isApproachingAdmin}
+                        className="px-3.5 py-2 rounded-xl text-xs font-bold bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 border border-rose-500/30 flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        <XCircle className="w-4 h-4" />
+                        <span>Reject Question</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleApproachMainAdmin(q)}
+                        disabled={isApproved || isApproachingAdmin}
+                        className="px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-500/30 flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        {isApproachingAdmin ? <Loader2 className="w-4 h-4 animate-spin" /> : <Clock className="w-4 h-4" />}
+                        <span>{isUnderReview ? 'Update Review Note' : 'Mark Under Review'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleAdminApprove(q)}
+                        disabled={isApproved || isApproachingAdmin}
+                        className="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        <CheckCircle className="w-4 h-4" />
+                        <span>Approve Question</span>
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleApproachMainAdmin(q)}
+                      disabled={isApproved || isApproachingAdmin}
+                      className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-sm flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isApproachingAdmin ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Send className="w-4 h-4" />
+                      )}
+                      <span>{isUnderReview ? 'Update / Re-Notify Main Admin' : 'Approach Main Admin'}</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

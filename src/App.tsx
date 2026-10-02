@@ -121,9 +121,7 @@ function getInitialRouteInfo(initialSession: SavedAuthSession | null) {
   // If user has a valid saved session, preserve their role and authentication
   if (initialSession) {
     if (initialSession.role === 'coordinator' || initialSession.role === 'super_admin' || initialSession.role === 'organiser') {
-      if (!pathname.startsWith('/jury') && !pathname.startsWith('/volunteer') && !pathname.startsWith('/join')) {
-        return { role: initialSession.role, isAuthenticated: true };
-      }
+      return { role: initialSession.role, isAuthenticated: true };
     } else if (initialSession.role === 'jury' && initialSession.juryCode) {
       if (pathname.includes('/jury') || !pathname.includes('/events/')) {
         return { role: 'jury' as UserRole, isAuthenticated: true };
@@ -1397,6 +1395,14 @@ export function App() {
 
         // 2. Explicit Volunteer Join Link requested (/join or /volunteer) - strictly excluding coordinator /events/ routes
         if (!pathname.includes('/events/') && (pathname.startsWith('/volunteer') || pathname === '/join' || pathname.startsWith('/join/'))) {
+          // If an admin or coordinator already has an active, authenticated session, preserve it!
+          if (sess && (sess.role === 'super_admin' || sess.role === 'coordinator' || sess.role === 'organiser')) {
+            setIsAuthenticated(true);
+            setRole(sess.role);
+            setUserSession(sess);
+            return;
+          }
+
           if (sess && sess.role === 'volunteer' && sess.volunteerCode) {
             const cleanCode = sess.volunteerCode.trim().toUpperCase();
             const allVols = storageService.getVolunteers();
