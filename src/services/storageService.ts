@@ -18631,7 +18631,7 @@ class StorageService {
       reviewer_name: volunteer.name,
       reviewer_role: reviewerRole,
       reviewed_at: new Date().toISOString(),
-      review_note: note || targetQ.review_note,
+      review_note: (note !== undefined && note !== null) ? note.trim() : (targetQ.review_note || ''),
       updated_at: new Date().toISOString()
     };
 
@@ -18655,12 +18655,24 @@ class StorageService {
       const allEvs = this.getEvents();
       const matched = findEventBySlug(allEvs, targetEventId) || allEvs.find(e => e.id === targetEventId);
       const syncId = matched?.id || targetEventId;
-      this.syncEventStateToSupabase(syncId, true).then(() => {
-        this.updateQuestionSnapshot(syncId).catch(() => {});
-      }).catch(err => {
+
+      if (matched) {
+        const currentSc = (matched.social_coverage || {}) as Record<string, any>;
+        const curPQs = Array.isArray(currentSc.proceedings_questions) ? currentSc.proceedings_questions : [];
+        matched.social_coverage = {
+          ...currentSc,
+          proceedings_questions: curPQs.map((q: any) => q.id === questionId ? { ...q, ...updatedQ } : q),
+          updated_at: new Date().toISOString()
+        };
+      }
+
+      try {
+        await this.syncEventStateToSupabase(syncId, true);
+        await this.updateQuestionSnapshot(syncId);
+      } catch (err) {
         console.warn('[Supabase] reviewAndApproachMainAdmin sync error:', err);
-        this.updateQuestionSnapshot(syncId).catch(() => {});
-      });
+        await this.updateQuestionSnapshot(syncId).catch(() => {});
+      }
     }
 
     if (typeof window !== 'undefined') {
