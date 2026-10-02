@@ -42,6 +42,8 @@ interface JuryDashboardProps {
   onShowToast: (title: string, message?: string, type?: 'success' | 'error' | 'info') => void;
 }
 
+export type ScoringState = 'NOT_STARTED' | 'DRAFT' | 'SUBMITTING' | 'OFFICIAL' | 'ADJUSTMENT';
+
 // 6 Criterion Step Options matching requested rubric weights (Total = 100)
 const RESEARCH_STEPS = [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30];      // Max 30
 const RELEVANCE_STEPS = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20];      // Max 20
@@ -375,6 +377,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       setTimeScore(existing.time_management ?? null);
       setIsLocked(Boolean((existing as any).is_locked || (existing as any).status === 'LOCKED'));
       setFeedback(existing.feedback || '');
+      setDraftSavedAt(null);
     } else {
       // Check if a local temporary draft exists (never saved to database or official evaluations)
       const draft = event?.id && (jury?.id || jury?.name)
@@ -390,6 +393,15 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
         setTimeScore(draft.time ?? null);
         setIsLocked(false);
         setFeedback(draft.feedback || '');
+        if (draft.updatedAt) {
+          try {
+            setDraftSavedAt(new Date(draft.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+          } catch {
+            setDraftSavedAt(null);
+          }
+        } else {
+          setDraftSavedAt(null);
+        }
       } else {
         // Strict Turn-1 Draft Model: Unanswered categories default to null (NOT zero)
         setResearchScore(null);
@@ -400,11 +412,15 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
         setTimeScore(null);
         setIsLocked(false);
         setFeedback('');
+        setDraftSavedAt(null);
       }
     }
     setLoadedKey(currentKey);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLearnerId, selectedSession.id, scores, event?.id, jury]);
+
+  // Draft save timestamp display
+  const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
 
   // Explicit completion check: distinguish UNANSWERED (null) vs ANSWERED (number, including legitimate 0)
   const isCategoryAnswered = (val: number | null): val is number => typeof val === 'number' && !isNaN(val);
@@ -426,6 +442,15 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     (conductScore ?? 0) +
     (originalityScore ?? 0) +
     (timeScore ?? 0);
+
+  // Authoritative Jury Scoring State Machine
+  const scoringState: ScoringState = useMemo(() => {
+    if (isSubmittingEvaluation) return 'SUBMITTING';
+    if (isAdjustmentModalOpen) return 'ADJUSTMENT';
+    if (currentEvaluation) return 'OFFICIAL';
+    if (answeredCategoriesCount > 0 || feedback.trim().length > 0) return 'DRAFT';
+    return 'NOT_STARTED';
+  }, [isSubmittingEvaluation, isAdjustmentModalOpen, currentEvaluation, answeredCategoriesCount, feedback]);
 
   // Category selection is a UI-only operation that updates local draft state (0 DB / Supabase writes)
   const handleSelectScore = (type: 'research' | 'relevance' | 'comm' | 'conduct' | 'originality' | 'time', val: number) => {
@@ -458,6 +483,9 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       setTimeScore(val);
     }
 
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    setDraftSavedAt(timeStr);
+
     // Persist draft in localStorage only for crash/tab survival; NEVER writes to official evaluations or Supabase
     if (event?.id && selectedLearner?.id && (jury?.id || jury?.name)) {
       storageService.saveJuryDraft(
@@ -481,6 +509,9 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
 
   const handleFeedbackChange = (val: string) => {
     setFeedback(val);
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    setDraftSavedAt(timeStr);
+
     if (event?.id && selectedLearner?.id && (jury?.id || jury?.name)) {
       storageService.saveJuryDraft(
         event.id,
@@ -499,6 +530,29 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
         }
       );
     }
+  };
+
+  const handleSaveDraft = () => {
+    if (!event?.id || !selectedLearner?.id || (!jury?.id && !jury?.name)) return;
+    storageService.saveJuryDraft(
+      event.id,
+      selectedSession.id,
+      jury.id || jury.name || 'jury',
+      selectedLearner.id,
+      {
+        research: researchScore,
+        relevance: relevanceScore,
+        comm: commScore,
+        conduct: conductScore,
+        originality: originalityScore,
+        time: timeScore,
+        feedback: feedback,
+        updatedAt: new Date().toISOString()
+      }
+    );
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    setDraftSavedAt(timeStr);
+    onShowToast('Draft Saved', `Draft for ${selectedLearner.full_name} saved locally (${answeredCategoriesCount}/6 categories). Not submitted as official evaluation.`, 'info');
   };
 
   // Jump To Participant Keypad Actions
@@ -694,10 +748,11 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       }
 
       setIsSavedRecently(true);
-      setTimeout(() => setIsSavedRecently(false), 2000);
-      onShowToast('Official Evaluation Submitted', `Recorded official Turn 1 evaluation (${savedEval.total}/100) for ${selectedLearner.full_name}`, 'success');
+      setDraftSavedAt(null);
+      setTimeout(() => setIsSavedRecently(false), 3000);
+      onShowToast('✓ Official Evaluation Saved', `Recorded official Turn 1 evaluation (${savedEval.total}/100) for ${selectedLearner.full_name}`, 'success');
     } catch (err: any) {
-      onShowToast('Submission Failed', err.message || 'Error submitting evaluation.', 'error');
+      onShowToast('Save failed — Retry', err.message || 'Error submitting official evaluation.', 'error');
     } finally {
       setIsSubmittingEvaluation(false);
     }
@@ -1477,7 +1532,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                           Subsequent Speaking Opportunity (Turn {currentTurnNumber})
                         </h4>
                         <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                          The delegate already has an official session evaluation. Choose an action for this turn:
+                          Choose what this turn means:
                         </p>
                       </div>
 
@@ -1488,7 +1543,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                           className="px-5 py-2.5 rounded-xl font-bold text-xs bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 transition flex items-center gap-2 cursor-pointer shadow-xs active:scale-98"
                         >
                           <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                          <span>Record Contribution Only (Keep {currentEvaluation.total}/100)</span>
+                          <span>Record Contribution Only (Keeps {currentEvaluation.total}/100)</span>
                         </button>
 
                         <button
@@ -1497,7 +1552,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                           className="btn-primary px-5 py-2.5 text-xs font-bold shadow-md cursor-pointer hover:scale-102 transition-transform flex items-center gap-2"
                         >
                           <Edit3 className="w-4 h-4" />
-                          <span>Adjust Evaluation (Turn {currentTurnNumber})</span>
+                          <span>Adjust Evaluation (Modify Score — Reason Required)</span>
                         </button>
                       </div>
                     </div>
@@ -1560,6 +1615,31 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                   {/* Delegate Header Info & Stepper */}
                   <div className="flex flex-wrap items-center justify-between pb-4 border-b gap-3" style={{ borderColor: 'var(--border)' }}>
                     <div>
+                      <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/30">
+                          NEW EVALUATION
+                        </span>
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/30">
+                          Speaking Turn 1
+                        </span>
+                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                          scoringState === 'OFFICIAL'
+                            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                            : scoringState === 'SUBMITTING'
+                            ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30 animate-pulse'
+                            : answeredCategoriesCount > 0
+                            ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30'
+                            : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-600'
+                        }`}>
+                          {scoringState === 'OFFICIAL'
+                            ? 'OFFICIAL EVALUATION'
+                            : scoringState === 'SUBMITTING'
+                            ? 'SUBMITTING...'
+                            : scoringState === 'DRAFT'
+                            ? `Draft — Not Submitted (${answeredCategoriesCount}/6 completed)`
+                            : 'NOT STARTED'}
+                        </span>
+                      </div>
                       <div className="flex items-center gap-2">
                         <h2 className="text-xl font-black" style={{ color: 'var(--text-primary)' }}>
                           {selectedLearner.full_name}
@@ -2148,16 +2228,33 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     </div>
 
                     <div className="flex flex-wrap items-center gap-3">
+                      {draftSavedAt && (
+                        <span className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-blue-500" />
+                          <span>Draft saved locally at {draftSavedAt}</span>
+                        </span>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={handleSaveDraft}
+                        disabled={isLocked || answeredCategoriesCount === 0}
+                        className="px-4 py-2.5 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                      >
+                        <Save className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Save Draft</span>
+                      </button>
+
                       {!isEvaluationComplete && (
                         <span className="text-xs font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
                           <AlertCircle className="w-4 h-4 shrink-0" />
-                          Complete all 6 categories ({6 - answeredCategoriesCount} remaining)
+                          Complete all 6 categories ({6 - answeredCategoriesCount} remaining to submit)
                         </span>
                       )}
 
                       {isSavedRecently && (
-                        <span className="text-xs font-bold flex items-center gap-1.5" style={{ color: 'var(--emerald)' }}>
-                          <CheckCircle className="w-4 h-4" /> Score Saved!
+                        <span className="text-xs font-bold flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                          <CheckCircle className="w-4 h-4" /> ✓ Official Evaluation Saved
                         </span>
                       )}
 
@@ -2166,7 +2263,8 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                         disabled={isLocked || !isEvaluationComplete || isSubmittingEvaluation}
                         className="btn-primary px-6 py-2.5 text-xs font-bold shadow-md cursor-pointer hover:scale-102 transition-transform disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
                       >
-                        <Save className="w-4 h-4" /> {isSubmittingEvaluation ? 'Submitting...' : 'SUBMIT FULL EVALUATION'}
+                        <CheckCircle className="w-4 h-4 text-emerald-400" />
+                        <span>{isSubmittingEvaluation ? 'Submitting Official Evaluation...' : 'Submit Official Evaluation'}</span>
                       </button>
                     </div>
                   </div>

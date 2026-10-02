@@ -15298,6 +15298,10 @@ class StorageService {
     }
     if (!juryId) juryId = 'default_jury';
 
+    const testMode = score.event_id ? this.getScoringTestMode(score.event_id) : { isTestMode: false, testRunId: null };
+    const isTest = score.is_test !== undefined ? Boolean(score.is_test) : (testMode.isTestMode || this.isTestScore(score));
+    const testRunId = score.test_run_id || (isTest ? (testMode.testRunId || undefined) : undefined);
+
     const normalizedScore: ScoreRecord = {
       ...score,
       id: score.id || uid('score'),
@@ -15314,7 +15318,8 @@ class StorageService {
       originality_preparation: originality,
       time_management: timeMgmt,
       total: finalTotal,
-      is_test: Boolean(score.is_test),
+      is_test: isTest,
+      test_run_id: testRunId,
       created_at: score.created_at || now,
       updated_at: now
     };
