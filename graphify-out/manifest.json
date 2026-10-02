@@ -294,9 +294,9 @@
     "semantic_hash": ""
   },
   "src/components/jury/JuryDashboard.tsx": {
-    "mtime": 1790934119.4716156,
-    "seen": 1790934769.3712592,
-    "ast_hash": "d797bceb5c6ec9a6a2d2380020310d49",
+    "mtime": 1790936283.786477,
+    "seen": 1790936371.1814203,
+    "ast_hash": "2d3076c8c53e1f2ed539cc3ba0cfa74f",
     "semantic_hash": ""
   },
   "src/components/student/StudentDashboard.tsx": {
