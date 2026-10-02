@@ -980,4 +980,53 @@ export interface SpeakingTurn {
   created_at?: string;
 }
 
+export interface JurySpeechRecognition {
+  id: string;
+  event_id: string;
+  session_id: string; // Canonical session ID
+  speaking_turn_id: string;
+  jury_id: string;
+  learner_id: string;
+  active: boolean;
+  note?: string | null;
+  revoked_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
+export interface ParticipantRecognitionSummary {
+  learnerId: string;
+  studentName: string;
+  constituencyNumber?: number;
+  constituencyName?: string;
+  partyName: string;
+  bench: BenchType | string;
+  recognitionCount: number;
+  speakingTurnCount: number;
+  recognitionRate: number;
+  distinctJurorCount: number;
+  totalJurors: number;
+}
+
+export interface SpeechImpactSummary {
+  speakingTurnId: string;
+  sequenceNumber: number;
+  learnerId: string;
+  studentName: string;
+  constituencyNumber?: number;
+  constituencyName?: string;
+  partyName: string;
+  bench: BenchType | string;
+  sessionId: string;
+  sessionName: string;
+  calledAt: string;
+  recognitionCount: number;
+  distinctJurorCount: number;
+  totalJurors: number;
+  jurorRecognitions: Array<{
+    juryId: string;
+    juryName?: string;
+    note?: string | null;
+    createdAt: string;
+  }>;
+}

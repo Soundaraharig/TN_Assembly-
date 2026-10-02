@@ -56,7 +56,10 @@ import type {
   SpeakingTurnStatus,
   QuestionSnapshot,
   StudentVoteRecord,
-  DerivedBillVoteCounts
+  DerivedBillVoteCounts,
+  JurySpeechRecognition,
+  ParticipantRecognitionSummary,
+  SpeechImpactSummary
 } from '../types';
 import {
   formatQuestionNumber,
@@ -259,7 +262,8 @@ const STORAGE_KEYS = {
   SPEAKING_TURNS: 'tn_assembly_speaking_turns_v1',
   JURY_EVALUATIONS: 'tn_assembly_jury_evaluations_v1',
   JURY_EVALUATION_TURNS: 'tn_assembly_jury_evaluation_turns_v1',
-  JURY_EVALUATION_ADJUSTMENTS: 'tn_assembly_jury_evaluation_adjustments_v1'
+  JURY_EVALUATION_ADJUSTMENTS: 'tn_assembly_jury_evaluation_adjustments_v1',
+  JURY_SPEECH_RECOGNITIONS: 'tn_assembly_jury_speech_recognitions_v1'
 };
 
 export const SUPABASE_COLUMNS: Record<string, string> = {
@@ -280,7 +284,8 @@ export const SUPABASE_COLUMNS: Record<string, string> = {
   LOGIN_RECORDS: 'id,event_id,user_id,learner_id,volunteer_id,user_name,role,access_code,login_at,logged_in_at,device_type,device_info,ip_address,details,created_at',
   JURY_EVALUATIONS: 'id,event_id,session_id,session_name,learner_id,learner_name,jury_id,jury_name,research_constituency,relevance_agenda,communication_delivery,parliamentary_conduct,originality_preparation,time_management,total,initial_speaking_turn_id,status,is_test,created_at,updated_at',
   JURY_EVALUATION_TURNS: 'id,evaluation_id,speaking_turn_id,turn_number,action_type,recorded_by,recorded_by_name,created_at',
-  JURY_EVALUATION_ADJUSTMENTS: 'id,evaluation_id,speaking_turn_id,juror_id,juror_name,previous_research_constituency,new_research_constituency,previous_relevance_agenda,new_relevance_agenda,previous_communication_delivery,new_communication_delivery,previous_parliamentary_conduct,new_parliamentary_conduct,previous_originality_preparation,new_originality_preparation,previous_time_management,new_time_management,previous_total,new_total,delta_total,adjustment_reason,adjusted_at'
+  JURY_EVALUATION_ADJUSTMENTS: 'id,evaluation_id,speaking_turn_id,juror_id,juror_name,previous_research_constituency,new_research_constituency,previous_relevance_agenda,new_relevance_agenda,previous_communication_delivery,new_communication_delivery,previous_parliamentary_conduct,new_parliamentary_conduct,previous_originality_preparation,new_originality_preparation,previous_time_management,new_time_management,previous_total,new_total,delta_total,adjustment_reason,adjusted_at',
+  JURY_SPEECH_RECOGNITIONS: 'id,event_id,session_id,speaking_turn_id,jury_id,learner_id,active,note,revoked_at,created_at,updated_at'
 };
 
 type Listener = () => void;
@@ -5099,6 +5104,44 @@ class StorageService {
             this.notify();
             if (typeof window !== 'undefined') {
               window.dispatchEvent(new CustomEvent('tn_assembly_hand_raise_setting', { detail: p }));
+              window.dispatchEvent(new Event('storage'));
+            }
+          }
+        })
+        .on('broadcast', { event: 'jury_recognition' }, (msg: any) => {
+          const p = msg?.payload;
+          if (p?.eventId && p?.speakingTurnId && p?.juryId) {
+            const all = this.getItem<JurySpeechRecognition[]>(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, []);
+            const idx = all.findIndex(
+              r => r.event_id === p.eventId && r.speaking_turn_id === p.speakingTurnId && r.jury_id === p.juryId
+            );
+            const now = new Date().toISOString();
+            if (idx >= 0) {
+              all[idx] = {
+                ...all[idx],
+                active: p.active !== false,
+                note: p.note !== undefined ? p.note : all[idx].note,
+                revoked_at: p.active === false ? now : null,
+                updated_at: now
+              };
+            } else if (p.active !== false) {
+              all.push({
+                id: p.id || `recog_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+                event_id: p.eventId,
+                session_id: p.sessionId || '',
+                speaking_turn_id: p.speakingTurnId,
+                jury_id: p.juryId,
+                learner_id: p.learnerId || '',
+                active: true,
+                note: p.note || null,
+                created_at: now,
+                updated_at: now
+              });
+            }
+            this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, all);
+            this.notify();
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_jury_recognition_update', { detail: p }));
               window.dispatchEvent(new Event('storage'));
             }
           }
@@ -15762,6 +15805,474 @@ class StorageService {
 
     this.notify();
     return evaluation;
+  }
+
+  // ── JURY RECOGNITION / SPEECH IMPACT ENGINE ──
+
+  private recognitionInFlightMap = new Map<string, Promise<{ recognition: JurySpeechRecognition; action: 'RECOGNIZED' | 'REVOKED' }>>();
+
+  public getJurySpeechRecognitions(
+    eventId?: string,
+    sessionId?: string,
+    speakingTurnId?: string,
+    juryId?: string,
+    learnerId?: string,
+    activeOnly: boolean = true
+  ): JurySpeechRecognition[] {
+    const all = this.getItem<JurySpeechRecognition[]>(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, []);
+    const agendaItems = eventId ? this.getAgenda(eventId) : [];
+
+    return all.filter(r => {
+      if (activeOnly && !r.active) return false;
+      if (eventId && r.event_id !== eventId) return false;
+      if (speakingTurnId && r.speaking_turn_id !== speakingTurnId) return false;
+      if (juryId && r.jury_id !== juryId) return false;
+      if (learnerId && r.learner_id !== learnerId) return false;
+      if (sessionId) {
+        const targetResolved = resolveCanonicalSession(sessionId, undefined, agendaItems);
+        const itemResolved = resolveCanonicalSession(r.session_id, undefined, agendaItems);
+        if (itemResolved.canonicalId !== targetResolved.canonicalId) return false;
+      }
+      return true;
+    });
+  }
+
+  public async fetchJurySpeechRecognitions(
+    eventId: string,
+    sessionId?: string
+  ): Promise<JurySpeechRecognition[]> {
+    if (!eventId) return [];
+    if (supabase && isSupabaseEnabled) {
+      try {
+        let query = supabase
+          .from('jury_speech_recognitions')
+          .select(SUPABASE_COLUMNS.JURY_SPEECH_RECOGNITIONS)
+          .eq('event_id', eventId);
+        if (sessionId) {
+          const agendaItems = this.getAgenda(eventId);
+          const resolved = resolveCanonicalSession(sessionId, undefined, agendaItems);
+          query = query.eq('session_id', resolved.canonicalId);
+        }
+        const { data, error } = await query.order('created_at', { ascending: true });
+        if (!error && data) {
+          const records = data as unknown as JurySpeechRecognition[];
+          const all = this.getItem<JurySpeechRecognition[]>(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, []);
+          const other = all.filter(r => r.event_id !== eventId || (sessionId && r.session_id !== sessionId));
+          const merged = [...other, ...records];
+          this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, merged);
+          return records;
+        }
+      } catch (err) {
+        console.warn('[fetchJurySpeechRecognitions] Supabase error:', err);
+      }
+    }
+    return this.getJurySpeechRecognitions(eventId, sessionId, undefined, undefined, undefined, false);
+  }
+
+  public async toggleJurySpeechRecognition(params: {
+    eventId: string;
+    sessionId: string;
+    sessionName?: string;
+    speakingTurnId: string;
+    juryId: string;
+    learnerId: string;
+    note?: string;
+    userRole?: string;
+    callerJuryId?: string;
+  }): Promise<{ recognition: JurySpeechRecognition; action: 'RECOGNIZED' | 'REVOKED' }> {
+    const { eventId, speakingTurnId, juryId, learnerId, userRole, callerJuryId } = params;
+    if (userRole === 'student') {
+      throw new Error('Students are not permitted to create or modify jury recognitions.');
+    }
+    if (callerJuryId && callerJuryId !== juryId) {
+      throw new Error("Unauthorized: Juror cannot modify another juror's recognition.");
+    }
+    if (!eventId) throw new Error('Event ID is required for jury recognition');
+    if (!speakingTurnId) throw new Error('Speaking turn ID is required for jury recognition');
+    if (!juryId) throw new Error('Jury ID is required for jury recognition');
+    if (!learnerId) throw new Error('Learner ID is required for jury recognition');
+
+    // Cross-event boundary check & speaking turn verification
+    const allTurns = this.getSpeakingTurns(eventId);
+    const targetTurn = allTurns.find(t => t.id === speakingTurnId);
+    if (targetTurn) {
+      if (targetTurn.event_id !== eventId) {
+        throw new Error('Cross-event recognition rejected: turn belongs to different event.');
+      }
+      if (targetTurn.learner_id !== learnerId) {
+        throw new Error('Invalid recognition: turn does not belong to specified learner.');
+      }
+    } else {
+      const rawTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+      const foreignTurn = rawTurns.find(t => t.id === speakingTurnId);
+      if (foreignTurn && foreignTurn.event_id !== eventId) {
+        throw new Error('Cross-event recognition rejected: turn belongs to different event.');
+      }
+    }
+
+    // In-flight locking key to prevent race conditions & double-click duplicate creation
+    const lockKey = `${eventId}:::${speakingTurnId}:::${juryId}`;
+    if (this.recognitionInFlightMap.has(lockKey)) {
+      return this.recognitionInFlightMap.get(lockKey)!;
+    }
+
+    const execPromise = (async () => {
+      const agendaItems = this.getAgenda(eventId);
+      const resolvedSession = resolveCanonicalSession(params.sessionId, params.sessionName, agendaItems);
+      const canonicalSessionId = resolvedSession.canonicalId;
+
+      const all = this.getItem<JurySpeechRecognition[]>(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, []);
+      const existingIdx = all.findIndex(
+        r => r.event_id === eventId && r.speaking_turn_id === speakingTurnId && r.jury_id === juryId
+      );
+
+      const now = new Date().toISOString();
+      let record: JurySpeechRecognition;
+      let action: 'RECOGNIZED' | 'REVOKED';
+
+      if (existingIdx >= 0) {
+        const existing = all[existingIdx];
+        if (existing.active) {
+          // Toggle OFF -> Revoke
+          record = {
+            ...existing,
+            active: false,
+            revoked_at: now,
+            updated_at: now
+          };
+          action = 'REVOKED';
+        } else {
+          // Toggle ON -> Re-activate
+          record = {
+            ...existing,
+            active: true,
+            note: params.note !== undefined ? params.note : existing.note,
+            revoked_at: null,
+            updated_at: now
+          };
+          action = 'RECOGNIZED';
+        }
+        all[existingIdx] = record;
+      } else {
+        // Create new recognition
+        record = {
+          id: uid('recog'),
+          event_id: eventId,
+          session_id: canonicalSessionId,
+          speaking_turn_id: speakingTurnId,
+          jury_id: juryId,
+          learner_id: learnerId,
+          active: true,
+          note: params.note ? params.note.trim() : null,
+          created_at: now,
+          updated_at: now
+        };
+        all.push(record);
+        action = 'RECOGNIZED';
+      }
+
+      // 1. Authoritative local storage persist
+      this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, all);
+
+      // 2. Persist to Supabase if configured (dedicated table ONLY, never social_coverage)
+      if (supabase && isSupabaseEnabled) {
+        supabase
+          .from('jury_speech_recognitions')
+          .upsert({
+            id: record.id,
+            event_id: record.event_id,
+            session_id: record.session_id,
+            speaking_turn_id: record.speaking_turn_id,
+            jury_id: record.jury_id,
+            learner_id: record.learner_id,
+            active: record.active,
+            note: record.note,
+            revoked_at: record.revoked_at || null,
+            updated_at: record.updated_at
+          }, { onConflict: 'event_id,speaking_turn_id,jury_id' })
+          .then();
+      }
+
+      // 3. Compact realtime broadcast
+      this.broadcast('jury_recognition', {
+        type: 'jury_recognition',
+        id: record.id,
+        eventId: record.event_id,
+        sessionId: record.session_id,
+        speakingTurnId: record.speaking_turn_id,
+        learnerId: record.learner_id,
+        juryId: record.jury_id,
+        active: record.active,
+        note: record.note
+      }).catch(() => {});
+
+      this.notify();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('tn_assembly_jury_recognition_update', {
+          detail: { eventId, speakingTurnId, juryId, learnerId, active: record.active }
+        }));
+      }
+
+      return { recognition: record, action };
+    })();
+
+    this.recognitionInFlightMap.set(lockKey, execPromise);
+    try {
+      return await execPromise;
+    } finally {
+      this.recognitionInFlightMap.delete(lockKey);
+    }
+  }
+
+  public async updateJurySpeechRecognitionNote(params: {
+    eventId: string;
+    speakingTurnId: string;
+    juryId: string;
+    note: string;
+    callerJuryId?: string;
+  }): Promise<JurySpeechRecognition | null> {
+    const { eventId, speakingTurnId, juryId, note, callerJuryId } = params;
+    if (callerJuryId && callerJuryId !== juryId) {
+      throw new Error("Unauthorized: Juror cannot modify another juror's recognition.");
+    }
+    const all = this.getItem<JurySpeechRecognition[]>(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, []);
+    const idx = all.findIndex(
+      r => r.event_id === eventId && r.speaking_turn_id === speakingTurnId && r.jury_id === juryId
+    );
+    if (idx === -1) return null;
+
+    const now = new Date().toISOString();
+    const updated: JurySpeechRecognition = {
+      ...all[idx],
+      note: note.trim() || null,
+      updated_at: now
+    };
+    all[idx] = updated;
+    this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, all);
+
+    if (supabase && isSupabaseEnabled) {
+      supabase
+        .from('jury_speech_recognitions')
+        .update({ note: updated.note, updated_at: now })
+        .eq('id', updated.id)
+        .then();
+    }
+
+    this.broadcast('jury_recognition', {
+      type: 'jury_recognition',
+      id: updated.id,
+      eventId: updated.event_id,
+      sessionId: updated.session_id,
+      speakingTurnId: updated.speaking_turn_id,
+      learnerId: updated.learner_id,
+      juryId: updated.jury_id,
+      active: updated.active,
+      note: updated.note
+    }).catch(() => {});
+
+    this.notify();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_jury_recognition_update', {
+        detail: { eventId, speakingTurnId, juryId, learnerId: updated.learner_id, active: updated.active, note: updated.note }
+      }));
+    }
+
+    return updated;
+  }
+
+  public getMostRecognizedParticipants(
+    eventId: string,
+    sessionId?: string
+  ): ParticipantRecognitionSummary[] {
+    if (!eventId) return [];
+
+    const agendaItems = this.getAgenda(eventId);
+    const targetSession = sessionId ? resolveCanonicalSession(sessionId, undefined, agendaItems) : null;
+
+    // Get active recognitions
+    const recognitions = this.getJurySpeechRecognitions(
+      eventId,
+      targetSession?.canonicalId,
+      undefined,
+      undefined,
+      undefined,
+      true
+    );
+
+    // Get all non-cancelled speaking turns
+    const allTurns = this.getSpeakingTurns(eventId).filter(t => {
+      if (t.status === 'CANCELLED') return false;
+      if (targetSession) {
+        const res = resolveCanonicalSession(t.session_id, t.session_name, agendaItems);
+        return res.canonicalId === targetSession.canonicalId;
+      }
+      return true;
+    });
+
+    // Jurors count for coverage calculation
+    const jurors = this.getJury(eventId);
+    const totalJurors = jurors.length > 0 ? jurors.length : 6;
+
+    // Learners map
+    const learners = this.getLearners(eventId);
+    const learnerMap = new Map<string, Learner>();
+    learners.forEach(l => learnerMap.set(l.id, l));
+
+    // Turn counts by learner
+    const turnsByLearner = new Map<string, number>();
+    allTurns.forEach(t => {
+      if (t.learner_id) {
+        turnsByLearner.set(t.learner_id, (turnsByLearner.get(t.learner_id) || 0) + 1);
+      }
+    });
+
+    // Recognitions grouped by learner
+    const recogByLearner = new Map<string, JurySpeechRecognition[]>();
+    recognitions.forEach(r => {
+      if (!recogByLearner.has(r.learner_id)) {
+        recogByLearner.set(r.learner_id, []);
+      }
+      recogByLearner.get(r.learner_id)!.push(r);
+    });
+
+    // Candidate set: all learners who spoke OR received recognition
+    const candidateLearnerIds = new Set<string>([
+      ...recogByLearner.keys(),
+      ...turnsByLearner.keys()
+    ]);
+
+    const summaries: ParticipantRecognitionSummary[] = [];
+
+    for (const lid of candidateLearnerIds) {
+      const learner = learnerMap.get(lid);
+      const learnerRecogs = recogByLearner.get(lid) || [];
+      const distinctJurors = new Set(learnerRecogs.map(r => r.jury_id));
+      const spkTurnCount = turnsByLearner.get(lid) || 0;
+      const recogCount = learnerRecogs.length;
+      const recogRate = spkTurnCount > 0 ? Number((recogCount / spkTurnCount).toFixed(2)) : 0;
+
+      summaries.push({
+        learnerId: lid,
+        studentName: learner?.full_name || 'Delegate',
+        constituencyNumber: learner?.constituency_number,
+        constituencyName: learner?.constituency_name,
+        partyName: learner?.party_name || 'Independent',
+        bench: learner?.bench || 'Ruling',
+        recognitionCount: recogCount,
+        speakingTurnCount: spkTurnCount,
+        recognitionRate: recogRate,
+        distinctJurorCount: distinctJurors.size,
+        totalJurors
+      });
+    }
+
+    // Deterministic factual sorting:
+    // 1. Total Recognitions DESC
+    // 2. Distinct Juror Count DESC
+    // 3. Speaking Turn Count ASC
+    // 4. Student Name ASC
+    summaries.sort((a, b) => {
+      if (b.recognitionCount !== a.recognitionCount) return b.recognitionCount - a.recognitionCount;
+      if (b.distinctJurorCount !== a.distinctJurorCount) return b.distinctJurorCount - a.distinctJurorCount;
+      if (a.speakingTurnCount !== b.speakingTurnCount) return a.speakingTurnCount - b.speakingTurnCount;
+      return a.studentName.localeCompare(b.studentName);
+    });
+
+    return summaries;
+  }
+
+  public getSpeechImpactSummaries(
+    eventId: string,
+    sessionId?: string
+  ): SpeechImpactSummary[] {
+    if (!eventId) return [];
+
+    const agendaItems = this.getAgenda(eventId);
+    const targetSession = sessionId ? resolveCanonicalSession(sessionId, undefined, agendaItems) : null;
+
+    // Jurors
+    const jurors = this.getJury(eventId);
+    const totalJurors = jurors.length > 0 ? jurors.length : 6;
+    const juryNameMap = new Map<string, string>();
+    jurors.forEach(j => juryNameMap.set(j.id, j.name));
+
+    // Learners
+    const learners = this.getLearners(eventId);
+    const learnerMap = new Map<string, Learner>();
+    learners.forEach(l => learnerMap.set(l.id, l));
+
+    // Active recognitions
+    const recognitions = this.getJurySpeechRecognitions(
+      eventId,
+      targetSession?.canonicalId,
+      undefined,
+      undefined,
+      undefined,
+      true
+    );
+
+    // Group recognitions by speaking_turn_id
+    const recogsByTurn = new Map<string, JurySpeechRecognition[]>();
+    recognitions.forEach(r => {
+      if (!recogsByTurn.has(r.speaking_turn_id)) {
+        recogsByTurn.set(r.speaking_turn_id, []);
+      }
+      recogsByTurn.get(r.speaking_turn_id)!.push(r);
+    });
+
+    // Speaking turns
+    const allTurns = this.getSpeakingTurns(eventId).filter(t => {
+      if (t.status === 'CANCELLED') return false;
+      if (targetSession) {
+        const res = resolveCanonicalSession(t.session_id, t.session_name, agendaItems);
+        return res.canonicalId === targetSession.canonicalId;
+      }
+      return true;
+    });
+
+    const summaries: SpeechImpactSummary[] = [];
+
+    for (const t of allTurns) {
+      const turnRecogs = recogsByTurn.get(t.id) || [];
+      const distinctJurors = new Set(turnRecogs.map(r => r.jury_id));
+      const learner = learnerMap.get(t.learner_id);
+      const resSession = resolveCanonicalSession(t.session_id, t.session_name, agendaItems);
+
+      summaries.push({
+        speakingTurnId: t.id,
+        sequenceNumber: t.sequence_number || 1,
+        learnerId: t.learner_id,
+        studentName: t.learner_name || learner?.full_name || 'Delegate',
+        constituencyNumber: learner?.constituency_number,
+        constituencyName: learner?.constituency_name,
+        partyName: learner?.party_name || 'Independent',
+        bench: learner?.bench || 'Ruling',
+        sessionId: resSession.canonicalId,
+        sessionName: resSession.displayName,
+        calledAt: t.called_at || t.created_at || new Date().toISOString(),
+        recognitionCount: turnRecogs.length,
+        distinctJurorCount: distinctJurors.size,
+        totalJurors,
+        jurorRecognitions: turnRecogs.map(r => ({
+          juryId: r.jury_id,
+          juryName: juryNameMap.get(r.jury_id) || r.jury_id,
+          note: r.note || null,
+          createdAt: r.created_at
+        }))
+      });
+    }
+
+    // Sort:
+    // 1. Recognition Count DESC
+    // 2. Distinct Juror Count DESC
+    // 3. Called At DESC
+    summaries.sort((a, b) => {
+      if (b.recognitionCount !== a.recognitionCount) return b.recognitionCount - a.recognitionCount;
+      if (b.distinctJurorCount !== a.distinctJurorCount) return b.distinctJurorCount - a.distinctJurorCount;
+      return new Date(b.calledAt).getTime() - new Date(a.calledAt).getTime();
+    });
+
+    return summaries;
   }
 
   public getJuryEvaluations(

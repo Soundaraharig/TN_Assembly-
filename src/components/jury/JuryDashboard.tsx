@@ -20,9 +20,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Edit3,
-  CheckCircle2
+  CheckCircle2,
+  Star,
+  Mic
 } from 'lucide-react';
-import type { JuryMember, Learner, ScoreRecord, CollegeEvent, AgendaItem, ScoringSession, JuryEvaluation } from '../../types';
+import type { JuryMember, Learner, ScoreRecord, CollegeEvent, AgendaItem, ScoringSession, JuryEvaluation, SpeakingTurn } from '../../types';
 import { useTheme } from '../../lib/theme';
 import { storageService } from '../../services/storageService';
 import { resolveCanonicalSession } from '../../utils/sessionUtils';
@@ -169,6 +171,142 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     const turnsRecorded = currentEvaluation.turns?.length || 0;
     return Math.max(2, turnsRecorded + 1, delegateSpeakingTurns.length);
   }, [currentEvaluation, delegateSpeakingTurns.length]);
+
+  // ── JURY RECOGNITION STATE & SYNC ──
+  const [recogTick, setRecogTick] = useState(0);
+  const [isTogglingRecog, setIsTogglingRecog] = useState(false);
+  const [optionalNote, setOptionalNote] = useState('');
+  const [isSavingNote, setIsSavingNote] = useState(false);
+
+  useEffect(() => {
+    const unsub = storageService.subscribe(() => {
+      setRecogTick(t => t + 1);
+    });
+    const handleRecogUpdate = () => {
+      setRecogTick(t => t + 1);
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('tn_assembly_jury_recognition_update', handleRecogUpdate);
+      window.addEventListener('tn_assembly_speaking_turn_update', handleRecogUpdate);
+      window.addEventListener('storage', handleRecogUpdate);
+    }
+    return () => {
+      unsub();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('tn_assembly_jury_recognition_update', handleRecogUpdate);
+        window.removeEventListener('tn_assembly_speaking_turn_update', handleRecogUpdate);
+        window.removeEventListener('storage', handleRecogUpdate);
+      }
+    };
+  }, []);
+
+  // Floor speaking turn currently active on the floor (status === 'SPEAKING')
+  const activeFloorSpeakingTurn = useMemo<SpeakingTurn | null>(() => {
+    if (!event?.id) return null;
+    const agendaItems = storageService.getAgenda(event.id);
+    const resolved = resolveCanonicalSession(selectedSession.id, selectedSession.name, agendaItems);
+    const allTurns = storageService.getSpeakingTurns(event.id);
+    return allTurns.find(t => {
+      const turnResolved = resolveCanonicalSession(t.session_id, t.session_name, agendaItems);
+      return turnResolved.canonicalId === resolved.canonicalId && t.status === 'SPEAKING';
+    }) || null;
+  }, [event?.id, selectedSession, recogTick]);
+
+  // Target speaking turn for currently selected delegate
+  const targetTurnForDelegate = useMemo<SpeakingTurn | null>(() => {
+    if (!delegateSpeakingTurns.length) return null;
+    const speaking = delegateSpeakingTurns.find(t => t.status === 'SPEAKING');
+    if (speaking) return speaking;
+    return delegateSpeakingTurns[delegateSpeakingTurns.length - 1] || null;
+  }, [delegateSpeakingTurns]);
+
+  // Check recognition state for target delegate turn
+  const delegateTurnRecognition = useMemo(() => {
+    if (!targetTurnForDelegate || !event?.id || !jury) return null;
+    const juryId = jury.id || jury.name || 'jury';
+    const recogs = storageService.getJurySpeechRecognitions(
+      event.id,
+      undefined,
+      targetTurnForDelegate.id,
+      juryId,
+      undefined,
+      false
+    );
+    return recogs[0] || null;
+  }, [targetTurnForDelegate, event?.id, jury, recogTick]);
+
+  const isDelegateTurnRecognized = Boolean(delegateTurnRecognition && delegateTurnRecognition.active);
+
+  // Sync note input when target delegate turn changes or recognition changes
+  useEffect(() => {
+    if (delegateTurnRecognition?.note) {
+      setOptionalNote(delegateTurnRecognition.note);
+    } else {
+      setOptionalNote('');
+    }
+  }, [delegateTurnRecognition?.id, delegateTurnRecognition?.note, targetTurnForDelegate?.id]);
+
+  // Check recognition state for floor turn
+  const floorTurnRecognition = useMemo(() => {
+    if (!activeFloorSpeakingTurn || !event?.id || !jury) return null;
+    const juryId = jury.id || jury.name || 'jury';
+    const recogs = storageService.getJurySpeechRecognitions(
+      event.id,
+      undefined,
+      activeFloorSpeakingTurn.id,
+      juryId,
+      undefined,
+      false
+    );
+    return recogs[0] || null;
+  }, [activeFloorSpeakingTurn, event?.id, jury, recogTick]);
+
+  const isFloorTurnRecognized = Boolean(floorTurnRecognition && floorTurnRecognition.active);
+
+  const handleToggleRecognition = async (turn: SpeakingTurn) => {
+    if (!event?.id || !jury || isTogglingRecog) return;
+    const juryId = jury.id || jury.name || 'jury';
+    setIsTogglingRecog(true);
+    try {
+      const res = await storageService.toggleJurySpeechRecognition({
+        eventId: event.id,
+        sessionId: turn.session_id || selectedSession.id,
+        sessionName: turn.session_name || selectedSession.name,
+        speakingTurnId: turn.id,
+        juryId,
+        learnerId: turn.learner_id,
+        note: optionalNote.trim() || undefined
+      });
+      if (res.action === 'RECOGNIZED') {
+        onShowToast('Jury Recognition Recorded', `Recognized speech by ${turn.learner_name || 'Delegate'}.`, 'success');
+      } else {
+        onShowToast('Jury Recognition Revoked', `Recognition removed for ${turn.learner_name || 'Delegate'}.`, 'info');
+      }
+    } catch (err: any) {
+      onShowToast('Recognition Action Failed', err.message || 'Unable to update recognition.', 'error');
+    } finally {
+      setIsTogglingRecog(false);
+    }
+  };
+
+  const handleSaveRecognitionNote = async (turn: SpeakingTurn) => {
+    if (!event?.id || !jury || isSavingNote) return;
+    const juryId = jury.id || jury.name || 'jury';
+    setIsSavingNote(true);
+    try {
+      await storageService.updateJurySpeechRecognitionNote({
+        eventId: event.id,
+        speakingTurnId: turn.id,
+        juryId,
+        note: optionalNote
+      });
+      onShowToast('Note Saved', 'Private recognition note recorded.', 'success');
+    } catch (err: any) {
+      onShowToast('Error', 'Failed to save recognition note.', 'error');
+    } finally {
+      setIsSavingNote(false);
+    }
+  };
 
   const [loadedKey, setLoadedKey] = useState<string>('');
 
@@ -911,6 +1049,59 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             {/* Left/Middle: Rubric Evaluation Form (8 cols) */}
             <div className="lg:col-span-8 space-y-6">
+              {/* NOW SPEAKING Floor Banner */}
+              {activeFloorSpeakingTurn && (
+                <div className="rounded-2xl p-4 border bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border-amber-500/30 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center font-black shadow-sm shrink-0">
+                      <Mic className="w-5 h-5 animate-pulse" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-amber-500 text-white">
+                          NOW SPEAKING
+                        </span>
+                        <span className="text-xs font-mono font-bold text-amber-700 dark:text-amber-400">
+                          Speaking Turn #{activeFloorSpeakingTurn.sequence_number || 1}
+                        </span>
+                      </div>
+                      <h3 className="text-base font-black text-slate-900 dark:text-white mt-0.5">
+                        {activeFloorSpeakingTurn.learner_name}
+                      </h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        {activeFloorSpeakingTurn.session_name || selectedSession.name}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {selectedLearnerId !== activeFloorSpeakingTurn.learner_id && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedLearnerId(activeFloorSpeakingTurn.learner_id)}
+                        className="px-3 py-1.5 rounded-xl text-xs font-bold border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer text-slate-800 dark:text-slate-200"
+                      >
+                        View Delegate
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      disabled={isTogglingRecog}
+                      onClick={() => handleToggleRecognition(activeFloorSpeakingTurn)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95 disabled:opacity-50 ${
+                        isFloorTurnRecognized
+                          ? 'bg-amber-500 text-white shadow-amber-500/20'
+                          : 'bg-white dark:bg-slate-800 text-amber-600 dark:text-amber-400 border border-amber-500/30 hover:bg-amber-50 dark:hover:bg-slate-700'
+                      }`}
+                      title={isFloorTurnRecognized ? 'Click to revoke recognition' : 'Click to recognize speaking turn'}
+                    >
+                      <Star className={`w-3.5 h-3.5 ${isFloorTurnRecognized ? 'fill-current text-white' : 'text-amber-500'}`} />
+                      <span>{isFloorTurnRecognized ? '★ Recognized' : '☆ Recognize'}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {selectedLearner ? (
                 currentEvaluation ? (
                   <div className="rounded-2xl p-6 border space-y-6 shadow-sm" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
@@ -1015,6 +1206,62 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       </div>
                     )}
 
+                    {/* JURY RECOGNITION CARD */}
+                    {targetTurnForDelegate && (
+                      <div className="p-4 rounded-xl border border-amber-500/20 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <Star className={`w-4 h-4 ${isDelegateTurnRecognized ? 'text-amber-500 fill-amber-500' : 'text-amber-500'}`} />
+                            <h4 className="text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white">
+                              Jury Recognition
+                            </h4>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">
+                              Speaking Turn #{targetTurnForDelegate.sequence_number || currentTurnNumber}
+                            </span>
+                          </div>
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400 italic">
+                            {isDelegateTurnRecognized ? 'Your recognition has been recorded.' : 'Speech stood out to me.'}
+                          </span>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-3 pt-0.5">
+                          <button
+                            type="button"
+                            disabled={isTogglingRecog}
+                            onClick={() => handleToggleRecognition(targetTurnForDelegate)}
+                            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow-xs active:scale-98 disabled:opacity-50 ${
+                              isDelegateTurnRecognized
+                                ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/20'
+                                : 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 hover:border-amber-500'
+                            }`}
+                          >
+                            <Star className={`w-4 h-4 ${isDelegateTurnRecognized ? 'fill-current text-white' : 'text-amber-500'}`} />
+                            <span>{isDelegateTurnRecognized ? '★ Recognized' : '☆ Recognize'}</span>
+                          </button>
+
+                          {isDelegateTurnRecognized && (
+                            <div className="flex-1 min-w-[220px] flex items-center gap-2">
+                              <input
+                                type="text"
+                                placeholder="Optional private note (not mandatory)..."
+                                value={optionalNote}
+                                onChange={e => setOptionalNote(e.target.value)}
+                                className="flex-1 px-3 py-1.5 text-xs rounded-xl border bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-amber-500"
+                              />
+                              <button
+                                type="button"
+                                disabled={isSavingNote}
+                                onClick={() => handleSaveRecognitionNote(targetTurnForDelegate)}
+                                className="px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 transition cursor-pointer"
+                              >
+                                {isSavingNote ? 'Saving...' : 'Save Note'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
                     {/* ACTIONS: RECORD CONTRIBUTION ONLY vs ADJUST EVALUATION */}
                     <div className="p-4 rounded-xl bg-amber-500/5 border border-amber-500/20 space-y-3">
                       <div>
@@ -1054,20 +1301,35 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                           <History className="w-3.5 h-3.5" /> Turn History & Audit Trail
                         </h4>
                         <div className="space-y-2">
-                          {currentEvaluation.turns?.map((t, idx) => (
-                            <div key={t.id || idx} className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 text-xs flex items-center justify-between">
-                              <div>
-                                <span className="font-extrabold text-slate-900 dark:text-white mr-2">Turn {t.turn_number}:</span>
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 mr-2">
-                                  {t.action_type.replace(/_/g, ' ')}
+                          {currentEvaluation.turns?.map((t, idx) => {
+                            const isTurnRecog = storageService.getJurySpeechRecognitions(
+                              event?.id,
+                              undefined,
+                              t.speaking_turn_id,
+                              jury?.id || jury?.name,
+                              undefined,
+                              true
+                            ).length > 0;
+                            return (
+                              <div key={t.id || idx} className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 text-xs flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-extrabold text-slate-900 dark:text-white mr-1">Turn {t.turn_number}:</span>
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 mr-1">
+                                    {t.action_type.replace(/_/g, ' ')}
+                                  </span>
+                                  {isTurnRecog && (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 flex items-center gap-1">
+                                      <Star className="w-3 h-3 fill-amber-500 text-amber-500" /> Recognized
+                                    </span>
+                                  )}
+                                  {t.notes && <span className="text-slate-500 italic">"{t.notes}"</span>}
+                                </div>
+                                <span className="text-[10px] text-slate-400 font-mono">
+                                  {new Date(t.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                 </span>
-                                {t.notes && <span className="text-slate-500 italic">"{t.notes}"</span>}
                               </div>
-                              <span className="text-[10px] text-slate-400 font-mono">
-                                {new Date(t.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                              </span>
-                            </div>
-                          ))}
+                            );
+                          })}
                           {currentEvaluation.adjustments?.map((a, idx) => (
                             <div key={a.id || idx} className="p-3 rounded-xl border border-amber-500/20 bg-amber-500/5 text-xs flex items-center justify-between">
                               <div>
@@ -1159,6 +1421,62 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       </div>
                     </div>
                   </div>
+
+                  {/* JURY RECOGNITION CARD (Turn 1 / Initial Evaluation) */}
+                  {targetTurnForDelegate && (
+                    <div className="p-4 rounded-xl border border-amber-500/20 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <Star className={`w-4 h-4 ${isDelegateTurnRecognized ? 'text-amber-500 fill-amber-500' : 'text-amber-500'}`} />
+                          <h4 className="text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white">
+                            Jury Recognition
+                          </h4>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">
+                            Speaking Turn #{targetTurnForDelegate.sequence_number || 1}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400 italic">
+                          {isDelegateTurnRecognized ? 'Your recognition has been recorded.' : 'Speech stood out to me.'}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-3 pt-0.5">
+                        <button
+                          type="button"
+                          disabled={isTogglingRecog}
+                          onClick={() => handleToggleRecognition(targetTurnForDelegate)}
+                          className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow-xs active:scale-98 disabled:opacity-50 ${
+                            isDelegateTurnRecognized
+                              ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/20'
+                              : 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 hover:border-amber-500'
+                          }`}
+                        >
+                          <Star className={`w-4 h-4 ${isDelegateTurnRecognized ? 'fill-current text-white' : 'text-amber-500'}`} />
+                          <span>{isDelegateTurnRecognized ? '★ Recognized' : '☆ Recognize'}</span>
+                        </button>
+
+                        {isDelegateTurnRecognized && (
+                          <div className="flex-1 min-w-[220px] flex items-center gap-2">
+                            <input
+                              type="text"
+                              placeholder="Optional private note (not mandatory)..."
+                              value={optionalNote}
+                              onChange={e => setOptionalNote(e.target.value)}
+                              className="flex-1 px-3 py-1.5 text-xs rounded-xl border bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-amber-500"
+                            />
+                            <button
+                              type="button"
+                              disabled={isSavingNote}
+                              onClick={() => handleSaveRecognitionNote(targetTurnForDelegate)}
+                              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 transition cursor-pointer"
+                            >
+                              {isSavingNote ? 'Saving...' : 'Save Note'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {/* 6 Rubric Criteria Grid Cards */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

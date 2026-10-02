@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import type {
   ScoreRecord,
   Learner,
@@ -27,7 +27,8 @@ import {
   Clock,
   ChevronRight,
   Eye,
-  Sparkles
+  Sparkles,
+  Star
 } from 'lucide-react';
 
 interface ScoreGridTabProps {
@@ -55,7 +56,7 @@ export const SCORING_CATEGORIES = [
 ] as const;
 
 export type CategoryId = (typeof SCORING_CATEGORIES)[number]['id'];
-export type ScoreGridViewMode = 'leaderboard_session' | 'leaderboard_overall' | 'matrix' | 'itemized' | 'adjustments';
+export type ScoreGridViewMode = 'leaderboard_session' | 'leaderboard_overall' | 'recognition' | 'matrix' | 'itemized' | 'adjustments';
 
 /**
  * Evaluates whether a participant is active strictly from their actual record state.
@@ -296,6 +297,115 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
     }
     return overallLeaderboardRows;
   }, [overallLeaderboardRows, isTop40Only]);
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // VIEW: Jury Recognition & Speech Impact
+  // ──────────────────────────────────────────────────────────────────────────
+  const [recogFilterTurn, setRecogFilterTurn] = useState<string>('ALL');
+  const [recogTick, setRecogTick] = useState<number>(0);
+
+  useEffect(() => {
+    const unsub = storageService.subscribe(() => setRecogTick(t => t + 1));
+    const handleRecogUpdate = () => setRecogTick(t => t + 1);
+    if (typeof window !== 'undefined') {
+      window.addEventListener('tn_assembly_jury_recognition_update', handleRecogUpdate);
+      window.addEventListener('storage', handleRecogUpdate);
+    }
+    return () => {
+      unsub();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('tn_assembly_jury_recognition_update', handleRecogUpdate);
+        window.removeEventListener('storage', handleRecogUpdate);
+      }
+    };
+  }, []);
+
+  const mostRecognizedParticipants = useMemo(() => {
+    const raw = storageService.getMostRecognizedParticipants(
+      eventId,
+      selectedSessionFilter !== 'ALL' ? selectedSessionFilter : undefined
+    );
+    return raw.filter(p => {
+      // Participant status filter
+      if (selectedParticipantStatus !== 'ALL') {
+        const learner = learnerMap.get(p.learnerId);
+        const active = isParticipantActive(learner);
+        if (selectedParticipantStatus === 'ACTIVE' && !active) return false;
+        if (selectedParticipantStatus === 'INACTIVE' && active) return false;
+      }
+      // Bench filter
+      if (selectedBenchFilter !== 'ALL' && p.bench !== selectedBenchFilter) return false;
+      // Search
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const sName = p.studentName.toLowerCase();
+        const constNum = (p.constituencyNumber ?? '').toString();
+        const constName = (p.constituencyName || '').toLowerCase();
+        const party = (p.partyName || '').toLowerCase();
+        if (!sName.includes(q) && !constNum.includes(q) && !constName.includes(q) && !party.includes(q)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [
+    eventId,
+    selectedSessionFilter,
+    selectedParticipantStatus,
+    selectedBenchFilter,
+    searchQuery,
+    learnerMap,
+    recogTick
+  ]);
+
+  const speechImpactSummaries = useMemo(() => {
+    const raw = storageService.getSpeechImpactSummaries(
+      eventId,
+      selectedSessionFilter !== 'ALL' ? selectedSessionFilter : undefined
+    );
+    return raw.filter(s => {
+      // Participant status filter
+      if (selectedParticipantStatus !== 'ALL') {
+        const learner = learnerMap.get(s.learnerId);
+        const active = isParticipantActive(learner);
+        if (selectedParticipantStatus === 'ACTIVE' && !active) return false;
+        if (selectedParticipantStatus === 'INACTIVE' && active) return false;
+      }
+      // Bench filter
+      if (selectedBenchFilter !== 'ALL' && s.bench !== selectedBenchFilter) return false;
+      // Jury filter
+      if (selectedJuryFilter !== 'ALL') {
+        const hasJury = s.jurorRecognitions.some(r => r.juryId === selectedJuryFilter || r.juryName === selectedJuryFilter);
+        if (!hasJury) return false;
+      }
+      // Turn filter
+      if (recogFilterTurn !== 'ALL' && s.speakingTurnId !== recogFilterTurn && `#${s.sequenceNumber}` !== recogFilterTurn) {
+        return false;
+      }
+      // Search
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const sName = s.studentName.toLowerCase();
+        const constNum = (s.constituencyNumber ?? '').toString();
+        const constName = (s.constituencyName || '').toLowerCase();
+        const sess = s.sessionName.toLowerCase();
+        if (!sName.includes(q) && !constNum.includes(q) && !constName.includes(q) && !sess.includes(q)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [
+    eventId,
+    selectedSessionFilter,
+    selectedParticipantStatus,
+    selectedBenchFilter,
+    selectedJuryFilter,
+    recogFilterTurn,
+    searchQuery,
+    learnerMap,
+    recogTick
+  ]);
 
   // ──────────────────────────────────────────────────────────────────────────
   // VIEW: All Score Adjustments Trail
@@ -1143,6 +1253,7 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500">
               {viewMode === 'leaderboard_session' && `${displayedSessionLeaderboardRows.length} participants`}
               {viewMode === 'leaderboard_overall' && `${displayedOverallLeaderboardRows.length} participants`}
+              {viewMode === 'recognition' && `${mostRecognizedParticipants.length} recognized participants`}
               {viewMode === 'matrix' && `${filteredScoreRecords.length} evaluations`}
               {viewMode === 'itemized' && `${filteredItemizedRows.length} rows`}
               {viewMode === 'adjustments' && `${allAdjustmentsLog.length} adjustments`}
@@ -1195,6 +1306,15 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
                 }`}
               >
                 <BarChart3 className="w-3.5 h-3.5" /> Overall Leaderboard
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('recognition')}
+                className={`px-3 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                  viewMode === 'recognition' ? 'bg-white dark:bg-slate-900 shadow-xs text-amber-600 dark:text-amber-400' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" /> Jury Recognition
               </button>
               <button
                 type="button"
@@ -1310,8 +1430,25 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
             </select>
           </div>
 
-          {/* 5. Completion Filter (or Category for Matrix) */}
-          {viewMode === 'matrix' || viewMode === 'itemized' ? (
+          {/* 5. Completion Filter (or Category for Matrix / Turn for Recognition) */}
+          {viewMode === 'recognition' ? (
+            <div>
+              <label className="block text-[10px] font-black uppercase tracking-wider mb-1 text-slate-400">
+                Speaking Turn
+              </label>
+              <select
+                value={recogFilterTurn}
+                onChange={e => setRecogFilterTurn(e.target.value)}
+                className="w-full text-xs font-bold py-2 px-3 rounded-xl border focus:outline-none cursor-pointer bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                style={{ borderColor: 'var(--border)' }}
+              >
+                <option value="ALL">All Turns</option>
+                {Array.from(new Set(speechImpactSummaries.map(s => `#${s.sequenceNumber}`))).sort().map(turnNum => (
+                  <option key={turnNum} value={turnNum}>Turn {turnNum}</option>
+                ))}
+              </select>
+            </div>
+          ) : viewMode === 'matrix' || viewMode === 'itemized' ? (
             <div>
               <label className="block text-[10px] font-black uppercase tracking-wider mb-1 text-slate-400">
                 Rubric Category
@@ -1682,6 +1819,233 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* VIEW: JURY RECOGNITION & SPEECH IMPACT */}
+      {viewMode === 'recognition' && (
+        <div className="space-y-6">
+          {/* Informational Guidance Banner */}
+          <div className="rounded-2xl p-4 border bg-amber-500/5 border-amber-500/20 flex items-start gap-3 shadow-xs">
+            <Star className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+            <div className="text-xs space-y-1">
+              <h4 className="font-black text-slate-900 dark:text-white uppercase tracking-wider">
+                Jury Recognition & Speech Impact (Informational Signal)
+              </h4>
+              <p className="text-slate-600 dark:text-slate-400">
+                Jury Recognition is a qualitative per-turn signal indicating speeches that caught jurors' attention.
+                It is completely independent and <strong>never modifies the 100-point rubric evaluation, session leaderboard, overall leaderboard, or Top 40 rankings</strong>.
+              </p>
+            </div>
+          </div>
+
+          {/* Section 1: MOST RECOGNIZED PARTICIPANTS */}
+          <div
+            className="rounded-2xl border shadow-sm overflow-hidden"
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+          >
+            <div className="p-4 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-2" style={{ borderColor: 'var(--border-soft)' }}>
+              <div className="flex items-center gap-2">
+                <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
+                <h4 className="text-xs font-black uppercase tracking-wider" style={{ color: 'var(--text-primary)' }}>
+                  Most Recognized Participants
+                </h4>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                  {mostRecognizedParticipants.length} Participants
+                </span>
+              </div>
+              <span className="text-[10px] text-slate-400 font-mono">
+                Aggregated by participant • Includes speaking turn frequency context
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead
+                  className="border-b text-[10px] uppercase font-bold tracking-wider"
+                  style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}
+                >
+                  <tr>
+                    <th className="p-3.5 pl-4 text-center w-12">#</th>
+                    <th className="p-3.5">Participant / MLA</th>
+                    <th className="p-3.5">Constituency</th>
+                    <th className="p-3.5">Bench</th>
+                    <th className="p-3.5 text-center font-black text-amber-600 dark:text-amber-400">Jury Recognitions</th>
+                    <th className="p-3.5 text-center">Speaking Turns</th>
+                    <th className="p-3.5 text-center">Jury Coverage</th>
+                    <th className="p-3.5 text-right pr-4">Recognition Rate</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y" style={{ borderColor: 'var(--border-soft)' }}>
+                  {mostRecognizedParticipants.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-12 text-center text-xs text-slate-400">
+                        No jury recognitions recorded yet for this event matching your filter criteria.
+                      </td>
+                    </tr>
+                  ) : (
+                    mostRecognizedParticipants.map((p, idx) => {
+                      const learner = learnerMap.get(p.learnerId);
+                      return (
+                        <tr key={p.learnerId} className="hover:bg-slate-500/5 transition-colors">
+                          <td className="p-3.5 pl-4 text-center font-bold font-mono text-slate-400">
+                            {idx + 1}
+                          </td>
+                          <td className="p-3.5 font-bold" style={{ color: 'var(--text-primary)' }}>
+                            <div className="flex items-center gap-1.5">
+                              <span>{p.studentName}</span>
+                              {learner?.access_code && (
+                                <span className="font-mono text-[9px] px-1 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 border border-slate-200 dark:border-slate-700">
+                                  {learner.access_code}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-3.5">
+                            <span className="font-mono font-bold text-blue-500">
+                              #{p.constituencyNumber ?? '?'}
+                            </span>{' '}
+                            <span className="text-[11px] text-slate-400 truncate">
+                              {p.constituencyName || ''}
+                            </span>
+                          </td>
+                          <td className="p-3.5">
+                            <span
+                              className="px-2 py-0.5 rounded-full text-[10px] font-bold border"
+                              style={{
+                                background: p.bench === 'Ruling' ? 'rgba(5,150,105,0.1)' : 'rgba(220,38,38,0.1)',
+                                color: p.bench === 'Ruling' ? 'var(--emerald)' : '#ef4444',
+                                borderColor: p.bench === 'Ruling' ? 'var(--emerald)' : '#ef4444'
+                              }}
+                            >
+                              {p.bench || 'Ruling'} Bench
+                            </span>
+                          </td>
+                          <td className="p-3.5 text-center font-mono font-black text-sm text-amber-500">
+                            <span className="inline-flex items-center gap-1">
+                              <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
+                              {p.recognitionCount}
+                            </span>
+                          </td>
+                          <td className="p-3.5 text-center font-mono font-bold text-slate-700 dark:text-slate-300">
+                            {p.speakingTurnCount}
+                          </td>
+                          <td className="p-3.5 text-center font-mono text-[11px] text-slate-600 dark:text-slate-400">
+                            {p.distinctJurorCount} / {p.totalJurors} Jurors
+                          </td>
+                          <td className="p-3.5 text-right font-mono font-bold pr-4 text-slate-700 dark:text-slate-300">
+                            {p.recognitionRate} <span className="text-[10px] text-slate-400 font-normal">/ turn</span>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Section 2: SPEECH IMPACT (By Individual Speaking Turn) */}
+          <div
+            className="rounded-2xl border shadow-sm overflow-hidden"
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+          >
+            <div className="p-4 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-2" style={{ borderColor: 'var(--border-soft)' }}>
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-purple-500" />
+                <h4 className="text-xs font-black uppercase tracking-wider" style={{ color: 'var(--text-primary)' }}>
+                  Speech Impact (By Individual Speaking Turn)
+                </h4>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
+                  {speechImpactSummaries.length} Speeches
+                </span>
+              </div>
+              <span className="text-[10px] text-slate-400 font-mono">
+                Answers: "Which individual speeches attracted the most jury recognition?"
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead
+                  className="border-b text-[10px] uppercase font-bold tracking-wider"
+                  style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}
+                >
+                  <tr>
+                    <th className="p-3.5 pl-4">Speaker</th>
+                    <th className="p-3.5">Session</th>
+                    <th className="p-3.5 text-center">Turn</th>
+                    <th className="p-3.5 text-center font-black text-amber-600 dark:text-amber-400">Recognitions</th>
+                    <th className="p-3.5 text-center">Jury Coverage</th>
+                    <th className="p-3.5 pr-4">Juror Signals & Notes</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y" style={{ borderColor: 'var(--border-soft)' }}>
+                  {speechImpactSummaries.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="py-12 text-center text-xs text-slate-400">
+                        No speeches matching your filter criteria.
+                      </td>
+                    </tr>
+                  ) : (
+                    speechImpactSummaries.map(s => {
+                      return (
+                        <tr key={s.speakingTurnId} className="hover:bg-slate-500/5 transition-colors">
+                          <td className="p-3.5 pl-4 font-bold" style={{ color: 'var(--text-primary)' }}>
+                            <div className="flex items-center gap-1.5">
+                              <span>{s.studentName}</span>
+                              <span className="font-mono text-[10px] text-slate-400">
+                                (#{s.constituencyNumber ?? '?'})
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-normal">
+                              {s.constituencyName || ''} • {s.partyName}
+                            </div>
+                          </td>
+                          <td className="p-3.5 font-medium text-slate-700 dark:text-slate-300">
+                            {s.sessionName}
+                          </td>
+                          <td className="p-3.5 text-center">
+                            <span className="px-2 py-0.5 rounded-md font-mono text-[10px] font-black bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                              #{s.sequenceNumber}
+                            </span>
+                          </td>
+                          <td className="p-3.5 text-center font-mono font-black text-sm text-amber-500">
+                            <span className="inline-flex items-center gap-1">
+                              <Star className={`w-3.5 h-3.5 ${s.recognitionCount > 0 ? 'fill-amber-500 text-amber-500' : 'text-slate-400'}`} />
+                              {s.recognitionCount}
+                            </span>
+                          </td>
+                          <td className="p-3.5 text-center font-mono text-[11px] text-slate-600 dark:text-slate-400">
+                            {s.distinctJurorCount} / {s.totalJurors} Jurors
+                          </td>
+                          <td className="p-3.5 pr-4">
+                            {s.jurorRecognitions.length === 0 ? (
+                              <span className="text-slate-400 italic text-[11px]">—</span>
+                            ) : (
+                              <div className="flex flex-wrap gap-1.5">
+                                {s.jurorRecognitions.map((r, rIdx) => (
+                                  <span
+                                    key={rIdx}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20 text-[10px]"
+                                    title={r.note ? `Note: "${r.note}"` : undefined}
+                                  >
+                                    <Star className="w-2.5 h-2.5 fill-current" />
+                                    <span className="font-bold">{r.juryName || 'Juror'}</span>
+                                    {r.note && <span className="italic text-slate-500">"{r.note}"</span>}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
