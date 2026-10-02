@@ -22,6 +22,7 @@ import type {
   ScoreRecord,
   ScoringSession,
   JuryEvaluation,
+  JuryEvaluationDraft,
   JuryEvaluationTurn,
   JuryEvaluationAdjustment,
   SessionLeaderboardRow,
@@ -15495,6 +15496,33 @@ class StorageService {
     return aggMap;
   }
 
+  // ── JURY EVALUATION DRAFT ENGINE (Strict UI isolation, 0 DB writes) ──
+  public getJuryDraft(eventId: string, sessionId: string, juryId: string, learnerId: string): JuryEvaluationDraft | null {
+    if (!eventId || !sessionId || !juryId || !learnerId) return null;
+    const agendaItems = this.getAgenda(eventId);
+    const resolved = resolveCanonicalSession(sessionId, undefined, agendaItems);
+    const key = `tn_assembly_jury_draft_${eventId}_${resolved.canonicalId}_${juryId}_${learnerId}`;
+    return this.getItem<JuryEvaluationDraft | null>(key, null);
+  }
+
+  public saveJuryDraft(eventId: string, sessionId: string, juryId: string, learnerId: string, draft: JuryEvaluationDraft): void {
+    if (!eventId || !sessionId || !juryId || !learnerId) return;
+    const agendaItems = this.getAgenda(eventId);
+    const resolved = resolveCanonicalSession(sessionId, undefined, agendaItems);
+    const key = `tn_assembly_jury_draft_${eventId}_${resolved.canonicalId}_${juryId}_${learnerId}`;
+    this.setItem(key, draft);
+  }
+
+  public clearJuryDraft(eventId: string, sessionId: string, juryId: string, learnerId: string): void {
+    if (!eventId || !sessionId || !juryId || !learnerId) return;
+    const agendaItems = this.getAgenda(eventId);
+    const resolved = resolveCanonicalSession(sessionId, undefined, agendaItems);
+    const key = `tn_assembly_jury_draft_${eventId}_${resolved.canonicalId}_${juryId}_${learnerId}`;
+    if (typeof localStorage !== 'undefined') {
+      try { localStorage.removeItem(key); } catch {}
+    }
+  }
+
   // ── MULTI-SPEAKING-TURN JURY EVALUATION ENGINE ──
 
   public recordInitialEvaluation(params: {
@@ -15519,21 +15547,47 @@ class StorageService {
     feedback?: string;
     isTest?: boolean;
   }): JuryEvaluation {
-    if (!params.learnerId) throw new Error('Learner ID is required for initial evaluation');
     if (!params.eventId) throw new Error('Event ID is required for initial evaluation');
+    if (!params.sessionId) throw new Error('Session ID is required for initial evaluation');
     if (!params.juryId) throw new Error('Jury ID is required for initial evaluation');
+    if (!params.learnerId) throw new Error('Learner ID is required for initial evaluation');
+
+    // Strict completion check: all six categories must be intentionally provided valid numbers
+    const isNum = (v: any) => typeof v === 'number' && !isNaN(v);
+    if (
+      !isNum(params.research_constituency) ||
+      !isNum(params.relevance_agenda) ||
+      !isNum(params.communication_delivery) ||
+      !isNum(params.parliamentary_conduct) ||
+      !isNum(params.originality_preparation) ||
+      !isNum(params.time_management)
+    ) {
+      throw new Error('INCOMPLETE_EVALUATION: All six scoring categories must be completed before official submission.');
+    }
+
+    // Range validation
+    if (
+      params.research_constituency < 0 || params.research_constituency > 30 ||
+      params.relevance_agenda < 0 || params.relevance_agenda > 20 ||
+      params.communication_delivery < 0 || params.communication_delivery > 20 ||
+      params.parliamentary_conduct < 0 || params.parliamentary_conduct > 12 ||
+      params.originality_preparation < 0 || params.originality_preparation > 12 ||
+      params.time_management < 0 || params.time_management > 6
+    ) {
+      throw new Error('INVALID_SCORE_RANGE: Rubric category score out of bounds.');
+    }
 
     const agendaItems = this.getAgenda(params.eventId);
     const resolvedSession = resolveCanonicalSession(params.sessionId, params.sessionName, agendaItems);
     const canonicalSessionId = resolvedSession.canonicalId;
     const canonicalSessionName = params.sessionName || resolvedSession.displayName;
 
-    const r = Math.max(0, Math.min(30, Number(params.research_constituency || 0)));
-    const rel = Math.max(0, Math.min(20, Number(params.relevance_agenda || 0)));
-    const comm = Math.max(0, Math.min(20, Number(params.communication_delivery || 0)));
-    const cond = Math.max(0, Math.min(12, Number(params.parliamentary_conduct || 0)));
-    const orig = Math.max(0, Math.min(12, Number(params.originality_preparation || 0)));
-    const time = Math.max(0, Math.min(6, Number(params.time_management || 0)));
+    const r = params.research_constituency;
+    const rel = params.relevance_agenda;
+    const comm = params.communication_delivery;
+    const cond = params.parliamentary_conduct;
+    const orig = params.originality_preparation;
+    const time = params.time_management;
     const total = r + rel + comm + cond + orig + time;
 
     const allEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
@@ -15546,6 +15600,11 @@ class StorageService {
 
     if (existing) {
       return existing;
+    }
+
+    const existingBridged = this.getJuryEvaluations(params.eventId, canonicalSessionId, params.juryId, params.learnerId)[0];
+    if (existingBridged) {
+      return existingBridged;
     }
 
     const now = new Date().toISOString();

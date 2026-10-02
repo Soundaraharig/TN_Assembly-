@@ -506,6 +506,17 @@ export interface JuryEvaluationAdjustment {
   adjusted_at: string;
 }
 
+export interface JuryEvaluationDraft {
+  research: number | null;
+  relevance: number | null;
+  comm: number | null;
+  conduct: number | null;
+  originality: number | null;
+  time: number | null;
+  feedback?: string;
+  updatedAt: string;
+}
+
 export interface JuryEvaluation {
   id: string;
   event_id: string;

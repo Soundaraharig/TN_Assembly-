@@ -22,7 +22,9 @@ import {
   Edit3,
   CheckCircle2,
   Star,
-  Mic
+  Mic,
+  ClipboardList,
+  AlertCircle
 } from 'lucide-react';
 import type { JuryMember, Learner, ScoreRecord, CollegeEvent, AgendaItem, ScoringSession, JuryEvaluation, SpeakingTurn } from '../../types';
 import { useTheme } from '../../lib/theme';
@@ -84,17 +86,18 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     setLoadedKey(''); // Force reload for current delegate under new session
   };
 
-  // 6 Rubric Scores State
-  const [researchScore, setResearchScore] = useState<number>(2);
-  const [relevanceScore, setRelevanceScore] = useState<number>(2);
-  const [commScore, setCommScore] = useState<number>(2);
-  const [conductScore, setConductScore] = useState<number>(1);
-  const [originalityScore, setOriginalityScore] = useState<number>(1);
-  const [timeScore, setTimeScore] = useState<number>(1);
+  // 6 Rubric Scores State (Strict Turn-1 Draft Model: null = unanswered, 0..N = answered)
+  const [researchScore, setResearchScore] = useState<number | null>(null);
+  const [relevanceScore, setRelevanceScore] = useState<number | null>(null);
+  const [commScore, setCommScore] = useState<number | null>(null);
+  const [conductScore, setConductScore] = useState<number | null>(null);
+  const [originalityScore, setOriginalityScore] = useState<number | null>(null);
+  const [timeScore, setTimeScore] = useState<number | null>(null);
 
   const [feedback, setFeedback] = useState<string>('');
   const [isLocked, setIsLocked] = useState<boolean>(false);
   const [isSavedRecently, setIsSavedRecently] = useState(false);
+  const [isSubmittingEvaluation, setIsSubmittingEvaluation] = useState(false);
 
   // Multi-Turn Adjustment Modal State
   const [isAdjustmentModalOpen, setIsAdjustmentModalOpen] = useState<boolean>(false);
@@ -310,133 +313,152 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
 
   const [loadedKey, setLoadedKey] = useState<string>('');
 
-  // Load existing score when selected learner OR selected session changes
+  // Load existing score or draft when selected learner OR selected session changes
   useEffect(() => {
     if (!selectedLearnerId || !selectedSession) return;
     const currentKey = `${selectedLearnerId}:::${selectedSession.id}`;
     if (loadedKey === currentKey) return;
 
+    // Check if an official evaluation or score already exists
     const existing = scores.find(s =>
       s.learner_id === selectedLearnerId &&
       (!event || !s.event_id || s.event_id === event.id) &&
       (s.session_id === selectedSession.id || s.session_name === selectedSession.name) &&
       ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))
     );
+
     if (existing) {
-      setResearchScore(existing.research_constituency ?? existing.policy_knowledge ?? 2);
-      setRelevanceScore(existing.relevance_agenda ?? existing.rebuttal_debate ?? 2);
-      setCommScore(existing.communication_delivery ?? existing.oratory ?? 2);
-      setConductScore(existing.parliamentary_conduct ?? 1);
-      setOriginalityScore(existing.originality_preparation ?? 1);
-      setTimeScore(existing.time_management ?? 1);
+      setResearchScore(existing.research_constituency ?? existing.policy_knowledge ?? null);
+      setRelevanceScore(existing.relevance_agenda ?? existing.rebuttal_debate ?? null);
+      setCommScore(existing.communication_delivery ?? existing.oratory ?? null);
+      setConductScore(existing.parliamentary_conduct ?? null);
+      setOriginalityScore(existing.originality_preparation ?? null);
+      setTimeScore(existing.time_management ?? null);
       setIsLocked(existing.is_locked ?? false);
       setFeedback(existing.feedback || '');
     } else {
-      // Default baseline values (matching 2 + 2 + 2 + 1 + 1 + 1 = 9 total baseline)
-      setResearchScore(2);
-      setRelevanceScore(2);
-      setCommScore(2);
-      setConductScore(1);
-      setOriginalityScore(1);
-      setTimeScore(1);
-      setIsLocked(false);
-      setFeedback('');
+      // Check if a local temporary draft exists (never saved to database or official evaluations)
+      const draft = event?.id && (jury?.id || jury?.name)
+        ? storageService.getJuryDraft(event.id, selectedSession.id, jury.id || jury.name || 'jury', selectedLearnerId)
+        : null;
+
+      if (draft) {
+        setResearchScore(draft.research ?? null);
+        setRelevanceScore(draft.relevance ?? null);
+        setCommScore(draft.comm ?? null);
+        setConductScore(draft.conduct ?? null);
+        setOriginalityScore(draft.originality ?? null);
+        setTimeScore(draft.time ?? null);
+        setIsLocked(false);
+        setFeedback(draft.feedback || '');
+      } else {
+        // Strict Turn-1 Draft Model: Unanswered categories default to null (NOT zero)
+        setResearchScore(null);
+        setRelevanceScore(null);
+        setCommScore(null);
+        setConductScore(null);
+        setOriginalityScore(null);
+        setTimeScore(null);
+        setIsLocked(false);
+        setFeedback('');
+      }
     }
     setLoadedKey(currentKey);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedLearnerId, selectedSession.id, scores]);
+  }, [selectedLearnerId, selectedSession.id, scores, event?.id, jury]);
 
-  const totalScore = researchScore + relevanceScore + commScore + conductScore + originalityScore + timeScore;
+  // Explicit completion check: distinguish UNANSWERED (null) vs ANSWERED (number, including legitimate 0)
+  const isCategoryAnswered = (val: number | null): val is number => typeof val === 'number' && !isNaN(val);
 
-  // Persist score record immediately to storage & Supabase
-  const persistScoreRecord = (overrides?: {
-    research?: number;
-    relevance?: number;
-    comm?: number;
-    conduct?: number;
-    originality?: number;
-    time?: number;
-    feedbackStr?: string;
-    lockedBool?: boolean;
-  }) => {
-    if (!selectedLearner) return;
+  const answeredCategoriesCount = [
+    isCategoryAnswered(researchScore),
+    isCategoryAnswered(relevanceScore),
+    isCategoryAnswered(commScore),
+    isCategoryAnswered(conductScore),
+    isCategoryAnswered(originalityScore),
+    isCategoryAnswered(timeScore)
+  ].filter(Boolean).length;
 
-    const rScore = overrides?.research ?? researchScore;
-    const relScore = overrides?.relevance ?? relevanceScore;
-    const cScore = overrides?.comm ?? commScore;
-    const condScore = overrides?.conduct ?? conductScore;
-    const origScore = overrides?.originality ?? originalityScore;
-    const tScore = overrides?.time ?? timeScore;
-    const fb = overrides?.feedbackStr !== undefined ? overrides.feedbackStr : feedback;
-    const lk = overrides?.lockedBool !== undefined ? overrides.lockedBool : isLocked;
+  const isEvaluationComplete = answeredCategoriesCount === 6;
 
-    const currentTotal = rScore + relScore + cScore + condScore + origScore + tScore;
+  const totalScore = (researchScore ?? 0) +
+    (relevanceScore ?? 0) +
+    (commScore ?? 0) +
+    (conductScore ?? 0) +
+    (originalityScore ?? 0) +
+    (timeScore ?? 0);
 
-    const existing = scores.find(s =>
-      s.learner_id === selectedLearner.id &&
-      (!event || !s.event_id || s.event_id === event.id) &&
-      (s.session_id === selectedSession.id || s.session_name === selectedSession.name) &&
-      ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))
-    );
-    const record: ScoreRecord = {
-      id: existing?.id || `score_${selectedLearner.id}_${selectedSession.id}_${jury?.id || 'jury'}_${Date.now()}`,
-      event_id: event?.id || selectedLearner.event_id || '',
-      session_id: selectedSession.id,
-      session_name: selectedSession.name,
-      learner_id: selectedLearner.id,
-      learner_name: selectedLearner.full_name,
-      constituency_number: selectedLearner.constituency_number,
-      constituency_name: selectedLearner.constituency_name,
-      party_name: selectedLearner.party_name || 'Independent',
-      bench: selectedLearner.bench || 'Ruling',
-      jury_id: jury?.id,
-      
-      // 6 Rubric Breakdown (Exact 100 Total)
-      research_constituency: rScore,
-      relevance_agenda: relScore,
-      communication_delivery: cScore,
-      parliamentary_conduct: condScore,
-      originality_preparation: origScore,
-      time_management: tScore,
-
-      // Legacy fallback fields for backwards compatibility
-      oratory: cScore,
-      policy_knowledge: rScore,
-      rebuttal_debate: relScore,
-
-      total: currentTotal,
-      feedback: fb.trim(),
-      juror_name: jury?.name || 'Evaluator',
-      is_locked: lk,
-      created_at: existing?.created_at || new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-
-    onSaveScore(record);
-    setIsSavedRecently(true);
-    setTimeout(() => setIsSavedRecently(false), 2000);
-  };
-
+  // Category selection is a UI-only operation that updates local draft state (0 DB / Supabase writes)
   const handleSelectScore = (type: 'research' | 'relevance' | 'comm' | 'conduct' | 'originality' | 'time', val: number) => {
     if (isLocked) return;
+
+    let newR = researchScore;
+    let newRel = relevanceScore;
+    let newC = commScore;
+    let newCond = conductScore;
+    let newOrig = originalityScore;
+    let newT = timeScore;
+
     if (type === 'research') {
+      newR = val;
       setResearchScore(val);
-      persistScoreRecord({ research: val });
     } else if (type === 'relevance') {
+      newRel = val;
       setRelevanceScore(val);
-      persistScoreRecord({ relevance: val });
     } else if (type === 'comm') {
+      newC = val;
       setCommScore(val);
-      persistScoreRecord({ comm: val });
     } else if (type === 'conduct') {
+      newCond = val;
       setConductScore(val);
-      persistScoreRecord({ conduct: val });
     } else if (type === 'originality') {
+      newOrig = val;
       setOriginalityScore(val);
-      persistScoreRecord({ originality: val });
     } else if (type === 'time') {
+      newT = val;
       setTimeScore(val);
-      persistScoreRecord({ time: val });
+    }
+
+    // Persist draft in localStorage only for crash/tab survival; NEVER writes to official evaluations or Supabase
+    if (event?.id && selectedLearner?.id && (jury?.id || jury?.name)) {
+      storageService.saveJuryDraft(
+        event.id,
+        selectedSession.id,
+        jury.id || jury.name || 'jury',
+        selectedLearner.id,
+        {
+          research: newR,
+          relevance: newRel,
+          comm: newC,
+          conduct: newCond,
+          originality: newOrig,
+          time: newT,
+          feedback: feedback,
+          updatedAt: new Date().toISOString()
+        }
+      );
+    }
+  };
+
+  const handleFeedbackChange = (val: string) => {
+    setFeedback(val);
+    if (event?.id && selectedLearner?.id && (jury?.id || jury?.name)) {
+      storageService.saveJuryDraft(
+        event.id,
+        selectedSession.id,
+        jury.id || jury.name || 'jury',
+        selectedLearner.id,
+        {
+          research: researchScore,
+          relevance: relevanceScore,
+          comm: commScore,
+          conduct: conductScore,
+          originality: originalityScore,
+          time: timeScore,
+          feedback: val,
+          updatedAt: new Date().toISOString()
+        }
+      );
     }
   };
 
@@ -552,34 +574,92 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
 
   const handleSaveEvaluation = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedLearner || !event?.id) return;
-    const activeTurn = delegateSpeakingTurns.find(t => t.status === 'SPEAKING' || t.status === 'SPOKEN') || delegateSpeakingTurns[0];
-    const turnId = activeTurn?.id || `turn_init_${selectedLearner.id}_${Date.now()}`;
+    if (!selectedLearner || !event?.id || isSubmittingEvaluation) return;
 
-    storageService.recordInitialEvaluation({
-      eventId: event.id,
-      sessionId: selectedSession.id,
-      sessionName: selectedSession.name,
-      learnerId: selectedLearner.id,
-      learnerName: selectedLearner.full_name,
-      constituencyNumber: selectedLearner.constituency_number,
-      constituencyName: selectedLearner.constituency_name,
-      partyName: selectedLearner.party_name,
-      bench: selectedLearner.bench,
-      juryId: jury?.id || jury?.name || 'jury',
-      juryName: jury?.name || 'Evaluator',
-      research_constituency: researchScore,
-      relevance_agenda: relevanceScore,
-      communication_delivery: commScore,
-      parliamentary_conduct: conductScore,
-      originality_preparation: originalityScore,
-      time_management: timeScore,
-      speakingTurnId: turnId,
-      feedback: feedback
-    });
+    if (!isEvaluationComplete) {
+      onShowToast(
+        'Incomplete Evaluation',
+        `Please complete all 6 scoring categories (${6 - answeredCategoriesCount} remaining) before submitting.`,
+        'error'
+      );
+      return;
+    }
 
-    persistScoreRecord();
-    onShowToast('Initial Evaluation Saved', `Recorded Turn 1 evaluation (${totalScore}/100) for ${selectedLearner.full_name}`, 'success');
+    setIsSubmittingEvaluation(true);
+    try {
+      const activeTurn = delegateSpeakingTurns.find(t => t.status === 'SPEAKING' || t.status === 'SPOKEN') || delegateSpeakingTurns[0];
+      const turnId = activeTurn?.id || `turn_init_${selectedLearner.id}_${Date.now()}`;
+
+      const savedEval = storageService.recordInitialEvaluation({
+        eventId: event.id,
+        sessionId: selectedSession.id,
+        sessionName: selectedSession.name,
+        learnerId: selectedLearner.id,
+        learnerName: selectedLearner.full_name,
+        constituencyNumber: selectedLearner.constituency_number,
+        constituencyName: selectedLearner.constituency_name,
+        partyName: selectedLearner.party_name,
+        bench: selectedLearner.bench,
+        juryId: jury?.id || jury?.name || 'jury',
+        juryName: jury?.name || 'Evaluator',
+        research_constituency: researchScore!,
+        relevance_agenda: relevanceScore!,
+        communication_delivery: commScore!,
+        parliamentary_conduct: conductScore!,
+        originality_preparation: originalityScore!,
+        time_management: timeScore!,
+        speakingTurnId: turnId,
+        feedback: feedback
+      });
+
+      // Clear local draft now that official evaluation is submitted
+      storageService.clearJuryDraft(
+        event.id,
+        selectedSession.id,
+        jury?.id || jury?.name || 'jury',
+        selectedLearner.id
+      );
+
+      // Notify parent if onSaveScore is passed to refresh scores state
+      if (onSaveScore) {
+        onSaveScore({
+          id: savedEval.id,
+          event_id: savedEval.event_id,
+          session_id: savedEval.session_id,
+          session_name: savedEval.session_name,
+          learner_id: savedEval.learner_id,
+          learner_name: savedEval.learner_name,
+          constituency_number: savedEval.constituency_number,
+          constituency_name: savedEval.constituency_name,
+          party_name: savedEval.party_name,
+          bench: savedEval.bench,
+          jury_id: savedEval.jury_id,
+          juror_name: savedEval.jury_name,
+          research_constituency: savedEval.research_constituency,
+          relevance_agenda: savedEval.relevance_agenda,
+          communication_delivery: savedEval.communication_delivery,
+          parliamentary_conduct: savedEval.parliamentary_conduct,
+          originality_preparation: savedEval.originality_preparation,
+          time_management: savedEval.time_management,
+          oratory: savedEval.communication_delivery,
+          policy_knowledge: savedEval.research_constituency,
+          rebuttal_debate: savedEval.relevance_agenda,
+          total: savedEval.total,
+          feedback: savedEval.feedback || '',
+          is_locked: false,
+          created_at: savedEval.created_at,
+          updated_at: savedEval.updated_at
+        });
+      }
+
+      setIsSavedRecently(true);
+      setTimeout(() => setIsSavedRecently(false), 2000);
+      onShowToast('Official Evaluation Submitted', `Recorded official Turn 1 evaluation (${savedEval.total}/100) for ${selectedLearner.full_name}`, 'success');
+    } catch (err: any) {
+      onShowToast('Submission Failed', err.message || 'Error submitting evaluation.', 'error');
+    } finally {
+      setIsSubmittingEvaluation(false);
+    }
   };
 
   const filteredLearners = useMemo(() => {
@@ -1412,11 +1492,11 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                         <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
                           Total Score
                         </p>
-                        <p className="text-2xl font-black" style={{ color: 'var(--amber)' }}>
+                        <p className="text-2xl font-black" style={{ color: isEvaluationComplete ? 'var(--amber)' : 'var(--text-muted)' }}>
                           {totalScore} <span className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>/ 100</span>
                         </p>
-                        <p className="text-[10px] font-bold" style={{ color: grade.color }}>
-                          {grade.label}
+                        <p className="text-[10px] font-bold" style={{ color: isEvaluationComplete ? grade.color : '#f59e0b' }}>
+                          {isEvaluationComplete ? grade.label : `Draft (${answeredCategoriesCount}/6 completed)`}
                         </p>
                       </div>
                     </div>
@@ -1484,9 +1564,16 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     {/* Card 1: Research & Constituency Understanding (Max 30) */}
                     <div className="p-4 rounded-xl border space-y-3 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-sm">
                       <div className="flex justify-between items-center text-xs font-extrabold text-slate-800 dark:text-slate-100">
-                        <span>Research & Constituency Understanding</span>
+                        <span className="flex items-center gap-1.5">
+                          Research & Constituency Understanding
+                          {researchScore !== null ? (
+                            <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">Selected</span>
+                          ) : (
+                            <span className="text-[10px] font-bold text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">Unanswered</span>
+                          )}
+                        </span>
                         <span className="font-mono text-sm">
-                          <strong className="text-blue-600 dark:text-blue-400">{researchScore}</strong>
+                          <strong className="text-blue-600 dark:text-blue-400">{researchScore !== null ? researchScore : '—'}</strong>
                           <span className="text-slate-400 text-xs">/30</span>
                         </span>
                       </div>
@@ -1495,7 +1582,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
                         <div
                           className="bg-blue-600 dark:bg-blue-500 h-full rounded-full transition-all duration-300"
-                          style={{ width: `${(researchScore / 30) * 100}%` }}
+                          style={{ width: `${researchScore !== null ? (researchScore / 30) * 100 : 0}%` }}
                         />
                       </div>
 
@@ -1522,9 +1609,16 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     {/* Card 2: Relevance to Central Agenda (Max 20) */}
                     <div className="p-4 rounded-xl border space-y-3 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-sm">
                       <div className="flex justify-between items-center text-xs font-extrabold text-slate-800 dark:text-slate-100">
-                        <span>Relevance to Central Agenda</span>
+                        <span className="flex items-center gap-1.5">
+                          Relevance to Central Agenda
+                          {relevanceScore !== null ? (
+                            <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">Selected</span>
+                          ) : (
+                            <span className="text-[10px] font-bold text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">Unanswered</span>
+                          )}
+                        </span>
                         <span className="font-mono text-sm">
-                          <strong className="text-blue-600 dark:text-blue-400">{relevanceScore}</strong>
+                          <strong className="text-blue-600 dark:text-blue-400">{relevanceScore !== null ? relevanceScore : '—'}</strong>
                           <span className="text-slate-400 text-xs">/20</span>
                         </span>
                       </div>
@@ -1533,7 +1627,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
                         <div
                           className="bg-blue-600 dark:bg-blue-500 h-full rounded-full transition-all duration-300"
-                          style={{ width: `${(relevanceScore / 20) * 100}%` }}
+                          style={{ width: `${relevanceScore !== null ? (relevanceScore / 20) * 100 : 0}%` }}
                         />
                       </div>
 
@@ -1560,9 +1654,16 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     {/* Card 3: Communication & Delivery (Max 20) */}
                     <div className="p-4 rounded-xl border space-y-3 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-sm">
                       <div className="flex justify-between items-center text-xs font-extrabold text-slate-800 dark:text-slate-100">
-                        <span>Communication & Delivery</span>
+                        <span className="flex items-center gap-1.5">
+                          Communication & Delivery
+                          {commScore !== null ? (
+                            <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">Selected</span>
+                          ) : (
+                            <span className="text-[10px] font-bold text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">Unanswered</span>
+                          )}
+                        </span>
                         <span className="font-mono text-sm">
-                          <strong className="text-blue-600 dark:text-blue-400">{commScore}</strong>
+                          <strong className="text-blue-600 dark:text-blue-400">{commScore !== null ? commScore : '—'}</strong>
                           <span className="text-slate-400 text-xs">/20</span>
                         </span>
                       </div>
@@ -1571,7 +1672,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
                         <div
                           className="bg-blue-600 dark:bg-blue-500 h-full rounded-full transition-all duration-300"
-                          style={{ width: `${(commScore / 20) * 100}%` }}
+                          style={{ width: `${commScore !== null ? (commScore / 20) * 100 : 0}%` }}
                         />
                       </div>
 
@@ -1598,9 +1699,16 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     {/* Card 4: Parliamentary Conduct (Max 12) */}
                     <div className="p-4 rounded-xl border space-y-3 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-sm">
                       <div className="flex justify-between items-center text-xs font-extrabold text-slate-800 dark:text-slate-100">
-                        <span>Parliamentary Conduct</span>
+                        <span className="flex items-center gap-1.5">
+                          Parliamentary Conduct
+                          {conductScore !== null ? (
+                            <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">Selected</span>
+                          ) : (
+                            <span className="text-[10px] font-bold text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">Unanswered</span>
+                          )}
+                        </span>
                         <span className="font-mono text-sm">
-                          <strong className="text-blue-600 dark:text-blue-400">{conductScore}</strong>
+                          <strong className="text-blue-600 dark:text-blue-400">{conductScore !== null ? conductScore : '—'}</strong>
                           <span className="text-slate-400 text-xs">/12</span>
                         </span>
                       </div>
@@ -1609,7 +1717,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
                         <div
                           className="bg-blue-600 dark:bg-blue-500 h-full rounded-full transition-all duration-300"
-                          style={{ width: `${(conductScore / 12) * 100}%` }}
+                          style={{ width: `${conductScore !== null ? (conductScore / 12) * 100 : 0}%` }}
                         />
                       </div>
 
@@ -1636,9 +1744,16 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     {/* Card 5: Originality & Preparation (Max 12) */}
                     <div className="p-4 rounded-xl border space-y-3 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-sm">
                       <div className="flex justify-between items-center text-xs font-extrabold text-slate-800 dark:text-slate-100">
-                        <span>Originality & Preparation</span>
+                        <span className="flex items-center gap-1.5">
+                          Originality & Preparation
+                          {originalityScore !== null ? (
+                            <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">Selected</span>
+                          ) : (
+                            <span className="text-[10px] font-bold text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">Unanswered</span>
+                          )}
+                        </span>
                         <span className="font-mono text-sm">
-                          <strong className="text-blue-600 dark:text-blue-400">{originalityScore}</strong>
+                          <strong className="text-blue-600 dark:text-blue-400">{originalityScore !== null ? originalityScore : '—'}</strong>
                           <span className="text-slate-400 text-xs">/12</span>
                         </span>
                       </div>
@@ -1647,7 +1762,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
                         <div
                           className="bg-blue-600 dark:bg-blue-500 h-full rounded-full transition-all duration-300"
-                          style={{ width: `${(originalityScore / 12) * 100}%` }}
+                          style={{ width: `${originalityScore !== null ? (originalityScore / 12) * 100 : 0}%` }}
                         />
                       </div>
 
@@ -1674,9 +1789,16 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     {/* Card 6: Time Management (Max 6) */}
                     <div className="p-4 rounded-xl border space-y-3 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-sm">
                       <div className="flex justify-between items-center text-xs font-extrabold text-slate-800 dark:text-slate-100">
-                        <span>Time Management</span>
+                        <span className="flex items-center gap-1.5">
+                          Time Management
+                          {timeScore !== null ? (
+                            <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">Selected</span>
+                          ) : (
+                            <span className="text-[10px] font-bold text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">Unanswered</span>
+                          )}
+                        </span>
                         <span className="font-mono text-sm">
-                          <strong className="text-blue-600 dark:text-blue-400">{timeScore}</strong>
+                          <strong className="text-blue-600 dark:text-blue-400">{timeScore !== null ? timeScore : '—'}</strong>
                           <span className="text-slate-400 text-xs">/6</span>
                         </span>
                       </div>
@@ -1685,7 +1807,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
                         <div
                           className="bg-blue-600 dark:bg-blue-500 h-full rounded-full transition-all duration-300"
-                          style={{ width: `${(timeScore / 6) * 100}%` }}
+                          style={{ width: `${timeScore !== null ? (timeScore / 6) * 100 : 0}%` }}
                         />
                       </div>
 
@@ -1737,10 +1859,83 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       rows={3}
                       value={feedback}
                       disabled={isLocked}
-                      onChange={e => setFeedback(e.target.value)}
+                      onChange={e => handleFeedbackChange(e.target.value)}
                       placeholder="Enter specific commendations, points of order, or areas of development..."
                       className="input-theme w-full p-3 text-xs leading-relaxed"
                     />
+                  </div>
+
+                  {/* Evaluation Summary Card */}
+                  <div className="rounded-xl border p-4 space-y-3 bg-slate-50/80 dark:bg-slate-900/60 border-slate-200 dark:border-slate-800">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
+                      <div className="flex items-center gap-2">
+                        <ClipboardList className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                        <h4 className="text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-100">
+                          Evaluation Summary
+                        </h4>
+                      </div>
+                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                        isEvaluationComplete
+                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                          : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+                      }`}>
+                        {isEvaluationComplete ? 'READY TO SUBMIT' : `DRAFT — NOT SUBMITTED (${answeredCategoriesCount}/6)`}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 text-xs">
+                      <div className="p-2.5 rounded-lg bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/60">
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400 block truncate">Research & Constituency</span>
+                        <span className="font-mono font-bold text-slate-800 dark:text-slate-100">
+                          {researchScore !== null ? `${researchScore}/30` : <span className="text-amber-500 font-normal">Pending</span>}
+                        </span>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/60">
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400 block truncate">Relevance to Central Agenda</span>
+                        <span className="font-mono font-bold text-slate-800 dark:text-slate-100">
+                          {relevanceScore !== null ? `${relevanceScore}/20` : <span className="text-amber-500 font-normal">Pending</span>}
+                        </span>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/60">
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400 block truncate">Communication & Delivery</span>
+                        <span className="font-mono font-bold text-slate-800 dark:text-slate-100">
+                          {commScore !== null ? `${commScore}/20` : <span className="text-amber-500 font-normal">Pending</span>}
+                        </span>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/60">
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400 block truncate">Parliamentary Conduct</span>
+                        <span className="font-mono font-bold text-slate-800 dark:text-slate-100">
+                          {conductScore !== null ? `${conductScore}/12` : <span className="text-amber-500 font-normal">Pending</span>}
+                        </span>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/60">
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400 block truncate">Originality & Preparation</span>
+                        <span className="font-mono font-bold text-slate-800 dark:text-slate-100">
+                          {originalityScore !== null ? `${originalityScore}/12` : <span className="text-amber-500 font-normal">Pending</span>}
+                        </span>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/60">
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400 block truncate">Time Management</span>
+                        <span className="font-mono font-bold text-slate-800 dark:text-slate-100">
+                          {timeScore !== null ? `${timeScore}/6` : <span className="text-amber-500 font-normal">Pending</span>}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-800">
+                      <div>
+                        <span className="text-[10px] font-black uppercase text-slate-500">TOTAL SCORE</span>
+                        <p className="text-xl font-black font-mono text-slate-900 dark:text-white">
+                          {isEvaluationComplete ? `${totalScore} / 100` : `${totalScore} / 100 (Incomplete)`}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[10px] font-bold uppercase text-slate-400">Status</span>
+                        <p className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                          {isEvaluationComplete ? 'Ready to Submit' : 'DRAFT — NOT SUBMITTED'}
+                        </p>
+                      </div>
+                    </div>
                   </div>
 
                   {/* Form Submission Actions */}
@@ -1760,7 +1955,14 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       </button>
                     </div>
 
-                    <div className="flex items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-3">
+                      {!isEvaluationComplete && (
+                        <span className="text-xs font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                          <AlertCircle className="w-4 h-4 shrink-0" />
+                          Complete all 6 categories ({6 - answeredCategoriesCount} remaining)
+                        </span>
+                      )}
+
                       {isSavedRecently && (
                         <span className="text-xs font-bold flex items-center gap-1.5" style={{ color: 'var(--emerald)' }}>
                           <CheckCircle className="w-4 h-4" /> Score Saved!
@@ -1769,10 +1971,10 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
 
                       <button
                         type="submit"
-                        disabled={isLocked}
-                        className="btn-primary px-6 py-2.5 text-xs font-bold shadow-md cursor-pointer hover:scale-102 transition-transform disabled:opacity-50"
+                        disabled={isLocked || !isEvaluationComplete || isSubmittingEvaluation}
+                        className="btn-primary px-6 py-2.5 text-xs font-bold shadow-md cursor-pointer hover:scale-102 transition-transform disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
                       >
-                        <Save className="w-4 h-4" /> Save Initial Evaluation (Turn 1)
+                        <Save className="w-4 h-4" /> {isSubmittingEvaluation ? 'Submitting...' : 'SUBMIT FULL EVALUATION'}
                       </button>
                     </div>
                   </div>
