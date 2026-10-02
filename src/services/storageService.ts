@@ -264,7 +264,9 @@ const STORAGE_KEYS = {
   JURY_EVALUATIONS: 'tn_assembly_jury_evaluations_v1',
   JURY_EVALUATION_TURNS: 'tn_assembly_jury_evaluation_turns_v1',
   JURY_EVALUATION_ADJUSTMENTS: 'tn_assembly_jury_evaluation_adjustments_v1',
-  JURY_SPEECH_RECOGNITIONS: 'tn_assembly_jury_speech_recognitions_v1'
+  JURY_SPEECH_RECOGNITIONS: 'tn_assembly_jury_speech_recognitions_v1',
+  JURY_TEST_MODE: 'tn_assembly_jury_test_mode_v1',
+  CURRENT_TEST_RUN_ID: 'tn_assembly_current_test_run_id_v1'
 };
 
 export const SUPABASE_COLUMNS: Record<string, string> = {
@@ -15546,6 +15548,7 @@ class StorageService {
     speakingTurnId?: string;
     feedback?: string;
     isTest?: boolean;
+    testRunId?: string;
   }): JuryEvaluation {
     if (!params.eventId) throw new Error('Event ID is required for initial evaluation');
     if (!params.sessionId) throw new Error('Session ID is required for initial evaluation');
@@ -15607,6 +15610,10 @@ class StorageService {
       return existingBridged;
     }
 
+    const testMode = this.getScoringTestMode(params.eventId);
+    const isTest = params.isTest !== undefined ? !!params.isTest : testMode.isTestMode;
+    const testRunId = params.testRunId !== undefined ? params.testRunId : (isTest ? (testMode.testRunId || uid('test_run')) : undefined);
+
     const now = new Date().toISOString();
     const evalId = uid('eval');
     const newEval: JuryEvaluation = {
@@ -15632,7 +15639,8 @@ class StorageService {
       feedback: (params.feedback || '').trim(),
       initial_speaking_turn_id: params.speakingTurnId,
       status: 'ACTIVE',
-      is_test: !!params.isTest,
+      is_test: isTest,
+      test_run_id: testRunId,
       created_at: now,
       updated_at: now,
       turns: [],
@@ -15648,6 +15656,8 @@ class StorageService {
         action_type: 'INITIAL_EVALUATION',
         recorded_by: params.juryId,
         recorded_by_name: params.juryName,
+        is_test: isTest,
+        test_run_id: testRunId,
         created_at: now
       };
       newEval.turns = [turnRecord];
@@ -15681,6 +15691,7 @@ class StorageService {
       total,
       feedback: newEval.feedback,
       is_test: newEval.is_test,
+      test_run_id: newEval.test_run_id,
       created_at: now,
       updated_at: now
     });
@@ -15716,6 +15727,8 @@ class StorageService {
       recorded_by: params.jurorId,
       recorded_by_name: params.jurorName,
       notes: (params.notes || '').trim(),
+      is_test: evaluation.is_test,
+      test_run_id: evaluation.test_run_id,
       created_at: now
     };
 
@@ -15795,6 +15808,8 @@ class StorageService {
       new_total: newTotal,
       delta_total: deltaTotal,
       adjustment_reason: reason,
+      is_test: evaluation.is_test,
+      test_run_id: evaluation.test_run_id,
       adjusted_at: now
     };
 
@@ -15815,6 +15830,8 @@ class StorageService {
         recorded_by: params.jurorId,
         recorded_by_name: params.jurorName,
         notes: reason,
+        is_test: evaluation.is_test,
+        test_run_id: evaluation.test_run_id,
         created_at: now
       };
       this.setItem(STORAGE_KEYS.JURY_EVALUATION_TURNS, [...allTurns, turnRecord]);
@@ -15938,6 +15955,8 @@ class StorageService {
     note?: string;
     userRole?: string;
     callerJuryId?: string;
+    isTest?: boolean;
+    testRunId?: string;
   }): Promise<{ recognition: JurySpeechRecognition; action: 'RECOGNIZED' | 'REVOKED' }> {
     const { eventId, speakingTurnId, juryId, learnerId, userRole, callerJuryId } = params;
     if (userRole === 'student') {
@@ -15989,6 +16008,10 @@ class StorageService {
       let record: JurySpeechRecognition;
       let action: 'RECOGNIZED' | 'REVOKED';
 
+      const testMode = this.getScoringTestMode(eventId);
+      const isTest = params.isTest !== undefined ? !!params.isTest : testMode.isTestMode;
+      const testRunId = params.testRunId !== undefined ? params.testRunId : (isTest ? (testMode.testRunId || uid('test_run')) : undefined);
+
       if (existingIdx >= 0) {
         const existing = all[existingIdx];
         if (existing.active) {
@@ -16007,6 +16030,8 @@ class StorageService {
             active: true,
             note: params.note !== undefined ? params.note : existing.note,
             revoked_at: null,
+            is_test: isTest || existing.is_test,
+            test_run_id: testRunId || existing.test_run_id,
             updated_at: now
           };
           action = 'RECOGNIZED';
@@ -16023,6 +16048,8 @@ class StorageService {
           learner_id: learnerId,
           active: true,
           note: params.note ? params.note.trim() : null,
+          is_test: isTest,
+          test_run_id: testRunId,
           created_at: now,
           updated_at: now
         };
@@ -16221,7 +16248,8 @@ class StorageService {
         speakingTurnCount: spkTurnCount,
         recognitionRate: recogRate,
         distinctJurorCount: distinctJurors.size,
-        totalJurors
+        totalJurors,
+        recognitionCoverage: totalJurors > 0 ? Math.round((distinctJurors.size / totalJurors) * 100) : 0
       });
     }
 
@@ -16297,6 +16325,17 @@ class StorageService {
       const learner = learnerMap.get(t.learner_id);
       const resSession = resolveCanonicalSession(t.session_id, t.session_name, agendaItems);
 
+      let speakingDuration = '—';
+      if (t.started_at && t.completed_at) {
+        const ms = Math.max(0, new Date(t.completed_at).getTime() - new Date(t.started_at).getTime());
+        const totalSec = Math.floor(ms / 1000);
+        const mins = Math.floor(totalSec / 60);
+        const secs = totalSec % 60;
+        speakingDuration = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+      } else if (t.started_at && t.status === 'SPEAKING') {
+        speakingDuration = 'Active';
+      }
+
       summaries.push({
         speakingTurnId: t.id,
         sequenceNumber: t.sequence_number || 1,
@@ -16309,6 +16348,9 @@ class StorageService {
         sessionId: resSession.canonicalId,
         sessionName: resSession.displayName,
         calledAt: t.called_at || t.created_at || new Date().toISOString(),
+        startedAt: t.started_at,
+        completedAt: t.completed_at,
+        speakingDuration,
         recognitionCount: turnRecogs.length,
         distinctJurorCount: distinctJurors.size,
         totalJurors,
@@ -16751,15 +16793,25 @@ class StorageService {
   /**
    * Safely and atomically resets ONLY test/demo jury scores for the specified eventId.
    * Completely cleans:
-   * 1. Dedicated tables (jury_evaluations, jury_evaluation_turns, jury_evaluation_adjustments)
-   * 2. Local storage dedicated keys (JURY_EVALUATIONS, JURY_EVALUATION_TURNS, JURY_EVALUATION_ADJUSTMENTS)
+   * 1. Dedicated tables (jury_evaluations, jury_evaluation_turns, jury_evaluation_adjustments, jury_speech_recognitions)
+   * 2. Local storage dedicated keys (JURY_EVALUATIONS, JURY_EVALUATION_TURNS, JURY_EVALUATION_ADJUSTMENTS, JURY_SPEECH_RECOGNITIONS)
    * 3. Legacy college_events.social_coverage.scores array (surgically filters test scores)
    * 4. SCORES cache & dedicated tn_assembly_scores_{eventId} backup
    * 
    * NEVER deletes or modifies real production scores (is_test !== true).
    * Includes atomic snapshot & rollback on error, direct Supabase verification, and defense-in-depth read checks.
    */
-  public async resetTestScores(eventId: string): Promise<{ success: boolean; deletedCount: number; remainingRealCount: number }> {
+  public async resetTestScores(
+    eventId: string,
+    options?: { testRunId?: string; resetAll?: boolean }
+  ): Promise<{
+    success: boolean;
+    deletedCount: number;
+    remainingRealCount: number;
+    deletedTurnsCount?: number;
+    deletedAdjustmentsCount?: number;
+    deletedRecognitionsCount?: number;
+  }> {
     if (!eventId || typeof eventId !== 'string') {
       throw new Error('Valid event ID is required to reset test scores.');
     }
@@ -16779,6 +16831,7 @@ class StorageService {
     const snapshotEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
     const snapshotTurns = this.getItem<JuryEvaluationTurn[]>(STORAGE_KEYS.JURY_EVALUATION_TURNS, []);
     const snapshotAdjs = this.getItem<JuryEvaluationAdjustment[]>(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, []);
+    const snapshotRecogs = this.getItem<JurySpeechRecognition[]>(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, []);
     const snapshotScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
     const snapshotBackup = typeof localStorage !== 'undefined' ? localStorage.getItem(`tn_assembly_scores_${eventId}`) : null;
     const snapshotEvents = this.getItem<CollegeEvent[]>(STORAGE_KEYS.EVENTS, []);
@@ -16788,6 +16841,7 @@ class StorageService {
         this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, snapshotEvals);
         this.setItem(STORAGE_KEYS.JURY_EVALUATION_TURNS, snapshotTurns);
         this.setItem(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, snapshotAdjs);
+        this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, snapshotRecogs);
         this.setItem(STORAGE_KEYS.SCORES, snapshotScores);
         if (typeof localStorage !== 'undefined') {
           if (snapshotBackup !== null) {
@@ -16806,29 +16860,73 @@ class StorageService {
       // ── 2. IDENTIFY TEST EVALUATIONS & ASSOCIATED RECORDS ACROSS DEDICATED TABLES ──
       const allEvals = snapshotEvals;
       const eventEvals = allEvals.filter(e => e.event_id === eventId);
-      const testEvals = eventEvals.filter(e => e.is_test === true || this.isTestScore(e as any));
-      const realEvals = eventEvals.filter(e => !e.is_test && !this.isTestScore(e as any));
+
+      const isTargetTestRecord = (rec: any): boolean => {
+        if (!rec) return false;
+        if (options?.testRunId) {
+          return rec.test_run_id === options.testRunId;
+        }
+        return rec.is_test === true || rec.test_run_id != null || this.isTestScore(rec);
+      };
+
+      const testEvals = eventEvals.filter(isTargetTestRecord);
+      const realEvals = eventEvals.filter(e => !isTargetTestRecord(e));
       const testEvalIds = new Set(testEvals.map(e => e.id));
+      const testEvalLearnerIds = new Set(testEvals.map(e => e.learner_id));
 
       // ── 3. CLEAN DEDICATED EVALUATION TABLES IN LOCAL STORAGE ──
-      const remainingEvals = allEvals.filter(e => !(e.event_id === eventId && (e.is_test === true || this.isTestScore(e as any))));
+      const remainingEvals = allEvals.filter(e => !(e.event_id === eventId && isTargetTestRecord(e)));
       this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, remainingEvals);
 
       const allTurns = snapshotTurns;
-      const remainingTurns = allTurns.filter(t => !testEvalIds.has(t.evaluation_id));
+      const testTurns = allTurns.filter(t => t.is_test || testEvalIds.has(t.evaluation_id) || (options?.testRunId && t.test_run_id === options.testRunId));
+      const remainingTurns = allTurns.filter(t => !testTurns.some(dt => dt.id === t.id));
       this.setItem(STORAGE_KEYS.JURY_EVALUATION_TURNS, remainingTurns);
 
       const allAdjs = snapshotAdjs;
-      const remainingAdjs = allAdjs.filter(a => !testEvalIds.has(a.evaluation_id));
+      const testAdjs = allAdjs.filter(a => a.is_test || testEvalIds.has(a.evaluation_id) || (options?.testRunId && a.test_run_id === options.testRunId));
+      const remainingAdjs = allAdjs.filter(a => !testAdjs.some(da => da.id === a.id));
       this.setItem(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, remainingAdjs);
 
+      const allRecogs = snapshotRecogs;
+      const testRecogs = allRecogs.filter(r =>
+        r.event_id === eventId && (
+          r.is_test === true ||
+          (options?.testRunId ? r.test_run_id === options.testRunId : r.test_run_id != null) ||
+          testEvalLearnerIds.has(r.learner_id) ||
+          this.isTestScore({ id: r.id, learner_id: r.learner_id, jury_id: r.jury_id } as any)
+        )
+      );
+      const remainingRecogs = allRecogs.filter(r => !testRecogs.some(tr => tr.id === r.id));
+      this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, remainingRecogs);
+
+      // Clear any local drafts associated with purged test delegates
+      if (typeof localStorage !== 'undefined') {
+        testEvalLearnerIds.forEach(lid => {
+          try {
+            const prefix = `tn_assembly_jury_draft_${eventId}_`;
+            for (let i = 0; i < localStorage.length; i++) {
+              const k = localStorage.key(i);
+              if (k && k.startsWith(prefix) && k.endsWith(`_${lid}`)) {
+                localStorage.removeItem(k);
+              }
+            }
+          } catch {}
+        });
+      }
+
       // ── 4. CLEAN DEDICATED SUPABASE TABLES IF CONFIGURED (Safely catch if tables do not exist) ──
-      if (supabase && testEvalIds.size > 0) {
+      if (supabase && (testEvalIds.size > 0 || testRecogs.length > 0)) {
         try {
           const testIdArray = Array.from(testEvalIds);
-          await supabase.from('jury_evaluation_adjustments').delete().in('evaluation_id', testIdArray);
-          await supabase.from('jury_evaluation_turns').delete().in('evaluation_id', testIdArray);
-          await supabase.from('jury_evaluations').delete().in('id', testIdArray);
+          if (testIdArray.length > 0) {
+            await supabase.from('jury_evaluation_adjustments').delete().in('evaluation_id', testIdArray);
+            await supabase.from('jury_evaluation_turns').delete().in('evaluation_id', testIdArray);
+            await supabase.from('jury_evaluations').delete().in('id', testIdArray);
+          }
+          if (testRecogs.length > 0) {
+            await supabase.from('jury_speech_recognitions').delete().in('id', testRecogs.map(r => r.id));
+          }
         } catch {
           // Dedicated tables might not exist yet; continuing with legacy bridge
         }
@@ -16853,8 +16951,8 @@ class StorageService {
 
         const remoteSC = (evData?.social_coverage || {}) as Record<string, any>;
         remoteScores = Array.isArray(remoteSC.scores) ? (remoteSC.scores as ScoreRecord[]) : [];
-        remoteTestScores = remoteScores.filter(s => this.isTestScore(s));
-        remoteRealScores = remoteScores.filter(s => !this.isTestScore(s));
+        remoteTestScores = remoteScores.filter(s => isTargetTestRecord(s));
+        remoteRealScores = remoteScores.filter(s => !isTargetTestRecord(s));
 
         // Audit Logging (Required by Section 4)
         console.log(`[StorageService.resetTestScores] Event ID: ${eventId}`);
@@ -16898,7 +16996,7 @@ class StorageService {
 
           const verifiedSC = (verifyData.social_coverage || {}) as Record<string, any>;
           const verifiedScores = Array.isArray(verifiedSC.scores) ? verifiedSC.scores : [];
-          const remainingRemoteTests = verifiedScores.filter((s: any) => this.isTestScore(s));
+          const remainingRemoteTests = verifiedScores.filter((s: any) => isTargetTestRecord(s));
 
           if (remainingRemoteTests.length > 0) {
             rollbackLocalState();
@@ -16910,8 +17008,8 @@ class StorageService {
       // ── 6. CLEAN LOCAL STORAGE SCORES KEY & DEDICATED BACKUP ──
       const allScores = snapshotScores;
       const localEventScores = allScores.filter(s => s.event_id === eventId);
-      const localTestScores = localEventScores.filter(s => this.isTestScore(s));
-      const localRealScores = localEventScores.filter(s => !this.isTestScore(s));
+      const localTestScores = localEventScores.filter(s => isTargetTestRecord(s));
+      const localRealScores = localEventScores.filter(s => !isTargetTestRecord(s));
 
       const remainingOtherScores = allScores.filter(s => s.event_id && s.event_id !== eventId);
       this.setItem(STORAGE_KEYS.SCORES, [...remainingOtherScores, ...localRealScores]);
@@ -16936,7 +17034,7 @@ class StorageService {
             ...ev,
             social_coverage: {
               ...sc,
-              scores: curScScores.filter(s => !this.isTestScore(s))
+              scores: curScScores.filter(s => !isTargetTestRecord(s))
             }
           };
         }
@@ -16946,7 +17044,7 @@ class StorageService {
 
       // ── 8. DEFENSIVE VERIFICATION OF READ PATH ──
       const postEvaluations = this.getJuryEvaluations(eventId);
-      const lingeringTests = postEvaluations.filter(e => e.is_test || this.isTestScore(e as any));
+      const lingeringTests = postEvaluations.filter(e => isTargetTestRecord(e));
       if (lingeringTests.length > 0) {
         rollbackLocalState();
         throw new Error(`Reset verification failed: ${lingeringTests.length} test evaluations still returned by getJuryEvaluations.`);
@@ -16983,7 +17081,14 @@ class StorageService {
         window.dispatchEvent(new Event('storage'));
       }
 
-      return { success: true, deletedCount, remainingRealCount };
+      return {
+        success: true,
+        deletedCount,
+        remainingRealCount,
+        deletedTurnsCount: testTurns.length,
+        deletedAdjustmentsCount: testAdjs.length,
+        deletedRecognitionsCount: testRecogs.length
+      };
     } catch (err) {
       rollbackLocalState();
       throw err;
@@ -17005,8 +17110,9 @@ class StorageService {
   public isTestScore(score: Partial<ScoreRecord> | Partial<JuryEvaluation>): boolean {
     if (!score) return false;
     if ((score as any).is_test === true) return true;
+    if ((score as any).test_run_id) return true;
     const id = (score as any).id;
-    if (typeof id === 'string' && (id.toLowerCase().startsWith('test_') || id.toLowerCase().includes('_test_'))) return true;
+    if (typeof id === 'string' && (id.toLowerCase().startsWith('test_') || id.toLowerCase().includes('_test_') || id.toLowerCase().includes('test_run'))) return true;
     const sessionId = (score as any).session_id;
     if (typeof sessionId === 'string' && sessionId.toLowerCase().startsWith('test')) return true;
     const sessionName = (score as any).session_name;
@@ -17024,6 +17130,248 @@ class StorageService {
 
   public async deleteTestScores(eventId: string): Promise<{ deletedCount: number; remainingRealCount: number }> {
     return this.resetTestScores(eventId);
+  }
+
+  // ── TEST MODE & TEST DATA MANAGEMENT ─────────────────────────────────────
+
+  public getScoringTestMode(eventId?: string): { isTestMode: boolean; testRunId: string | null } {
+    if (typeof localStorage === 'undefined') {
+      return { isTestMode: false, testRunId: null };
+    }
+    try {
+      const modeKey = eventId ? `${STORAGE_KEYS.JURY_TEST_MODE}_${eventId}` : STORAGE_KEYS.JURY_TEST_MODE;
+      const isTestMode = localStorage.getItem(modeKey) === 'true';
+      const runKey = eventId ? `${STORAGE_KEYS.CURRENT_TEST_RUN_ID}_${eventId}` : STORAGE_KEYS.CURRENT_TEST_RUN_ID;
+      const testRunId = localStorage.getItem(runKey);
+      return { isTestMode, testRunId: isTestMode ? testRunId : null };
+    } catch {
+      return { isTestMode: false, testRunId: null };
+    }
+  }
+
+  public setScoringTestMode(eventId: string, isTestMode: boolean, testRunId?: string): { isTestMode: boolean; testRunId: string | null } {
+    if (!eventId) throw new Error('Event ID is required to configure scoring test mode.');
+    if (!this.isAuthorizedToResetScores()) {
+      throw new Error('Unauthorized: Only administrators can change scoring test mode.');
+    }
+    const modeKey = `${STORAGE_KEYS.JURY_TEST_MODE}_${eventId}`;
+    const runKey = `${STORAGE_KEYS.CURRENT_TEST_RUN_ID}_${eventId}`;
+    const activeRunId = isTestMode ? (testRunId || (typeof localStorage !== 'undefined' ? localStorage.getItem(runKey) : null) || uid('test_run')) : null;
+    
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(modeKey, String(isTestMode));
+      if (activeRunId) {
+        localStorage.setItem(runKey, activeRunId);
+      } else {
+        localStorage.removeItem(runKey);
+      }
+    }
+    this.notify();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_test_mode_update', {
+        detail: { eventId, isTestMode, testRunId: activeRunId }
+      }));
+    }
+    return { isTestMode, testRunId: activeRunId };
+  }
+
+  public startNewTestRun(eventId: string): string {
+    const newRunId = uid('test_run');
+    this.setScoringTestMode(eventId, true, newRunId);
+    return newRunId;
+  }
+
+  public getUnclassifiedTestCandidates(eventId: string): Array<{
+    id: string;
+    learner_id: string;
+    learner_name: string;
+    jury_id: string;
+    jury_name: string;
+    session_id: string;
+    session_name: string;
+    total: number;
+    created_at: string;
+    updated_at: string;
+    is_test: boolean;
+    source: string;
+    test_run_id?: string;
+  }> {
+    if (!eventId) return [];
+    const evals = this.getJuryEvaluations(eventId, undefined, undefined, undefined, true);
+    const legacyScores = this.getScores(eventId);
+
+    const candidates: Map<string, any> = new Map();
+
+    // Look for evaluations that are NOT marked test
+    evals.forEach(e => {
+      if (e.is_test || this.isTestScore(e as any)) return;
+      candidates.set(e.id, {
+        id: e.id,
+        learner_id: e.learner_id,
+        learner_name: e.learner_name,
+        jury_id: e.jury_id,
+        jury_name: e.jury_name,
+        session_id: e.session_id,
+        session_name: e.session_name,
+        total: e.total,
+        created_at: e.created_at,
+        updated_at: e.updated_at,
+        is_test: false,
+        source: 'Jury Evaluation'
+      });
+    });
+
+    legacyScores.forEach(s => {
+      if (s.is_test || this.isTestScore(s)) return;
+      if (!candidates.has(s.id)) {
+        candidates.set(s.id, {
+          id: s.id,
+          learner_id: s.learner_id,
+          learner_name: s.learner_name,
+          jury_id: s.jury_id || 'unknown',
+          jury_name: s.juror_name || 'Jury',
+          session_id: s.session_id || 'zero_hour',
+          session_name: s.session_name || 'Zero Hour',
+          total: s.total,
+          created_at: s.created_at || s.updated_at,
+          updated_at: s.updated_at,
+          is_test: false,
+          source: 'Jury Score'
+        });
+      }
+    });
+
+    return Array.from(candidates.values()).sort(
+      (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+    );
+  }
+
+  public async classifyScoresAsTest(eventId: string, scoreIds: string[], testRunId?: string): Promise<{ success: boolean; convertedCount: number }> {
+    if (!eventId || !scoreIds || scoreIds.length === 0) {
+      return { success: true, convertedCount: 0 };
+    }
+    if (!this.isAuthorizedToResetScores()) {
+      throw new Error('Unauthorized: Only administrators can classify scores.');
+    }
+    const targetIds = new Set(scoreIds);
+    const assignedRunId = testRunId || uid('test_cleanup');
+    let count = 0;
+
+    // 1. Update JURY_EVALUATIONS in localStorage
+    const allEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
+    allEvals.forEach(e => {
+      if (targetIds.has(e.id)) {
+        e.is_test = true;
+        e.test_run_id = assignedRunId;
+        e.turns?.forEach(t => { t.is_test = true; t.test_run_id = assignedRunId; });
+        e.adjustments?.forEach(a => { a.is_test = true; a.test_run_id = assignedRunId; });
+        count++;
+      }
+    });
+    this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, allEvals);
+
+    // 2. Update SCORES in localStorage
+    const allScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
+    allScores.forEach(s => {
+      if (targetIds.has(s.id)) {
+        s.is_test = true;
+        s.test_run_id = assignedRunId;
+        count++;
+      }
+    });
+    this.setItem(STORAGE_KEYS.SCORES, allScores);
+
+    // 3. Update Supabase college_events.social_coverage.scores if configured
+    if (supabase) {
+      try {
+        const { data: evData } = await supabase
+          .from('college_events')
+          .select('id, social_coverage')
+          .eq('id', eventId)
+          .single();
+        if (evData) {
+          const sc = (evData.social_coverage || {}) as Record<string, any>;
+          const scores = Array.isArray(sc.scores) ? sc.scores : [];
+          let scUpdated = false;
+          const updatedScores = scores.map((s: any) => {
+            if (targetIds.has(s.id)) {
+              scUpdated = true;
+              return { ...s, is_test: true, test_run_id: assignedRunId };
+            }
+            return s;
+          });
+          if (scUpdated) {
+            await supabase.from('college_events').update({
+              social_coverage: { ...sc, scores: updatedScores },
+              updated_at: new Date().toISOString()
+            }).eq('id', eventId);
+          }
+        }
+      } catch (err) {
+        console.warn('[classifyScoresAsTest] Supabase sync error:', err);
+      }
+    }
+
+    this.invalidateCache(eventId);
+    this.invalidateCache('events');
+    this.notify();
+    return { success: true, convertedCount: count || targetIds.size };
+  }
+
+  public getScoringDataAudit(eventId: string): {
+    testData: {
+      evaluations: number;
+      turns: number;
+      adjustments: number;
+      recognitions: number;
+      currentTestRunId: string | null;
+    };
+    realData: {
+      evaluations: number;
+      turns: number;
+      adjustments: number;
+      recognitions: number;
+    };
+  } {
+    if (!eventId) {
+      return {
+        testData: { evaluations: 0, turns: 0, adjustments: 0, recognitions: 0, currentTestRunId: null },
+        realData: { evaluations: 0, turns: 0, adjustments: 0, recognitions: 0 }
+      };
+    }
+    const testMode = this.getScoringTestMode(eventId);
+    const evals = this.getJuryEvaluations(eventId, undefined, undefined, undefined, true);
+    const turns = this.getItem<JuryEvaluationTurn[]>(STORAGE_KEYS.JURY_EVALUATION_TURNS, []);
+    const adjs = this.getItem<JuryEvaluationAdjustment[]>(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, []);
+    const recogs = this.getJurySpeechRecognitions(eventId, undefined, undefined, undefined, undefined, false);
+
+    const testEvalIds = new Set(evals.filter(e => e.is_test || this.isTestScore(e as any)).map(e => e.id));
+    const realEvals = evals.filter(e => !e.is_test && !this.isTestScore(e as any));
+
+    const testTurns = turns.filter(t => t.is_test || testEvalIds.has(t.evaluation_id));
+    const realTurns = turns.filter(t => !t.is_test && !testEvalIds.has(t.evaluation_id));
+
+    const testAdjs = adjs.filter(a => a.is_test || testEvalIds.has(a.evaluation_id));
+    const realAdjs = adjs.filter(a => !a.is_test && !testEvalIds.has(a.evaluation_id));
+
+    const testRecogs = recogs.filter(r => r.is_test || (r.test_run_id != null));
+    const realRecogs = recogs.filter(r => !r.is_test && (r.test_run_id == null));
+
+    return {
+      testData: {
+        evaluations: testEvalIds.size,
+        turns: testTurns.length,
+        adjustments: testAdjs.length,
+        recognitions: testRecogs.length,
+        currentTestRunId: testMode.testRunId
+      },
+      realData: {
+        evaluations: realEvals.length,
+        turns: realTurns.length,
+        adjustments: realAdjs.length,
+        recognitions: realRecogs.length
+      }
+    };
   }
 
   // ── PROJECTOR DISPLAY STUDIO ──────────────────────────────────────────────

@@ -463,6 +463,7 @@ export interface ScoreRecord {
   juror_name?: string;
   is_locked?: boolean;
   is_test?: boolean;
+  test_run_id?: string;
   created_at?: string;
   updated_at: string;
 }
@@ -478,6 +479,8 @@ export interface JuryEvaluationTurn {
   recorded_by?: string;
   recorded_by_name?: string;
   notes?: string;
+  is_test?: boolean;
+  test_run_id?: string;
   created_at: string;
 }
 
@@ -503,6 +506,8 @@ export interface JuryEvaluationAdjustment {
   new_total: number;
   delta_total: number;
   adjustment_reason: string;
+  is_test?: boolean;
+  test_run_id?: string;
   adjusted_at: string;
 }
 
@@ -541,6 +546,7 @@ export interface JuryEvaluation {
   initial_speaking_turn_id?: string;
   status: 'ACTIVE' | 'LOCKED' | 'FLAGGED';
   is_test: boolean;
+  test_run_id?: string;
   created_at: string;
   updated_at: string;
   turns?: JuryEvaluationTurn[];
@@ -1001,6 +1007,8 @@ export interface JurySpeechRecognition {
   active: boolean;
   note?: string | null;
   revoked_at?: string | null;
+  is_test?: boolean;
+  test_run_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -1017,6 +1025,7 @@ export interface ParticipantRecognitionSummary {
   recognitionRate: number;
   distinctJurorCount: number;
   totalJurors: number;
+  recognitionCoverage?: number; // e.g. 50 (%)
 }
 
 export interface SpeechImpactSummary {
@@ -1031,9 +1040,13 @@ export interface SpeechImpactSummary {
   sessionId: string;
   sessionName: string;
   calledAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  speakingDuration?: string; // e.g. "2:14" or "1:48"
   recognitionCount: number;
   distinctJurorCount: number;
   totalJurors: number;
+  recognitionCoverage?: number;
   jurorRecognitions: Array<{
     juryId: string;
     juryName?: string;

@@ -28,7 +28,10 @@ import {
   ChevronRight,
   Eye,
   Sparkles,
-  Star
+  Star,
+  Shield,
+  CheckSquare,
+  RefreshCw
 } from 'lucide-react';
 
 interface ScoreGridTabProps {
@@ -135,12 +138,22 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   const [viewMode, setViewMode] = useState<ScoreGridViewMode>('leaderboard_session');
   const [isTop40Only, setIsTop40Only] = useState<boolean>(true);
 
-  // Modals
+  // Modals & Reset State
   const [isGradeModalOpen, setIsGradeModalOpen] = useState(false);
   const [isResetTestModalOpen, setIsResetTestModalOpen] = useState(false);
   const [isDeletingTestScores, setIsDeletingTestScores] = useState(false);
   const [isTrailModalOpen, setIsTrailModalOpen] = useState(false);
   const [selectedTrailEvaluation, setSelectedTrailEvaluation] = useState<JuryEvaluation | null>(null);
+
+  // Test Mode & Classification State
+  const [testMode, setTestMode] = useState(() => storageService.getScoringTestMode(eventId));
+  const [auditTick, setAuditTick] = useState<number>(0);
+  const [isUnclassifiedModalOpen, setIsUnclassifiedModalOpen] = useState(false);
+  const [unclassifiedCandidates, setUnclassifiedCandidates] = useState<any[]>([]);
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<Set<string>>(new Set());
+  const [candidateFilter, setCandidateFilter] = useState<'all' | 'candidates_only'>('candidates_only');
+  const [isClassifying, setIsClassifying] = useState(false);
+  const [resetScope, setResetScope] = useState<'all' | 'current_run'>('all');
 
   // Available Sessions & Juries
   const availableSessions = useMemo<ScoringSession[]>(() => {
@@ -191,6 +204,24 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   const realScoresCount = useMemo(() => {
     return Math.max(0, eventScores.length - testScoresCount);
   }, [eventScores, testScoresCount]);
+
+  // Sync test mode and audit when storage updates
+  useEffect(() => {
+    const handleSync = () => {
+      setTestMode(storageService.getScoringTestMode(eventId));
+      setAuditTick(t => t + 1);
+    };
+    window.addEventListener('storage', handleSync);
+    window.addEventListener('tn_assembly_storage_update', handleSync);
+    return () => {
+      window.removeEventListener('storage', handleSync);
+      window.removeEventListener('tn_assembly_storage_update', handleSync);
+    };
+  }, [eventId]);
+
+  const auditData = useMemo(() => {
+    return storageService.getScoringDataAudit(eventId);
+  }, [eventId, scores, auditTick, isDeletingTestScores, isClassifying]);
 
   // Authorization check for administrative score reset
   const isAuthorized = Boolean(
@@ -966,8 +997,132 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   };
 
   // ──────────────────────────────────────────────────────────────────────────
-  // Test Scores Reset Controls
+  // Test Scores Reset Controls & Test Mode Handlers
   // ──────────────────────────────────────────────────────────────────────────
+  const isLikelyTestCandidate = (c: any) => {
+    const name = (c.learner_name || '').toLowerCase();
+    const juror = (c.jury_name || '').toLowerCase();
+    const created = c.created_at || '';
+    if (created.startsWith('2026-10-02') || created.includes('2026-10-02')) return { isLikely: true, reason: 'Created Oct 2, 2026' };
+    if (name.includes('test') || name.includes('demo') || juror.includes('test') || juror.includes('demo')) {
+      return { isLikely: true, reason: 'Contains test keyword' };
+    }
+    const knownTestNames = ['vishnu karthika', 'anu sri', 'rithika', 'monika', 'kamali'];
+    if (knownTestNames.some(kn => name.includes(kn))) {
+      return { isLikely: true, reason: 'Matching test delegate' };
+    }
+    return { isLikely: false, reason: '' };
+  };
+
+  const processedCandidates = useMemo(() => {
+    return unclassifiedCandidates.map(c => {
+      const check = isLikelyTestCandidate(c);
+      return {
+        ...c,
+        isLikelyTest: check.isLikely,
+        suspectReason: check.reason
+      };
+    });
+  }, [unclassifiedCandidates]);
+
+  const displayedCandidates = useMemo(() => {
+    if (candidateFilter === 'candidates_only') {
+      return processedCandidates.filter(c => c.isLikelyTest);
+    }
+    return processedCandidates;
+  }, [processedCandidates, candidateFilter]);
+
+  const suspectedCandidatesCount = useMemo(() => {
+    return processedCandidates.filter(c => c.isLikelyTest).length;
+  }, [processedCandidates]);
+
+  const handleToggleTestMode = () => {
+    if (!eventId) return;
+    try {
+      const nextMode = !testMode.isTestMode;
+      const updated = storageService.setScoringTestMode(eventId, nextMode);
+      setTestMode(updated);
+      onShowToast(
+        updated.isTestMode ? 'Test Mode Activated' : 'Live Production Active',
+        updated.isTestMode
+          ? `Scoring is now running in Test Mode with Run ID: ${updated.testRunId}. New evaluations are tagged as test records.`
+          : 'Scoring is now running in Live Production mode. Official scores will be saved.',
+        updated.isTestMode ? 'info' : 'success'
+      );
+    } catch (err: any) {
+      onShowToast('Error', err?.message || 'Failed to toggle scoring test mode.', 'error');
+    }
+  };
+
+  const handleStartNewTestRun = () => {
+    if (!eventId) return;
+    try {
+      const newRunId = storageService.startNewTestRun(eventId);
+      setTestMode({ isTestMode: true, testRunId: newRunId });
+      onShowToast(
+        'New Test Run Started',
+        `Active Test Run ID updated to: ${newRunId}. Previous test data remains distinct.`,
+        'info'
+      );
+    } catch (err: any) {
+      onShowToast('Error', err?.message || 'Failed to start new test run.', 'error');
+    }
+  };
+
+  const handleOpenUnclassifiedModal = () => {
+    if (!eventId) return;
+    const candidates = storageService.getUnclassifiedTestCandidates(eventId);
+    setUnclassifiedCandidates(candidates);
+    const preselected = new Set<string>();
+    candidates.forEach(c => {
+      if (isLikelyTestCandidate(c).isLikely) {
+        preselected.add(c.id);
+      }
+    });
+    setSelectedCandidateIds(preselected);
+    setIsUnclassifiedModalOpen(true);
+  };
+
+  const handleToggleCandidateSelect = (id: string) => {
+    setSelectedCandidateIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleSelectAllDisplayedCandidates = () => {
+    setSelectedCandidateIds(new Set(displayedCandidates.map(c => c.id)));
+  };
+
+  const handleClassifySelected = async () => {
+    if (!eventId || selectedCandidateIds.size === 0) return;
+    setIsClassifying(true);
+    try {
+      const res = await storageService.classifyScoresAsTest(
+        eventId,
+        Array.from(selectedCandidateIds),
+        testMode.testRunId || undefined
+      );
+      onShowToast(
+        'Scores Classified as Test Data',
+        `Successfully classified ${res.convertedCount} score(s) as test data. They can now be cleanly purged via Reset Test Scores.`,
+        'success'
+      );
+      setSelectedCandidateIds(new Set());
+      setIsUnclassifiedModalOpen(false);
+      setAuditTick(t => t + 1);
+      if (onResetScores) {
+        onResetScores();
+      }
+    } catch (err: any) {
+      onShowToast('Classification Failed', err?.message || 'Could not classify selected scores.', 'error');
+    } finally {
+      setIsClassifying(false);
+    }
+  };
+
   const handleOpenResetTestModal = () => {
     if (!isAuthorized) {
       onShowToast('Unauthorized', 'Only administrators are authorized to reset jury scores.', 'error');
@@ -981,10 +1136,11 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
       );
       return;
     }
-    if (testScoresCount === 0) {
+    const currentTestCount = Math.max(testScoresCount, auditData.testData.evaluations);
+    if (currentTestCount === 0) {
       onShowToast(
         'No Test Scores Found',
-        `All ${eventScores.length} score records for this event are real production scores. Real production scores cannot be reset.`,
+        `All ${eventScores.length} score records for this event are real production scores. Real production scores cannot be reset. Use "Review Unclassified Scores" if test scores were saved as normal scores.`,
         'info'
       );
       return;
@@ -999,18 +1155,22 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
     }
     setIsDeletingTestScores(true);
     try {
-      const res = await storageService.resetTestScores(eventId);
+      const res = await storageService.resetTestScores(eventId, {
+        testRunId: resetScope === 'current_run' ? (testMode.testRunId || undefined) : undefined,
+        resetAll: resetScope === 'all'
+      });
       setIsResetTestModalOpen(false);
+      setAuditTick(t => t + 1);
       if (res.deletedCount > 0) {
         onShowToast(
           `${res.deletedCount} test score${res.deletedCount > 1 ? 's' : ''} removed`,
-          `${res.deletedCount} test scores were removed. ${res.remainingRealCount} real production scores were preserved.`,
+          `${res.deletedCount} test records were removed. ${res.remainingRealCount} real production scores were preserved.`,
           'success'
         );
       } else {
         onShowToast(
           'Reset completed — 0 scores removed',
-          'No test scores were found. All production records remain untouched.',
+          'No test scores were found matching criteria. All production records remain untouched.',
           'info'
         );
       }
@@ -1190,6 +1350,129 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Admin Test Mode & Test Data Management Controls */}
+      {isAuthorized && (
+        <div
+          className={`rounded-2xl p-4 md:p-5 border shadow-sm transition-all ${
+            testMode.isTestMode
+              ? 'bg-amber-500/10 border-amber-500/30'
+              : 'bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800'
+          }`}
+        >
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            {/* Status & Operational Mode */}
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] uppercase font-black tracking-widest text-slate-400">
+                  Scoring Environment
+                </span>
+                {testMode.isTestMode ? (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-black bg-amber-500 text-white shadow-xs">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    TEST MODE ACTIVE
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-black bg-emerald-600 text-white shadow-xs">
+                    <Shield className="w-3.5 h-3.5" />
+                    LIVE PRODUCTION MODE
+                  </span>
+                )}
+                {testMode.testRunId && (
+                  <span className="font-mono text-[11px] px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-800 dark:text-amber-300 font-bold border border-amber-500/30">
+                    Run ID: {testMode.testRunId}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-600 dark:text-slate-400">
+                {testMode.isTestMode
+                  ? 'All scores and recognitions entered in this browser are tagged with testRunId and can be cleanly purged without touching production data.'
+                  : 'Scores and recognitions are entered as official production records. Real production scores are strictly protected.'}
+              </p>
+            </div>
+
+            {/* Mode Switching & Action Buttons */}
+            <div className="flex items-center gap-2 flex-wrap shrink-0">
+              <button
+                type="button"
+                onClick={handleToggleTestMode}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer flex items-center gap-1.5 ${
+                  testMode.isTestMode
+                    ? 'bg-emerald-600 text-white hover:bg-emerald-700 border-emerald-600'
+                    : 'bg-amber-500 text-white hover:bg-amber-600 border-amber-500'
+                }`}
+              >
+                {testMode.isTestMode ? (
+                  <>
+                    <Shield className="w-3.5 h-3.5" />
+                    Switch to Live Production
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    Switch to Test Run Mode
+                  </>
+                )}
+              </button>
+
+              {testMode.isTestMode && (
+                <button
+                  type="button"
+                  onClick={handleStartNewTestRun}
+                  className="px-3 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer flex items-center gap-1.5 bg-white dark:bg-slate-800 hover:bg-slate-100 text-slate-700 dark:text-slate-200"
+                  style={{ borderColor: 'var(--border)' }}
+                  title="Generate a new Test Run ID to isolate subsequent test evaluations"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-amber-500" />
+                  New Test Run ID
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={handleOpenUnclassifiedModal}
+                className="px-3 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer flex items-center gap-1.5 bg-white dark:bg-slate-800 hover:bg-slate-100 text-slate-700 dark:text-slate-200"
+                style={{ borderColor: 'var(--border)' }}
+                title="Review scores that may have been created during manual testing and classify them"
+              >
+                <CheckSquare className="w-3.5 h-3.5 text-blue-500" />
+                Review Unclassified Scores
+              </button>
+            </div>
+          </div>
+
+          {/* Audit Data Breakdown Strip */}
+          <div className="mt-3 pt-3 border-t border-slate-200/60 dark:border-slate-800/60 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="text-slate-400">Production Scores:</span>
+              <span className="font-mono font-black text-emerald-600 dark:text-emerald-400">
+                {auditData.realData.evaluations || realScoresCount}
+              </span>
+              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.2 rounded">
+                Protected
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-slate-400">Test Scores:</span>
+              <span className="font-mono font-black text-rose-500">
+                {auditData.testData.evaluations || testScoresCount}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-slate-400">Test Recognitions:</span>
+              <span className="font-mono font-black text-amber-500">
+                {auditData.testData.recognitions}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-slate-400">Test Turns & Adjs:</span>
+              <span className="font-mono font-bold text-slate-700 dark:text-slate-300">
+                {auditData.testData.turns} / {auditData.testData.adjustments}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Stats Summary Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 md:gap-4">
@@ -1931,8 +2214,13 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
                           <td className="p-3.5 text-center font-mono font-bold text-slate-700 dark:text-slate-300">
                             {p.speakingTurnCount}
                           </td>
-                          <td className="p-3.5 text-center font-mono text-[11px] text-slate-600 dark:text-slate-400">
-                            {p.distinctJurorCount} / {p.totalJurors} Jurors
+                          <td className="p-3.5 text-center font-mono text-[11px]">
+                            <div className="font-bold text-slate-700 dark:text-slate-300">
+                              {p.distinctJurorCount} / {p.totalJurors} Jurors
+                            </div>
+                            <div className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold">
+                              {p.recognitionCoverage ?? Math.round((p.distinctJurorCount / (p.totalJurors || 1)) * 100)}% coverage
+                            </div>
                           </td>
                           <td className="p-3.5 text-right font-mono font-bold pr-4 text-slate-700 dark:text-slate-300">
                             {p.recognitionRate} <span className="text-[10px] text-slate-400 font-normal">/ turn</span>
@@ -1978,13 +2266,14 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
                     <th className="p-3.5 text-center">Turn</th>
                     <th className="p-3.5 text-center font-black text-amber-600 dark:text-amber-400">Recognitions</th>
                     <th className="p-3.5 text-center">Jury Coverage</th>
+                    <th className="p-3.5 text-center">Speaking Duration</th>
                     <th className="p-3.5 pr-4">Juror Signals & Notes</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y" style={{ borderColor: 'var(--border-soft)' }}>
                   {speechImpactSummaries.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="py-12 text-center text-xs text-slate-400">
+                      <td colSpan={7} className="py-12 text-center text-xs text-slate-400">
                         No speeches matching your filter criteria.
                       </td>
                     </tr>
@@ -2017,8 +2306,25 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
                               {s.recognitionCount}
                             </span>
                           </td>
+                          <td className="p-3.5 text-center font-mono text-[11px]">
+                            <div className="text-slate-700 dark:text-slate-300 font-bold">
+                              {s.distinctJurorCount} / {s.totalJurors} Jurors
+                            </div>
+                            {s.recognitionCoverage !== undefined && (
+                              <div className="text-[10px] text-purple-600 dark:text-purple-400 font-medium">
+                                {s.recognitionCoverage}%
+                              </div>
+                            )}
+                          </td>
                           <td className="p-3.5 text-center font-mono text-[11px] text-slate-600 dark:text-slate-400">
-                            {s.distinctJurorCount} / {s.totalJurors} Jurors
+                            {s.speakingDuration ? (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                                <Clock className="w-2.5 h-2.5" />
+                                {s.speakingDuration}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400">—</span>
+                            )}
                           </td>
                           <td className="p-3.5 pr-4">
                             {s.jurorRecognitions.length === 0 ? (
@@ -2540,12 +2846,41 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
                   RESET TEST SCORES?
                 </h4>
                 <p className="text-xs text-rose-500/90 font-medium">
-                  This will safely remove ONLY test score records marked is_test === true.
+                  Safely remove ONLY records marked is_test === true.
                 </p>
               </div>
             </div>
 
-            <div className="p-4 rounded-xl border bg-slate-50 dark:bg-slate-900/60 space-y-3" style={{ borderColor: 'var(--border)' }}>
+            {/* Scope Selection */}
+            {testMode.testRunId && (
+              <div className="space-y-1.5 p-3 rounded-xl border bg-slate-100/50 dark:bg-slate-900/40 text-xs" style={{ borderColor: 'var(--border)' }}>
+                <span className="text-[10px] uppercase font-bold text-slate-400">Purge Scope</span>
+                <div className="space-y-1">
+                  <label className="flex items-center gap-2 cursor-pointer font-medium">
+                    <input
+                      type="radio"
+                      name="resetScope"
+                      checked={resetScope === 'all'}
+                      onChange={() => setResetScope('all')}
+                      className="cursor-pointer"
+                    />
+                    <span>Purge ALL Test Data for this event</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer font-medium">
+                    <input
+                      type="radio"
+                      name="resetScope"
+                      checked={resetScope === 'current_run'}
+                      onChange={() => setResetScope('current_run')}
+                      className="cursor-pointer"
+                    />
+                    <span>Purge ONLY Current Test Run ({testMode.testRunId})</span>
+                  </label>
+                </div>
+              </div>
+            )}
+
+            <div className="p-4 rounded-xl border bg-slate-50 dark:bg-slate-900/60 space-y-2.5" style={{ borderColor: 'var(--border)' }}>
               <div>
                 <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400">Event:</span>
                 <p className="text-sm font-black truncate mt-0.5" style={{ color: 'var(--text-primary)' }}>
@@ -2553,29 +2888,49 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
                 </p>
               </div>
 
-              <div className="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-800 text-xs font-semibold">
-                <span className="text-slate-400">Test Scores to be Removed:</span>
-                <span className="font-mono font-black text-rose-500 text-sm px-2.5 py-0.5 rounded-md bg-rose-500/10 border border-rose-500/20">
-                  {testScoresCount}
-                </span>
+              <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-200 dark:border-slate-800 text-xs">
+                <div>
+                  <span className="text-slate-400 block text-[10px]">Test Evaluations:</span>
+                  <span className="font-mono font-black text-rose-500 text-sm">
+                    {auditData.testData.evaluations || testScoresCount}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[10px]">Test Recognitions:</span>
+                  <span className="font-mono font-black text-amber-500 text-sm">
+                    {auditData.testData.recognitions}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[10px]">Test Speaking Turns:</span>
+                  <span className="font-mono font-bold text-slate-700 dark:text-slate-300">
+                    {auditData.testData.turns}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[10px]">Test Adjustments:</span>
+                  <span className="font-mono font-bold text-slate-700 dark:text-slate-300">
+                    {auditData.testData.adjustments}
+                  </span>
+                </div>
               </div>
 
-              <div className="flex items-center justify-between text-xs font-semibold">
+              <div className="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-800 text-xs font-semibold">
                 <span className="text-slate-400">Real Production Scores Preserved:</span>
                 <span className="font-mono font-black text-emerald-500 text-sm px-2.5 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20">
-                  {realScoresCount}
+                  {auditData.realData.evaluations || realScoresCount}
                 </span>
               </div>
 
-              {testScoresCount === 0 ? (
+              {(auditData.testData.evaluations || testScoresCount) === 0 && auditData.testData.recognitions === 0 ? (
                 <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-2">
                   <AlertTriangle className="w-4 h-4 shrink-0 text-amber-500" />
-                  <span>No test scores found for this event. All records are real production scores.</span>
+                  <span>No test scores found. If test scores were saved as normal scores, use "Review Unclassified Scores" to classify them first.</span>
                 </div>
               ) : (
                 <div className="p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/20 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-500" />
-                  <span>Production Guardrail Active: Real production scores will NOT be deleted or modified.</span>
+                  <span>Production Guardrail Active: Genuine production scores will NEVER be touched.</span>
                 </div>
               )}
             </div>
@@ -2593,12 +2948,179 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
               <button
                 type="button"
                 onClick={handleConfirmDeleteTestScores}
-                disabled={isDeletingTestScores || testScoresCount === 0}
+                disabled={isDeletingTestScores || ((auditData.testData.evaluations || testScoresCount) === 0 && auditData.testData.recognitions === 0)}
                 className="px-4 py-2.5 rounded-xl font-bold text-xs text-white bg-rose-600 hover:bg-rose-700 shadow-md cursor-pointer flex items-center gap-1.5 transition disabled:opacity-50"
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>{isDeletingTestScores ? 'Resetting...' : 'Confirm Reset Test Scores'}</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Review Unclassified Scores Modal */}
+      {isUnclassifiedModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+          <div
+            className="rounded-2xl max-w-3xl w-full p-6 border shadow-2xl space-y-4 max-h-[90vh] flex flex-col animate-scale-in"
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+          >
+            <div className="flex items-center justify-between border-b pb-3 shrink-0" style={{ borderColor: 'var(--border-soft)' }}>
+              <div>
+                <h4 className="text-base font-black tracking-tight flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+                  <CheckSquare className="w-5 h-5 text-blue-500" />
+                  Review & Classify Test-Like Scores
+                </h4>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Select manual test scores to tag them as test data. Once classified, they can be safely purged without touching genuine production scores.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsUnclassifiedModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 text-sm font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Filter Pills & Selection Controls */}
+            <div className="flex items-center justify-between gap-2 shrink-0 flex-wrap">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCandidateFilter('candidates_only')}
+                  className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
+                    candidateFilter === 'candidates_only'
+                      ? 'bg-amber-500 text-white'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                  }`}
+                >
+                  Suspected Test Scores ({suspectedCandidatesCount})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCandidateFilter('all')}
+                  className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
+                    candidateFilter === 'all'
+                      ? 'bg-amber-500 text-white'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                  }`}
+                >
+                  All Unclassified Scores ({unclassifiedCandidates.length})
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSelectAllDisplayedCandidates}
+                  className="text-xs font-bold text-blue-500 hover:underline cursor-pointer"
+                >
+                  Select All Displayed
+                </button>
+                <span className="text-slate-300">|</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedCandidateIds(new Set())}
+                  className="text-xs font-bold text-slate-400 hover:underline cursor-pointer"
+                >
+                  Clear Selection
+                </button>
+              </div>
+            </div>
+
+            {/* Table of Candidates */}
+            <div className="overflow-y-auto flex-1 border rounded-xl" style={{ borderColor: 'var(--border)' }}>
+              <table className="w-full text-left text-xs">
+                <thead className="sticky top-0 bg-slate-100 dark:bg-slate-800 text-[10px] uppercase font-bold text-slate-500 border-b" style={{ borderColor: 'var(--border)' }}>
+                  <tr>
+                    <th className="p-3 pl-4 w-10 text-center">Select</th>
+                    <th className="p-3">Participant</th>
+                    <th className="p-3">Session</th>
+                    <th className="p-3">Jury</th>
+                    <th className="p-3 text-center">Total</th>
+                    <th className="p-3">Date</th>
+                    <th className="p-3">Signal</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y" style={{ borderColor: 'var(--border-soft)' }}>
+                  {displayedCandidates.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-8 text-center text-slate-400">
+                        No candidates found matching filter.
+                      </td>
+                    </tr>
+                  ) : (
+                    displayedCandidates.map(c => {
+                      const isSelected = selectedCandidateIds.has(c.id);
+                      return (
+                        <tr
+                          key={c.id}
+                          onClick={() => handleToggleCandidateSelect(c.id)}
+                          className={`cursor-pointer transition-colors ${
+                            isSelected ? 'bg-amber-500/10' : 'hover:bg-slate-500/5'
+                          }`}
+                        >
+                          <td className="p-3 pl-4 text-center">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => handleToggleCandidateSelect(c.id)}
+                              className="rounded cursor-pointer"
+                            />
+                          </td>
+                          <td className="p-3 font-bold" style={{ color: 'var(--text-primary)' }}>
+                            {c.learner_name}
+                          </td>
+                          <td className="p-3 text-slate-500">{c.session_name}</td>
+                          <td className="p-3 text-slate-500">{c.jury_name}</td>
+                          <td className="p-3 text-center font-mono font-bold text-amber-500">{c.total}</td>
+                          <td className="p-3 text-slate-400 font-mono text-[10px]">
+                            {c.created_at ? new Date(c.created_at).toLocaleDateString() : '—'}
+                          </td>
+                          <td className="p-3">
+                            {c.isLikelyTest ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                                {c.suspectReason || 'Test Candidate'}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 text-[10px]">Standard</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-between pt-3 border-t shrink-0" style={{ borderColor: 'var(--border-soft)' }}>
+              <span className="text-xs text-slate-500">
+                Selected: <strong className="text-slate-900 dark:text-white">{selectedCandidateIds.size}</strong> records
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsUnclassifiedModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border text-xs font-semibold cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800"
+                  style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClassifySelected}
+                  disabled={selectedCandidateIds.size === 0 || isClassifying}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-amber-500 hover:bg-amber-600 shadow-md cursor-pointer transition disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <CheckSquare className="w-3.5 h-3.5" />
+                  <span>{isClassifying ? 'Classifying...' : `Mark ${selectedCandidateIds.size} Selected as Test`}</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
