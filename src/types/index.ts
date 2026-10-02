@@ -467,6 +467,119 @@ export interface ScoreRecord {
   updated_at: string;
 }
 
+export type EvaluationActionType = 'INITIAL_EVALUATION' | 'CONTRIBUTION_ONLY' | 'ADJUSTMENT';
+
+export interface JuryEvaluationTurn {
+  id: string;
+  evaluation_id: string;
+  speaking_turn_id: string;
+  turn_number: number;
+  action_type: EvaluationActionType;
+  recorded_by?: string;
+  recorded_by_name?: string;
+  notes?: string;
+  created_at: string;
+}
+
+export interface JuryEvaluationAdjustment {
+  id: string;
+  evaluation_id: string;
+  speaking_turn_id?: string;
+  juror_id?: string;
+  juror_name: string;
+  previous_research_constituency: number;
+  new_research_constituency: number;
+  previous_relevance_agenda: number;
+  new_relevance_agenda: number;
+  previous_communication_delivery: number;
+  new_communication_delivery: number;
+  previous_parliamentary_conduct: number;
+  new_parliamentary_conduct: number;
+  previous_originality_preparation: number;
+  new_originality_preparation: number;
+  previous_time_management: number;
+  new_time_management: number;
+  previous_total: number;
+  new_total: number;
+  delta_total: number;
+  adjustment_reason: string;
+  adjusted_at: string;
+}
+
+export interface JuryEvaluation {
+  id: string;
+  event_id: string;
+  session_id: string;
+  session_name: string;
+  learner_id: string;
+  learner_name: string;
+  constituency_number?: number;
+  constituency_name?: string;
+  party_name: string;
+  bench: BenchType;
+  jury_id: string;
+  jury_name: string;
+  research_constituency: number;
+  relevance_agenda: number;
+  communication_delivery: number;
+  parliamentary_conduct: number;
+  originality_preparation: number;
+  time_management: number;
+  total: number;
+  feedback?: string;
+  initial_speaking_turn_id?: string;
+  status: 'ACTIVE' | 'LOCKED' | 'FLAGGED';
+  is_test: boolean;
+  created_at: string;
+  updated_at: string;
+  turns?: JuryEvaluationTurn[];
+  adjustments?: JuryEvaluationAdjustment[];
+}
+
+export interface SessionLeaderboardRow {
+  rank: number;
+  learnerId: string;
+  studentName: string;
+  constituencyNumber?: number;
+  constituencyName?: string;
+  partyName: string;
+  bench: BenchType;
+  sessionScore: number;
+  jurorCount: number;
+  expectedJurors: number;
+  completionStatus: 'FULLY_SCORED' | 'PARTIALLY_SCORED' | 'NOT_SCORED';
+  speakingTurnCount: number;
+  avgResearch: number;
+  avgRelevance: number;
+  avgComm: number;
+  avgConduct: number;
+  avgOrig: number;
+  avgTime: number;
+  adjustmentsCount: number;
+  latestScoreTimestamp: string;
+}
+
+export interface OverallLeaderboardRow {
+  rank: number;
+  learnerId: string;
+  studentName: string;
+  constituencyNumber?: number;
+  constituencyName?: string;
+  partyName: string;
+  bench: BenchType;
+  overallScore: number;
+  sessionsEvaluatedCount: number;
+  totalJurorEvaluationsCount: number;
+  speakingTurnCount: number;
+  sessionBreakdown: Record<string, {
+    sessionId: string;
+    sessionName: string;
+    score: number;
+    jurorCount: number;
+    speakingTurnCount: number;
+  }>;
+}
+
 export interface VoteAuditEntry {
   id: string;
   event_id: string;

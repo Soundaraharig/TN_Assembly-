@@ -21,6 +21,11 @@ import type {
   BillProceeding,
   ScoreRecord,
   ScoringSession,
+  JuryEvaluation,
+  JuryEvaluationTurn,
+  JuryEvaluationAdjustment,
+  SessionLeaderboardRow,
+  OverallLeaderboardRow,
   VoteAuditEntry,
   AggregatedScore,
   ParliamentQuestion,
@@ -59,6 +64,7 @@ import {
   getNextQuestionNumber,
   ensureQuestionNumbers
 } from '../utils/questionUtils';
+import { resolveCanonicalSession } from '../utils/sessionUtils';
 
 export {
   formatQuestionNumber,
@@ -244,7 +250,10 @@ const STORAGE_KEYS = {
   ELECTIONS_BACKUP_SNAPSHOTS: 'tn_assembly_elections_backup_snapshots_v1',
   ALLOCATION_CONFIRMATIONS: 'tn_assembly_allocation_confirmations_v1',
   SPEAKING_REQUESTS: 'tn_assembly_speaking_requests_v1',
-  SPEAKING_TURNS: 'tn_assembly_speaking_turns_v1'
+  SPEAKING_TURNS: 'tn_assembly_speaking_turns_v1',
+  JURY_EVALUATIONS: 'tn_assembly_jury_evaluations_v1',
+  JURY_EVALUATION_TURNS: 'tn_assembly_jury_evaluation_turns_v1',
+  JURY_EVALUATION_ADJUSTMENTS: 'tn_assembly_jury_evaluation_adjustments_v1'
 };
 
 export const SUPABASE_COLUMNS: Record<string, string> = {
@@ -262,7 +271,10 @@ export const SUPABASE_COLUMNS: Record<string, string> = {
   LEARNER_ALLOCATION_CONFIRMATIONS: 'id,event_id,learner_id,allocation_hash,confirmed_party,confirmed_committee,confirmed_constituency_name,confirmed_constituency_number,confirmed_bench,checked_at,created_at,updated_at',
   SPEAKING_REQUESTS: 'id,event_id,session_id,session_name,learner_id,learner_name,constituency_number,bench,status,requested_at,called_at,resolved_at,resolved_by,created_at,updated_at',
   SPEAKING_TURNS: 'id,event_id,session_id,session_name,learner_id,learner_name,request_id,sequence_number,called_at,started_at,completed_at,called_by,status,created_at',
-  LOGIN_RECORDS: 'id,event_id,user_id,learner_id,volunteer_id,user_name,role,access_code,login_at,logged_in_at,device_type,device_info,ip_address,details,created_at'
+  LOGIN_RECORDS: 'id,event_id,user_id,learner_id,volunteer_id,user_name,role,access_code,login_at,logged_in_at,device_type,device_info,ip_address,details,created_at',
+  JURY_EVALUATIONS: 'id,event_id,session_id,session_name,learner_id,learner_name,jury_id,jury_name,research_constituency,relevance_agenda,communication_delivery,parliamentary_conduct,originality_preparation,time_management,total,initial_speaking_turn_id,status,is_test,created_at,updated_at',
+  JURY_EVALUATION_TURNS: 'id,evaluation_id,speaking_turn_id,turn_number,action_type,recorded_by,recorded_by_name,created_at',
+  JURY_EVALUATION_ADJUSTMENTS: 'id,evaluation_id,speaking_turn_id,juror_id,juror_name,previous_research_constituency,new_research_constituency,previous_relevance_agenda,new_relevance_agenda,previous_communication_delivery,new_communication_delivery,previous_parliamentary_conduct,new_parliamentary_conduct,previous_originality_preparation,new_originality_preparation,previous_time_management,new_time_management,previous_total,new_total,delta_total,adjustment_reason,adjusted_at'
 };
 
 type Listener = () => void;
@@ -15083,18 +15095,9 @@ class StorageService {
    */
   public getScoreCompositeKey(score: Partial<ScoreRecord>, eventIdFallback = ''): string {
     const evId = score.event_id || eventIdFallback || '';
-    
-    // Stable session resolution (prefer stable session_id)
-    let sessKey = score.session_id;
-    if (!sessKey && score.session_name) {
-      const sNameLower = score.session_name.toLowerCase();
-      if (sNameLower.includes('zero')) sessKey = 'zero_hour';
-      else if (sNameLower.includes('question')) sessKey = 'question_hour';
-      else if (sNameLower.includes('bill')) sessKey = 'bill_presenting';
-      else if (sNameLower.includes('90') || sNameLower.includes('speech')) sessKey = '90_sec_speech';
-      else sessKey = score.session_name.trim().toLowerCase().replace(/\s+/g, '_');
-    }
-    if (!sessKey) sessKey = 'default_session';
+    const agendaItems = evId ? this.getAgenda(evId) : [];
+    const resolvedSession = resolveCanonicalSession(score.session_id, score.session_name, agendaItems);
+    const sessKey = resolvedSession.canonicalId;
 
     // Stable jury resolution (prefer stable jury_id)
     let juryKey = score.jury_id;
@@ -15111,12 +15114,12 @@ class StorageService {
    * Returns all available scoring sessions for an event.
    * Dynamically inspects session_agenda from Supabase while guaranteeing
    * the canonical parliamentary sessions (Zero Hour, Question Hour, Bill Presenting, 90 Sec Speech)
-   * are ALWAYS present.
+   * are ALWAYS present with stable canonical IDs.
    */
   public getScoringSessions(eventId: string): ScoringSession[] {
     const agendaItems = this.getAgenda(eventId);
     const sessions: ScoringSession[] = [];
-    const seenIds = new Set<string>();
+    const seenCanonicalIds = new Set<string>();
 
     const canonicalConfigs: Array<{ pattern: RegExp; id: string; name: string; order: number }> = [
       { pattern: /zero\s*hour/i, id: 'zero_hour', name: 'Zero Hour', order: 1 },
@@ -15127,31 +15130,22 @@ class StorageService {
 
     canonicalConfigs.forEach(canon => {
       const matched = agendaItems.find(a => canon.pattern.test(a.title || '') || canon.pattern.test(a.description || ''));
-      if (matched) {
-        sessions.push({
-          id: matched.id,
-          name: matched.title || canon.name,
-          day: matched.day,
-          time: matched.time,
-          description: matched.description,
-          is_canonical: true,
-          order_number: canon.order
-        });
-        seenIds.add(matched.id);
-      } else {
-        sessions.push({
-          id: canon.id,
-          name: canon.name,
-          is_canonical: true,
-          order_number: canon.order
-        });
-        seenIds.add(canon.id);
-      }
+      sessions.push({
+        id: canon.id, // Always anchor to stable canonical ID!
+        name: matched?.title || canon.name,
+        day: matched?.day,
+        time: matched?.time,
+        description: matched?.description,
+        is_canonical: true,
+        order_number: canon.order
+      });
+      seenCanonicalIds.add(canon.id);
+      if (matched) seenCanonicalIds.add(matched.id);
     });
 
     // Also include any other agenda items that could be custom scored sessions
     agendaItems.forEach((a, idx) => {
-      if (!seenIds.has(a.id) && a.title && (a.category === 'DEBATE' || a.category === 'PRESENTATION' || a.category === 'VOTING' || /hour|debate|speech|motion/i.test(a.title))) {
+      if (!seenCanonicalIds.has(a.id) && a.title && (a.category === 'DEBATE' || a.category === 'PRESENTATION' || a.category === 'VOTING' || /hour|debate|speech|motion/i.test(a.title))) {
         sessions.push({
           id: a.id,
           name: a.title,
@@ -15161,7 +15155,7 @@ class StorageService {
           is_canonical: false,
           order_number: 10 + idx
         });
-        seenIds.add(a.id);
+        seenCanonicalIds.add(a.id);
       }
     });
 
@@ -15201,7 +15195,12 @@ class StorageService {
       all = all.filter(s => s.event_id === eventId);
     }
     if (sessionId && sessionId !== 'ALL') {
-      all = all.filter(s => s.session_id === sessionId || s.session_name === sessionId);
+      const agenda = eventId ? this.getAgenda(eventId) : [];
+      const targetCanonical = resolveCanonicalSession(sessionId, undefined, agenda).canonicalId;
+      all = all.filter(s => {
+        const sCanonical = resolveCanonicalSession(s.session_id, s.session_name, agenda).canonicalId;
+        return sCanonical === targetCanonical || s.session_id === sessionId || s.session_name === sessionId;
+      });
     }
     if (juryId && juryId !== 'ALL') {
       all = all.filter(s => s.jury_id === juryId || s.juror_name === juryId);
@@ -15234,18 +15233,11 @@ class StorageService {
 
     const now = new Date().toISOString();
 
-    // Ensure stable session_id and jury_id are always assigned
-    let sessId = score.session_id;
-    let sessName = score.session_name || 'Session';
-    if (!sessId && score.session_name) {
-      const sNameLower = score.session_name.toLowerCase();
-      if (sNameLower.includes('zero')) { sessId = 'zero_hour'; sessName = 'Zero Hour'; }
-      else if (sNameLower.includes('question')) { sessId = 'question_hour'; sessName = 'Question Hour'; }
-      else if (sNameLower.includes('bill')) { sessId = 'bill_presenting'; sessName = 'Bill Presenting'; }
-      else if (sNameLower.includes('90') || sNameLower.includes('speech')) { sessId = '90_sec_speech'; sessName = '90 Sec Speech'; }
-      else { sessId = score.session_name.trim().toLowerCase().replace(/\s+/g, '_'); }
-    }
-    if (!sessId) sessId = 'default_session';
+    // Canonical session resolution
+    const agendaItems = score.event_id ? this.getAgenda(score.event_id) : [];
+    const resolvedSession = resolveCanonicalSession(score.session_id, score.session_name, agendaItems);
+    const sessId = resolvedSession.canonicalId;
+    const sessName = score.session_name || resolvedSession.displayName;
 
     let juryId = score.jury_id;
     let jurorName = score.juror_name || 'Juror';
@@ -15454,6 +15446,669 @@ class StorageService {
     return aggMap;
   }
 
+  // ── MULTI-SPEAKING-TURN JURY EVALUATION ENGINE ──
+
+  public recordInitialEvaluation(params: {
+    eventId: string;
+    sessionId: string;
+    sessionName?: string;
+    learnerId: string;
+    learnerName?: string;
+    constituencyNumber?: number;
+    constituencyName?: string;
+    partyName?: string;
+    bench?: 'Ruling' | 'Opposition' | 'Independent';
+    juryId: string;
+    juryName: string;
+    research_constituency: number;
+    relevance_agenda: number;
+    communication_delivery: number;
+    parliamentary_conduct: number;
+    originality_preparation: number;
+    time_management: number;
+    speakingTurnId?: string;
+    feedback?: string;
+    isTest?: boolean;
+  }): JuryEvaluation {
+    if (!params.learnerId) throw new Error('Learner ID is required for initial evaluation');
+    if (!params.eventId) throw new Error('Event ID is required for initial evaluation');
+    if (!params.juryId) throw new Error('Jury ID is required for initial evaluation');
+
+    const agendaItems = this.getAgenda(params.eventId);
+    const resolvedSession = resolveCanonicalSession(params.sessionId, params.sessionName, agendaItems);
+    const canonicalSessionId = resolvedSession.canonicalId;
+    const canonicalSessionName = params.sessionName || resolvedSession.displayName;
+
+    const r = Math.max(0, Math.min(30, Number(params.research_constituency || 0)));
+    const rel = Math.max(0, Math.min(20, Number(params.relevance_agenda || 0)));
+    const comm = Math.max(0, Math.min(20, Number(params.communication_delivery || 0)));
+    const cond = Math.max(0, Math.min(12, Number(params.parliamentary_conduct || 0)));
+    const orig = Math.max(0, Math.min(12, Number(params.originality_preparation || 0)));
+    const time = Math.max(0, Math.min(6, Number(params.time_management || 0)));
+    const total = r + rel + comm + cond + orig + time;
+
+    const allEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
+    const existing = allEvals.find(e =>
+      e.event_id === params.eventId &&
+      e.session_id === canonicalSessionId &&
+      e.jury_id === params.juryId &&
+      e.learner_id === params.learnerId
+    );
+
+    if (existing) {
+      return existing;
+    }
+
+    const now = new Date().toISOString();
+    const evalId = uid('eval');
+    const newEval: JuryEvaluation = {
+      id: evalId,
+      event_id: params.eventId,
+      session_id: canonicalSessionId,
+      session_name: canonicalSessionName,
+      learner_id: params.learnerId,
+      learner_name: params.learnerName || 'Delegate',
+      constituency_number: params.constituencyNumber,
+      constituency_name: params.constituencyName,
+      party_name: params.partyName || 'Independent',
+      bench: (params.bench as any) || 'Ruling',
+      jury_id: params.juryId,
+      jury_name: params.juryName,
+      research_constituency: r,
+      relevance_agenda: rel,
+      communication_delivery: comm,
+      parliamentary_conduct: cond,
+      originality_preparation: orig,
+      time_management: time,
+      total,
+      feedback: (params.feedback || '').trim(),
+      initial_speaking_turn_id: params.speakingTurnId,
+      status: 'ACTIVE',
+      is_test: !!params.isTest,
+      created_at: now,
+      updated_at: now,
+      turns: [],
+      adjustments: []
+    };
+
+    if (params.speakingTurnId) {
+      const turnRecord: JuryEvaluationTurn = {
+        id: uid('eval_turn'),
+        evaluation_id: evalId,
+        speaking_turn_id: params.speakingTurnId,
+        turn_number: 1,
+        action_type: 'INITIAL_EVALUATION',
+        recorded_by: params.juryId,
+        recorded_by_name: params.juryName,
+        created_at: now
+      };
+      newEval.turns = [turnRecord];
+      const allTurns = this.getItem<JuryEvaluationTurn[]>(STORAGE_KEYS.JURY_EVALUATION_TURNS, []);
+      this.setItem(STORAGE_KEYS.JURY_EVALUATION_TURNS, [...allTurns, turnRecord]);
+    }
+
+    allEvals.push(newEval);
+    this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, allEvals);
+
+    // Backward compatibility: also sync into ScoreRecord store
+    this.saveScoreRecord({
+      id: evalId,
+      event_id: params.eventId,
+      session_id: canonicalSessionId,
+      session_name: canonicalSessionName,
+      learner_id: params.learnerId,
+      learner_name: newEval.learner_name,
+      constituency_number: params.constituencyNumber,
+      constituency_name: params.constituencyName,
+      party_name: newEval.party_name,
+      bench: newEval.bench,
+      jury_id: params.juryId,
+      juror_name: params.juryName,
+      research_constituency: r,
+      relevance_agenda: rel,
+      communication_delivery: comm,
+      parliamentary_conduct: cond,
+      originality_preparation: orig,
+      time_management: time,
+      total,
+      feedback: newEval.feedback,
+      is_test: newEval.is_test,
+      created_at: now,
+      updated_at: now
+    });
+
+    this.notify();
+    return newEval;
+  }
+
+  public recordContributionOnly(params: {
+    evaluationId: string;
+    speakingTurnId: string;
+    jurorId: string;
+    jurorName: string;
+    notes?: string;
+  }): JuryEvaluation {
+    const allEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
+    const evaluation = allEvals.find(e => e.id === params.evaluationId);
+    if (!evaluation) {
+      throw new Error(`Evaluation ${params.evaluationId} not found`);
+    }
+
+    const allTurns = this.getItem<JuryEvaluationTurn[]>(STORAGE_KEYS.JURY_EVALUATION_TURNS, []);
+    const evalTurns = allTurns.filter(t => t.evaluation_id === params.evaluationId);
+    const turnNumber = evalTurns.length + 1;
+    const now = new Date().toISOString();
+
+    const newTurn: JuryEvaluationTurn = {
+      id: uid('eval_turn'),
+      evaluation_id: params.evaluationId,
+      speaking_turn_id: params.speakingTurnId,
+      turn_number: turnNumber,
+      action_type: 'CONTRIBUTION_ONLY',
+      recorded_by: params.jurorId,
+      recorded_by_name: params.jurorName,
+      notes: (params.notes || '').trim(),
+      created_at: now
+    };
+
+    this.setItem(STORAGE_KEYS.JURY_EVALUATION_TURNS, [...allTurns, newTurn]);
+
+    evaluation.updated_at = now;
+    evaluation.turns = [...evalTurns, newTurn];
+    this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, allEvals);
+
+    this.notify();
+    return evaluation;
+  }
+
+  public recordScoreAdjustment(params: {
+    evaluationId: string;
+    speakingTurnId?: string;
+    jurorId: string;
+    jurorName: string;
+    research_constituency: number;
+    relevance_agenda: number;
+    communication_delivery: number;
+    parliamentary_conduct: number;
+    originality_preparation: number;
+    time_management: number;
+    adjustmentReason: string;
+  }): JuryEvaluation {
+    const reason = (params.adjustmentReason || '').trim();
+    if (!reason) {
+      throw new Error('Mandatory adjustment reason is required for any score adjustment.');
+    }
+
+    const allEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
+    const evaluation = allEvals.find(e => e.id === params.evaluationId);
+    if (!evaluation) {
+      throw new Error(`Evaluation ${params.evaluationId} not found`);
+    }
+
+    const prevR = evaluation.research_constituency;
+    const prevRel = evaluation.relevance_agenda;
+    const prevComm = evaluation.communication_delivery;
+    const prevCond = evaluation.parliamentary_conduct;
+    const prevOrig = evaluation.originality_preparation;
+    const prevTime = evaluation.time_management;
+    const prevTotal = evaluation.total;
+
+    const newR = Math.max(0, Math.min(30, Number(params.research_constituency ?? prevR)));
+    const newRel = Math.max(0, Math.min(20, Number(params.relevance_agenda ?? prevRel)));
+    const newComm = Math.max(0, Math.min(20, Number(params.communication_delivery ?? prevComm)));
+    const newCond = Math.max(0, Math.min(12, Number(params.parliamentary_conduct ?? prevCond)));
+    const newOrig = Math.max(0, Math.min(12, Number(params.originality_preparation ?? prevOrig)));
+    const newTime = Math.max(0, Math.min(6, Number(params.time_management ?? prevTime)));
+    const newTotal = newR + newRel + newComm + newCond + newOrig + newTime;
+    const deltaTotal = Number((newTotal - prevTotal).toFixed(1));
+
+    const now = new Date().toISOString();
+
+    // 1. Create Adjustment History record
+    const adjustmentRecord: JuryEvaluationAdjustment = {
+      id: uid('eval_adj'),
+      evaluation_id: params.evaluationId,
+      speaking_turn_id: params.speakingTurnId,
+      juror_id: params.jurorId,
+      juror_name: params.jurorName,
+      previous_research_constituency: prevR,
+      new_research_constituency: newR,
+      previous_relevance_agenda: prevRel,
+      new_relevance_agenda: newRel,
+      previous_communication_delivery: prevComm,
+      new_communication_delivery: newComm,
+      previous_parliamentary_conduct: prevCond,
+      new_parliamentary_conduct: newCond,
+      previous_originality_preparation: prevOrig,
+      new_originality_preparation: newOrig,
+      previous_time_management: prevTime,
+      new_time_management: newTime,
+      previous_total: prevTotal,
+      new_total: newTotal,
+      delta_total: deltaTotal,
+      adjustment_reason: reason,
+      adjusted_at: now
+    };
+
+    const allAdjustments = this.getItem<JuryEvaluationAdjustment[]>(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, []);
+    this.setItem(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, [...allAdjustments, adjustmentRecord]);
+
+    // 2. Create Turn entry if speakingTurnId provided
+    const allTurns = this.getItem<JuryEvaluationTurn[]>(STORAGE_KEYS.JURY_EVALUATION_TURNS, []);
+    const evalTurns = allTurns.filter(t => t.evaluation_id === params.evaluationId);
+    let turnRecord: JuryEvaluationTurn | undefined;
+    if (params.speakingTurnId) {
+      turnRecord = {
+        id: uid('eval_turn'),
+        evaluation_id: params.evaluationId,
+        speaking_turn_id: params.speakingTurnId,
+        turn_number: evalTurns.length + 1,
+        action_type: 'ADJUSTMENT',
+        recorded_by: params.jurorId,
+        recorded_by_name: params.jurorName,
+        notes: reason,
+        created_at: now
+      };
+      this.setItem(STORAGE_KEYS.JURY_EVALUATION_TURNS, [...allTurns, turnRecord]);
+    }
+
+    // 3. Update official evaluation
+    evaluation.research_constituency = newR;
+    evaluation.relevance_agenda = newRel;
+    evaluation.communication_delivery = newComm;
+    evaluation.parliamentary_conduct = newCond;
+    evaluation.originality_preparation = newOrig;
+    evaluation.time_management = newTime;
+    evaluation.total = newTotal;
+    evaluation.updated_at = now;
+    evaluation.adjustments = [...(evaluation.adjustments || []), adjustmentRecord];
+    if (params.speakingTurnId && turnRecord) {
+      evaluation.turns = [...evalTurns, turnRecord];
+    }
+    this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, allEvals);
+
+    // 4. Update legacy ScoreRecord mirror
+    this.saveScoreRecord({
+      id: evaluation.id,
+      event_id: evaluation.event_id,
+      session_id: evaluation.session_id,
+      session_name: evaluation.session_name,
+      learner_id: evaluation.learner_id,
+      learner_name: evaluation.learner_name,
+      constituency_number: evaluation.constituency_number,
+      constituency_name: evaluation.constituency_name,
+      party_name: evaluation.party_name,
+      bench: evaluation.bench,
+      jury_id: evaluation.jury_id,
+      juror_name: evaluation.jury_name,
+      research_constituency: newR,
+      relevance_agenda: newRel,
+      communication_delivery: newComm,
+      parliamentary_conduct: newCond,
+      originality_preparation: newOrig,
+      time_management: newTime,
+      total: newTotal,
+      feedback: evaluation.feedback,
+      is_test: evaluation.is_test,
+      created_at: evaluation.created_at,
+      updated_at: now
+    });
+
+    this.notify();
+    return evaluation;
+  }
+
+  public getJuryEvaluations(
+    eventId?: string,
+    sessionId?: string,
+    juryId?: string,
+    learnerId?: string
+  ): JuryEvaluation[] {
+    const allEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
+    const allTurns = this.getItem<JuryEvaluationTurn[]>(STORAGE_KEYS.JURY_EVALUATION_TURNS, []);
+    const allAdjs = this.getItem<JuryEvaluationAdjustment[]>(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, []);
+
+    // Bridge from legacy scores to guarantee that all historical scores are available seamlessly
+    const legacyScores = this.getScores(eventId, sessionId);
+    const agendaItems = eventId ? this.getAgenda(eventId) : [];
+
+    const evalMap = new Map<string, JuryEvaluation>();
+
+    // Index existing new-model evaluations
+    allEvals.forEach(e => {
+      const resolved = resolveCanonicalSession(e.session_id, e.session_name, agendaItems);
+      const k = `${e.event_id}:::${resolved.canonicalId}:::${e.jury_id}:::${e.learner_id}`;
+      e.turns = allTurns.filter(t => t.evaluation_id === e.id);
+      e.adjustments = allAdjs.filter(a => a.evaluation_id === e.id);
+      evalMap.set(k, e);
+    });
+
+    // Bridge legacy scores if not in evalMap
+    legacyScores.forEach(s => {
+      if (!s.learner_id) return;
+      const resolved = resolveCanonicalSession(s.session_id, s.session_name, agendaItems);
+      let jId = s.jury_id;
+      if (!jId && s.juror_name) {
+        jId = s.juror_name.trim().toLowerCase().replace(/\s+/g, '_');
+      }
+      if (!jId) jId = 'default_jury';
+
+      const k = `${s.event_id}:::${resolved.canonicalId}:::${jId}:::${s.learner_id}`;
+      if (!evalMap.has(k)) {
+        const syntheticEval: JuryEvaluation = {
+          id: s.id,
+          event_id: s.event_id || eventId || '',
+          session_id: resolved.canonicalId,
+          session_name: resolved.displayName,
+          learner_id: s.learner_id,
+          learner_name: s.learner_name || 'Delegate',
+          constituency_number: s.constituency_number,
+          constituency_name: s.constituency_name,
+          party_name: s.party_name || 'Independent',
+          bench: (s.bench as any) || 'Ruling',
+          jury_id: jId,
+          jury_name: s.juror_name || 'Juror',
+          research_constituency: Number(s.research_constituency || 0),
+          relevance_agenda: Number(s.relevance_agenda || 0),
+          communication_delivery: Number(s.communication_delivery || 0),
+          parliamentary_conduct: Number(s.parliamentary_conduct || 0),
+          originality_preparation: Number(s.originality_preparation || 0),
+          time_management: Number(s.time_management || 0),
+          total: Number(s.total || 0),
+          feedback: s.feedback || '',
+          status: 'ACTIVE',
+          is_test: !!s.is_test,
+          created_at: s.created_at || new Date().toISOString(),
+          updated_at: s.updated_at || new Date().toISOString(),
+          turns: [],
+          adjustments: []
+        };
+        evalMap.set(k, syntheticEval);
+      }
+    });
+
+    let result = Array.from(evalMap.values());
+
+    if (eventId) {
+      result = result.filter(e => e.event_id === eventId);
+    }
+    if (sessionId) {
+      const targetResolved = resolveCanonicalSession(sessionId, undefined, agendaItems);
+      result = result.filter(e => {
+        const itemResolved = resolveCanonicalSession(e.session_id, e.session_name, agendaItems);
+        return itemResolved.canonicalId === targetResolved.canonicalId;
+      });
+    }
+    if (juryId) {
+      result = result.filter(e => e.jury_id === juryId || e.jury_name === juryId);
+    }
+    if (learnerId) {
+      result = result.filter(e => e.learner_id === learnerId);
+    }
+
+    return result;
+  }
+
+  public getSessionLeaderboard(eventId: string, sessionId: string): SessionLeaderboardRow[] {
+    if (!eventId || !sessionId) return [];
+
+    const agendaItems = this.getAgenda(eventId);
+    const targetSession = resolveCanonicalSession(sessionId, undefined, agendaItems);
+    const evals = this.getJuryEvaluations(eventId, targetSession.canonicalId).filter(e => !e.is_test);
+    const learners = this.getLearners(eventId);
+    const learnerMap = new Map<string, Learner>();
+    learners.forEach(l => learnerMap.set(l.id, l));
+
+    const speakingTurns = this.getSpeakingTurns(eventId).filter(t => {
+      const res = resolveCanonicalSession(t.session_id, t.session_name, agendaItems);
+      return res.canonicalId === targetSession.canonicalId && t.status !== 'CANCELLED';
+    });
+
+    const speakingCountsByLearner = new Map<string, number>();
+    speakingTurns.forEach(st => {
+      if (st.learner_id) {
+        speakingCountsByLearner.set(st.learner_id, (speakingCountsByLearner.get(st.learner_id) || 0) + 1);
+      }
+    });
+
+    const jurors = this.getJury(eventId);
+    const expectedJurors = jurors.length > 0 ? jurors.length : 6;
+
+    // Group evaluations by learner_id
+    const evalsByLearner = new Map<string, JuryEvaluation[]>();
+    evals.forEach(e => {
+      if (!evalsByLearner.has(e.learner_id)) {
+        evalsByLearner.set(e.learner_id, []);
+      }
+      evalsByLearner.get(e.learner_id)!.push(e);
+    });
+
+    const rows: SessionLeaderboardRow[] = [];
+
+    // All evaluated learners or learners who spoke
+    const relevantLearnerIds = new Set<string>([
+      ...evalsByLearner.keys(),
+      ...speakingCountsByLearner.keys()
+    ]);
+
+    for (const lid of relevantLearnerIds) {
+      const learnerEvals = evalsByLearner.get(lid) || [];
+      const learner = learnerMap.get(lid);
+      const jurorCount = learnerEvals.length;
+      const turnCount = speakingCountsByLearner.get(lid) || 0;
+
+      let sumResearch = 0;
+      let sumRelevance = 0;
+      let sumComm = 0;
+      let sumConduct = 0;
+      let sumOrig = 0;
+      let sumTime = 0;
+      let sumTotal = 0;
+      let totalAdjustments = 0;
+      let latestTimestamp = '';
+
+      learnerEvals.forEach(e => {
+        sumResearch += e.research_constituency;
+        sumRelevance += e.relevance_agenda;
+        sumComm += e.communication_delivery;
+        sumConduct += e.parliamentary_conduct;
+        sumOrig += e.originality_preparation;
+        sumTime += e.time_management;
+        sumTotal += e.total;
+        totalAdjustments += (e.adjustments?.length || 0);
+        if (!latestTimestamp || new Date(e.updated_at).getTime() > new Date(latestTimestamp).getTime()) {
+          latestTimestamp = e.updated_at;
+        }
+      });
+
+      const count = jurorCount || 1;
+      const sessionScore = jurorCount > 0 ? Number((sumTotal / count).toFixed(2)) : 0;
+      const avgResearch = jurorCount > 0 ? Number((sumResearch / count).toFixed(1)) : 0;
+      const avgRelevance = jurorCount > 0 ? Number((sumRelevance / count).toFixed(1)) : 0;
+      const avgComm = jurorCount > 0 ? Number((sumComm / count).toFixed(1)) : 0;
+      const avgConduct = jurorCount > 0 ? Number((sumConduct / count).toFixed(1)) : 0;
+      const avgOrig = jurorCount > 0 ? Number((sumOrig / count).toFixed(1)) : 0;
+      const avgTime = jurorCount > 0 ? Number((sumTime / count).toFixed(1)) : 0;
+
+      let completionStatus: 'FULLY_SCORED' | 'PARTIALLY_SCORED' | 'NOT_SCORED' = 'NOT_SCORED';
+      if (jurorCount >= expectedJurors) {
+        completionStatus = 'FULLY_SCORED';
+      } else if (jurorCount > 0) {
+        completionStatus = 'PARTIALLY_SCORED';
+      }
+
+      rows.push({
+        rank: 0,
+        learnerId: lid,
+        studentName: learner?.full_name || learnerEvals[0]?.learner_name || 'Delegate',
+        constituencyNumber: learner?.constituency_number || learnerEvals[0]?.constituency_number,
+        constituencyName: learner?.constituency_name || learnerEvals[0]?.constituency_name,
+        partyName: learner?.party_name || learnerEvals[0]?.party_name || 'Independent',
+        bench: learner?.bench || learnerEvals[0]?.bench || 'Ruling',
+        sessionScore,
+        jurorCount,
+        expectedJurors,
+        completionStatus,
+        speakingTurnCount: Math.max(turnCount, learnerEvals[0]?.turns?.length || 0),
+        avgResearch,
+        avgRelevance,
+        avgComm,
+        avgConduct,
+        avgOrig,
+        avgTime,
+        adjustmentsCount: totalAdjustments,
+        latestScoreTimestamp: latestTimestamp || new Date().toISOString()
+      });
+    }
+
+    // Deterministic Sorting:
+    // 1. Session Score DESC
+    // 2. Parliamentary Conduct average DESC
+    // 3. Research & Constituency average DESC
+    // 4. Jury completion ratio DESC
+    // 5. Stable learner ID ASC
+    rows.sort((a, b) => {
+      if (b.sessionScore !== a.sessionScore) return b.sessionScore - a.sessionScore;
+      if (b.avgConduct !== a.avgConduct) return b.avgConduct - a.avgConduct;
+      if (b.avgResearch !== a.avgResearch) return b.avgResearch - a.avgResearch;
+      const aComp = a.jurorCount / a.expectedJurors;
+      const bComp = b.jurorCount / b.expectedJurors;
+      if (bComp !== aComp) return bComp - aComp;
+      return a.learnerId.localeCompare(b.learnerId);
+    });
+
+    // Assign Ranks
+    for (let i = 0; i < rows.length; i++) {
+      if (i > 0) {
+        const prev = rows[i - 1];
+        const curr = rows[i];
+        if (curr.sessionScore === prev.sessionScore &&
+            curr.avgConduct === prev.avgConduct &&
+            curr.avgResearch === prev.avgResearch &&
+            curr.jurorCount === prev.jurorCount) {
+          curr.rank = prev.rank;
+        } else {
+          curr.rank = i + 1;
+        }
+      } else {
+        rows[0].rank = 1;
+      }
+    }
+
+    return rows;
+  }
+
+  public getOverallLeaderboard(eventId: string): OverallLeaderboardRow[] {
+    if (!eventId) return [];
+
+    const canonicalSessions = this.getScoringSessions(eventId);
+    const learners = this.getLearners(eventId);
+    const learnerMap = new Map<string, Learner>();
+    learners.forEach(l => learnerMap.set(l.id, l));
+
+    const speakingTurns = this.getSpeakingTurns(eventId).filter(t => t.status !== 'CANCELLED');
+    const speakingCountsByLearner = new Map<string, number>();
+    speakingTurns.forEach(st => {
+      if (st.learner_id) {
+        speakingCountsByLearner.set(st.learner_id, (speakingCountsByLearner.get(st.learner_id) || 0) + 1);
+      }
+    });
+
+    // Map: learnerId => sessionBreakdown
+    const learnerSessionScores = new Map<string, Record<string, {
+      sessionId: string;
+      sessionName: string;
+      score: number;
+      jurorCount: number;
+      speakingTurnCount: number;
+    }>>();
+
+    canonicalSessions.forEach(session => {
+      const sessionRows = this.getSessionLeaderboard(eventId, session.id);
+      sessionRows.forEach(row => {
+        if (row.sessionScore > 0 || row.jurorCount > 0) {
+          if (!learnerSessionScores.has(row.learnerId)) {
+            learnerSessionScores.set(row.learnerId, {});
+          }
+          learnerSessionScores.get(row.learnerId)![session.id] = {
+            sessionId: session.id,
+            sessionName: session.name,
+            score: row.sessionScore,
+            jurorCount: row.jurorCount,
+            speakingTurnCount: row.speakingTurnCount
+          };
+        }
+      });
+    });
+
+    const rows: OverallLeaderboardRow[] = [];
+
+    learnerSessionScores.forEach((sessions, lid) => {
+      const learner = learnerMap.get(lid);
+      const sessionKeys = Object.keys(sessions);
+      if (sessionKeys.length === 0) return;
+
+      let sumScore = 0;
+      let totalJurorCount = 0;
+      let totalTurns = 0;
+
+      sessionKeys.forEach(sk => {
+        const sInfo = sessions[sk];
+        sumScore += sInfo.score;
+        totalJurorCount += sInfo.jurorCount;
+        totalTurns += sInfo.speakingTurnCount;
+      });
+
+      // Arithmetic mean of eligible scored sessions ONLY (unscored sessions are NOT counted as zeroes)
+      const overallScore = Number((sumScore / sessionKeys.length).toFixed(2));
+
+      rows.push({
+        rank: 0,
+        learnerId: lid,
+        studentName: learner?.full_name || 'Delegate',
+        constituencyNumber: learner?.constituency_number,
+        constituencyName: learner?.constituency_name,
+        partyName: learner?.party_name || 'Independent',
+        bench: learner?.bench || 'Ruling',
+        overallScore,
+        sessionsEvaluatedCount: sessionKeys.length,
+        totalJurorEvaluationsCount: totalJurorCount,
+        speakingTurnCount: Math.max(totalTurns, speakingCountsByLearner.get(lid) || 0),
+        sessionBreakdown: sessions
+      });
+    });
+
+    // Deterministic Sorting:
+    // 1. Overall Score DESC
+    // 2. Sessions Evaluated Count DESC
+    // 3. Speaking Turn Count DESC
+    // 4. Learner ID ASC
+    rows.sort((a, b) => {
+      if (b.overallScore !== a.overallScore) return b.overallScore - a.overallScore;
+      if (b.sessionsEvaluatedCount !== a.sessionsEvaluatedCount) return b.sessionsEvaluatedCount - a.sessionsEvaluatedCount;
+      if (b.speakingTurnCount !== a.speakingTurnCount) return b.speakingTurnCount - a.speakingTurnCount;
+      return a.learnerId.localeCompare(b.learnerId);
+    });
+
+    for (let i = 0; i < rows.length; i++) {
+      if (i > 0) {
+        const prev = rows[i - 1];
+        const curr = rows[i];
+        if (curr.overallScore === prev.overallScore &&
+            curr.sessionsEvaluatedCount === prev.sessionsEvaluatedCount &&
+            curr.speakingTurnCount === prev.speakingTurnCount) {
+          curr.rank = prev.rank;
+        } else {
+          curr.rank = i + 1;
+        }
+      } else {
+        rows[0].rank = 1;
+      }
+    }
+
+    return rows;
+  }
+
   // ── VOTE AUDIT TRAIL (Issue #7: Monotonic Audit Log) ──
   public recordVoteAuditEntry(entry: VoteAuditEntry) {
     const all = this.getItem<VoteAuditEntry[]>(STORAGE_KEYS.VOTE_AUDIT_LOG, []);
@@ -15504,8 +16159,9 @@ class StorageService {
   }
 
   /**
-   * Permanently resets all jury scores ONLY for the specified eventId in Supabase and local storage.
+   * Safely resets ONLY test/demo jury scores for the specified eventId in Supabase and local storage.
    * Strictly scopes database update to WHERE id = eventId.
+   * NEVER deletes or clears real production scores (is_test === false).
    * Preserves all other social_coverage fields (elections, flash_votes, proceedings, questions, etc.).
    * Never affects any other event or any non-score data.
    */
@@ -15526,6 +16182,7 @@ class StorageService {
     }
 
     let deletedCount = 0;
+    let remainingRealCount = 0;
 
     // 1. Supabase update (Authoritative database)
     if (supabase) {
@@ -15541,53 +16198,69 @@ class StorageService {
 
       const remoteSC = (evData?.social_coverage || {}) as Record<string, any>;
       const remoteScores = Array.isArray(remoteSC.scores) ? (remoteSC.scores as ScoreRecord[]) : [];
-      deletedCount = remoteScores.length;
+      const testScores = remoteScores.filter(s => this.isTestScore(s));
+      const realScores = remoteScores.filter(s => !this.isTestScore(s));
+      deletedCount = testScores.length;
+      remainingRealCount = realScores.length;
 
-      const updatedSC = {
-        ...remoteSC,
-        scores: [],
-        updated_at: new Date().toISOString()
-      };
-
-      const { error: updateErr } = await supabase
-        .from('college_events')
-        .update({
-          social_coverage: updatedSC,
+      // Only perform database update if test scores actually exist
+      if (deletedCount > 0) {
+        const updatedSC = {
+          ...remoteSC,
+          scores: realScores,
           updated_at: new Date().toISOString()
-        })
-        .eq('id', eventId);
+        };
 
-      if (updateErr) {
-        throw new Error(`Database error resetting test scores: ${updateErr.message}`);
+        const { error: updateErr } = await supabase
+          .from('college_events')
+          .update({
+            social_coverage: updatedSC,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', eventId);
+
+        if (updateErr) {
+          throw new Error(`Database error resetting test scores: ${updateErr.message}`);
+        }
       }
     }
 
-    // 2. Clear Local Storage scores strictly for this event
+    // 2. Clear Local Storage test scores strictly for this event
     const all = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
     const localEventScores = all.filter(s => s.event_id === eventId);
-    if (deletedCount === 0) {
-      deletedCount = localEventScores.length;
-    }
-    const remainingOtherScores = all.filter(s => s.event_id && s.event_id !== eventId);
-    this.setItem(STORAGE_KEYS.SCORES, remainingOtherScores);
+    const localTestScores = localEventScores.filter(s => this.isTestScore(s));
+    const localRealScores = localEventScores.filter(s => !this.isTestScore(s));
 
-    // 3. Remove dedicated event backup
+    if (deletedCount === 0) {
+      deletedCount = localTestScores.length;
+      remainingRealCount = localRealScores.length;
+    }
+
+    const remainingOtherScores = all.filter(s => s.event_id && s.event_id !== eventId);
+    this.setItem(STORAGE_KEYS.SCORES, [...remainingOtherScores, ...localRealScores]);
+
+    // 3. Update dedicated event backup with real scores only
     if (typeof localStorage !== 'undefined') {
       try {
-        localStorage.removeItem(`tn_assembly_scores_${eventId}`);
+        if (localRealScores.length > 0) {
+          localStorage.setItem(`tn_assembly_scores_${eventId}`, JSON.stringify(localRealScores));
+        } else {
+          localStorage.removeItem(`tn_assembly_scores_${eventId}`);
+        }
       } catch {}
     }
 
-    // 4. Update cached event in STORAGE_KEYS.EVENTS so social_coverage.scores is empty
+    // 4. Update cached event in STORAGE_KEYS.EVENTS so social_coverage.scores retains only real scores
     const allEvs = this.getEvents();
     const updatedEvs = allEvs.map(ev => {
       if (ev.id === eventId) {
         const sc = (ev.social_coverage || {}) as Record<string, any>;
+        const curScScores = Array.isArray(sc.scores) ? (sc.scores as ScoreRecord[]) : [];
         return {
           ...ev,
           social_coverage: {
             ...sc,
-            scores: []
+            scores: curScScores.filter(s => !this.isTestScore(s))
           }
         };
       }
@@ -15600,13 +16273,13 @@ class StorageService {
     this.invalidateCache('events');
     this.invalidateCache('portal_');
 
-    // 6. Broadcast reset over existing realtime channel if active
-    if (this.realtimeChannel) {
+    // 6. Broadcast reset over existing realtime channel ONLY if test scores were actually deleted
+    if (deletedCount > 0 && this.realtimeChannel) {
       try {
         await this.realtimeChannel.send({
           type: 'broadcast',
           event: 'scores_reset',
-          payload: { eventId }
+          payload: { eventId, deletedCount, remainingRealCount }
         });
       } catch {}
     }
@@ -15616,7 +16289,7 @@ class StorageService {
       window.dispatchEvent(new Event('storage'));
     }
 
-    return { success: true, deletedCount, remainingRealCount: 0 };
+    return { success: true, deletedCount, remainingRealCount };
   }
 
   public resetScores(eventId?: string) {
@@ -15625,7 +16298,9 @@ class StorageService {
         console.warn('[StorageService] Error resetting scores:', err);
       });
     } else {
-      this.setItem(STORAGE_KEYS.SCORES, []);
+      // Safely preserve any non-test scores
+      const all = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
+      this.setItem(STORAGE_KEYS.SCORES, all.filter(s => !this.isTestScore(s)));
     }
   }
 

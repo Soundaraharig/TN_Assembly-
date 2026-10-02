@@ -980,6 +980,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
 
       {activeTabFromPath === 'awards' && (
         <AwardsTab
+          eventId={activeEvent.id}
           learners={currentLearners}
           eventName={activeEvent.college_name}
           onShowToast={props.addToast}
