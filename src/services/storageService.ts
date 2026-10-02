@@ -16383,7 +16383,7 @@ class StorageService {
         ...localTestScores.map(s => s.id)
       ]);
       const deletedCount = uniquePurgedIds.size;
-      const remainingRealCount = remoteScores.length > 0 ? remoteRealScores.length : localRealScores.length;
+      const remainingRealCount = remoteScores.length > 0 ? remoteRealScores.length : (localRealScores.length > 0 ? localRealScores.length : realEvals.length);
 
       // ── 9. CACHE INVALIDATION & REALTIME BROADCAST ──
       this.invalidateCache(eventId);
