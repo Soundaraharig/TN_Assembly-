@@ -116,6 +116,10 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
   const [jumpInput, setJumpInput] = useState<string>('');
   const [isKeypadOpen, setIsKeypadOpen] = useState<boolean>(true);
 
+  // Live Mode First Score Submission Warning Modal State
+  const [hasAcknowledgedLiveWarning, setHasAcknowledgedLiveWarning] = useState<boolean>(false);
+  const [isLiveWarningModalOpen, setIsLiveWarningModalOpen] = useState<boolean>(false);
+
   // Mobile Quick Search State
   const [isMobileSearchOpen, setIsMobileSearchOpen] = useState<boolean>(false);
   const [isMobileKeypadOpen, setIsMobileKeypadOpen] = useState<boolean>(false);
@@ -235,6 +239,19 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     if (speaking) return speaking;
     return delegateSpeakingTurns[delegateSpeakingTurns.length - 1] || null;
   }, [delegateSpeakingTurns]);
+
+  // Pre-calculate recognitions count per participant across all turns in this event
+  const learnerRecognitionsCountMap = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!event?.id) return map;
+    const recogs = storageService.getJurySpeechRecognitions(event.id, undefined, undefined, undefined, undefined, false);
+    recogs.forEach(r => {
+      if (r.active && r.learner_id) {
+        map.set(r.learner_id, (map.get(r.learner_id) || 0) + 1);
+      }
+    });
+    return map;
+  }, [event?.id, recogTick]);
 
   const isTurnRecognizedByCurrentJuror = (turnId: string): boolean => {
     if (!event?.id || !jury || !turnId) return false;
@@ -678,6 +695,17 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       return;
     }
 
+    // In LIVE mode, prompt once before creating the first official evaluation
+    if (!testMode.isTestMode && !hasAcknowledgedLiveWarning) {
+      setIsLiveWarningModalOpen(true);
+      return;
+    }
+
+    executeActualSubmission();
+  };
+
+  const executeActualSubmission = () => {
+    if (!selectedLearner || !event?.id || isSubmittingEvaluation) return;
     setIsSubmittingEvaluation(true);
     try {
       const activeTurn = delegateSpeakingTurns.find(t => t.status === 'SPEAKING' || t.status === 'SPOKEN') || delegateSpeakingTurns[0];
@@ -906,24 +934,45 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 space-y-6">
-        {/* TEST MODE BANNER */}
-        {testMode.isTestMode && (
-          <div className="rounded-2xl p-4 border border-rose-500/40 bg-gradient-to-r from-rose-500/15 via-rose-500/5 to-transparent flex flex-wrap items-center justify-between gap-3 shadow-sm animate-pulse">
+        {/* SCORING ENVIRONMENT BANNER (PHASE 19) */}
+        {testMode.isTestMode ? (
+          <div className="rounded-2xl p-4 border border-amber-500/40 bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-transparent flex flex-wrap items-center justify-between gap-3 shadow-sm">
             <div className="flex items-center gap-3">
-              <div className="px-3 py-1 rounded-xl bg-rose-600 text-white font-black text-xs uppercase tracking-wider shadow-sm">
-                TEST MODE ACTIVE
+              <div className="px-3.5 py-1.5 rounded-xl bg-amber-500 text-slate-950 font-black text-xs uppercase tracking-wider shadow-sm flex items-center gap-1.5">
+                <span>🟠</span>
+                <span>TEST MODE</span>
               </div>
               <div>
-                <p className="text-xs font-black text-rose-600 dark:text-rose-400">
-                  Scores recorded now will be isolated under Test Run #{testMode.testRunId?.slice(0, 8)}
+                <p className="text-xs font-black text-amber-700 dark:text-amber-300">
+                  Scores entered here are test data and can be safely reset.
                 </p>
                 <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                  These records are tagged is_test=true and will NOT corrupt official assembly production leaderboards.
+                  Isolated under Test Run #{testMode.testRunId?.slice(0, 8)} • Will NOT affect official assembly results.
                 </p>
               </div>
             </div>
-            <span className="font-mono text-xs px-2.5 py-1 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/30">
+            <span className="font-mono text-xs px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
               Run: {testMode.testRunId || 'test_run'}
+            </span>
+          </div>
+        ) : (
+          <div className="rounded-2xl p-3 px-4 border border-emerald-500/30 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent flex flex-wrap items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-3">
+              <div className="px-3 py-1 rounded-xl bg-emerald-600 text-white font-black text-xs uppercase tracking-wider shadow-xs flex items-center gap-1.5">
+                <span>🟢</span>
+                <span>LIVE PRODUCTION</span>
+              </div>
+              <div>
+                <p className="text-xs font-bold text-emerald-800 dark:text-emerald-300">
+                  Scores entered here affect official jury records.
+                </p>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                  Official 100-point rubric scores will be permanently recorded for {event?.college_name || 'Assembly'}.
+                </p>
+              </div>
+            </div>
+            <span className="text-[10px] uppercase font-mono font-bold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20">
+              Official Ledger
             </span>
           </div>
         )}
@@ -1247,23 +1296,24 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             {/* Left/Middle: Rubric Evaluation Form (8 cols) */}
             <div className="lg:col-span-8 space-y-6">
-              {/* NOW SPEAKING Floor Banner */}
-              {activeFloorSpeakingTurn && (
-                <div className="rounded-2xl p-5 border bg-gradient-to-r from-amber-500/15 via-amber-500/8 to-transparent border-amber-500/40 flex flex-wrap items-center justify-between gap-4 shadow-sm">
+              {/* NOW SPEAKING Floor Banner (PHASE 7, 10, 11) */}
+              {activeFloorSpeakingTurn ? (
+                <div className="rounded-2xl p-5 border bg-gradient-to-r from-rose-500/15 via-amber-500/10 to-transparent border-rose-500/40 flex flex-wrap items-center justify-between gap-4 shadow-md">
                   <div className="flex items-center gap-3.5">
-                    <div className="w-12 h-12 rounded-2xl bg-amber-500 text-white flex items-center justify-center font-black shadow-md shrink-0 ring-4 ring-amber-500/20">
+                    <div className="w-12 h-12 rounded-2xl bg-rose-600 text-white flex items-center justify-center font-black shadow-md shrink-0 ring-4 ring-rose-500/20">
                       <Mic className="w-6 h-6 animate-pulse" />
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-500 text-slate-950 shadow-xs">
-                          NOW SPEAKING
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-600 text-white shadow-xs flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-white animate-ping"></span>
+                          🔴 NOW SPEAKING
                         </span>
                         <span className="text-xs font-mono font-bold text-amber-700 dark:text-amber-300">
-                          Speaking Turn #{activeFloorSpeakingTurn.sequence_number || 1}
+                          Speaking Turn {activeFloorSpeakingTurn.sequence_number || 1}
                         </span>
                       </div>
-                      <h3 className="text-lg font-black text-slate-900 dark:text-white mt-0.5 tracking-tight">
+                      <h3 className="text-xl font-black text-slate-900 dark:text-white mt-0.5 tracking-tight">
                         {activeFloorSpeakingTurn.learner_name}
                       </h3>
                       <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">
@@ -1278,7 +1328,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       <button
                         type="button"
                         onClick={() => setSelectedLearnerId(activeFloorSpeakingTurn.learner_id)}
-                        className="px-3.5 py-2 rounded-xl text-xs font-bold border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer text-slate-800 dark:text-slate-200 shadow-xs"
+                        className="px-4 py-2.5 rounded-xl text-xs font-bold border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer text-slate-800 dark:text-slate-200 shadow-xs"
                       >
                         Score Delegate
                       </button>
@@ -1287,17 +1337,25 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       type="button"
                       disabled={isTogglingRecog}
                       onClick={() => handleToggleRecognition(activeFloorSpeakingTurn)}
-                      className={`px-5 py-2.5 rounded-xl text-xs font-black transition flex items-center gap-2 cursor-pointer shadow-md active:scale-95 disabled:opacity-50 ${
+                      className={`px-6 py-3 rounded-xl text-xs font-black transition flex items-center gap-2 cursor-pointer shadow-lg active:scale-95 disabled:opacity-50 ${
                         isFloorTurnRecognized
                           ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/30 ring-2 ring-amber-400'
-                          : 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 border-2 border-amber-500/50 hover:bg-amber-50 dark:hover:bg-slate-800'
+                          : 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 border-2 border-amber-500/60 hover:bg-amber-50 dark:hover:bg-slate-800'
                       }`}
                       title={isFloorTurnRecognized ? 'Click to revoke recognition (UNRECOGNIZE)' : 'Click to recognize this speech'}
                     >
-                      <Star className={`w-4 h-4 ${isFloorTurnRecognized ? 'fill-current text-white' : 'text-amber-500'}`} />
-                      <span>{isFloorTurnRecognized ? '⭐ RECOGNIZED (Click to Unrecognize)' : '⭐ RECOGNIZE'}</span>
+                      <Star className={`w-5 h-5 ${isFloorTurnRecognized ? 'fill-current text-white' : 'text-amber-500'}`} />
+                      <span>{isFloorTurnRecognized ? '⭐ RECOGNIZED (Recorded)' : '⭐ RECOGNIZE SPEECH'}</span>
                     </button>
                   </div>
+                </div>
+              ) : (
+                <div className="rounded-xl px-4 py-2.5 border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                  <span className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-slate-400"></span>
+                    No MLA is currently speaking on the floor.
+                  </span>
+                  <span className="text-[11px] italic">Recognition activates automatically when an MLA begins speaking.</span>
                 </div>
               )}
 
@@ -1405,22 +1463,22 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       </div>
                     )}
 
-                    {/* JURY RECOGNITION SECTION (Turn-based) */}
+                    {/* SPEECH IMPACT / JURY RECOGNITION SECTION (Turn-based, PHASE 8) */}
                     <div className="p-4 rounded-xl border border-amber-500/30 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent space-y-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
                           <h4 className="text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white">
-                            ⭐ Speech Recognition
+                            SPEECH IMPACT
                           </h4>
                           {targetTurnForDelegate && (
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">
-                              Speaking Turn #{targetTurnForDelegate.sequence_number || currentTurnNumber}
+                              Speaking Turn {targetTurnForDelegate.sequence_number || currentTurnNumber}
                             </span>
                           )}
                         </div>
                         <span className="text-[11px] text-slate-500 dark:text-slate-400 italic">
-                          Independent qualitative speech recognition • Does not alter official score
+                          Independent qualitative feedback • Does not alter official score
                         </span>
                       </div>
 
@@ -1516,10 +1574,11 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       ) : (
                         <div className="p-3.5 rounded-xl bg-slate-100/70 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs space-y-1">
                           <p className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                            <span className="text-amber-500">ℹ</span> Recognition is available when this MLA has a recorded speaking turn.
+                            <Star className="w-4 h-4 text-amber-500" />
+                            <span>⭐ Speech Recognition — Waiting for a recorded speaking turn.</span>
                           </p>
                           <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                            No speaking turn has been recorded for this participant yet. When the student speaks on the floor, you can recognize their speech here or via the NOW SPEAKING floor banner.
+                            When this MLA starts speaking on the floor, the recognition button will automatically activate here and in the 🔴 NOW SPEAKING banner.
                           </p>
                         </div>
                       )}
@@ -1710,22 +1769,22 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     </div>
                   </div>
 
-                  {/* JURY RECOGNITION SECTION (Turn 1 / Initial Evaluation) */}
+                  {/* SPEECH IMPACT / JURY RECOGNITION SECTION (Turn 1 / Initial Evaluation, PHASE 8) */}
                   <div className="p-4 rounded-xl border border-amber-500/30 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
                         <h4 className="text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white">
-                          ⭐ Speech Recognition
+                          SPEECH IMPACT
                         </h4>
                         {targetTurnForDelegate && (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">
-                            Speaking Turn #{targetTurnForDelegate.sequence_number || 1}
+                            Speaking Turn {targetTurnForDelegate.sequence_number || 1}
                           </span>
                         )}
                       </div>
                       <span className="text-[11px] text-slate-500 dark:text-slate-400 italic">
-                        Independent qualitative speech recognition • Does not alter official score
+                        Independent qualitative feedback • Does not alter official score
                       </span>
                     </div>
 
@@ -1821,10 +1880,11 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     ) : (
                       <div className="p-3.5 rounded-xl bg-slate-100/70 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs space-y-1">
                         <p className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                          <span className="text-amber-500">ℹ</span> Recognition is available when this MLA has a recorded speaking turn.
+                          <Star className="w-4 h-4 text-amber-500" />
+                          <span>⭐ Speech Recognition — Waiting for a recorded speaking turn.</span>
                         </p>
                         <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                          No speaking turn has been recorded for this participant yet. When the student speaks on the floor, you can recognize their speech here or via the NOW SPEAKING floor banner.
+                          When this MLA starts speaking on the floor, the recognition button will automatically activate here and in the 🔴 NOW SPEAKING banner.
                         </p>
                       </div>
                     )}
@@ -2409,6 +2469,8 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       );
                       const constNum = learner.constituency_number ?? (learner as any).roll_no;
                       const constName = learner.constituency_name || learner.role || 'Assembly Seat';
+                      const recogCount = learnerRecognitionsCountMap.get(learner.id) || 0;
+                      const isCurrentlySpeaking = activeFloorSpeakingTurn?.learner_id === learner.id;
 
                       return (
                         <button
@@ -2416,27 +2478,40 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                           onClick={() => setSelectedLearnerId(learner.id)}
                           className={`w-full text-left p-2.5 rounded-xl border transition flex items-center justify-between cursor-pointer ${
                             isSelected ? 'shadow-sm scale-[1.01]' : 'hover:scale-[1.005]'
-                          }`}
+                          } ${isCurrentlySpeaking ? 'ring-2 ring-rose-500/50 bg-rose-500/5' : ''}`}
                           style={{
-                            backgroundColor: isSelected ? 'var(--accent-soft)' : 'var(--bg-elevated)',
-                            borderColor: isSelected ? 'var(--accent)' : 'var(--border)'
+                            backgroundColor: isSelected ? 'var(--accent-soft)' : (isCurrentlySpeaking ? 'rgba(244, 63, 94, 0.05)' : 'var(--bg-elevated)'),
+                            borderColor: isCurrentlySpeaking ? 'rgb(244, 63, 94)' : (isSelected ? 'var(--accent)' : 'var(--border)')
                           }}
                         >
                           <div className="min-w-0 pr-2 flex-1">
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               <p className="font-extrabold text-xs truncate" style={{ color: 'var(--text-primary)' }}>
                                 {learner.full_name}
                               </p>
                               {existingScore && (
                                 <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--emerald)' }} />
                               )}
+                              {isCurrentlySpeaking && (
+                                <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black uppercase tracking-wider bg-rose-600 text-white shadow-2xs flex items-center gap-1 animate-pulse">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-white"></span>
+                                  SPEAKING
+                                </span>
+                              )}
                             </div>
                             <p className="text-[11px] font-bold truncate mt-0.5" style={{ color: 'var(--accent)' }}>
                               {constNum !== undefined && constNum !== null ? `#${constNum} • ` : ''}{constName}
                             </p>
-                            <p className="text-[10px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                              {learner.party_name || 'Independent'} • {learner.bench || 'Ruling'}
-                            </p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
+                                {learner.party_name || 'Independent'} • {learner.bench || 'Ruling'}
+                              </span>
+                              {recogCount > 0 && (
+                                <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.2 rounded-md border border-amber-500/20 flex items-center gap-0.5">
+                                  ⭐ {recogCount}
+                                </span>
+                              )}
+                            </div>
                           </div>
                           <div className="text-right flex-shrink-0 flex flex-col items-end justify-center gap-1">
                             {constNum !== undefined && constNum !== null && (
@@ -2932,6 +3007,64 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
             </div>
           );
         })()}
+
+        {/* ONE-TIME LIVE MODE SUBMISSION WARNING MODAL (PHASE 19) */}
+        {isLiveWarningModalOpen && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+            <div
+              className="rounded-2xl max-w-md w-full p-6 border shadow-2xl space-y-4 animate-scale-in"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+            >
+              <div className="flex items-center gap-3">
+                <div className="p-3 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-500">
+                  <AlertCircle className="w-6 h-6" />
+                </div>
+                <div>
+                  <h4 className="text-base font-black tracking-tight" style={{ color: 'var(--text-primary)' }}>
+                    OFFICIAL JURY SUBMISSION
+                  </h4>
+                  <p className="text-xs text-amber-600 dark:text-amber-400 font-semibold">
+                    Live Production Mode Active
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-4 rounded-xl border bg-amber-500/5 border-amber-500/20 text-xs text-slate-700 dark:text-slate-300 space-y-2">
+                <p className="font-bold text-slate-900 dark:text-white">
+                  You are about to create an official jury evaluation.
+                </p>
+                <p className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-400">
+                  This score will be entered into the authoritative event ledger for <strong>{selectedLearner?.full_name}</strong> in session <strong>{selectedSession.name}</strong> and cannot be silently undone.
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 italic">
+                  (If you are practicing or testing, switch to Test Mode in the Coordinator panel first.)
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t" style={{ borderColor: 'var(--border-soft)' }}>
+                <button
+                  type="button"
+                  onClick={() => setIsLiveWarningModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border font-semibold text-xs cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                  style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsLiveWarningModalOpen(false);
+                    setHasAcknowledgedLiveWarning(true);
+                    executeActualSubmission();
+                  }}
+                  className="px-5 py-2 rounded-xl font-bold text-xs text-white bg-emerald-600 hover:bg-emerald-700 shadow-md cursor-pointer transition"
+                >
+                  Continue & Submit
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

@@ -145,6 +145,11 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   const [isTrailModalOpen, setIsTrailModalOpen] = useState(false);
   const [selectedTrailEvaluation, setSelectedTrailEvaluation] = useState<JuryEvaluation | null>(null);
 
+  // Dedicated Event Jury Scoring Reset State (Admin Only)
+  const [isResetJuryModalOpen, setIsResetJuryModalOpen] = useState(false);
+  const [typedJuryConfirm, setTypedJuryConfirm] = useState('');
+  const [isResettingJuryScoring, setIsResettingJuryScoring] = useState(false);
+
   // Test Mode & Classification State
   const [testMode, setTestMode] = useState(() => storageService.getScoringTestMode(eventId));
   const [auditTick, setAuditTick] = useState<number>(0);
@@ -1188,6 +1193,42 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
     }
   };
 
+  const handleConfirmResetJuryScoring = async () => {
+    if (!eventId) {
+      onShowToast('Unable to reset jury scoring', 'Missing event identifier.', 'error');
+      return;
+    }
+    if (typedJuryConfirm !== 'RESET JURY SCORES') {
+      onShowToast('Confirmation Required', 'You must type "RESET JURY SCORES" exactly to proceed.', 'error');
+      return;
+    }
+    setIsResettingJuryScoring(true);
+    try {
+      const res = await storageService.resetEventJuryScoring(eventId, {
+        confirmationPhrase: typedJuryConfirm
+      });
+      setIsResetJuryModalOpen(false);
+      setTypedJuryConfirm('');
+      setAuditTick(t => t + 1);
+      onShowToast(
+        'Jury Scoring Reset Complete',
+        `Successfully reset jury scoring for this event (${res.deletedLegacyScores || res.deletedEvaluations} scores removed). Speaking turns and participant records preserved.`,
+        'success'
+      );
+      if (onResetScores) {
+        onResetScores();
+      }
+    } catch (err: any) {
+      onShowToast(
+        'Reset Failed',
+        err?.message || 'Error executing jury scoring reset.',
+        'error'
+      );
+    } finally {
+      setIsResettingJuryScoring(false);
+    }
+  };
+
   // ──────────────────────────────────────────────────────────────────────────
   // Grade Modal State & Handlers
   // ──────────────────────────────────────────────────────────────────────────
@@ -1313,20 +1354,43 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
         </div>
 
         <div className="flex items-center gap-2 shrink-0 flex-wrap">
-          {/* Reset Test Scores button (Clearly separated from normal score operations) */}
+          {/* Distinct Score Count Badges */}
+          <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 text-xs">
+            <span className="text-slate-400">Production:</span>
+            <span className="font-mono font-black text-emerald-600 dark:text-emerald-400">{realScoresCount}</span>
+            <span className="text-slate-300 dark:text-slate-600">|</span>
+            <span className="text-slate-400">Test:</span>
+            <span className="font-mono font-black text-rose-500">{testScoresCount}</span>
+          </div>
+
+          {/* Reset Test Scores button (Clearly separated: only deletes test data) */}
           <button
             type="button"
             onClick={handleOpenResetTestModal}
-            disabled={isDeletingTestScores}
-            className="px-3.5 py-2 rounded-xl font-bold text-xs border flex items-center gap-1.5 transition cursor-pointer hover:bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-900/50 disabled:opacity-50"
+            disabled={isDeletingTestScores || testScoresCount === 0}
+            className="px-3 py-1.5 rounded-xl font-bold text-xs border flex items-center gap-1.5 transition cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
             title="Safely remove test/demo score records without deleting real production scores"
           >
-            <Trash2 className="w-4 h-4 text-rose-500" />
-            <span>{isDeletingTestScores ? 'Resetting...' : 'Reset Test Scores'}</span>
-            <span className={`font-mono text-[10px] px-1.5 py-0.2 rounded-full ${testScoresCount > 0 ? 'bg-rose-500 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-500'}`}>
-              {testScoresCount}
-            </span>
+            <Trash2 className="w-3.5 h-3.5 text-slate-400" />
+            <span>Reset Test Scores ({testScoresCount})</span>
           </button>
+
+          {/* Dedicated Event Jury Scoring Reset Button (Administrator Only) */}
+          {isAuthorized && (
+            <button
+              type="button"
+              onClick={() => {
+                setTypedJuryConfirm('');
+                setIsResetJuryModalOpen(true);
+              }}
+              disabled={isResettingJuryScoring}
+              className="px-3.5 py-1.5 rounded-xl font-bold text-xs border flex items-center gap-1.5 transition cursor-pointer hover:bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-300 dark:border-rose-900/50 shadow-xs"
+              title="Reset all jury scoring activity for this event and start fresh"
+            >
+              <AlertTriangle className="w-3.5 h-3.5 text-rose-500" />
+              <span>Reset Jury Scoring</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -2958,6 +3022,107 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
           </div>
         </div>
       )}
+
+      {/* Reset Jury Scoring Modal (Admin Only, Complete Reset with strict safeguards) */}
+      {isResetJuryModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+          <div
+            className="rounded-2xl max-w-lg w-full p-6 border shadow-2xl space-y-4 animate-scale-in"
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-500">
+                <AlertTriangle className="w-7 h-7" />
+              </div>
+              <div>
+                <h4 className="text-lg font-black tracking-tight text-rose-600 dark:text-rose-400">
+                  RESET JURY SCORING
+                </h4>
+                <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  {eventName || 'Current Event'}
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl border bg-rose-500/5 border-rose-500/20 space-y-3">
+              <p className="text-xs font-medium text-slate-700 dark:text-slate-300 leading-relaxed">
+                This will remove all jury scoring activity for <strong>THIS EVENT ONLY</strong>:
+              </p>
+              <ul className="text-xs space-y-1 font-medium text-rose-600 dark:text-rose-400">
+                <li>• Official jury evaluations</li>
+                <li>• Speaking-turn score links</li>
+                <li>• Score adjustments & audit trail</li>
+                <li>• Jury recognition marks</li>
+                <li>• Jury scoring history for this event</li>
+              </ul>
+            </div>
+
+            <div className="p-3.5 rounded-xl border bg-emerald-500/5 border-emerald-500/20 text-xs space-y-1.5">
+              <p className="font-bold text-emerald-600 dark:text-emerald-400">It will NOT remove:</p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-slate-600 dark:text-slate-400 text-[11px]">
+                <span>✓ Participants</span>
+                <span>✓ Attendance</span>
+                <span>✓ Questions</span>
+                <span>✓ Agenda</span>
+                <span>✓ Parties</span>
+                <span>✓ Committees</span>
+                <span>✓ Constituencies</span>
+                <span>✓ Votes</span>
+                <span>✓ Bills</span>
+                <span>✓ Event configuration</span>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl border bg-slate-100/60 dark:bg-slate-900/60 text-xs">
+              <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Current Jury Records:</span>
+              <div className="grid grid-cols-2 gap-2 text-slate-700 dark:text-slate-300 font-medium">
+                <div>Evaluations / Scores: <strong className="text-amber-500">{eventScores.length}</strong></div>
+                <div>Adjustments: <strong className="text-slate-500">{allAdjustmentsLog.length}</strong></div>
+                <div>Recognitions: <strong className="text-slate-500">{auditData.testData.recognitions + (auditData.realData.recognitions || 0)}</strong></div>
+                <div>Speaking Turns: <strong className="text-emerald-500">Preserved</strong></div>
+              </div>
+            </div>
+
+            <div className="space-y-1.5 pt-1">
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                To confirm, type <span className="font-mono text-rose-600 dark:text-rose-400 select-all font-black">RESET JURY SCORES</span> below:
+              </label>
+              <input
+                type="text"
+                value={typedJuryConfirm}
+                onChange={e => setTypedJuryConfirm(e.target.value)}
+                placeholder="Type RESET JURY SCORES"
+                className="w-full px-3 py-2 rounded-xl border font-mono text-xs focus:outline-none bg-white dark:bg-slate-900 text-slate-900 dark:text-white border-rose-300 dark:border-rose-900 focus:border-rose-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t" style={{ borderColor: 'var(--border-soft)' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsResetJuryModalOpen(false);
+                  setTypedJuryConfirm('');
+                }}
+                className="px-4 py-2 rounded-xl border font-semibold text-xs cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
+                disabled={isResettingJuryScoring}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmResetJuryScoring}
+                disabled={typedJuryConfirm !== 'RESET JURY SCORES' || isResettingJuryScoring}
+                className="px-4 py-2 rounded-xl font-bold text-xs text-white bg-rose-600 hover:bg-rose-700 shadow-md cursor-pointer flex items-center gap-1.5 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isResettingJuryScoring ? 'Resetting...' : 'BACK UP + RESET JURY SCORING'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
 
       {/* Review Unclassified Scores Modal */}
       {isUnclassifiedModalOpen && (

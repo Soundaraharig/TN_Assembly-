@@ -17137,6 +17137,285 @@ class StorageService {
     return this.resetTestScores(eventId);
   }
 
+  /**
+   * Dedicated Event-Scoped Jury Scoring Reset (Administrator-Only)
+   * 
+   * Authoritatively resets all jury scoring activity for ONE specific event.
+   * This includes:
+   * - Official jury evaluations (jury_evaluations)
+   * - Evaluation turns (jury_evaluation_turns)
+   * - Evaluation adjustments (jury_evaluation_adjustments)
+   * - Speech recognitions (jury_speech_recognitions)
+   * - Event-scoped legacy scores (college_events.social_coverage.scores)
+   * - Event-scoped localStorage jury caches and drafts
+   * 
+   * Strictly preserves:
+   * - Participants / Learners
+   * - Speaking turns (assembly floor proceedings)
+   * - Attendance
+   * - Questions
+   * - Votes / Flash votes
+   * - Bills & Elections
+   * - Agenda & Sessions
+   * - All other college events (e.g. JKKN ARTS 600 scores)
+   */
+  public async resetEventJuryScoring(
+    eventId: string,
+    options?: { confirmationPhrase?: string }
+  ): Promise<{
+    success: boolean;
+    eventId: string;
+    deletedEvaluations: number;
+    deletedEvaluationTurns: number;
+    deletedAdjustments: number;
+    deletedRecognitions: number;
+    deletedLegacyScores: number;
+    preservedSpeakingTurns: number;
+    preservedOtherEventData: boolean;
+  }> {
+    if (!eventId || typeof eventId !== 'string') {
+      throw new Error('Valid event ID is required to reset jury scoring.');
+    }
+
+    if (!this.isAuthorizedToResetScores()) {
+      throw new Error('Unauthorized: Only administrators are authorized to reset jury scoring.');
+    }
+
+    if (options?.confirmationPhrase !== 'RESET JURY SCORES') {
+      throw new Error('Confirmation phrase "RESET JURY SCORES" must be typed exactly to confirm jury scoring reset.');
+    }
+
+    // Cancel any pending debounced sync timers for this event
+    const pendingTimer = this.scoreSyncTimers.get(eventId);
+    if (pendingTimer) {
+      clearTimeout(pendingTimer);
+      this.scoreSyncTimers.delete(eventId);
+    }
+
+    // ── 1. SNAPSHOT CURRENT STATES FOR ATOMIC ROLLBACK ──
+    const snapshotEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
+    const snapshotTurns = this.getItem<JuryEvaluationTurn[]>(STORAGE_KEYS.JURY_EVALUATION_TURNS, []);
+    const snapshotAdjs = this.getItem<JuryEvaluationAdjustment[]>(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, []);
+    const snapshotRecogs = this.getItem<JurySpeechRecognition[]>(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, []);
+    const snapshotScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
+    const snapshotBackup = typeof localStorage !== 'undefined' ? localStorage.getItem(`tn_assembly_scores_${eventId}`) : null;
+    const snapshotEvents = this.getItem<CollegeEvent[]>(STORAGE_KEYS.EVENTS, []);
+
+    const rollbackLocalState = () => {
+      try {
+        this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, snapshotEvals);
+        this.setItem(STORAGE_KEYS.JURY_EVALUATION_TURNS, snapshotTurns);
+        this.setItem(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, snapshotAdjs);
+        this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, snapshotRecogs);
+        this.setItem(STORAGE_KEYS.SCORES, snapshotScores);
+        if (typeof localStorage !== 'undefined') {
+          if (snapshotBackup !== null) {
+            localStorage.setItem(`tn_assembly_scores_${eventId}`, snapshotBackup);
+          } else {
+            localStorage.removeItem(`tn_assembly_scores_${eventId}`);
+          }
+        }
+        this.setItem(STORAGE_KEYS.EVENTS, snapshotEvents);
+      } catch (rbErr) {
+        console.error('[StorageService.resetEventJuryScoring] Rollback error:', rbErr);
+      }
+    };
+
+    try {
+      // ── 2. IDENTIFY TARGET EVENT RECORDS ──
+      const allEvals = snapshotEvals;
+      const targetEvals = allEvals.filter(e => e.event_id === eventId);
+      const remainingEvals = allEvals.filter(e => e.event_id !== eventId);
+      const targetEvalIds = new Set(targetEvals.map(e => e.id));
+
+      const allTurns = snapshotTurns;
+      const targetTurns = allTurns.filter(t => targetEvalIds.has(t.evaluation_id));
+      const remainingTurns = allTurns.filter(t => !targetEvalIds.has(t.evaluation_id));
+
+      const allAdjs = snapshotAdjs;
+      const targetAdjs = allAdjs.filter(a => targetEvalIds.has(a.evaluation_id));
+      const remainingAdjs = allAdjs.filter(a => !targetEvalIds.has(a.evaluation_id));
+
+      const allRecogs = snapshotRecogs;
+      const targetRecogs = allRecogs.filter(r => r.event_id === eventId);
+      const remainingRecogs = allRecogs.filter(r => r.event_id !== eventId);
+
+      // ── 3. UPDATE LOCAL STORAGE DEDICATED TABLES ──
+      this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, remainingEvals);
+      this.setItem(STORAGE_KEYS.JURY_EVALUATION_TURNS, remainingTurns);
+      this.setItem(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, remainingAdjs);
+      this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, remainingRecogs);
+
+      // Clear any local drafts for this event
+      if (typeof localStorage !== 'undefined') {
+        try {
+          const draftPrefix = `tn_assembly_jury_draft_${eventId}_`;
+          const keysToRemove: string[] = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith(draftPrefix)) {
+              keysToRemove.push(k);
+            }
+          }
+          keysToRemove.forEach(k => localStorage.removeItem(k));
+          localStorage.removeItem(`tn_assembly_scores_${eventId}`);
+        } catch {}
+      }
+
+      // ── 4. CLEAN DEDICATED SUPABASE TABLES IF PRESENT ──
+      if (supabase && (targetEvalIds.size > 0 || targetRecogs.length > 0)) {
+        try {
+          const evalIdArray = Array.from(targetEvalIds);
+          if (evalIdArray.length > 0) {
+            await supabase.from('jury_evaluation_adjustments').delete().in('evaluation_id', evalIdArray);
+            await supabase.from('jury_evaluation_turns').delete().in('evaluation_id', evalIdArray);
+            await supabase.from('jury_evaluations').delete().in('id', evalIdArray);
+          }
+          if (targetRecogs.length > 0) {
+            await supabase.from('jury_speech_recognitions').delete().in('id', targetRecogs.map(r => r.id));
+          }
+        } catch {
+          // Tables might not exist on remote Supabase; continuing with social_coverage
+        }
+      }
+
+      // ── 5. CLEAN LEGACY social_coverage.scores FOR THIS EVENT IN SUPABASE ──
+      let deletedLegacyScoresCount = 0;
+      let preservedSpeakingTurnsCount = 0;
+
+      if (supabase) {
+        // Fetch current event to verify before modifying
+        const { data: evData, error: fetchErr } = await supabase
+          .from('college_events')
+          .select('id, college_name, social_coverage')
+          .eq('id', eventId)
+          .single();
+
+        if (fetchErr) {
+          rollbackLocalState();
+          throw new Error(`Failed to fetch event for jury reset: ${fetchErr.message}`);
+        }
+
+        const remoteSC = (evData?.social_coverage || {}) as Record<string, any>;
+        const remoteScores = Array.isArray(remoteSC.scores) ? (remoteSC.scores as ScoreRecord[]) : [];
+        deletedLegacyScoresCount = remoteScores.length;
+
+        // Count speaking turns (these are PRESERVED)
+        const { count: turnCount } = await supabase
+          .from('speaking_turns')
+          .select('*', { count: 'exact', head: true })
+          .eq('event_id', eventId);
+        preservedSpeakingTurnsCount = turnCount || 0;
+
+        // Update social_coverage with empty scores array, strictly preserving all other event data
+        const updatedSC = {
+          ...remoteSC,
+          scores: [],
+          updated_at: new Date().toISOString()
+        };
+
+        const { error: updateErr } = await supabase
+          .from('college_events')
+          .update({
+            social_coverage: updatedSC,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', eventId);
+
+        if (updateErr) {
+          rollbackLocalState();
+          throw new Error(`Database error resetting event jury scores: ${updateErr.message}`);
+        }
+
+        // Fresh verification fetch
+        const { data: verifyData, error: verifyErr } = await supabase
+          .from('college_events')
+          .select('social_coverage')
+          .eq('id', eventId)
+          .single();
+
+        if (verifyErr || !verifyData) {
+          rollbackLocalState();
+          throw new Error('Supabase post-reset verification fetch failed.');
+        }
+
+        const verifiedSC = (verifyData.social_coverage || {}) as Record<string, any>;
+        const verifiedScores = Array.isArray(verifiedSC.scores) ? verifiedSC.scores : [];
+        if (verifiedScores.length > 0) {
+          rollbackLocalState();
+          throw new Error(`Reset verification failed: ${verifiedScores.length} scores still exist in Supabase.`);
+        }
+      }
+
+      // ── 6. CLEAN LOCAL STORAGE SCORES KEY ──
+      const allScores = snapshotScores;
+      const remainingScores = allScores.filter(s => s.event_id && s.event_id !== eventId);
+      this.setItem(STORAGE_KEYS.SCORES, remainingScores);
+
+      // ── 7. UPDATE CACHED EVENT IN STORAGE_KEYS.EVENTS ──
+      const allEvs = this.getEvents();
+      const updatedEvs = allEvs.map(ev => {
+        if (ev.id === eventId) {
+          const sc = (ev.social_coverage || {}) as Record<string, any>;
+          return {
+            ...ev,
+            social_coverage: {
+              ...sc,
+              scores: []
+            }
+          };
+        }
+        return ev;
+      });
+      this.setItem(STORAGE_KEYS.EVENTS, updatedEvs);
+
+      // ── 8. DEFENSIVE VERIFICATION OF READ PATH ──
+      const postEvaluations = this.getJuryEvaluations(eventId);
+      if (postEvaluations.length > 0) {
+        rollbackLocalState();
+        throw new Error(`Reset verification failed: ${postEvaluations.length} evaluations still returned by getJuryEvaluations.`);
+      }
+
+      // ── 9. CACHE INVALIDATION & REALTIME BROADCAST ──
+      this.invalidateCache(eventId);
+      this.invalidateCache('events');
+      this.invalidateCache('portal_');
+      this.invalidateCache('evaluations');
+      this.invalidateCache('leaderboard');
+
+      if (this.realtimeChannel) {
+        try {
+          await this.realtimeChannel.send({
+            type: 'broadcast',
+            event: 'jury_scoring_reset',
+            payload: { eventId, timestamp: new Date().toISOString() }
+          });
+        } catch {}
+      }
+
+      this.notify();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('storage'));
+        window.dispatchEvent(new CustomEvent('tn_assembly_scores_updated', { detail: { eventId } }));
+      }
+
+      return {
+        success: true,
+        eventId,
+        deletedEvaluations: targetEvals.length,
+        deletedEvaluationTurns: targetTurns.length,
+        deletedAdjustments: targetAdjs.length,
+        deletedRecognitions: targetRecogs.length,
+        deletedLegacyScores: deletedLegacyScoresCount,
+        preservedSpeakingTurns: preservedSpeakingTurnsCount,
+        preservedOtherEventData: true
+      };
+    } catch (err) {
+      rollbackLocalState();
+      throw err;
+    }
+  }
+
   // ── TEST MODE & TEST DATA MANAGEMENT ─────────────────────────────────────
 
   public getScoringTestMode(eventId?: string): { isTestMode: boolean; testRunId: string | null } {
