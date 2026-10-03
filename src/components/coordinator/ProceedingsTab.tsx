@@ -28,7 +28,8 @@ import {
   Copy,
   CheckCircle2,
   XCircle,
-  Search
+  Search,
+  Loader2
 } from 'lucide-react';
 import { ArrangeQuestionOrderModal } from './ArrangeQuestionOrderModal';
 import { SubmissionListModal, type SubmittedMemberRecord } from './SubmissionListModal';
@@ -71,6 +72,8 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   const [isTogglingDeadline, setIsTogglingDeadline] = useState(false);
   const [selectedQuestion, setSelectedQuestion] = useState<ProceedingsQuestion | null>(null);
   const [isArrangeOrderOpen, setIsArrangeOrderOpen] = useState(false);
+  const [updatingQuestionId, setUpdatingQuestionId] = useState<string | null>(null);
+  const [updatingActionStatus, setUpdatingActionStatus] = useState<string | null>(null);
 
   // Filters
   const [statusFilter, setStatusFilter] = useState<'All' | 'Submitted' | 'Under Review' | 'Approved' | 'Starred' | 'Rejected'>('All');
@@ -191,7 +194,9 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   };
 
   // Question Actions with toggle support
-  const handleUpdateQuestionStatus = (id: string, actionStatus: 'Submitted' | 'Under Review' | 'Approved' | 'Starred' | 'Rejected') => {
+  const handleUpdateQuestionStatus = async (id: string, actionStatus: 'Submitted' | 'Under Review' | 'Approved' | 'Starred' | 'Rejected') => {
+    if (updatingQuestionId) return;
+
     const targetQ = questions.find(q => q.id === id);
     const currentStatus = normalizeStatus(targetQ?.status);
 
@@ -199,38 +204,65 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
     const nextStatus = currentStatus === actionStatus ? 'Submitted' : actionStatus;
     const actorName = 'Speaker / Admin';
 
-    const res = storageService.updateProceedingsQuestionStatus(
-      id,
-      nextStatus,
-      actorName,
-      eventId || targetSlug,
-      { role: userRole || 'super_admin', name: actorName }
-    );
+    setUpdatingQuestionId(id);
+    setUpdatingActionStatus(nextStatus);
 
-    if (!res.success) {
-      onShowToast('Action Blocked', res.error || 'Unauthorized action.', 'error');
-      return;
+    try {
+      const res = await storageService.updateProceedingsQuestionStatus(
+        id,
+        nextStatus,
+        actorName,
+        authoritativeEventId || eventId || targetSlug,
+        { role: userRole || 'super_admin', name: actorName }
+      );
+
+      if (!res.success) {
+        onShowToast(
+          'Action Blocked',
+          res.error || (actionStatus === 'Rejected'
+            ? 'Unable to reject this question. The question remains APPROVED.'
+            : `Unable to update question. Status remains ${currentStatus}.`),
+          'error'
+        );
+        setQuestions(storageService.getProceedingsQuestions(authoritativeEventId || eventId || targetSlug));
+        return;
+      }
+
+      // Keep modal state in sync if open
+      setSelectedQuestion(prev => {
+        if (!prev || prev.id !== id) return prev;
+        return {
+          ...prev,
+          status: nextStatus,
+          approved_by: nextStatus === 'Approved' ? actorName : prev.approved_by,
+          approved_at: nextStatus === 'Approved' ? new Date().toISOString() : prev.approved_at
+        };
+      });
+
+      refreshData();
+      onShowToast(
+        nextStatus === 'Rejected' ? 'Question Rejected' : 'Status Updated',
+        nextStatus === 'Submitted'
+          ? 'Question status reverted to Pending Approval'
+          : nextStatus === 'Rejected'
+          ? 'Question rejected successfully'
+          : `Question status changed to ${nextStatus}`,
+        'success'
+      );
+    } catch (err: any) {
+      console.error('Failed to update question status:', err);
+      onShowToast(
+        'Update Error',
+        actionStatus === 'Rejected'
+          ? 'Unable to reject this question. The question remains APPROVED.'
+          : `Unable to update question. Status remains ${currentStatus}.`,
+        'error'
+      );
+      setQuestions(storageService.getProceedingsQuestions(authoritativeEventId || eventId || targetSlug));
+    } finally {
+      setUpdatingQuestionId(null);
+      setUpdatingActionStatus(null);
     }
-
-    // Keep modal state in sync if open
-    setSelectedQuestion(prev => {
-      if (!prev || prev.id !== id) return prev;
-      return {
-        ...prev,
-        status: nextStatus,
-        approved_by: nextStatus === 'Approved' ? actorName : prev.approved_by,
-        approved_at: nextStatus === 'Approved' ? new Date().toISOString() : prev.approved_at
-      };
-    });
-
-    refreshData();
-    onShowToast(
-      'Status Updated',
-      nextStatus === 'Submitted'
-        ? 'Question status reverted to Pending Approval'
-        : `Question status changed to ${nextStatus}`,
-      'success'
-    );
   };
 
   const handleDeleteQuestion = (id: string) => {
@@ -1498,6 +1530,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                             const isApproved = currentCanonical === 'Approved';
                             const isStarred = currentCanonical === 'Starred';
                             const isRejected = currentCanonical === 'Rejected';
+                            const isRowUpdating = updatingQuestionId === q.id;
 
                             return (
                               <div className="flex items-center justify-end gap-1.5">
@@ -1512,41 +1545,62 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
 
                                 <button
                                   type="button"
+                                  disabled={Boolean(updatingQuestionId)}
                                   onClick={() => handleUpdateQuestionStatus(q.id, 'Approved')}
-                                  title={isApproved ? "Approved (Click to revert to Pending)" : "Approve Question"}
+                                  title={isRowUpdating && updatingActionStatus === 'Approved' ? "Approving question..." : (isApproved ? "Approved (Click to revert to Pending)" : "Approve Question")}
                                   className={`p-1.5 rounded-lg transition-all duration-200 cursor-pointer flex items-center justify-center ${
-                                    isApproved
+                                    isRowUpdating && updatingActionStatus === 'Approved'
+                                      ? 'bg-emerald-500/20 text-emerald-500 animate-pulse cursor-wait'
+                                      : isApproved
                                       ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/30 ring-2 ring-emerald-400 scale-105 font-bold'
                                       : 'bg-emerald-500/10 hover:bg-emerald-500 hover:text-white text-emerald-600'
-                                  }`}
+                                  } ${Boolean(updatingQuestionId) ? 'opacity-60 cursor-not-allowed' : ''}`}
                                 >
-                                  <Check className={`w-3.5 h-3.5 ${isApproved ? 'stroke-[3]' : 'stroke-2'}`} />
+                                  {isRowUpdating && updatingActionStatus === 'Approved' ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin stroke-2" />
+                                  ) : (
+                                    <Check className={`w-3.5 h-3.5 ${isApproved ? 'stroke-[3]' : 'stroke-2'}`} />
+                                  )}
                                 </button>
 
                                 <button
                                   type="button"
+                                  disabled={Boolean(updatingQuestionId)}
                                   onClick={() => handleUpdateQuestionStatus(q.id, 'Starred')}
-                                  title={isStarred ? "Starred (Click to unstar)" : "Star Question"}
+                                  title={isRowUpdating && updatingActionStatus === 'Starred' ? "Starring question..." : (isStarred ? "Starred (Click to unstar)" : "Star Question")}
                                   className={`p-1.5 rounded-lg transition-all duration-200 cursor-pointer flex items-center justify-center ${
-                                    isStarred
+                                    isRowUpdating && updatingActionStatus === 'Starred'
+                                      ? 'bg-amber-500/20 text-amber-500 animate-pulse cursor-wait'
+                                      : isStarred
                                       ? 'bg-amber-500 text-white shadow-md shadow-amber-500/30 ring-2 ring-amber-400 scale-105 font-bold'
                                       : 'bg-amber-500/10 hover:bg-amber-500 hover:text-white text-amber-500'
-                                  }`}
+                                  } ${Boolean(updatingQuestionId) ? 'opacity-60 cursor-not-allowed' : ''}`}
                                 >
-                                  <Star className={`w-3.5 h-3.5 ${isStarred ? 'fill-white stroke-white stroke-[2.5]' : 'stroke-2'}`} />
+                                  {isRowUpdating && updatingActionStatus === 'Starred' ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin stroke-2" />
+                                  ) : (
+                                    <Star className={`w-3.5 h-3.5 ${isStarred ? 'fill-white stroke-white stroke-[2.5]' : 'stroke-2'}`} />
+                                  )}
                                 </button>
 
                                 <button
                                   type="button"
+                                  disabled={Boolean(updatingQuestionId)}
                                   onClick={() => handleUpdateQuestionStatus(q.id, 'Rejected')}
-                                  title={isRejected ? "Rejected (Click to revert to Pending)" : "Reject Question"}
+                                  title={isRowUpdating && updatingActionStatus === 'Rejected' ? "Rejecting question..." : (isRejected ? "Rejected (Click to revert to Pending)" : "Reject Question")}
                                   className={`p-1.5 rounded-lg transition-all duration-200 cursor-pointer flex items-center justify-center ${
-                                    isRejected
+                                    isRowUpdating && updatingActionStatus === 'Rejected'
+                                      ? 'bg-rose-500/20 text-rose-500 animate-pulse cursor-wait'
+                                      : isRejected
                                       ? 'bg-rose-500 text-white shadow-md shadow-rose-500/30 ring-2 ring-rose-400 scale-105 font-bold'
                                       : 'bg-rose-500/10 hover:bg-rose-500 hover:text-white text-rose-600'
-                                  }`}
+                                  } ${Boolean(updatingQuestionId) ? 'opacity-60 cursor-not-allowed' : ''}`}
                                 >
-                                  <X className={`w-3.5 h-3.5 ${isRejected ? 'stroke-[3]' : 'stroke-2'}`} />
+                                  {isRowUpdating && updatingActionStatus === 'Rejected' ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin stroke-2" />
+                                  ) : (
+                                    <X className={`w-3.5 h-3.5 ${isRejected ? 'stroke-[3]' : 'stroke-2'}`} />
+                                  )}
                                 </button>
 
                                 <button
@@ -1656,27 +1710,54 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                           </button>
                           <button
                             type="button"
+                            disabled={Boolean(updatingQuestionId)}
                             onClick={() => handleUpdateQuestionStatus(q.id, 'Approved')}
-                            className={`p-1.5 rounded-lg cursor-pointer ${isApproved ? 'bg-emerald-500 text-white' : 'bg-emerald-500/10 text-emerald-600'}`}
-                            title="Approve"
+                            className={`p-1.5 rounded-lg cursor-pointer ${
+                              updatingQuestionId === q.id && updatingActionStatus === 'Approved'
+                                ? 'bg-emerald-500/20 text-emerald-500 animate-pulse cursor-wait'
+                                : isApproved ? 'bg-emerald-500 text-white' : 'bg-emerald-500/10 text-emerald-600'
+                            } ${Boolean(updatingQuestionId) ? 'opacity-60 cursor-not-allowed' : ''}`}
+                            title={updatingQuestionId === q.id && updatingActionStatus === 'Approved' ? "Approving..." : "Approve"}
                           >
-                            <Check className="w-3.5 h-3.5" />
+                            {updatingQuestionId === q.id && updatingActionStatus === 'Approved' ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Check className="w-3.5 h-3.5" />
+                            )}
                           </button>
                           <button
                             type="button"
+                            disabled={Boolean(updatingQuestionId)}
                             onClick={() => handleUpdateQuestionStatus(q.id, 'Starred')}
-                            className={`p-1.5 rounded-lg cursor-pointer ${isStarred ? 'bg-amber-500 text-white' : 'bg-amber-500/10 text-amber-500'}`}
-                            title="Star"
+                            className={`p-1.5 rounded-lg cursor-pointer ${
+                              updatingQuestionId === q.id && updatingActionStatus === 'Starred'
+                                ? 'bg-amber-500/20 text-amber-500 animate-pulse cursor-wait'
+                                : isStarred ? 'bg-amber-500 text-white' : 'bg-amber-500/10 text-amber-500'
+                            } ${Boolean(updatingQuestionId) ? 'opacity-60 cursor-not-allowed' : ''}`}
+                            title={updatingQuestionId === q.id && updatingActionStatus === 'Starred' ? "Starring..." : "Star"}
                           >
-                            <Star className="w-3.5 h-3.5" />
+                            {updatingQuestionId === q.id && updatingActionStatus === 'Starred' ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Star className="w-3.5 h-3.5" />
+                            )}
                           </button>
                           <button
                             type="button"
+                            disabled={Boolean(updatingQuestionId)}
                             onClick={() => handleUpdateQuestionStatus(q.id, 'Rejected')}
-                            className={`p-1.5 rounded-lg cursor-pointer ${isRejected ? 'bg-rose-500 text-white' : 'bg-rose-500/10 text-rose-600'}`}
-                            title="Reject"
+                            className={`p-1.5 rounded-lg cursor-pointer ${
+                              updatingQuestionId === q.id && updatingActionStatus === 'Rejected'
+                                ? 'bg-rose-500/20 text-rose-500 animate-pulse cursor-wait'
+                                : isRejected ? 'bg-rose-500 text-white' : 'bg-rose-500/10 text-rose-600'
+                            } ${Boolean(updatingQuestionId) ? 'opacity-60 cursor-not-allowed' : ''}`}
+                            title={updatingQuestionId === q.id && updatingActionStatus === 'Rejected' ? "Rejecting..." : "Reject"}
                           >
-                            <X className="w-3.5 h-3.5" />
+                            {updatingQuestionId === q.id && updatingActionStatus === 'Rejected' ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <X className="w-3.5 h-3.5" />
+                            )}
                           </button>
                           <button
                             type="button"
@@ -2008,41 +2089,77 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
+                        disabled={Boolean(updatingQuestionId)}
                         onClick={() => handleUpdateQuestionStatus(selectedQuestion.id, 'Approved')}
                         className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-                          isApproved
+                          updatingQuestionId === selectedQuestion.id && updatingActionStatus === 'Approved'
+                            ? 'bg-emerald-600 text-white opacity-80 cursor-wait'
+                            : isApproved
                             ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 ring-2 ring-emerald-400'
                             : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm'
-                        }`}
+                        } ${Boolean(updatingQuestionId) ? 'opacity-60 cursor-not-allowed' : ''}`}
                       >
-                        <Check className="w-4 h-4 stroke-2" />
-                        <span>{isApproved ? 'Approved ✓' : 'FINAL APPROVE'}</span>
+                        {updatingQuestionId === selectedQuestion.id && updatingActionStatus === 'Approved' ? (
+                          <>
+                            <Loader2 className="w-4 h-4 stroke-2 animate-spin" />
+                            <span>Approving...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Check className="w-4 h-4 stroke-2" />
+                            <span>{isApproved ? 'Approved ✓' : 'FINAL APPROVE'}</span>
+                          </>
+                        )}
                       </button>
 
                       <button
                         type="button"
+                        disabled={Boolean(updatingQuestionId)}
                         onClick={() => handleUpdateQuestionStatus(selectedQuestion.id, 'Starred')}
                         className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-                          isStarred
+                          updatingQuestionId === selectedQuestion.id && updatingActionStatus === 'Starred'
+                            ? 'bg-amber-500 text-white opacity-80 cursor-wait'
+                            : isStarred
                             ? 'bg-amber-500 text-white shadow-md shadow-amber-500/30 ring-2 ring-amber-400'
                             : 'bg-amber-500/10 hover:bg-amber-500 hover:text-white text-amber-600'
-                        }`}
+                        } ${Boolean(updatingQuestionId) ? 'opacity-60 cursor-not-allowed' : ''}`}
                       >
-                        <Star className="w-4 h-4 stroke-2" />
-                        <span>{isStarred ? 'Starred ★' : 'Star'}</span>
+                        {updatingQuestionId === selectedQuestion.id && updatingActionStatus === 'Starred' ? (
+                          <>
+                            <Loader2 className="w-4 h-4 stroke-2 animate-spin" />
+                            <span>Starring...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Star className="w-4 h-4 stroke-2" />
+                            <span>{isStarred ? 'Starred ★' : 'Star'}</span>
+                          </>
+                        )}
                       </button>
 
                       <button
                         type="button"
+                        disabled={Boolean(updatingQuestionId)}
                         onClick={() => handleUpdateQuestionStatus(selectedQuestion.id, 'Rejected')}
                         className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-                          isRejected
+                          updatingQuestionId === selectedQuestion.id && updatingActionStatus === 'Rejected'
+                            ? 'bg-rose-600 text-white opacity-80 cursor-wait'
+                            : isRejected
                             ? 'bg-rose-600 text-white shadow-md shadow-rose-600/30 ring-2 ring-rose-400'
                             : 'bg-rose-500/10 hover:bg-rose-500 hover:text-white text-rose-600'
-                        }`}
+                        } ${Boolean(updatingQuestionId) ? 'opacity-60 cursor-not-allowed' : ''}`}
                       >
-                        <X className="w-4 h-4 stroke-2" />
-                        <span>{isRejected ? 'Rejected ✗' : 'Reject'}</span>
+                        {updatingQuestionId === selectedQuestion.id && updatingActionStatus === 'Rejected' ? (
+                          <>
+                            <Loader2 className="w-4 h-4 stroke-2 animate-spin" />
+                            <span>Rejecting...</span>
+                          </>
+                        ) : (
+                          <>
+                            <X className="w-4 h-4 stroke-2" />
+                            <span>{isRejected ? 'Rejected ✗' : 'Reject'}</span>
+                          </>
+                        )}
                       </button>
                     </div>
                   </div>

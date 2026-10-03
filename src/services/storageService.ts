@@ -1671,30 +1671,44 @@ class StorageService {
           allProceedingsQs = [...allProceedingsQs, ...pqFromQs];
         }
       }
+      const eventRemotePQsMap = new Map<string, any>();
       if (Array.isArray(sc.proceedings_questions)) {
-        const pqs = sc.proceedings_questions
+        sc.proceedings_questions
           .filter((q: any) => 
             !activeDeletedSet.has(q.id) && 
             !questionDeletedSet.has(q.id) &&
             q.status !== 'Deleted' &&
             !(q as any).deleted
           )
-          .map((q: any) => ({
-            ...q,
-            event_id: ev.id || (q.event_id ? this.resolveCanonicalEventId(q.event_id) : undefined) || q.event_id,
-            event_slug: q.event_slug || getEventSlug(ev)
-          }));
-        allProceedingsQs = [...allProceedingsQs, ...pqs];
+          .forEach((q: any) => {
+            const mapped = {
+              ...q,
+              event_id: ev.id || (q.event_id ? this.resolveCanonicalEventId(q.event_id) : undefined) || q.event_id,
+              event_slug: q.event_slug || getEventSlug(ev)
+            };
+            eventRemotePQsMap.set(q.id, mapped);
+          });
       }
       if (Array.isArray(sc.official_approved_questions)) {
-        const offPQs = sc.official_approved_questions
-          .map((q: any) => ({
+        sc.official_approved_questions.forEach((q: any) => {
+          const mapped = {
             ...q,
             event_id: ev.id || (q.event_id ? this.resolveCanonicalEventId(q.event_id) : undefined) || q.event_id,
             event_slug: q.event_slug || getEventSlug(ev)
-          }));
-        allProceedingsQs = [...allProceedingsQs, ...offPQs];
+          };
+          const existing = eventRemotePQsMap.get(q.id);
+          if (!existing) {
+            eventRemotePQsMap.set(q.id, mapped);
+          } else {
+            const exT = new Date(existing.updated_at || existing.created_at || 0).getTime();
+            const offT = new Date(q.updated_at || q.created_at || 0).getTime();
+            if (offT > exT) {
+              eventRemotePQsMap.set(q.id, mapped);
+            }
+          }
+        });
       }
+      allProceedingsQs = [...allProceedingsQs, ...Array.from(eventRemotePQsMap.values())];
       if (Array.isArray(sc.scores)) {
         allScores = [...allScores, ...sc.scores];
       }
@@ -2068,15 +2082,22 @@ class StorageService {
           const remoteT = new Date(remote.updated_at || remote.created_at || 0).getTime();
           const remoteCanonical = getCanonicalQuestionStatus(remote);
           const localCanonical = getCanonicalQuestionStatus(local);
-          const mergedStatus = (remoteCanonical === 'Approved' || localCanonical === 'Approved')
-            ? 'Approved'
-            : (remoteCanonical === 'Starred' || localCanonical === 'Starred')
-            ? 'Starred'
-            : (remoteCanonical === 'Rejected' || localCanonical === 'Rejected')
-            ? 'Rejected'
-            : (remoteCanonical === 'Under Review' || localCanonical === 'Under Review')
-            ? 'Under Review'
-            : (localT >= remoteT ? (localCanonical || local.status) : (remoteCanonical || remote.status));
+          let mergedStatus = remoteCanonical || remote.status;
+          if (localT > remoteT) {
+            mergedStatus = localCanonical || local.status;
+          } else if (remoteT > localT) {
+            mergedStatus = remoteCanonical || remote.status;
+          } else {
+            if (localCanonical === 'Rejected' || remoteCanonical === 'Rejected') {
+              mergedStatus = 'Rejected';
+            } else if (localCanonical === 'Approved' || remoteCanonical === 'Approved') {
+              mergedStatus = 'Approved';
+            } else if (localCanonical === 'Starred' || remoteCanonical === 'Starred') {
+              mergedStatus = 'Starred';
+            } else {
+              mergedStatus = localCanonical || remoteCanonical || local.status;
+            }
+          }
           pqMap.set(local.id, {
             ...(localT >= remoteT ? local : remote),
             status: mergedStatus,
@@ -2535,15 +2556,22 @@ class StorageService {
               const remoteT = new Date(remoteQ.updated_at || remoteQ.created_at || 0).getTime();
               const remoteCanonical = getCanonicalQuestionStatus(remoteQ);
               const localCanonical = getCanonicalQuestionStatus(local);
-              const mergedStatus = (remoteCanonical === 'Approved' || localCanonical === 'Approved')
-                ? 'Approved'
-                : (remoteCanonical === 'Starred' || localCanonical === 'Starred')
-                ? 'Starred'
-                : (remoteCanonical === 'Rejected' || localCanonical === 'Rejected')
-                ? 'Rejected'
-                : (remoteCanonical === 'Under Review' || localCanonical === 'Under Review')
-                ? 'Under Review'
-                : (localT >= remoteT ? (localCanonical || local.status) : (remoteCanonical || remoteQ.status));
+              let mergedStatus = remoteCanonical || remoteQ.status;
+              if (localT > remoteT) {
+                mergedStatus = localCanonical || local.status;
+              } else if (remoteT > localT) {
+                mergedStatus = remoteCanonical || remoteQ.status;
+              } else {
+                if (localCanonical === 'Rejected' || remoteCanonical === 'Rejected') {
+                  mergedStatus = 'Rejected';
+                } else if (localCanonical === 'Approved' || remoteCanonical === 'Approved') {
+                  mergedStatus = 'Approved';
+                } else if (localCanonical === 'Starred' || remoteCanonical === 'Starred') {
+                  mergedStatus = 'Starred';
+                } else {
+                  mergedStatus = localCanonical || remoteCanonical || local.status;
+                }
+              }
               pqMap.set(remoteQ.id, {
                 ...remoteQ,
                 ...local,
@@ -4280,15 +4308,22 @@ class StorageService {
                 const remoteT = new Date(remoteQ.updated_at || remoteQ.created_at || 0).getTime();
                 const remoteCanonical = getCanonicalQuestionStatus(remoteQ);
                 const localCanonical = getCanonicalQuestionStatus(local);
-                const mergedStatus = (remoteCanonical === 'Approved' || localCanonical === 'Approved')
-                  ? 'Approved'
-                  : (remoteCanonical === 'Starred' || localCanonical === 'Starred')
-                  ? 'Starred'
-                  : (remoteCanonical === 'Rejected' || localCanonical === 'Rejected')
-                  ? 'Rejected'
-                  : (remoteCanonical === 'Under Review' || localCanonical === 'Under Review')
-                  ? 'Under Review'
-                  : (localT >= remoteT ? (localCanonical || local.status) : (remoteCanonical || remoteQ.status));
+                let mergedStatus = remoteCanonical || remoteQ.status;
+                if (localT > remoteT) {
+                  mergedStatus = localCanonical || local.status;
+                } else if (remoteT > localT) {
+                  mergedStatus = remoteCanonical || remoteQ.status;
+                } else {
+                  if (localCanonical === 'Rejected' || remoteCanonical === 'Rejected') {
+                    mergedStatus = 'Rejected';
+                  } else if (localCanonical === 'Approved' || remoteCanonical === 'Approved') {
+                    mergedStatus = 'Approved';
+                  } else if (localCanonical === 'Starred' || remoteCanonical === 'Starred') {
+                    mergedStatus = 'Starred';
+                  } else {
+                    mergedStatus = localCanonical || remoteCanonical || local.status;
+                  }
+                }
                 pqMap.set(remoteQ.id, {
                   ...(localT >= remoteT ? local : remoteQ),
                   status: mergedStatus,
@@ -5647,7 +5682,7 @@ class StorageService {
         ...partialSc,
         proceedings_questions: mergedPQs,
         questions: mergedPQs.length > 0 ? mergedPQs : (remotePQs.length > 0 ? remotePQs : []),
-        official_approved_questions: filteredApproved.length > 0 ? filteredApproved : undefined,
+        official_approved_questions: Array.isArray(partialSc.official_approved_questions) ? filteredApproved : (filteredApproved.length > 0 ? filteredApproved : []),
         question_calling_order: filteredCallingOrder,
         active_question_id: filteredActiveQId,
         completed_question_ids: mergedCompletedQIds,
@@ -6090,19 +6125,24 @@ class StorageService {
         proceedings: finalMergedProcs,
         questions: finalMergedPQs,
         proceedings_questions: finalMergedPQs,
-        official_approved_questions: (Array.isArray(existingSC.official_approved_questions) && existingSC.official_approved_questions.length >= finalMergedPQs.filter(q => q.status === 'Approved' || q.status === 'Starred').length)
-          ? existingSC.official_approved_questions
-          : finalMergedPQs.filter(q => q.status === 'Approved' || q.status === 'Starred'),
-        question_calling_order: (Array.isArray((currentEv?.social_coverage as any)?.question_calling_order) && (currentEv!.social_coverage as any).question_calling_order.length > 0)
-          ? (currentEv!.social_coverage as any).question_calling_order
-          : (Array.isArray(existingSC.question_calling_order) && existingSC.question_calling_order.length > 0
-              ? existingSC.question_calling_order
-              : this.getQuestionCallingOrderIds(eventId)),
-        active_question_id: (currentEv?.social_coverage as any)?.active_question_id !== undefined
-          ? (currentEv!.social_coverage as any).active_question_id
-          : (existingSC.active_question_id !== undefined
-              ? existingSC.active_question_id
-              : this.getActiveQuestionId(eventId)),
+        official_approved_questions: finalMergedPQs.filter(q => q.status === 'Approved' || q.status === 'Starred'),
+        question_calling_order: (() => {
+          const approvedIdSet = new Set(finalMergedPQs.filter(q => q.status === 'Approved' || q.status === 'Starred').map(q => q.id));
+          const localOrder = (currentEv?.social_coverage as any)?.question_calling_order;
+          const rawOrder = Array.isArray(localOrder)
+            ? localOrder
+            : (Array.isArray(existingSC.question_calling_order) ? existingSC.question_calling_order : this.getQuestionCallingOrderIds(eventId));
+          return rawOrder.filter((id: string) => approvedIdSet.has(id));
+        })(),
+        active_question_id: (() => {
+          const approvedIdSet = new Set(finalMergedPQs.filter(q => q.status === 'Approved' || q.status === 'Starred').map(q => q.id));
+          const cand = (currentEv?.social_coverage as any)?.active_question_id !== undefined
+            ? (currentEv!.social_coverage as any).active_question_id
+            : (existingSC.active_question_id !== undefined
+                ? existingSC.active_question_id
+                : this.getActiveQuestionId(eventId));
+          return (cand && approvedIdSet.has(cand)) ? cand : null;
+        })(),
         completed_question_ids: Array.isArray((currentEv?.social_coverage as any)?.completed_question_ids)
           ? (currentEv!.social_coverage as any).completed_question_ids
           : (Array.isArray(existingSC.completed_question_ids) ? existingSC.completed_question_ids : []),
@@ -6225,7 +6265,7 @@ class StorageService {
             });
             payload.proceedings = Array.from(freshProcMap.values());
 
-            // Safeguard questions on OCC conflict retry so approved questions are never wiped
+            // Safeguard questions on OCC conflict retry so questions with recent updates are never wiped
             const freshApproved = Array.isArray(freshSC.official_approved_questions) ? (freshSC.official_approved_questions as ProceedingsQuestion[]) : [];
             const freshPQs = Array.isArray(freshSC.proceedings_questions) ? (freshSC.proceedings_questions as ProceedingsQuestion[]) : [];
             const retryPQMap = new Map<string, ProceedingsQuestion>();
@@ -6233,21 +6273,32 @@ class StorageService {
               if (q && q.id) retryPQMap.set(q.id, q);
             });
             ((payload.proceedings_questions as ProceedingsQuestion[]) || []).forEach(q => {
-              if (q && q.id && !retryPQMap.has(q.id)) {
-                retryPQMap.set(q.id, q);
+              if (q && q.id) {
+                const ex = retryPQMap.get(q.id);
+                if (!ex) {
+                  retryPQMap.set(q.id, q);
+                } else {
+                  const qT = new Date(q.updated_at || q.created_at || 0).getTime();
+                  const exT = new Date(ex.updated_at || ex.created_at || 0).getTime();
+                  retryPQMap.set(q.id, qT >= exT ? q : ex);
+                }
               }
             });
             const { questions: retryNumbered } = ensureQuestionNumbers(Array.from(retryPQMap.values()));
             payload.proceedings_questions = retryNumbered;
             payload.questions = payload.proceedings_questions;
-            if (freshApproved.length > 0) {
-              payload.official_approved_questions = freshApproved;
+            const retryApproved = retryNumbered.filter(q => q.status === 'Approved' || q.status === 'Starred');
+            payload.official_approved_questions = retryApproved;
+            const retryApprovedIds = new Set(retryApproved.map(q => q.id));
+            if (Array.isArray(freshSC.question_calling_order)) {
+              payload.question_calling_order = freshSC.question_calling_order.filter((id: string) => retryApprovedIds.has(id));
+            } else if (Array.isArray(payload.question_calling_order)) {
+              payload.question_calling_order = (payload.question_calling_order as string[]).filter((id: string) => retryApprovedIds.has(id));
             }
-            if (Array.isArray(freshSC.question_calling_order) && freshSC.question_calling_order.length > 0) {
-              payload.question_calling_order = freshSC.question_calling_order;
-            }
-            if (freshSC.active_question_id) {
+            if (freshSC.active_question_id && retryApprovedIds.has(freshSC.active_question_id)) {
               payload.active_question_id = freshSC.active_question_id;
+            } else if (payload.active_question_id && !retryApprovedIds.has(payload.active_question_id)) {
+              payload.active_question_id = null;
             }
           }
         } catch {}
@@ -20093,15 +20144,22 @@ class StorageService {
             const remoteT = new Date(remote.updated_at || remote.created_at || 0).getTime();
             const remoteCanonical = getCanonicalQuestionStatus(remote);
             const localCanonical = getCanonicalQuestionStatus(lq);
-            const mergedStatus = (remoteCanonical === 'Approved' || localCanonical === 'Approved')
-              ? 'Approved'
-              : (remoteCanonical === 'Starred' || localCanonical === 'Starred')
-              ? 'Starred'
-              : (remoteCanonical === 'Rejected' || localCanonical === 'Rejected')
-              ? 'Rejected'
-              : (remoteCanonical === 'Under Review' || localCanonical === 'Under Review')
-              ? 'Under Review'
-              : (localT >= remoteT ? (localCanonical || lq.status) : (remoteCanonical || remote.status));
+            let mergedStatus = remoteCanonical || remote.status;
+            if (localT > remoteT) {
+              mergedStatus = localCanonical || lq.status;
+            } else if (remoteT > localT) {
+              mergedStatus = remoteCanonical || remote.status;
+            } else {
+              if (localCanonical === 'Rejected' || remoteCanonical === 'Rejected') {
+                mergedStatus = 'Rejected';
+              } else if (localCanonical === 'Approved' || remoteCanonical === 'Approved') {
+                mergedStatus = 'Approved';
+              } else if (localCanonical === 'Starred' || remoteCanonical === 'Starred') {
+                mergedStatus = 'Starred';
+              } else {
+                mergedStatus = localCanonical || remoteCanonical || lq.status;
+              }
+            }
 
             // CRITICAL: Question text must NEVER be truncated or shortened
             const bestText = (lq.question_text && lq.question_text.length >= (remote.question_text || '').length)
@@ -20373,13 +20431,13 @@ class StorageService {
     return newQuestion;
   }
 
-  public updateProceedingsQuestionStatus(
+  public async updateProceedingsQuestionStatus(
     questionId: string,
     status: 'Submitted' | 'Under Review' | 'Approved' | 'Starred' | 'Rejected',
     approvedBy?: string,
     fallbackEventId?: string,
     userContext?: { role?: string; volunteer?: Volunteer; name?: string; activeEventId?: string; actorEventId?: string; assignedEventIds?: string[] }
-  ): { success: boolean; question?: ProceedingsQuestion; error?: string } {
+  ): Promise<{ success: boolean; question?: ProceedingsQuestion; error?: string }> {
     const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
     const targetQ = list.find(q => q.id === questionId);
     if (!targetQ) {
@@ -20505,12 +20563,47 @@ class StorageService {
         this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
       }
 
-      this.syncEventStateToSupabase(syncId, true).then(() => {
-        this.updateQuestionSnapshot(syncId).catch(() => {});
-      }).catch(err => {
-        console.warn('[Supabase] updateProceedingsQuestionStatus sync error:', err);
-        this.updateQuestionSnapshot(syncId).catch(() => {});
-      });
+      try {
+        await this.syncEventStateToSupabase(syncId, true);
+        await this.updateQuestionSnapshot(syncId).catch(() => {});
+      } catch (err: any) {
+        console.error('[Supabase] updateProceedingsQuestionStatus sync error:', err);
+        return {
+          success: false,
+          question: updatedQ,
+          error: err?.message || 'Failed to persist question status to remote database.'
+        };
+      }
+
+      // Authoritative read-after-write verification
+      if (supabase && syncId) {
+        try {
+          const { data: verifyEv, error: verifyErr } = await supabase
+            .from('college_events')
+            .select('id, social_coverage')
+            .eq('id', syncId)
+            .maybeSingle();
+          if (!verifyErr && verifyEv?.social_coverage) {
+            const vSC = verifyEv.social_coverage as Record<string, any>;
+            const vOff: any[] = Array.isArray(vSC.official_approved_questions) ? vSC.official_approved_questions : [];
+            const vCalling: string[] = Array.isArray(vSC.question_calling_order) ? vSC.question_calling_order : [];
+            const isInOfficial = vOff.some(q => q.id === questionId);
+            const isInCalling = vCalling.includes(questionId);
+
+            if (status === 'Rejected' || status === 'Submitted') {
+              if (isInOfficial || isInCalling) {
+                console.warn(`[Authoritative Verification] Question ${questionId} is ${status} but remote official list or calling order still contains it! Performing cleanup patch...`);
+                await this.patchSocialCoverageSafe(syncId, {
+                  official_approved_questions: vOff.filter(q => q.id !== questionId),
+                  question_calling_order: vCalling.filter(id => id !== questionId)
+                });
+              }
+            }
+          }
+        } catch (vErr) {
+          console.warn('[updateProceedingsQuestionStatus] Verification check warning:', vErr);
+        }
+      }
     }
 
     return { success: true, question: updatedQ };
@@ -20710,11 +20803,12 @@ class StorageService {
     const allEvs = this.getEvents();
     const matched = findEventBySlug(allEvs, eventId) || allEvs.find(e => e.id === eventId);
     const sc = (matched?.social_coverage || {}) as Record<string, any>;
-    if (Array.isArray(sc.question_calling_order) && sc.question_calling_order.length > 0) {
-      return sc.question_calling_order;
-    }
     const qs = this.getProceedingsQuestions(eventId);
-    const approvedOrdered = qs.filter(q => (q.status === 'Approved' || q.status === 'Starred') && q.calling_order !== undefined);
+    const approvedQMap = new Map(qs.filter(q => q.status === 'Approved' || q.status === 'Starred').map(q => [q.id, q]));
+    if (Array.isArray(sc.question_calling_order) && sc.question_calling_order.length > 0) {
+      return sc.question_calling_order.filter((id: string) => approvedQMap.has(id));
+    }
+    const approvedOrdered = Array.from(approvedQMap.values()).filter(q => q.calling_order !== undefined);
     approvedOrdered.sort((a, b) => (a.calling_order || 0) - (b.calling_order || 0));
     return approvedOrdered.map(q => q.id);
   }
