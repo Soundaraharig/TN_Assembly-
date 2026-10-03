@@ -341,20 +341,32 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   const [recogTick, setRecogTick] = useState<number>(0);
 
   useEffect(() => {
+    // 1. Fetch authoritative speaking turns & jury recognitions on mount
+    if (eventId) {
+      storageService.fetchSpeakingTurns(eventId).then(() => setRecogTick(t => t + 1)).catch(() => {});
+      storageService.fetchJurySpeechRecognitions(eventId).then(() => setRecogTick(t => t + 1)).catch(() => {});
+    }
+
     const unsub = storageService.subscribe(() => setRecogTick(t => t + 1));
     const handleRecogUpdate = () => setRecogTick(t => t + 1);
     if (typeof window !== 'undefined') {
       window.addEventListener('tn_assembly_jury_recognition_update', handleRecogUpdate);
+      window.addEventListener('tn_assembly_current_speaker_changed', handleRecogUpdate);
+      window.addEventListener('tn_assembly_speaking_turn_update', handleRecogUpdate);
+      window.addEventListener('tn_assembly_speaking_update', handleRecogUpdate);
       window.addEventListener('storage', handleRecogUpdate);
     }
     return () => {
       unsub();
       if (typeof window !== 'undefined') {
         window.removeEventListener('tn_assembly_jury_recognition_update', handleRecogUpdate);
+        window.removeEventListener('tn_assembly_current_speaker_changed', handleRecogUpdate);
+        window.removeEventListener('tn_assembly_speaking_turn_update', handleRecogUpdate);
+        window.removeEventListener('tn_assembly_speaking_update', handleRecogUpdate);
         window.removeEventListener('storage', handleRecogUpdate);
       }
     };
-  }, []);
+  }, [eventId]);
 
   const mostRecognizedParticipants = useMemo(() => {
     const raw = storageService.getMostRecognizedParticipants(
@@ -2287,7 +2299,15 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
                             </div>
                           </td>
                           <td className="p-3.5 text-right font-mono font-bold pr-4 text-slate-700 dark:text-slate-300">
-                            {p.recognitionRate} <span className="text-[10px] text-slate-400 font-normal">/ turn</span>
+                            {p.speakingTurnCount > 0 ? (
+                              <>
+                                {p.recognitionRate} <span className="text-[10px] text-slate-400 font-normal">/ turn</span>
+                              </>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 font-normal italic">
+                                N/A — No recorded speaking turns
+                              </span>
+                            )}
                           </td>
                         </tr>
                       );

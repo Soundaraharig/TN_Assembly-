@@ -242,6 +242,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       setRecogTick(t => t + 1);
     };
     if (typeof window !== 'undefined') {
+      window.addEventListener('tn_assembly_current_speaker_changed', handleRecogUpdate);
       window.addEventListener('tn_assembly_speaking_update', handleRecogUpdate);
       window.addEventListener('tn_assembly_speaking_turn_update', handleRecogUpdate);
       window.addEventListener('tn_assembly_jury_recognition_update', handleRecogUpdate);
@@ -251,6 +252,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     return () => {
       unsub();
       if (typeof window !== 'undefined') {
+        window.removeEventListener('tn_assembly_current_speaker_changed', handleRecogUpdate);
         window.removeEventListener('tn_assembly_speaking_update', handleRecogUpdate);
         window.removeEventListener('tn_assembly_speaking_turn_update', handleRecogUpdate);
         window.removeEventListener('tn_assembly_jury_recognition_update', handleRecogUpdate);
@@ -267,8 +269,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
   // Floor speaking turn currently active on the floor (status === 'SPEAKING' across entire event floor)
   const activeFloorSpeakingTurn = useMemo<SpeakingTurn | null>(() => {
     if (!event?.id) return null;
-    const allTurns = storageService.getSpeakingTurns(event.id);
-    return allTurns.find(t => t.event_id === event.id && t.status === 'SPEAKING') || null;
+    return storageService.getAuthoritativeCurrentSpeaker(event.id);
   }, [event?.id, recogTick]);
 
   const activeFloorLearner = useMemo(() => {
@@ -279,10 +280,13 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
   // Target speaking turn for recognition of currently selected delegate
   const targetTurnForDelegate = useMemo<SpeakingTurn | null>(() => {
     if (!effectiveDelegateTurns.length) return null;
-    const speaking = effectiveDelegateTurns.find(t => t.status === 'SPEAKING');
-    if (speaking) return speaking;
+    // If selected delegate is the floor speaker, use the authoritative floor turn
+    if (activeFloorSpeakingTurn && activeFloorSpeakingTurn.learner_id === selectedLearner?.id) {
+      return activeFloorSpeakingTurn;
+    }
+    // Otherwise use the most recent completed turn
     return effectiveDelegateTurns[effectiveDelegateTurns.length - 1] || null;
-  }, [effectiveDelegateTurns]);
+  }, [effectiveDelegateTurns, activeFloorSpeakingTurn, selectedLearner?.id]);
 
   // Pre-calculate recognitions count per participant across all turns in this event
   const learnerRecognitionsCountMap = useMemo(() => {
@@ -1514,8 +1518,8 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     )}
 
                     {/* SPEECH IMPACT / JURY RECOGNITION SECTION (CASE A, CASE B, CASE C) */}
-                    {targetTurnForDelegate && targetTurnForDelegate.status === 'SPEAKING' ? (
-                      /* CASE A — active SPEAKING turn exists */
+                    {activeFloorSpeakingTurn && activeFloorSpeakingTurn.learner_id === selectedLearner.id ? (
+                      /* CASE A — selected delegate is actively SPEAKING on the floor */
                       <div className="rounded-xl p-4 bg-gradient-to-r from-rose-500/20 via-amber-500/10 to-transparent border-2 border-rose-500/50 flex flex-wrap items-center justify-between gap-3 shadow-md">
                         <div>
                           <div className="flex items-center gap-2">
@@ -1524,7 +1528,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                               🔴 NOW SPEAKING
                             </span>
                             <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">
-                              Speaking Turn {targetTurnForDelegate.sequence_number || currentTurnNumber}
+                              Speaking Turn {activeFloorSpeakingTurn.sequence_number || 1}
                             </span>
                           </div>
                           <h4 className="text-sm font-black text-slate-900 dark:text-white mt-1">
@@ -1537,7 +1541,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                         <button
                           type="button"
                           disabled={isTogglingRecog}
-                          onClick={() => handleToggleRecognition(targetTurnForDelegate)}
+                          onClick={() => handleToggleRecognition(activeFloorSpeakingTurn)}
                           className={`px-5 py-2.5 rounded-xl text-xs font-black transition flex items-center gap-2 cursor-pointer shadow-md active:scale-95 disabled:opacity-50 ${
                             isDelegateTurnRecognized
                               ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/25 ring-2 ring-amber-400'
@@ -1868,8 +1872,8 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                   </div>
 
                   {/* SPEECH IMPACT / JURY RECOGNITION SECTION (CASE A, CASE B, CASE C) */}
-                  {targetTurnForDelegate && targetTurnForDelegate.status === 'SPEAKING' ? (
-                    /* CASE A — active SPEAKING turn exists */
+                  {activeFloorSpeakingTurn && activeFloorSpeakingTurn.learner_id === selectedLearner.id ? (
+                    /* CASE A — selected delegate is actively SPEAKING on the floor */
                     <div className="rounded-xl p-4 bg-gradient-to-r from-rose-500/20 via-amber-500/10 to-transparent border-2 border-rose-500/50 flex flex-wrap items-center justify-between gap-3 shadow-md">
                       <div>
                         <div className="flex items-center gap-2">
@@ -1878,7 +1882,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             🔴 NOW SPEAKING
                           </span>
                           <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">
-                            Speaking Turn {targetTurnForDelegate.sequence_number || 1}
+                            Speaking Turn {activeFloorSpeakingTurn.sequence_number || 1}
                           </span>
                         </div>
                         <h4 className="text-sm font-black text-slate-900 dark:text-white mt-1">
@@ -1891,7 +1895,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       <button
                         type="button"
                         disabled={isTogglingRecog}
-                        onClick={() => handleToggleRecognition(targetTurnForDelegate)}
+                        onClick={() => handleToggleRecognition(activeFloorSpeakingTurn)}
                         className={`px-5 py-2.5 rounded-xl text-xs font-black transition flex items-center gap-2 cursor-pointer shadow-md active:scale-95 disabled:opacity-50 ${
                           isDelegateTurnRecognized
                             ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/25 ring-2 ring-amber-400'

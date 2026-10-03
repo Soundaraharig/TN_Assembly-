@@ -27,7 +27,10 @@ import {
   Eye,
   Clock,
   ArrowUpRight,
-  Copy
+  Copy,
+  Mic,
+  Play,
+  ChevronRight
 } from 'lucide-react';
 import type {
   Volunteer,
@@ -41,7 +44,8 @@ import type {
   EventDay,
   DayAttendanceRecord,
   DayAttendanceStatus,
-  ProceedingsQuestion
+  ProceedingsQuestion,
+  SpeakingTurn
 } from '../../types';
 import { getRecordSessionStatuses, formatMarkedBy, getCanonicalQuestionStatus } from '../../types';
 import { useTheme } from '../../lib/theme';
@@ -150,13 +154,129 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   const isJournalist = volunteerType === 'Journalist';
   const hasQuestionReviewAccess = isAdministrator || isJournalist || canReviewQuestions('volunteer', volunteerType);
 
+  const isSpeakerAid = volunteer?.station === "Now Speaking (Speaker's aide)" ||
+    volunteer?.station?.toLowerCase().includes('speaker') ||
+    volunteer?.role === 'Speaker Aid' ||
+    volunteer?.volunteer_type === 'Speaker Aid' ||
+    volunteerType?.toLowerCase().includes('speaker aid') ||
+    isAdministrator;
+
   const [selectedDay] = useState<1 | 2>(1);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PRESENT' | 'ABSENT'>('ALL');
   const [isOnDuty, setIsOnDuty] = useState(volunteer?.has_arrived ?? true);
-  const [activeTab, setActiveTab] = useState<'questions' | 'attendance' | 'yuvadesk' | 'checkin' | 'walkin' | 'checklist'>(
-    hasQuestionReviewAccess ? 'questions' : 'attendance'
+  const [activeTab, setActiveTab] = useState<'speaker_aid' | 'questions' | 'attendance' | 'yuvadesk' | 'checkin' | 'walkin' | 'checklist'>(
+    isSpeakerAid ? 'speaker_aid' : (hasQuestionReviewAccess ? 'questions' : 'attendance')
   );
+
+  // Speaker Aid floor control state
+  const [speakerAidTick, setSpeakerAidTick] = useState<number>(0);
+  const [speakerSearch, setSpeakerSearch] = useState<string>('');
+  const [speakerBenchFilter, setSpeakerBenchFilter] = useState<'ALL' | 'Ruling' | 'Opposition'>('ALL');
+  const [isSpeakerModalOpen, setIsSpeakerModalOpen] = useState<boolean>(false);
+  const [candidateSpeaker, setCandidateSpeaker] = useState<Learner | null>(null);
+  const [isStartingTurn, setIsStartingTurn] = useState<boolean>(false);
+  const [isEndingTurn, setIsEndingTurn] = useState<boolean>(false);
+  const [liveElapsedSeconds, setLiveElapsedSeconds] = useState<number>(0);
+
+  // Synchronize authoritative speaking turns on mount & upon realtime events
+  useEffect(() => {
+    storageService.fetchSpeakingTurns(eventId).then(() => setSpeakerAidTick(t => t + 1)).catch(() => {});
+    const unsub = storageService.subscribe(() => setSpeakerAidTick(t => t + 1));
+    const handleSpeakerUpdate = () => setSpeakerAidTick(t => t + 1);
+    if (typeof window !== 'undefined') {
+      window.addEventListener('tn_assembly_current_speaker_changed', handleSpeakerUpdate);
+      window.addEventListener('tn_assembly_speaking_turn_update', handleSpeakerUpdate);
+      window.addEventListener('tn_assembly_speaking_update', handleSpeakerUpdate);
+      window.addEventListener('storage', handleSpeakerUpdate);
+    }
+    return () => {
+      unsub();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('tn_assembly_current_speaker_changed', handleSpeakerUpdate);
+        window.removeEventListener('tn_assembly_speaking_turn_update', handleSpeakerUpdate);
+        window.removeEventListener('tn_assembly_speaking_update', handleSpeakerUpdate);
+        window.removeEventListener('storage', handleSpeakerUpdate);
+      }
+    };
+  }, [eventId]);
+
+  const activeSpeakerTurn = useMemo<SpeakingTurn | null>(() => {
+    return storageService.getAuthoritativeCurrentSpeaker(eventId);
+  }, [eventId, speakerAidTick]);
+
+  const activeSpeakerLearner = useMemo(() => {
+    if (!activeSpeakerTurn) return null;
+    return propLearners.find(l => l.id === activeSpeakerTurn.learner_id) || null;
+  }, [activeSpeakerTurn, propLearners]);
+
+  // Live timer for active speaking turn
+  useEffect(() => {
+    if (!activeSpeakerTurn?.started_at || activeSpeakerTurn.status !== 'SPEAKING') {
+      setLiveElapsedSeconds(0);
+      return;
+    }
+    const updateElapsed = () => {
+      const startMs = new Date(activeSpeakerTurn.started_at!).getTime();
+      const diffSec = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+      setLiveElapsedSeconds(diffSec);
+    };
+    updateElapsed();
+    const interval = setInterval(updateElapsed, 1000);
+    return () => clearInterval(interval);
+  }, [activeSpeakerTurn?.id, activeSpeakerTurn?.started_at, activeSpeakerTurn?.status]);
+
+  const handleSelectSpeaker = async (learner: Learner) => {
+    if (!learner || isStartingTurn) return;
+    setIsStartingTurn(true);
+    try {
+      const activeSession = storageService.getActiveSession(eventId);
+      const res = await storageService.setAuthoritativeCurrentSpeaker({
+        eventId,
+        sessionId: activeSession.id || 'session_general',
+        sessionName: activeSession.title || 'Assembly Floor Session',
+        learnerId: learner.id,
+        learnerName: learner.full_name,
+        calledBy: volunteer?.name ? `Speaker Aid (${volunteer.name})` : 'Speaker Aid',
+        speakerAidId: volunteer?.id
+      });
+      if (res.success && res.turn) {
+        onShowToast('Speaker Active', `${learner.full_name} is now speaking on the floor (Turn ${res.turn.sequence_number})`, 'success');
+        setIsSpeakerModalOpen(false);
+        setCandidateSpeaker(null);
+        setSpeakerSearch('');
+        setSpeakerAidTick(t => t + 1);
+      } else {
+        onShowToast('Speaker Selection Failed', res.error || 'Could not set current speaker', 'error');
+      }
+    } catch (err: any) {
+      onShowToast('Speaker Selection Error', err?.message || 'Failed to set speaker', 'error');
+    } finally {
+      setIsStartingTurn(false);
+    }
+  };
+
+  const handleEndSpeakingTurn = async () => {
+    if (!activeSpeakerTurn || isEndingTurn) return;
+    setIsEndingTurn(true);
+    try {
+      const res = await storageService.endAuthoritativeCurrentSpeaker({
+        eventId,
+        sessionId: activeSpeakerTurn.session_id,
+        turnId: activeSpeakerTurn.id
+      });
+      if (res.success) {
+        onShowToast('Speech Concluded', `${activeSpeakerTurn.learner_name}'s speaking turn has completed`, 'info');
+        setSpeakerAidTick(t => t + 1);
+      } else {
+        onShowToast('End Speech Failed', res.error || 'Could not conclude speaking turn', 'error');
+      }
+    } catch (err: any) {
+      onShowToast('End Speech Error', err?.message || 'Failed to end speaking turn', 'error');
+    } finally {
+      setIsEndingTurn(false);
+    }
+  };
 
   // Question review queue state (for Administrator / Journalist / review-authorized volunteers)
   const [questions, setQuestions] = useState<ProceedingsQuestion[]>(() => {
@@ -1168,6 +1288,23 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
         {/* View Tabs */}
         <div className="flex items-center justify-between flex-wrap gap-3 border-b pb-3" style={{ borderColor: 'var(--border)' }}>
           <div className="flex rounded-xl p-1 border flex-wrap gap-1" style={{ background: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+            {/* Speaker Aid Tab Button */}
+            <button
+              onClick={() => setActiveTab('speaker_aid')}
+              className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                activeTab === 'speaker_aid' ? 'shadow-sm ring-1 ring-rose-500/50' : 'opacity-70 hover:opacity-100'
+              }`}
+              style={{
+                background: activeTab === 'speaker_aid' ? '#e11d48' : 'transparent',
+                color: activeTab === 'speaker_aid' ? '#fff' : 'var(--text-primary)'
+              }}
+            >
+              <Mic className="w-3.5 h-3.5" />
+              <span>Speaker Aid / Floor Control</span>
+              {activeSpeakerTurn && (
+                <span className="w-2 h-2 rounded-full bg-white animate-ping ml-0.5" />
+              )}
+            </button>
             {hasQuestionReviewAccess && (
               <button
                 onClick={() => setActiveTab('questions')}
@@ -2724,6 +2861,393 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                 ))
               )}
             </div>
+          </div>
+        )}
+
+        {/* Tab: Speaker Aid Floor Control Desk */}
+        {activeTab === 'speaker_aid' && (
+          <div className="space-y-6">
+            {/* Floor Status Card */}
+            <div
+              className="rounded-3xl p-6 border shadow-lg overflow-hidden relative"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+            >
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-5" style={{ borderColor: 'var(--border-soft)' }}>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="p-2 rounded-xl bg-rose-500/10 text-rose-500 border border-rose-500/20">
+                      <Mic className="w-5 h-5" />
+                    </span>
+                    <div>
+                      <h2 className="text-lg font-black tracking-tight" style={{ color: 'var(--text-primary)' }}>
+                        CURRENT SPEAKER CONTROL
+                      </h2>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Authoritative source of truth for the floor. Updating here synchronizes all Jury Dashboards immediately.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCandidateSpeaker(null);
+                      setSpeakerSearch('');
+                      setIsSpeakerModalOpen(true);
+                    }}
+                    className="px-5 py-2.5 rounded-xl text-xs font-black bg-rose-600 hover:bg-rose-700 text-white shadow-md shadow-rose-600/25 transition cursor-pointer flex items-center gap-2"
+                  >
+                    <Users className="w-4 h-4" />
+                    <span>{activeSpeakerTurn ? 'CHANGE SPEAKER' : 'SELECT SPEAKER'}</span>
+                  </button>
+                  {activeSpeakerTurn && (
+                    <button
+                      type="button"
+                      disabled={isEndingTurn}
+                      onClick={handleEndSpeakingTurn}
+                      className="px-4 py-2.5 rounded-xl text-xs font-bold border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer text-slate-700 dark:text-slate-300 disabled:opacity-50"
+                    >
+                      {isEndingTurn ? 'Ending...' : 'Finish Speech'}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Speaker Content Display */}
+              <div className="pt-6">
+                {activeSpeakerTurn ? (
+                  <div className="rounded-2xl p-6 border bg-gradient-to-r from-rose-500/15 via-amber-500/10 to-transparent border-rose-500/40 flex flex-col md:flex-row md:items-center justify-between gap-6 shadow-md">
+                    <div className="flex items-start gap-4">
+                      <div className="w-16 h-16 rounded-2xl bg-rose-600 text-white flex items-center justify-center font-black shadow-lg shrink-0 ring-4 ring-rose-500/20 text-2xl">
+                        <Mic className="w-8 h-8 animate-pulse" />
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-rose-600 text-white shadow-sm flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-white animate-ping"></span>
+                            🔴 NOW SPEAKING
+                          </span>
+                          <span className="px-3 py-1 rounded-full text-xs font-mono font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                            Speaking Turn {activeSpeakerTurn.sequence_number || 1}
+                          </span>
+                          <span
+                            className="px-2.5 py-1 rounded-full text-xs font-bold border"
+                            style={{
+                              background: activeSpeakerLearner?.bench === 'Ruling' ? 'rgba(5,150,105,0.1)' : 'rgba(220,38,38,0.1)',
+                              color: activeSpeakerLearner?.bench === 'Ruling' ? 'var(--emerald)' : '#ef4444',
+                              borderColor: activeSpeakerLearner?.bench === 'Ruling' ? 'var(--emerald)' : '#ef4444'
+                            }}
+                          >
+                            {activeSpeakerLearner?.bench || 'Ruling'} Bench
+                          </span>
+                        </div>
+                        <h3 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight pt-1">
+                          {activeSpeakerTurn.learner_name}
+                        </h3>
+                        <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">
+                          {activeSpeakerLearner?.constituency_number !== undefined ? `Constituency #${activeSpeakerLearner.constituency_number} — ` : ''}
+                          {activeSpeakerLearner?.constituency_name || 'Assembly Delegate'} • {activeSpeakerTurn.session_name}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Timer & Controls */}
+                    <div className="flex flex-col md:items-end justify-center gap-2 shrink-0">
+                      <div className="px-4 py-2 rounded-xl bg-slate-900 dark:bg-black text-white font-mono text-center border border-slate-700 shadow-inner">
+                        <div className="text-[10px] uppercase font-bold text-slate-400">Speaking Duration</div>
+                        <div className="text-xl font-black text-amber-400">
+                          {Math.floor(liveElapsedSeconds / 60)}:{liveElapsedSeconds % 60 < 10 ? '0' : ''}{liveElapsedSeconds % 60}
+                        </div>
+                      </div>
+                      <span className="text-[10px] text-slate-400 font-mono text-center md:text-right">
+                        Called by: {activeSpeakerTurn.called_by || 'Speaker Aid'}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl p-8 border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/30 text-center space-y-3">
+                    <div className="w-12 h-12 rounded-2xl bg-slate-200 dark:bg-slate-800 text-slate-400 flex items-center justify-center mx-auto">
+                      <Mic className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                        No MLA is currently speaking on the floor
+                      </h4>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto mt-0.5">
+                        Click "Select Speaker" below to designate the active MLA. All connected jury screens will automatically display that MLA.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCandidateSpeaker(null);
+                        setSpeakerSearch('');
+                        setIsSpeakerModalOpen(true);
+                      }}
+                      className="px-6 py-2.5 rounded-xl text-xs font-black bg-rose-600 hover:bg-rose-700 text-white shadow-md transition cursor-pointer inline-flex items-center gap-2"
+                    >
+                      <UserCheck className="w-4 h-4" />
+                      <span>Select Floor Speaker</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Speaking History in this Session */}
+            <div
+              className="rounded-3xl p-6 border shadow-sm space-y-4"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 dark:text-slate-200 flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-slate-400" />
+                  <span>Floor Speaking Turns Log ({storageService.getSpeakingTurns(eventId).length})</span>
+                </h3>
+                <span className="text-[11px] text-slate-400 font-mono">
+                  Authoritative record of speeches
+                </span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead
+                    className="border-b text-[10px] uppercase font-bold tracking-wider"
+                    style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-soft)', color: 'var(--text-muted)' }}
+                  >
+                    <tr>
+                      <th className="p-3 pl-4 text-center w-14">Turn</th>
+                      <th className="p-3">Speaker / Delegate</th>
+                      <th className="p-3">Constituency</th>
+                      <th className="p-3">Session</th>
+                      <th className="p-3 text-center">Status</th>
+                      <th className="p-3 text-right pr-4">Duration</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y" style={{ borderColor: 'var(--border-soft)' }}>
+                    {storageService.getSpeakingTurns(eventId).length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="py-8 text-center text-xs text-slate-400">
+                          No floor speaking turns recorded yet for this event.
+                        </td>
+                      </tr>
+                    ) : (
+                      storageService.getSpeakingTurns(eventId).slice().reverse().map(turn => {
+                        const learner = propLearners.find(l => l.id === turn.learner_id);
+                        let duration = '—';
+                        if (turn.started_at && turn.completed_at) {
+                          const ms = Math.max(0, new Date(turn.completed_at).getTime() - new Date(turn.started_at).getTime());
+                          const totalSec = Math.floor(ms / 1000);
+                          duration = `${Math.floor(totalSec / 60)}:${totalSec % 60 < 10 ? '0' : ''}${totalSec % 60}`;
+                        } else if (turn.status === 'SPEAKING') {
+                          duration = 'Active';
+                        }
+                        return (
+                          <tr key={turn.id} className="hover:bg-slate-500/5 transition-colors">
+                            <td className="p-3 pl-4 text-center font-mono font-bold text-amber-600 dark:text-amber-400">
+                              #{turn.sequence_number || 1}
+                            </td>
+                            <td className="p-3 font-bold text-slate-900 dark:text-white">
+                              {turn.learner_name}
+                            </td>
+                            <td className="p-3 text-slate-600 dark:text-slate-300">
+                              #{learner?.constituency_number ?? '?'} {learner?.constituency_name || ''}
+                            </td>
+                            <td className="p-3 text-slate-500 dark:text-slate-400">
+                              {turn.session_name}
+                            </td>
+                            <td className="p-3 text-center">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                  turn.status === 'SPEAKING'
+                                    ? 'bg-rose-500/10 text-rose-600 border border-rose-500/20 animate-pulse'
+                                    : turn.status === 'SPOKEN'
+                                    ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
+                                    : 'bg-slate-500/10 text-slate-500'
+                                }`}
+                              >
+                                {turn.status}
+                              </span>
+                            </td>
+                            <td className="p-3 pr-4 text-right font-mono font-bold text-slate-700 dark:text-slate-300">
+                              {duration}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* SELECT SPEAKER MODAL */}
+            {isSpeakerModalOpen && (
+              <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4">
+                <div
+                  className="rounded-3xl max-w-2xl w-full p-6 shadow-2xl border space-y-4 max-h-[90vh] flex flex-col"
+                  style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+                >
+                  <div className="flex items-center justify-between border-b pb-3" style={{ borderColor: 'var(--border-soft)' }}>
+                    <div>
+                      <h3 className="text-base font-black uppercase tracking-wider text-slate-900 dark:text-white">
+                        Select Current Floor Speaker
+                      </h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Choose the MLA who has the floor.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsSpeakerModalOpen(false);
+                        setCandidateSpeaker(null);
+                      }}
+                      className="p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  {/* Search & Bench Filter */}
+                  <div className="flex flex-col sm:flex-row items-center gap-2">
+                    <div className="relative flex-1 w-full">
+                      <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={speakerSearch}
+                        onChange={e => setSpeakerSearch(e.target.value)}
+                        placeholder="Search delegate by name, constituency #, or name..."
+                        className="w-full pl-9 pr-4 py-2 rounded-xl text-xs border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-rose-500"
+                      />
+                    </div>
+                    <div className="flex items-center gap-1 w-full sm:w-auto">
+                      {(['ALL', 'Ruling', 'Opposition'] as const).map(b => (
+                        <button
+                          key={b}
+                          type="button"
+                          onClick={() => setSpeakerBenchFilter(b)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex-1 sm:flex-none ${
+                            speakerBenchFilter === b
+                              ? 'bg-rose-600 text-white shadow-xs'
+                              : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
+                          }`}
+                        >
+                          {b}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Safety Confirmation Card (Section 13) */}
+                  {candidateSpeaker && (
+                    <div className="rounded-2xl p-4 border bg-amber-500/10 border-amber-500/30 space-y-3">
+                      <div className="text-xs font-bold text-amber-900 dark:text-amber-200 flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 text-amber-600" />
+                        <span>Confirm Speaker Transition</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 text-xs">
+                        <div className="p-2.5 rounded-xl bg-white/60 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                          <span className="text-[10px] text-slate-400 uppercase font-bold block">Current Floor Speaker</span>
+                          <span className="font-bold text-slate-700 dark:text-slate-300">
+                            {activeSpeakerTurn ? `${activeSpeakerTurn.learner_name} (Turn ${activeSpeakerTurn.sequence_number})` : 'Floor Idle (No speaker)'}
+                          </span>
+                        </div>
+                        <div className="p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/30">
+                          <span className="text-[10px] text-rose-600 dark:text-rose-400 uppercase font-black block">New Floor Speaker</span>
+                          <span className="font-black text-rose-700 dark:text-rose-300">
+                            {candidateSpeaker.full_name} (#{candidateSpeaker.constituency_number ?? '?'})
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-end gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setCandidateSpeaker(null)}
+                          className="px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isStartingTurn}
+                          onClick={() => handleSelectSpeaker(candidateSpeaker)}
+                          className="px-4 py-1.5 rounded-lg text-xs font-black bg-rose-600 hover:bg-rose-700 text-white cursor-pointer shadow-md disabled:opacity-50 flex items-center gap-1.5"
+                        >
+                          {isStartingTurn ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+                          <span>Start New Speaking Turn</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Delegates List */}
+                  <div className="overflow-y-auto space-y-1.5 flex-1 pr-1" style={{ maxHeight: '350px' }}>
+                    {propLearners
+                      .filter(l => {
+                        if (speakerBenchFilter !== 'ALL' && l.bench !== speakerBenchFilter) return false;
+                        if (speakerSearch.trim()) {
+                          return matchesLearnerConstituency(l, speakerSearch) || l.full_name.toLowerCase().includes(speakerSearch.toLowerCase().trim());
+                        }
+                        return true;
+                      })
+                      .map(learner => {
+                        const isCurrentlySpeaking = activeSpeakerTurn?.learner_id === learner.id;
+                        const isCandidate = candidateSpeaker?.id === learner.id;
+                        return (
+                          <button
+                            type="button"
+                            key={learner.id}
+                            data-testid={`speaker-select-${learner.id}`}
+                            onClick={() => setCandidateSpeaker(learner)}
+                            className={`w-full text-left p-3 rounded-xl border flex items-center justify-between transition cursor-pointer ${
+                              isCandidate
+                                ? 'border-rose-500 bg-rose-500/10'
+                                : isCurrentlySpeaking
+                                ? 'border-amber-500 bg-amber-500/5'
+                                : 'hover:bg-slate-100 dark:hover:bg-slate-800/60'
+                            }`}
+                            style={{ borderColor: isCandidate ? 'var(--rose-500)' : 'var(--border-soft)' }}
+                          >
+                            <div className="flex items-center gap-3">
+                              <span className="font-mono text-xs font-black text-blue-500 w-10 text-right">
+                                #{learner.constituency_number ?? '?'}
+                              </span>
+                              <div>
+                                <h4 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5">
+                                  <span>{learner.full_name}</span>
+                                  {isCurrentlySpeaking && (
+                                    <span className="px-1.5 py-0.2 rounded text-[9px] font-black bg-rose-600 text-white animate-pulse">
+                                      NOW SPEAKING
+                                    </span>
+                                  )}
+                                </h4>
+                                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                                  {learner.constituency_name || 'Assembly Delegate'} • {learner.party_name || 'Independent'}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span
+                                className="px-2 py-0.5 rounded text-[10px] font-bold border"
+                                style={{
+                                  background: learner.bench === 'Ruling' ? 'rgba(5,150,105,0.1)' : 'rgba(220,38,38,0.1)',
+                                  color: learner.bench === 'Ruling' ? 'var(--emerald)' : '#ef4444',
+                                  borderColor: learner.bench === 'Ruling' ? 'var(--emerald)' : '#ef4444'
+                                }}
+                              >
+                                {learner.bench || 'Ruling'}
+                              </span>
+                              <ChevronRight className="w-4 h-4 text-slate-400" />
+                            </div>
+                          </button>
+                        );
+                      })}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </main>

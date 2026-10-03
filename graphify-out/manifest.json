@@ -276,9 +276,9 @@
     "semantic_hash": "fa5314fe5afc9779f21497b6295a37d9"
   },
   "src/components/coordinator/ScoreGridTab.tsx": {
-    "mtime": 1791002059.5480213,
-    "seen": 1791005882.6212595,
-    "ast_hash": "20922e67d8b1e245e2ac9e11f14c01d2",
+    "mtime": 1791012596.0388708,
+    "seen": 1791013920.119796,
+    "ast_hash": "d036fc0e7e5211fc56ecd17887c51e20",
     "semantic_hash": ""
   },
   "src/components/coordinator/TeamTab.tsx": {
@@ -294,9 +294,9 @@
     "semantic_hash": ""
   },
   "src/components/jury/JuryDashboard.tsx": {
-    "mtime": 1791005541.4958892,
-    "seen": 1791005882.6235235,
-    "ast_hash": "bd136b2780b0043d9795072683289141",
+    "mtime": 1791012638.9395304,
+    "seen": 1791013920.162349,
+    "ast_hash": "2ee752538d3dc235e83e19066bde4434",
     "semantic_hash": ""
   },
   "src/components/student/StudentDashboard.tsx": {
@@ -318,9 +318,9 @@
     "semantic_hash": ""
   },
   "src/components/volunteer/VolunteerDashboard.tsx": {
-    "mtime": 1790927199.6318257,
-    "seen": 1790934769.3715932,
-    "ast_hash": "9131ba2c284295d0d04dffe3ecee2883",
+    "mtime": 1791013488.1450038,
+    "seen": 1791013920.2023962,
+    "ast_hash": "9d52c55ab2f8eff5ea90e6180255b1e7",
     "semantic_hash": ""
   },
   "src/data/initialMockData.ts": {
@@ -354,9 +354,9 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1791004444.1608047,
-    "seen": 1791005882.6344118,
-    "ast_hash": "acbea4e6fe8633bdc8bce63cd55bd9af",
+    "mtime": 1791013683.945313,
+    "seen": 1791013920.238771,
+    "ast_hash": "1b8e209c3c2ffeec273f924c7bbb0f82",
     "semantic_hash": ""
   },
   "src/types/index.ts": {

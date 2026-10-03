@@ -1063,9 +1063,15 @@ class StorageService {
           event.key === STORAGE_KEYS.FLASH_VOTES ||
           event.key === STORAGE_KEYS.NOMINATIONS ||
           event.key === STORAGE_KEYS.EVENTS ||
-          event.key === STORAGE_KEYS.DAY_ATTENDANCE
+          event.key === STORAGE_KEYS.DAY_ATTENDANCE ||
+          event.key === STORAGE_KEYS.SPEAKING_TURNS ||
+          event.key === STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS
         ) {
           this.notify();
+          if (event.key === STORAGE_KEYS.SPEAKING_TURNS) {
+            window.dispatchEvent(new CustomEvent('tn_assembly_current_speaker_changed', { detail: { action: 'cross_tab_storage_sync' } }));
+            window.dispatchEvent(new CustomEvent('tn_assembly_speaking_turn_update', { detail: { action: 'cross_tab_storage_sync' } }));
+          }
         }
       });
     }
@@ -5020,12 +5026,55 @@ class StorageService {
             }
           }
         })
+        .on('broadcast', { event: 'current_speaker_changed' }, (msg: any) => {
+          const p = msg?.payload;
+          if (p?.eventId) {
+            const allTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+            const now = new Date().toISOString();
+            if (p.status === 'SPEAKING' && p.speakingTurnId) {
+              const nextTurns = allTurns.map(t => {
+                if (t.event_id === p.eventId && t.id !== p.speakingTurnId && t.status === 'SPEAKING') {
+                  return { ...t, status: 'SPOKEN' as SpeakingTurnStatus, completed_at: p.startedAt || now };
+                }
+                if (t.id === p.speakingTurnId) {
+                  return { ...t, status: 'SPEAKING' as SpeakingTurnStatus, started_at: p.startedAt || t.started_at || now };
+                }
+                return t;
+              });
+              if (p.turn && !nextTurns.some(t => t.id === p.speakingTurnId)) {
+                nextTurns.push(p.turn);
+              }
+              this.setItem(STORAGE_KEYS.SPEAKING_TURNS, nextTurns);
+            } else if (p.status === 'IDLE' || p.status === 'SPOKEN') {
+              const nextTurns = allTurns.map(t => {
+                if (t.event_id === p.eventId && t.status === 'SPEAKING') {
+                  return { ...t, status: 'SPOKEN' as SpeakingTurnStatus, completed_at: now };
+                }
+                return t;
+              });
+              this.setItem(STORAGE_KEYS.SPEAKING_TURNS, nextTurns);
+            }
+            this.notify();
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_current_speaker_changed', { detail: p }));
+              window.dispatchEvent(new CustomEvent('tn_assembly_speaking_turn_update', { detail: p }));
+              window.dispatchEvent(new CustomEvent('tn_assembly_speaking_update', { detail: p }));
+              window.dispatchEvent(new Event('storage'));
+            }
+          }
+        })
         .on('broadcast', { event: 'speaking_turn_update' }, (msg: any) => {
           const p = msg?.payload;
           if (p?.turn) {
             const turn = p.turn as SpeakingTurn;
             const allTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
-            const nextTurns = allTurns.filter(t => t.id !== turn.id);
+            // Enforce single active speaker rule: if incoming turn is SPEAKING, close any other active turns for this event
+            const nextTurns = allTurns.map(t => {
+              if (turn.status === 'SPEAKING' && t.event_id === turn.event_id && t.id !== turn.id && t.status === 'SPEAKING') {
+                return { ...t, status: 'SPOKEN' as SpeakingTurnStatus, completed_at: turn.started_at || new Date().toISOString() };
+              }
+              return t;
+            }).filter(t => t.id !== turn.id);
             nextTurns.push(turn);
             this.setItem(STORAGE_KEYS.SPEAKING_TURNS, nextTurns);
 
@@ -5036,12 +5085,14 @@ class StorageService {
             }
             this.notify();
             if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_current_speaker_changed', { detail: { ...p, status: turn.status, speakingTurnId: turn.id, learnerId: turn.learner_id } }));
+              window.dispatchEvent(new CustomEvent('tn_assembly_speaking_turn_update', { detail: p }));
               window.dispatchEvent(new CustomEvent('tn_assembly_speaking_update', { detail: p }));
               window.dispatchEvent(new Event('storage'));
             }
           } else if (p?.action === 'completed' && p?.turnId) {
             const allTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
-            const nextTurns = allTurns.map(t => t.id === p.turnId ? { ...t, status: 'SPOKEN' as SpeakingTurnStatus } : t);
+            const nextTurns = allTurns.map(t => t.id === p.turnId ? { ...t, status: 'SPOKEN' as SpeakingTurnStatus, completed_at: t.completed_at || new Date().toISOString() } : t);
             this.setItem(STORAGE_KEYS.SPEAKING_TURNS, nextTurns);
 
             if (p.requestId) {
@@ -5051,6 +5102,8 @@ class StorageService {
             }
             this.notify();
             if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_current_speaker_changed', { detail: { action: 'completed', turnId: p.turnId, status: 'IDLE' } }));
+              window.dispatchEvent(new CustomEvent('tn_assembly_speaking_turn_update', { detail: p }));
               window.dispatchEvent(new CustomEvent('tn_assembly_speaking_update', { detail: p }));
               window.dispatchEvent(new Event('storage'));
             }
@@ -10831,6 +10884,263 @@ class StorageService {
     return { success: true, request: newRequest };
   }
 
+  private currentSpeakerLockMap = new Map<string, Promise<{ success: boolean; turn?: SpeakingTurn; error?: string }>>();
+
+  public getAuthoritativeCurrentSpeaker(eventId: string, sessionId?: string): SpeakingTurn | null {
+    if (!eventId) return null;
+    const turns = this.getSpeakingTurns(eventId, sessionId);
+    const active = turns.filter(t => t.event_id === eventId && t.status === 'SPEAKING');
+    if (active.length === 0) return null;
+    if (active.length === 1) return active[0];
+    // If multiple exist (defensive guard), pick the newest one by started_at or created_at
+    active.sort((a, b) => new Date(b.started_at || b.created_at || 0).getTime() - new Date(a.started_at || a.created_at || 0).getTime());
+    return active[0];
+  }
+
+  public async setAuthoritativeCurrentSpeaker(params: {
+    eventId: string;
+    sessionId: string;
+    sessionName?: string;
+    learnerId: string;
+    learnerName?: string;
+    calledBy?: string;
+    speakerAidId?: string;
+    requestId?: string;
+  }): Promise<{ success: boolean; turn?: SpeakingTurn; error?: string }> {
+    const { eventId, sessionId, learnerId, calledBy = 'Speaker Aid', speakerAidId, requestId } = params;
+    if (!eventId || !sessionId || !learnerId) {
+      return { success: false, error: 'Missing required parameters (eventId, sessionId, learnerId)' };
+    }
+
+    // In-flight concurrency lock to prevent double clicks or concurrent tab collisions
+    const lockKey = `${eventId}:::${sessionId}`;
+    while (this.currentSpeakerLockMap.has(lockKey)) {
+      try {
+        await this.currentSpeakerLockMap.get(lockKey);
+      } catch {}
+    }
+
+    const execPromise = (async () => {
+      const now = new Date().toISOString();
+
+      // Resolve learner details if name not provided
+      let learnerName = params.learnerName;
+      if (!learnerName) {
+        const learners = this.getLearners(eventId);
+        const l = learners.find(x => x.id === learnerId);
+        learnerName = l?.full_name || 'Delegate';
+      }
+
+      // Resolve session name if not provided
+      let sessionName = params.sessionName;
+      if (!sessionName) {
+        const agenda = this.getAgenda(eventId);
+        const a = agenda.find(x => x.id === sessionId);
+        sessionName = a?.title || 'Floor Proceedings';
+      }
+
+      // 1. Authoritative local storage: Close ALL currently SPEAKING turns for this event
+      const allTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+      const closedTurns = allTurns.map(t => {
+        if (t.event_id === eventId && t.status === 'SPEAKING') {
+          return {
+            ...t,
+            status: 'SPOKEN' as SpeakingTurnStatus,
+            completed_at: t.completed_at || now
+          };
+        }
+        return t;
+      });
+
+      // 2. Compute sequence number from existing non-cancelled session turns
+      const sessionTurns = closedTurns.filter(
+        t => t.event_id === eventId && t.session_id === sessionId && t.status !== 'CANCELLED'
+      );
+      const nextSeq = sessionTurns.length + 1;
+
+      // 3. Create speaking turn record
+      const newTurn: SpeakingTurn = {
+        id: genUuid(),
+        event_id: eventId,
+        session_id: sessionId,
+        session_name: sessionName,
+        learner_id: learnerId,
+        learner_name: learnerName,
+        request_id: requestId,
+        sequence_number: nextSeq,
+        called_at: now,
+        started_at: now,
+        called_by: speakerAidId || calledBy,
+        status: 'SPEAKING',
+        created_at: now
+      };
+
+      closedTurns.push(newTurn);
+      this.setItem(STORAGE_KEYS.SPEAKING_TURNS, closedTurns);
+
+      // Also update request if one exists
+      if (requestId) {
+        const allReqs = this.getItem<SpeakingRequest[]>(STORAGE_KEYS.SPEAKING_REQUESTS, []);
+        const nextReqs = allReqs.map(r => r.id === requestId ? { ...r, status: 'CALLED' as SpeakingRequestStatus, called_at: now, updated_at: now } : r);
+        this.setItem(STORAGE_KEYS.SPEAKING_REQUESTS, nextReqs);
+      }
+      this.notify();
+
+      // 4. Persist to Supabase tables
+      if (supabase && isSupabaseEnabled) {
+        try {
+          // Close active turns in Supabase first
+          await supabase
+            .from('speaking_turns')
+            .update({ status: 'SPOKEN', completed_at: now })
+            .eq('event_id', eventId)
+            .eq('status', 'SPEAKING');
+
+          if (requestId) {
+            await supabase
+              .from('speaking_requests')
+              .update({ status: 'CALLED', called_at: now, updated_at: now })
+              .eq('id', requestId);
+          }
+
+          // Insert new speaking turn
+          await supabase
+            .from('speaking_turns')
+            .insert({
+              id: newTurn.id,
+              event_id: newTurn.event_id,
+              session_id: newTurn.session_id,
+              session_name: newTurn.session_name,
+              learner_id: newTurn.learner_id,
+              learner_name: newTurn.learner_name,
+              request_id: newTurn.request_id || null,
+              sequence_number: newTurn.sequence_number,
+              called_at: newTurn.called_at,
+              started_at: newTurn.started_at,
+              called_by: newTurn.called_by || null,
+              status: newTurn.status,
+              created_at: now
+            });
+        } catch (sbErr) {
+          console.warn('[setAuthoritativeCurrentSpeaker] Supabase persistence error:', sbErr);
+        }
+      }
+
+      // 5. Broadcast compact realtime payload on EXISTING multiplexed channel tn_assembly_live_${eventId}
+      const broadcastPayload = {
+        type: 'current_speaker_changed',
+        eventId,
+        sessionId,
+        speakingTurnId: newTurn.id,
+        learnerId: newTurn.learner_id,
+        turnNumber: newTurn.sequence_number,
+        status: 'SPEAKING',
+        startedAt: newTurn.started_at,
+        learnerName: newTurn.learner_name,
+        sessionName: newTurn.session_name,
+        turn: newTurn
+      };
+
+      this.broadcast('current_speaker_changed', broadcastPayload).catch(() => {});
+      this.broadcast('speaking_turn_update', {
+        eventId,
+        sessionId,
+        action: 'called',
+        requestId,
+        turn: newTurn
+      }).catch(() => {});
+
+      // 6. Window CustomEvents
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('tn_assembly_current_speaker_changed', { detail: broadcastPayload }));
+        window.dispatchEvent(new CustomEvent('tn_assembly_speaking_turn_update', { detail: broadcastPayload }));
+        window.dispatchEvent(new CustomEvent('tn_assembly_speaking_update', { detail: broadcastPayload }));
+        window.dispatchEvent(new Event('storage'));
+      }
+
+      return { success: true, turn: newTurn };
+    })();
+
+    this.currentSpeakerLockMap.set(lockKey, execPromise);
+    try {
+      return await execPromise;
+    } finally {
+      this.currentSpeakerLockMap.delete(lockKey);
+    }
+  }
+
+  public async endAuthoritativeCurrentSpeaker(params: {
+    eventId: string;
+    sessionId?: string;
+    turnId?: string;
+  }): Promise<{ success: boolean; error?: string }> {
+    const { eventId, sessionId, turnId } = params;
+    const now = new Date().toISOString();
+
+    const allTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+    let turnToCloseId = turnId;
+
+    const nextTurns = allTurns.map(t => {
+      if (t.event_id === eventId && (t.status === 'SPEAKING' || (turnId && t.id === turnId))) {
+        turnToCloseId = t.id;
+        return {
+          ...t,
+          status: 'SPOKEN' as SpeakingTurnStatus,
+          completed_at: t.completed_at || now
+        };
+      }
+      return t;
+    });
+
+    this.setItem(STORAGE_KEYS.SPEAKING_TURNS, nextTurns);
+    this.notify();
+
+    if (supabase && isSupabaseEnabled) {
+      try {
+        let q = supabase
+          .from('speaking_turns')
+          .update({ status: 'SPOKEN', completed_at: now })
+          .eq('event_id', eventId);
+        if (turnToCloseId) {
+          q = q.eq('id', turnToCloseId);
+        } else {
+          q = q.eq('status', 'SPEAKING');
+        }
+        await q;
+      } catch (err) {
+        console.warn('[endAuthoritativeCurrentSpeaker] Supabase update warning:', err);
+      }
+    }
+
+    const payload = {
+      type: 'current_speaker_changed',
+      eventId,
+      sessionId: sessionId || '',
+      speakingTurnId: null,
+      learnerId: null,
+      turnNumber: 0,
+      status: 'IDLE',
+      startedAt: null
+    };
+
+    this.broadcast('current_speaker_changed', payload).catch(() => {});
+    this.broadcast('speaking_turn_update', {
+      eventId,
+      sessionId: sessionId || '',
+      action: 'completed',
+      turnId: turnToCloseId
+    }).catch(() => {});
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_current_speaker_changed', { detail: payload }));
+      window.dispatchEvent(new CustomEvent('tn_assembly_speaking_turn_update', { detail: payload }));
+      window.dispatchEvent(new CustomEvent('tn_assembly_speaking_update', { detail: payload }));
+      window.dispatchEvent(new Event('storage'));
+    }
+
+    return { success: true };
+  }
+
   public async callSpeaker(params: {
     requestId: string;
     eventId: string;
@@ -10841,114 +11151,17 @@ class StorageService {
     calledBy?: string;
   }): Promise<{ success: boolean; turn?: SpeakingTurn; error?: string }> {
     const { requestId, eventId, sessionId, sessionName, learnerId, learnerName, calledBy = 'Speaker' } = params;
-    const now = new Date().toISOString();
 
-    // Check if turn already exists for this request (prevent duplicate counts on double-click / rapid call)
-    const allTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
-    const existingTurn = allTurns.find(t => t.request_id === requestId && t.status !== 'CANCELLED');
-    if (existingTurn) {
-      return { success: true, turn: existingTurn };
-    }
-
-    // 1. Update request to CALLED
-    const allReqs = this.getItem<SpeakingRequest[]>(STORAGE_KEYS.SPEAKING_REQUESTS, []);
-    let updatedReq: SpeakingRequest | undefined;
-    const nextReqs = allReqs.map(r => {
-      if (r.id === requestId) {
-        updatedReq = { ...r, status: 'CALLED' as SpeakingRequestStatus, called_at: now, updated_at: now };
-        return updatedReq;
-      }
-      return r;
-    });
-    this.setItem(STORAGE_KEYS.SPEAKING_REQUESTS, nextReqs);
-
-    // 2. Compute sequence number from existing session turns
-    const sessionTurns = allTurns.filter(t => t.event_id === eventId && t.session_id === sessionId);
-    const nextSeq = sessionTurns.length + 1;
-
-    // 3. Create speaking turn record
-    const newTurn: SpeakingTurn = {
-      id: genUuid(),
-      event_id: eventId,
-      session_id: sessionId,
-      session_name: sessionName,
-      learner_id: learnerId,
-      learner_name: learnerName,
-      request_id: requestId,
-      sequence_number: nextSeq,
-      called_at: now,
-      started_at: now,
-      called_by: calledBy,
-      status: 'SPEAKING',
-      created_at: now
-    };
-
-    allTurns.push(newTurn);
-    this.setItem(STORAGE_KEYS.SPEAKING_TURNS, allTurns);
-    this.notify();
-
-    // 4. Persist to Supabase tables and fallback
-    if (supabase && isSupabaseEnabled) {
-      supabase
-        .from('speaking_requests')
-        .update({ status: 'CALLED', called_at: now, updated_at: now })
-        .eq('id', requestId)
-        .then();
-
-      supabase
-        .from('speaking_turns')
-        .insert({
-          id: newTurn.id,
-          event_id: newTurn.event_id,
-          session_id: newTurn.session_id,
-          session_name: newTurn.session_name,
-          learner_id: newTurn.learner_id,
-          learner_name: newTurn.learner_name,
-          request_id: newTurn.request_id || null,
-          sequence_number: newTurn.sequence_number,
-          called_at: newTurn.called_at,
-          started_at: newTurn.started_at,
-          called_by: newTurn.called_by || null,
-          status: newTurn.status,
-          created_at: now
-        })
-        .then(() => {}, async () => {
-          const sb = supabase;
-          if (!sb) return;
-          try {
-            const { data: evData } = await sb
-              .from('college_events')
-              .select('social_coverage')
-              .eq('id', eventId)
-              .maybeSingle();
-            const sc = (evData?.social_coverage || {}) as Record<string, any>;
-            const curReqs = Array.isArray(sc.speaking_requests) ? sc.speaking_requests : [];
-            const curTurns = Array.isArray(sc.speaking_turns) ? sc.speaking_turns : [];
-            await sb
-              .from('college_events')
-              .update({
-                social_coverage: {
-                  ...sc,
-                  speaking_requests: curReqs.map((r: any) => r.id === requestId ? { ...r, status: 'CALLED', called_at: now } : r),
-                  speaking_turns: [...curTurns.filter((t: any) => t.id !== newTurn.id), newTurn],
-                  updated_at: now
-                }
-              })
-              .eq('id', eventId);
-          } catch {}
-        });
-    }
-
-    // 5. Broadcast
-    this.broadcast('speaking_turn_update', {
+    // Delegate to unified setAuthoritativeCurrentSpeaker to guarantee closing previous speakers
+    return this.setAuthoritativeCurrentSpeaker({
       eventId,
       sessionId,
-      action: 'called',
-      requestId,
-      turn: newTurn
-    }).catch(() => {});
-
-    return { success: true, turn: newTurn };
+      sessionName,
+      learnerId,
+      learnerName,
+      calledBy,
+      requestId
+    });
   }
 
   public async completeSpeakingTurn(params: {
@@ -11034,6 +11247,25 @@ class StorageService {
       turnId,
       requestId
     }).catch(() => {});
+
+    // Broadcast current_speaker_changed as IDLE if no other turn is SPEAKING
+    const remainingActive = nextTurns.find(t => t.event_id === eventId && t.status === 'SPEAKING');
+    if (!remainingActive) {
+      const payload = {
+        type: 'current_speaker_changed',
+        eventId,
+        sessionId,
+        speakingTurnId: null,
+        learnerId: null,
+        turnNumber: 0,
+        status: 'IDLE',
+        startedAt: null
+      };
+      this.broadcast('current_speaker_changed', payload).catch(() => {});
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('tn_assembly_current_speaker_changed', { detail: payload }));
+      }
+    }
 
     return { success: true };
   }
@@ -16037,7 +16269,27 @@ class StorageService {
           return records;
         }
       } catch (err) {
-        console.warn('[fetchJurySpeechRecognitions] Supabase error:', err);
+        console.warn('[fetchJurySpeechRecognitions] Supabase table error, trying social_coverage:', err);
+      }
+
+      // Resilient fallback: social_coverage.jury_speech_recognitions
+      try {
+        const { data: evData } = await supabase
+          .from('college_events')
+          .select('social_coverage')
+          .eq('id', eventId)
+          .maybeSingle();
+        const sc = (evData?.social_coverage || {}) as Record<string, any>;
+        const recogs = Array.isArray(sc.jury_speech_recognitions) ? (sc.jury_speech_recognitions as JurySpeechRecognition[]) : [];
+        if (recogs.length > 0) {
+          const all = this.getItem<JurySpeechRecognition[]>(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, []);
+          const other = all.filter(r => r.event_id !== eventId);
+          const merged = [...other, ...recogs];
+          this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, merged);
+          return sessionId ? recogs.filter(r => r.session_id === sessionId) : recogs;
+        }
+      } catch (e) {
+        console.warn('[fetchJurySpeechRecognitions] Fallback error:', e);
       }
     }
     return this.getJurySpeechRecognitions(eventId, sessionId, undefined, undefined, undefined, false);
@@ -16161,7 +16413,7 @@ class StorageService {
       // 1. Authoritative local storage persist
       this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, all);
 
-      // 2. Persist to Supabase if configured (dedicated table ONLY, never social_coverage)
+      // 2. Persist to Supabase if configured (dedicated table with social_coverage fallback)
       if (supabase && isSupabaseEnabled) {
         supabase
           .from('jury_speech_recognitions')
@@ -16177,7 +16429,30 @@ class StorageService {
             revoked_at: record.revoked_at || null,
             updated_at: record.updated_at
           }, { onConflict: 'event_id,speaking_turn_id,jury_id' })
-          .then();
+          .then(() => {}, async () => {
+            const sb = supabase;
+            if (!sb) return;
+            try {
+              const { data: evData } = await sb
+                .from('college_events')
+                .select('social_coverage')
+                .eq('id', eventId)
+                .maybeSingle();
+              const sc = (evData?.social_coverage || {}) as Record<string, any>;
+              const curRecogs = Array.isArray(sc.jury_speech_recognitions) ? sc.jury_speech_recognitions : [];
+              const updatedRecogs = [...curRecogs.filter((r: any) => !(r.event_id === record.event_id && r.speaking_turn_id === record.speaking_turn_id && r.jury_id === record.jury_id)), record];
+              await sb
+                .from('college_events')
+                .update({
+                  social_coverage: {
+                    ...sc,
+                    jury_speech_recognitions: updatedRecogs,
+                    updated_at: now
+                  }
+                })
+                .eq('id', eventId);
+            } catch {}
+          });
       }
 
       // 3. Compact realtime broadcast
