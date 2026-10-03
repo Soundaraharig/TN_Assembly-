@@ -980,6 +980,15 @@ export interface SpeakingRequest {
 
 export type SpeakingTurnStatus = 'SPEAKING' | 'SPOKEN' | 'CANCELLED';
 
+export type ScoringMode = 'test' | 'live';
+
+export interface ScoringEnvironment {
+  mode: ScoringMode;
+  testRunId: string | null;
+  updated_at?: string;
+  updated_by?: string;
+}
+
 export interface SpeakingTurn {
   id: string;
   event_id: string;
@@ -994,6 +1003,8 @@ export interface SpeakingTurn {
   completed_at?: string;
   called_by?: string;
   status: SpeakingTurnStatus;
+  is_test?: boolean;
+  test_run_id?: string;
   created_at?: string;
 }
 

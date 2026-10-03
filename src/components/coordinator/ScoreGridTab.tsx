@@ -141,6 +141,7 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   // Modals & Reset State
   const [isGradeModalOpen, setIsGradeModalOpen] = useState(false);
   const [isResetTestModalOpen, setIsResetTestModalOpen] = useState(false);
+  const [typedTestConfirm, setTypedTestConfirm] = useState('');
   const [isDeletingTestScores, setIsDeletingTestScores] = useState(false);
   const [isTrailModalOpen, setIsTrailModalOpen] = useState(false);
   const [selectedTrailEvaluation, setSelectedTrailEvaluation] = useState<JuryEvaluation | null>(null);
@@ -1071,10 +1072,10 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
     }
   };
 
-  const handleStartNewTestRun = () => {
+  const handleStartNewTestRun = async () => {
     if (!eventId) return;
     try {
-      const newRunId = storageService.startNewTestRun(eventId);
+      const newRunId = await storageService.startNewTestRun(eventId);
       setTestMode({ isTestMode: true, testRunId: newRunId });
       onShowToast(
         'New Test Run Started',
@@ -1145,29 +1146,32 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
       onShowToast('Unauthorized', 'Only administrators are authorized to reset jury scores.', 'error');
       return;
     }
-    if (eventScores.length === 0) {
+    const currentTestCount =
+      auditData.testData.evaluations +
+      auditData.testData.recognitions +
+      auditData.testData.turns +
+      auditData.testData.adjustments +
+      (auditData.testData.testFloorTurns || 0);
+
+    if (currentTestCount === 0 && testScoresCount === 0) {
       onShowToast(
-        'No Scores Found',
-        'There are no jury score records for this event.',
+        'No Test Data Found',
+        `No test scores, recognitions, or test turns found for this event. Real production data is completely protected.`,
         'info'
       );
       return;
     }
-    const currentTestCount = Math.max(testScoresCount, auditData.testData.evaluations);
-    if (currentTestCount === 0) {
-      onShowToast(
-        'No Test Scores Found',
-        `All ${eventScores.length} score records for this event are real production scores. Real production scores cannot be reset. Use "Review Unclassified Scores" if test scores were saved as normal scores.`,
-        'info'
-      );
-      return;
-    }
+    setTypedTestConfirm('');
     setIsResetTestModalOpen(true);
   };
 
   const handleConfirmDeleteTestScores = async () => {
     if (!eventId) {
       onShowToast('Unable to reset test scores. No score data was changed.', 'Missing event identifier.', 'error');
+      return;
+    }
+    if (typedTestConfirm !== 'RESET TEST RUN') {
+      onShowToast('Confirmation Required', 'You must type "RESET TEST RUN" exactly to confirm.', 'error');
       return;
     }
     setIsDeletingTestScores(true);
@@ -1177,6 +1181,7 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
         resetAll: resetScope === 'all'
       });
       setIsResetTestModalOpen(false);
+      setTypedTestConfirm('');
       setAuditTick(t => t + 1);
       if (res.deletedCount > 0) {
         onShowToast(
@@ -1375,16 +1380,16 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
             <span className="font-mono font-black text-rose-500">{testScoresCount}</span>
           </div>
 
-          {/* Reset Test Scores button (Clearly separated: only deletes test data) */}
+          {/* Reset Test Run button (Clearly separated: only deletes test data) */}
           <button
             type="button"
             onClick={handleOpenResetTestModal}
-            disabled={isDeletingTestScores || testScoresCount === 0}
+            disabled={isDeletingTestScores || (auditData.testData.evaluations === 0 && auditData.testData.recognitions === 0 && auditData.testData.turns === 0 && (auditData.testData.testFloorTurns || 0) === 0 && testScoresCount === 0)}
             className="px-3 py-1.5 rounded-xl font-bold text-xs border flex items-center gap-1.5 transition cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
             title="Safely remove test/demo score records without deleting real production scores"
           >
             <Trash2 className="w-3.5 h-3.5 text-slate-400" />
-            <span>Reset Test Scores ({testScoresCount})</span>
+            <span>Reset Test Run</span>
           </button>
 
           {/* Dedicated Event Jury Scoring Reset Button (Administrator Only) */}
@@ -1518,33 +1523,40 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
           </div>
 
           {/* Audit Data Breakdown Strip */}
-          <div className="mt-3 pt-3 border-t border-slate-200/60 dark:border-slate-800/60 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-            <div className="flex items-center gap-2">
-              <span className="text-slate-400">Production Scores:</span>
-              <span className="font-mono font-black text-emerald-600 dark:text-emerald-400">
-                {auditData.realData.evaluations || realScoresCount}
+          <div className="mt-3 pt-3 border-t border-slate-200/60 dark:border-slate-800/60 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+            <div className="p-3 rounded-xl border bg-emerald-500/5 border-emerald-500/20 space-y-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 block">
+                PRODUCTION
               </span>
-              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.2 rounded">
-                Protected
-              </span>
+              <div className="grid grid-cols-3 gap-2 text-slate-700 dark:text-slate-300 font-medium">
+                <div>Evaluations: <strong className="font-mono text-emerald-600 dark:text-emerald-400">{auditData.realData.evaluations || realScoresCount}</strong></div>
+                <div>Recognitions: <strong className="font-mono text-emerald-600 dark:text-emerald-400">{auditData.realData.recognitions}</strong></div>
+                <div>Adjustments: <strong className="font-mono text-emerald-600 dark:text-emerald-400">{auditData.realData.adjustments}</strong></div>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-slate-400">Test Scores:</span>
-              <span className="font-mono font-black text-rose-500">
-                {auditData.testData.evaluations || testScoresCount}
-              </span>
+
+            <div className="p-3 rounded-xl border bg-amber-500/5 border-amber-500/20 space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                  TEST {testMode.testRunId ? `(${testMode.testRunId})` : ''}
+                </span>
+              </div>
+              <div className="grid grid-cols-4 gap-2 text-slate-700 dark:text-slate-300 font-medium">
+                <div>Evals: <strong className="font-mono text-rose-500">{auditData.testData.evaluations || testScoresCount}</strong></div>
+                <div>Recogs: <strong className="font-mono text-amber-500">{auditData.testData.recognitions}</strong></div>
+                <div>Adjs: <strong className="font-mono text-slate-600 dark:text-slate-400">{auditData.testData.adjustments}</strong></div>
+                <div>Turns: <strong className="font-mono text-slate-600 dark:text-slate-400">{auditData.testData.testFloorTurns || auditData.testData.turns}</strong></div>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-slate-400">Test Recognitions:</span>
-              <span className="font-mono font-black text-amber-500">
-                {auditData.testData.recognitions}
+
+            <div className="p-3 rounded-xl border bg-blue-500/5 border-blue-500/20 space-y-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 block">
+                SPEAKING PROCEEDINGS
               </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-slate-400">Test Turns & Adjs:</span>
-              <span className="font-mono font-bold text-slate-700 dark:text-slate-300">
-                {auditData.testData.turns} / {auditData.testData.adjustments}
-              </span>
+              <div className="flex items-center gap-4 text-slate-700 dark:text-slate-300 font-medium">
+                <div>Live Speaking Turns: <strong className="font-mono text-blue-600 dark:text-blue-400">{auditData.realData.liveFloorTurns || 0}</strong></div>
+                <div>Test Turns: <strong className="font-mono text-slate-500">{auditData.testData.testFloorTurns || 0}</strong></div>
+              </div>
             </div>
           </div>
         </div>
@@ -2988,7 +3000,7 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
                 <div>
                   <span className="text-slate-400 block text-[10px]">Test Speaking Turns:</span>
                   <span className="font-mono font-bold text-slate-700 dark:text-slate-300">
-                    {auditData.testData.turns}
+                    {auditData.testData.testFloorTurns || auditData.testData.turns}
                   </span>
                 </div>
                 <div>
@@ -2999,30 +3011,49 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
                 </div>
               </div>
 
+              <div className="p-3 rounded-xl border bg-emerald-500/5 border-emerald-500/20 text-xs space-y-1">
+                <p className="font-bold text-emerald-600 dark:text-emerald-400">Will NOT delete:</p>
+                <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-slate-600 dark:text-slate-400 text-[11px]">
+                  <span>✓ Participants</span>
+                  <span>✓ Attendance</span>
+                  <span>✓ Questions</span>
+                  <span>✓ Votes</span>
+                  <span>✓ Bills</span>
+                  <span>✓ Agenda</span>
+                  <span>✓ Production evaluations</span>
+                  <span>✓ Production recognitions</span>
+                  <span>✓ Production speaking turns</span>
+                </div>
+              </div>
+
               <div className="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-800 text-xs font-semibold">
                 <span className="text-slate-400">Real Production Scores Preserved:</span>
                 <span className="font-mono font-black text-emerald-500 text-sm px-2.5 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20">
                   {auditData.realData.evaluations || realScoresCount}
                 </span>
               </div>
+            </div>
 
-              {(auditData.testData.evaluations || testScoresCount) === 0 && auditData.testData.recognitions === 0 ? (
-                <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 shrink-0 text-amber-500" />
-                  <span>No test scores found. If test scores were saved as normal scores, use "Review Unclassified Scores" to classify them first.</span>
-                </div>
-              ) : (
-                <div className="p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/20 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-500" />
-                  <span>Production Guardrail Active: Genuine production scores will NEVER be touched.</span>
-                </div>
-              )}
+            <div className="space-y-1.5 pt-1">
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                To confirm, type <span className="font-mono text-rose-600 dark:text-rose-400 select-all font-black">RESET TEST RUN</span> below:
+              </label>
+              <input
+                type="text"
+                value={typedTestConfirm}
+                onChange={e => setTypedTestConfirm(e.target.value)}
+                placeholder="Type RESET TEST RUN"
+                className="w-full px-3 py-2 rounded-xl border font-mono text-xs focus:outline-none bg-white dark:bg-slate-900 text-slate-900 dark:text-white border-rose-300 dark:border-rose-900 focus:border-rose-500"
+              />
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => setIsResetTestModalOpen(false)}
+                onClick={() => {
+                  setIsResetTestModalOpen(false);
+                  setTypedTestConfirm('');
+                }}
                 className="px-4 py-2.5 rounded-xl border font-semibold text-xs cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition"
                 style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
                 disabled={isDeletingTestScores}
@@ -3032,11 +3063,11 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
               <button
                 type="button"
                 onClick={handleConfirmDeleteTestScores}
-                disabled={isDeletingTestScores || ((auditData.testData.evaluations || testScoresCount) === 0 && auditData.testData.recognitions === 0)}
+                disabled={isDeletingTestScores || typedTestConfirm !== 'RESET TEST RUN'}
                 className="px-4 py-2.5 rounded-xl font-bold text-xs text-white bg-rose-600 hover:bg-rose-700 shadow-md cursor-pointer flex items-center gap-1.5 transition disabled:opacity-50"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>{isDeletingTestScores ? 'Resetting...' : 'Confirm Reset Test Scores'}</span>
+                <span>{isDeletingTestScores ? 'Resetting...' : 'Confirm Reset Test Run'}</span>
               </button>
             </div>
           </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Award,
   UserCheck,
@@ -232,19 +232,59 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     return Math.max(2, turnsRecorded + 1, effectiveDelegateTurns.length);
   }, [currentEvaluation, effectiveDelegateTurns.length]);
 
+  const lastSpeakerVersionRef = useRef<number>(0);
+
+  // On mount: auto-select currently active floor speaker if one exists
+  useEffect(() => {
+    if (!event?.id) return;
+    const active = storageService.getAuthoritativeCurrentSpeaker(event.id);
+    if (active && active.status === 'SPEAKING' && active.learner_id) {
+      setSelectedLearnerId(active.learner_id);
+    }
+  }, [event?.id]);
+
   useEffect(() => {
     const unsub = storageService.subscribe(() => {
       setRecogTick(t => t + 1);
     });
+
+    const handleSpeakerChanged = (evt: Event) => {
+      const customEvt = evt as CustomEvent;
+      const detail = customEvt?.detail;
+      if (detail) {
+        if (detail.version && typeof detail.version === 'number') {
+          if (detail.version < lastSpeakerVersionRef.current) {
+            // Drop stale out-of-order event (Phase 19)
+            return;
+          }
+          lastSpeakerVersionRef.current = detail.version;
+        }
+
+        if (detail.status === 'SPEAKING' && detail.learnerId) {
+          setSelectedLearnerId(detail.learnerId);
+        }
+      } else {
+        if (event?.id) {
+          const active = storageService.getAuthoritativeCurrentSpeaker(event.id);
+          if (active && active.status === 'SPEAKING' && active.learner_id) {
+            setSelectedLearnerId(active.learner_id);
+          }
+        }
+      }
+      setRecogTick(t => t + 1);
+    };
+
     const handleRecogUpdate = () => {
       setRecogTick(t => t + 1);
     };
+
     if (typeof window !== 'undefined') {
-      window.addEventListener('tn_assembly_current_speaker_changed', handleRecogUpdate);
-      window.addEventListener('tn_assembly_speaking_update', handleRecogUpdate);
-      window.addEventListener('tn_assembly_speaking_turn_update', handleRecogUpdate);
+      window.addEventListener('tn_assembly_current_speaker_changed', handleSpeakerChanged);
+      window.addEventListener('tn_assembly_speaking_update', handleSpeakerChanged);
+      window.addEventListener('tn_assembly_speaking_turn_update', handleSpeakerChanged);
       window.addEventListener('tn_assembly_jury_recognition_update', handleRecogUpdate);
       window.addEventListener('tn_assembly_test_mode_update', handleRecogUpdate);
+      window.addEventListener('tn_assembly_scoring_environment_update', handleRecogUpdate);
       window.addEventListener('tn_assembly_scores_updated', handleRecogUpdate);
       window.addEventListener('tn_assembly_jury_scoring_reset', handleRecogUpdate);
       window.addEventListener('storage', handleRecogUpdate);
@@ -252,17 +292,18 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     return () => {
       unsub();
       if (typeof window !== 'undefined') {
-        window.removeEventListener('tn_assembly_current_speaker_changed', handleRecogUpdate);
-        window.removeEventListener('tn_assembly_speaking_update', handleRecogUpdate);
-        window.removeEventListener('tn_assembly_speaking_turn_update', handleRecogUpdate);
+        window.removeEventListener('tn_assembly_current_speaker_changed', handleSpeakerChanged);
+        window.removeEventListener('tn_assembly_speaking_update', handleSpeakerChanged);
+        window.removeEventListener('tn_assembly_speaking_turn_update', handleSpeakerChanged);
         window.removeEventListener('tn_assembly_jury_recognition_update', handleRecogUpdate);
         window.removeEventListener('tn_assembly_test_mode_update', handleRecogUpdate);
+        window.removeEventListener('tn_assembly_scoring_environment_update', handleRecogUpdate);
         window.removeEventListener('tn_assembly_scores_updated', handleRecogUpdate);
         window.removeEventListener('tn_assembly_jury_scoring_reset', handleRecogUpdate);
         window.removeEventListener('storage', handleRecogUpdate);
       }
     };
-  }, []);
+  }, [event?.id]);
 
   const testMode = useMemo(() => {
     return storageService.getScoringTestMode(event?.id);
@@ -577,24 +618,6 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     if (currentIndex >= 0 && currentIndex < learners.length - 1) {
       setSelectedLearnerId(learners[currentIndex + 1].id);
     }
-  };
-
-  const handleRecordContributionOnly = () => {
-    if (!currentEvaluation || !selectedLearner || !event?.id) return;
-    const activeTurn = (activeFloorSpeakingTurn?.learner_id === selectedLearner.id ? activeFloorSpeakingTurn : null) ||
-      effectiveDelegateTurns.find(t => t.status === 'SPEAKING' || t.status === 'SPOKEN') ||
-      effectiveDelegateTurns[effectiveDelegateTurns.length - 1];
-    const turnId = activeTurn?.id || '';
-    
-    storageService.recordContributionOnly({
-      evaluationId: currentEvaluation.id,
-      speakingTurnId: turnId,
-      jurorId: jury?.id || jury?.name || 'jury',
-      jurorName: jury?.name || 'Evaluator',
-      notes: `Recorded participation on Turn ${currentTurnNumber}. Score preserved at ${currentEvaluation.total}/100.`
-    });
-
-    onShowToast('Turn Contribution Logged', `Recorded speaking turn contribution for ${selectedLearner.full_name}. Official score preserved at ${currentEvaluation.total}/100.`, 'success');
   };
 
   const handleOpenAdjustmentModal = () => {
@@ -1262,8 +1285,8 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             {/* Left/Middle: Rubric Evaluation Form (8 cols) */}
             <div className="lg:col-span-8 space-y-6">
-              {/* NOW SPEAKING Floor Banner (PHASE 7, 10, 11) */}
-              {activeFloorSpeakingTurn ? (
+              {/* NOW SPEAKING Floor Banner (Phase 7, 11, 12, 32) */}
+              {activeFloorSpeakingTurn && activeFloorSpeakingTurn.status === 'SPEAKING' ? (
                 <div className="rounded-2xl p-5 border bg-gradient-to-r from-rose-500/15 via-amber-500/10 to-transparent border-rose-500/40 flex flex-wrap items-center justify-between gap-4 shadow-md">
                   <div className="flex items-center gap-3.5">
                     <div className="w-12 h-12 rounded-2xl bg-rose-600 text-white flex items-center justify-center font-black shadow-md shrink-0 ring-4 ring-rose-500/20">
@@ -1284,21 +1307,23 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       </h3>
                       <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">
                         {activeFloorLearner?.constituency_number !== undefined ? `Constituency #${activeFloorLearner.constituency_number} — ` : ''}
-                        {activeFloorLearner?.constituency_name || 'Assembly Delegate'} • {activeFloorSpeakingTurn.session_name || selectedSession.name}
+                        {activeFloorLearner?.constituency_name || 'Assembly Delegate'} • {activeFloorLearner?.bench || 'Ruling'} Bench
                       </p>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2.5">
-                    {selectedLearnerId !== activeFloorSpeakingTurn.learner_id && (
-                      <button
-                        type="button"
-                        onClick={() => setSelectedLearnerId(activeFloorSpeakingTurn.learner_id)}
-                        className="px-4 py-2.5 rounded-xl text-xs font-bold border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer text-slate-800 dark:text-slate-200 shadow-xs"
-                      >
-                        Score Delegate
-                      </button>
-                    )}
+                  <div className="flex items-center gap-3">
+                    {/* Compact personal like count beside MLA */}
+                    <div className="text-center px-3.5 py-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 shadow-xs">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                        Speeches Liked
+                      </p>
+                      <p className="text-base font-black font-mono text-amber-600 dark:text-amber-400 flex items-center justify-center gap-1">
+                        ⭐ {learnerRecognitionsCountMap.get(activeFloorSpeakingTurn.learner_id) || 0}
+                      </p>
+                    </div>
+
+                    {/* Single LIKE button for this current speaking turn */}
                     <button
                       type="button"
                       disabled={isTogglingRecog}
@@ -1316,12 +1341,12 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                   </div>
                 </div>
               ) : (
-                <div className="rounded-xl px-4 py-2.5 border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                <div className="rounded-xl px-4 py-3 border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
                   <span className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-slate-400"></span>
-                    No MLA is currently speaking on the floor.
+                    🔵 NO SPEAKER ACTIVE (Waiting for Speaker Aid...)
                   </span>
-                  <span className="text-[11px] italic">Like button activates automatically when an MLA begins speaking.</span>
+                  <span className="text-[11px] italic">Like button activates automatically when Speaker Aid starts an MLA's speech.</span>
                 </div>
               )}
 
@@ -1394,6 +1419,14 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                           <p className="text-[10px] font-bold" style={{ color: grade.color }}>
                             {grade.label}
                           </p>
+                          <button
+                            type="button"
+                            onClick={handleOpenAdjustmentModal}
+                            className="mt-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 hover:bg-amber-500/20 cursor-pointer flex items-center gap-1 ml-auto"
+                            title="Adjust official score with audit trail"
+                          >
+                            <Edit3 className="w-3 h-3" /> Adjust Score
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -1439,108 +1472,6 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       </div>
                     )}
 
-                    {/* CURRENT SPEECH LIKE ACTION — Only for currently active Speaker-Aid-selected MLA */}
-                    {activeFloorSpeakingTurn && activeFloorSpeakingTurn.learner_id === selectedLearner.id && (
-                      <div className="rounded-xl p-4 bg-gradient-to-r from-rose-500/15 via-amber-500/10 to-transparent border border-rose-500/40 flex flex-wrap items-center justify-between gap-3 shadow-xs">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-600 text-white flex items-center gap-1 shadow-xs">
-                              <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
-                              🔴 NOW SPEAKING — {selectedLearner.full_name}
-                            </span>
-                            <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">
-                              Speaking Turn {activeFloorSpeakingTurn.sequence_number || 1}
-                            </span>
-                          </div>
-                          <h4 className="text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-200 mt-1.5 flex items-center gap-1">
-                            <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
-                            SPEECH LIKE
-                          </h4>
-                        </div>
-                        <button
-                          type="button"
-                          disabled={isTogglingRecog}
-                          onClick={() => handleToggleRecognition(activeFloorSpeakingTurn)}
-                          className={`px-5 py-2.5 rounded-xl text-xs font-black transition flex items-center gap-2 cursor-pointer shadow-md active:scale-95 disabled:opacity-50 ${
-                            isFloorTurnRecognized
-                              ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/25 ring-2 ring-amber-400'
-                              : 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 border-2 border-amber-500/50 hover:bg-amber-50 dark:hover:bg-slate-800'
-                          }`}
-                        >
-                          <Star className={`w-4 h-4 ${isFloorTurnRecognized ? 'fill-current text-white' : 'text-amber-500'}`} />
-                          <span>{isFloorTurnRecognized ? '⭐ LIKED ✓' : '⭐ LIKE THIS SPEECH'}</span>
-                        </button>
-                      </div>
-                    )}
-
-                    {/* ACTIONS: RECORD CONTRIBUTION ONLY vs ADJUST EVALUATION */}
-                    <div className="p-4 rounded-xl bg-amber-500/5 border border-amber-500/20 space-y-3">
-                      <div>
-                        <h4 className="text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white">
-                          Subsequent Speaking Opportunity (Turn {currentTurnNumber})
-                        </h4>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                          Choose what this turn means:
-                        </p>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-3 pt-1">
-                        <button
-                          type="button"
-                          onClick={handleRecordContributionOnly}
-                          className="px-5 py-2.5 rounded-xl font-bold text-xs bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 transition flex items-center gap-2 cursor-pointer shadow-xs active:scale-98"
-                        >
-                          <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                          <span>Record Contribution Only (Keeps {currentEvaluation.total}/100)</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={handleOpenAdjustmentModal}
-                          className="btn-primary px-5 py-2.5 text-xs font-bold shadow-md cursor-pointer hover:scale-102 transition-transform flex items-center gap-2"
-                        >
-                          <Edit3 className="w-4 h-4" />
-                          <span>Adjust Evaluation (Modify Score — Reason Required)</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Turn History / Audit Trail */}
-                    {Boolean(currentEvaluation.turns?.length || currentEvaluation.adjustments?.length) && (
-                      <div className="space-y-3 pt-2">
-                        <h4 className="text-xs font-black uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                          <History className="w-3.5 h-3.5" /> Turn History & Audit Trail
-                        </h4>
-                        <div className="space-y-2">
-                          {currentEvaluation.turns?.map((t, idx) => (
-                            <div key={t.id || idx} className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 text-xs flex items-center justify-between gap-3">
-                              <div className="flex items-center gap-2">
-                                <span className="font-extrabold text-slate-900 dark:text-white mr-1">Turn {t.turn_number}:</span>
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 mr-1">
-                                  {t.action_type.replace(/_/g, ' ')}
-                                </span>
-                                {t.notes && <span className="text-slate-500 italic max-w-xs truncate">"{t.notes}"</span>}
-                              </div>
-                              <span className="text-[10px] text-slate-400 font-mono">
-                                {new Date(t.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                              </span>
-                            </div>
-                          ))}
-                          {currentEvaluation.adjustments?.map((a, idx) => (
-                            <div key={a.id || idx} className="p-3 rounded-xl border border-amber-500/20 bg-amber-500/5 text-xs flex items-center justify-between">
-                              <div>
-                                <span className="font-extrabold text-amber-600 dark:text-amber-400 mr-2">Score Adjustment:</span>
-                                <span className="font-mono font-bold mr-2">{a.previous_total} → {a.new_total} ({a.delta_total >= 0 ? `+${a.delta_total}` : a.delta_total})</span>
-                                <span className="text-slate-600 dark:text-slate-300 italic">"{a.adjustment_reason}"</span>
-                              </div>
-                              <span className="text-[10px] text-slate-400 font-mono">
-                                {new Date(a.adjusted_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 ) : (
                 <form onSubmit={handleSaveEvaluation} className="rounded-2xl p-6 border space-y-6 shadow-sm" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
@@ -1652,40 +1583,6 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       </div>
                     </div>
                   </div>
-
-                  {/* CURRENT SPEECH LIKE ACTION — Only for currently active Speaker-Aid-selected MLA */}
-                  {activeFloorSpeakingTurn && activeFloorSpeakingTurn.learner_id === selectedLearner.id && (
-                    <div className="rounded-xl p-4 bg-gradient-to-r from-rose-500/15 via-amber-500/10 to-transparent border border-rose-500/40 flex flex-wrap items-center justify-between gap-3 shadow-xs">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-600 text-white flex items-center gap-1 shadow-xs">
-                            <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
-                            🔴 NOW SPEAKING — {selectedLearner.full_name}
-                          </span>
-                          <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">
-                            Speaking Turn {activeFloorSpeakingTurn.sequence_number || 1}
-                          </span>
-                        </div>
-                        <h4 className="text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-200 mt-1.5 flex items-center gap-1">
-                          <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
-                          SPEECH LIKE
-                        </h4>
-                      </div>
-                      <button
-                        type="button"
-                        disabled={isTogglingRecog}
-                        onClick={() => handleToggleRecognition(activeFloorSpeakingTurn)}
-                        className={`px-5 py-2.5 rounded-xl text-xs font-black transition flex items-center gap-2 cursor-pointer shadow-md active:scale-95 disabled:opacity-50 ${
-                          isFloorTurnRecognized
-                            ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/25 ring-2 ring-amber-400'
-                            : 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 border-2 border-amber-500/50 hover:bg-amber-50 dark:hover:bg-slate-800'
-                        }`}
-                      >
-                        <Star className={`w-4 h-4 ${isFloorTurnRecognized ? 'fill-current text-white' : 'text-amber-500'}`} />
-                        <span>{isFloorTurnRecognized ? '⭐ LIKED ✓' : '⭐ LIKE THIS SPEECH'}</span>
-                      </button>
-                    </div>
-                  )}
 
                   {/* 6 Rubric Criteria Grid Cards */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -2127,7 +2024,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                   </div>
 
                 </form>
-              ) ) : (
+              )) : (
                 <div className="flex-1 flex flex-col items-center justify-center text-center p-12 rounded-2xl border" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-muted)' }}>
                   <Sliders className="w-12 h-12 mb-3 opacity-40" />
                   <p className="text-sm font-semibold">Select a delegate from the roster or jump to a participant number to begin scoring.</p>

@@ -60,7 +60,9 @@ import type {
   DerivedBillVoteCounts,
   JurySpeechRecognition,
   ParticipantRecognitionSummary,
-  SpeechImpactSummary
+  SpeechImpactSummary,
+  ScoringMode,
+  ScoringEnvironment
 } from '../types';
 import {
   formatQuestionNumber,
@@ -266,7 +268,9 @@ const STORAGE_KEYS = {
   JURY_EVALUATION_ADJUSTMENTS: 'tn_assembly_jury_evaluation_adjustments_v1',
   JURY_SPEECH_RECOGNITIONS: 'tn_assembly_jury_speech_recognitions_v1',
   JURY_TEST_MODE: 'tn_assembly_jury_test_mode_v1',
-  CURRENT_TEST_RUN_ID: 'tn_assembly_current_test_run_id_v1'
+  CURRENT_TEST_RUN_ID: 'tn_assembly_current_test_run_id_v1',
+  SCORING_ENVIRONMENT: 'tn_assembly_scoring_environment_v1',
+  CURRENT_SPEAKER_VERSION: 'tn_assembly_current_speaker_version_v1'
 };
 
 export const SUPABASE_COLUMNS: Record<string, string> = {
@@ -10824,7 +10828,23 @@ class StorageService {
         }
         const { data, error } = await query.order('called_at', { ascending: true });
         if (!error && data) {
-          const records = data as unknown as SpeakingTurn[];
+          const rawRecords = data as unknown as SpeakingTurn[];
+          const records = rawRecords.map(r => {
+            let isTest = r.is_test;
+            let testRunId = r.test_run_id;
+            if (r.called_by && r.called_by.includes('[TEST')) {
+              isTest = true;
+              const match = r.called_by.match(/\[TEST:?([^\]]*)\]/);
+              if (match && match[1] && match[1] !== 'RUN') {
+                testRunId = match[1];
+              }
+            }
+            return {
+              ...r,
+              is_test: Boolean(isTest),
+              test_run_id: testRunId || undefined
+            };
+          });
           const all = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
           const other = all.filter(t => t.event_id !== eventId || (sessionId && t.session_id !== sessionId));
           const merged = [...other, ...records];
@@ -11036,6 +11056,15 @@ class StorageService {
       );
       const nextSeq = sessionTurns.length + 1;
 
+      // Authoritative scoring environment check
+      const env = this.getScoringEnvironment(eventId);
+      const isTest = env.mode === 'test';
+      const testRunId = isTest ? (env.testRunId || null) : null;
+      let effectiveCalledBy = speakerAidId || calledBy;
+      if (isTest) {
+        effectiveCalledBy = `${effectiveCalledBy} [TEST:${testRunId || 'RUN'}]`;
+      }
+
       // 3. Create speaking turn record
       const newTurn: SpeakingTurn = {
         id: genUuid(),
@@ -11048,8 +11077,10 @@ class StorageService {
         sequence_number: nextSeq,
         called_at: now,
         started_at: now,
-        called_by: speakerAidId || calledBy,
+        called_by: effectiveCalledBy,
         status: 'SPEAKING',
+        is_test: isTest,
+        test_run_id: testRunId || undefined,
         created_at: now
       };
 
@@ -11063,6 +11094,14 @@ class StorageService {
         this.setItem(STORAGE_KEYS.SPEAKING_REQUESTS, nextReqs);
       }
       this.notify();
+
+      // Monotonic speaker sequence version
+      const speakerVersion = Date.now();
+      if (typeof localStorage !== 'undefined') {
+        try {
+          localStorage.setItem(`${STORAGE_KEYS.CURRENT_SPEAKER_VERSION}_${eventId}`, String(speakerVersion));
+        } catch {}
+      }
 
       // 4. Persist to Supabase tables
       if (supabase && isSupabaseEnabled) {
@@ -11099,6 +11138,28 @@ class StorageService {
               status: newTurn.status,
               created_at: now
             });
+
+          // If test turn, also track ID in social_coverage.test_speaking_turn_ids
+          if (isTest) {
+            const { data: evData } = await supabase
+              .from('college_events')
+              .select('social_coverage')
+              .eq('id', eventId)
+              .maybeSingle();
+            const sc = (evData?.social_coverage || {}) as Record<string, any>;
+            const curTestTurns = Array.isArray(sc.test_speaking_turn_ids) ? sc.test_speaking_turn_ids : [];
+            await supabase
+              .from('college_events')
+              .update({
+                social_coverage: {
+                  ...sc,
+                  test_speaking_turn_ids: [...curTestTurns, newTurn.id],
+                  updated_at: now
+                },
+                updated_at: now
+              })
+              .eq('id', eventId);
+          }
         } catch (sbErr) {
           console.warn('[setAuthoritativeCurrentSpeaker] Supabase persistence error:', sbErr);
         }
@@ -11116,6 +11177,9 @@ class StorageService {
         startedAt: newTurn.started_at,
         learnerName: newTurn.learner_name,
         sessionName: newTurn.session_name,
+        isTest: newTurn.is_test,
+        testRunId: newTurn.test_run_id,
+        version: speakerVersion,
         turn: newTurn
       };
 
@@ -11190,6 +11254,13 @@ class StorageService {
       }
     }
 
+    const speakerVersion = Date.now();
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem(`${STORAGE_KEYS.CURRENT_SPEAKER_VERSION}_${eventId}`, String(speakerVersion));
+      } catch {}
+    }
+
     const payload = {
       type: 'current_speaker_changed',
       eventId,
@@ -11198,7 +11269,8 @@ class StorageService {
       learnerId: null,
       turnNumber: 0,
       status: 'IDLE',
-      startedAt: null
+      startedAt: null,
+      version: speakerVersion
     };
 
     this.broadcast('current_speaker_changed', payload).catch(() => {});
@@ -15946,9 +16018,9 @@ class StorageService {
       return existingBridged;
     }
 
-    const testMode = this.getScoringTestMode(params.eventId);
-    const isTest = params.isTest !== undefined ? !!params.isTest : testMode.isTestMode;
-    const testRunId = params.testRunId !== undefined ? params.testRunId : (isTest ? (testMode.testRunId || uid('test_run')) : undefined);
+    const env = this.getScoringEnvironment(params.eventId);
+    const isTest = env.mode === 'test';
+    const testRunId = isTest ? (env.testRunId || params.testRunId || uid('test_run')) : undefined;
 
     const now = new Date().toISOString();
     const evalId = uid('eval');
@@ -16457,9 +16529,9 @@ class StorageService {
       let record: JurySpeechRecognition;
       let action: 'RECOGNIZED' | 'REVOKED';
 
-      const testMode = this.getScoringTestMode(eventId);
-      const isTest = params.isTest !== undefined ? !!params.isTest : testMode.isTestMode;
-      const testRunId = params.testRunId !== undefined ? params.testRunId : (isTest ? (testMode.testRunId || uid('test_run')) : undefined);
+      const env = this.getScoringEnvironment(eventId);
+      const isTest = env.mode === 'test';
+      const testRunId = isTest ? (env.testRunId || params.testRunId || uid('test_run')) : undefined;
 
       if (existingIdx >= 0) {
         const existing = all[existingIdx];
@@ -16479,8 +16551,8 @@ class StorageService {
             active: true,
             note: params.note !== undefined ? params.note : existing.note,
             revoked_at: null,
-            is_test: isTest || existing.is_test,
-            test_run_id: testRunId || existing.test_run_id,
+            is_test: isTest,
+            test_run_id: testRunId,
             updated_at: now
           };
           action = 'RECOGNIZED';
@@ -16953,7 +17025,11 @@ class StorageService {
     return result;
   }
 
-  public getSessionLeaderboard(eventId: string, sessionId: string): SessionLeaderboardRow[] {
+  public getSessionLeaderboard(
+    eventId: string,
+    sessionId: string,
+    options?: { includeTestTurns?: boolean }
+  ): SessionLeaderboardRow[] {
     if (!eventId || !sessionId) return [];
 
     const agendaItems = this.getAgenda(eventId);
@@ -16965,6 +17041,8 @@ class StorageService {
 
     const speakingTurns = this.getSpeakingTurns(eventId).filter(t => {
       const res = resolveCanonicalSession(t.session_id, t.session_name, agendaItems);
+      const isTestTurn = t.is_test || !!t.test_run_id || (t.called_by && t.called_by.includes('[TEST'));
+      if (options?.includeTestTurns !== true && isTestTurn) return false;
       return res.canonicalId === targetSession.canonicalId && t.status !== 'CANCELLED';
     });
 
@@ -17404,10 +17482,38 @@ class StorageService {
         }
       }
 
-      // ── 5. CLEAN LEGACY social_coverage.scores IN SUPABASE (SURGICAL TRANSFORMATION) ──
+      // ── 5. CLEAN TEST SPEAKING TURNS FROM LOCAL STORAGE & SUPABASE ──
+      const allFloorTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+      const isTargetTestTurn = (t: SpeakingTurn): boolean => {
+        if (t.event_id !== eventId) return false;
+        if (options?.testRunId) {
+          return t.test_run_id === options.testRunId;
+        }
+        return (
+          t.is_test === true ||
+          t.test_run_id != null ||
+          Boolean(t.called_by && t.called_by.includes('[TEST'))
+        );
+      };
+      const testFloorTurns = allFloorTurns.filter(isTargetTestTurn);
+      const remainingFloorTurns = allFloorTurns.filter(t => !isTargetTestTurn(t));
+      this.setItem(STORAGE_KEYS.SPEAKING_TURNS, remainingFloorTurns);
+
+      if (supabase && isSupabaseEnabled && testFloorTurns.length > 0) {
+        try {
+          const testTurnIds = testFloorTurns.map(t => t.id);
+          await supabase.from('speaking_turns').delete().in('id', testTurnIds).eq('event_id', eventId);
+        } catch (turnErr) {
+          console.warn('[resetTestScores] Error deleting test speaking turns:', turnErr);
+        }
+      }
+
+      // ── 6. CLEAN LEGACY social_coverage.scores & jury_speech_recognitions IN SUPABASE ──
       let remoteScores: ScoreRecord[] = [];
       let remoteTestScores: ScoreRecord[] = [];
       let remoteRealScores: ScoreRecord[] = [];
+      let remoteTestRecogs: JurySpeechRecognition[] = [];
+      let remoteRealRecogs: JurySpeechRecognition[] = [];
 
       if (supabase) {
         const { data: evData, error: fetchErr } = await supabase
@@ -17426,18 +17532,27 @@ class StorageService {
         remoteTestScores = remoteScores.filter(s => isTargetTestRecord(s));
         remoteRealScores = remoteScores.filter(s => !isTargetTestRecord(s));
 
+        const remoteRecogs = Array.isArray(remoteSC.jury_speech_recognitions) ? (remoteSC.jury_speech_recognitions as JurySpeechRecognition[]) : [];
+        remoteTestRecogs = remoteRecogs.filter(r => isTargetTestRecord(r));
+        remoteRealRecogs = remoteRecogs.filter(r => !isTargetTestRecord(r));
+
+        const curTestTurnIds = Array.isArray(remoteSC.test_speaking_turn_ids) ? remoteSC.test_speaking_turn_ids : [];
+        const remainingTestTurnIds = curTestTurnIds.filter((tid: string) => !testFloorTurns.some(t => t.id === tid));
+
         // Audit Logging (Required by Section 4)
         console.log(`[StorageService.resetTestScores] Event ID: ${eventId}`);
         console.log(`[StorageService.resetTestScores] Legacy score count before: ${remoteScores.length}`);
-        console.log(`[StorageService.resetTestScores] Test count before: ${remoteTestScores.length}`);
-        console.log(`[StorageService.resetTestScores] Real count before: ${remoteRealScores.length}`);
-        console.log(`[StorageService.resetTestScores] Test IDs being removed:`, remoteTestScores.map(s => s.id));
-        console.log(`[StorageService.resetTestScores] Real IDs being preserved:`, remoteRealScores.map(s => s.id));
+        console.log(`[StorageService.resetTestScores] Test scores before: ${remoteTestScores.length}`);
+        console.log(`[StorageService.resetTestScores] Real scores before: ${remoteRealScores.length}`);
+        console.log(`[StorageService.resetTestScores] Test recognitions before: ${remoteTestRecogs.length}`);
+        console.log(`[StorageService.resetTestScores] Test floor turns before: ${testFloorTurns.length}`);
 
-        if (remoteTestScores.length > 0) {
+        if (remoteTestScores.length > 0 || remoteTestRecogs.length > 0 || testFloorTurns.length > 0) {
           const updatedSC = {
             ...remoteSC,
             scores: remoteRealScores,
+            jury_speech_recognitions: remoteRealRecogs,
+            test_speaking_turn_ids: remainingTestTurnIds,
             updated_at: new Date().toISOString()
           };
 
@@ -17477,7 +17592,7 @@ class StorageService {
         }
       }
 
-      // ── 6. CLEAN LOCAL STORAGE SCORES KEY & DEDICATED BACKUP ──
+      // ── 7. CLEAN LOCAL STORAGE SCORES KEY & DEDICATED BACKUP ──
       const allScores = snapshotScores;
       const localEventScores = allScores.filter(s => s.event_id === eventId);
       const localTestScores = localEventScores.filter(s => isTargetTestRecord(s));
@@ -17496,17 +17611,19 @@ class StorageService {
         } catch {}
       }
 
-      // ── 7. UPDATE CACHED EVENT IN STORAGE_KEYS.EVENTS ──
+      // ── 8. UPDATE CACHED EVENT IN STORAGE_KEYS.EVENTS ──
       const allEvs = this.getEvents();
       const updatedEvs = allEvs.map(ev => {
         if (ev.id === eventId) {
           const sc = (ev.social_coverage || {}) as Record<string, any>;
           const curScScores = Array.isArray(sc.scores) ? (sc.scores as ScoreRecord[]) : [];
+          const curScRecogs = Array.isArray(sc.jury_speech_recognitions) ? (sc.jury_speech_recognitions as JurySpeechRecognition[]) : [];
           return {
             ...ev,
             social_coverage: {
               ...sc,
-              scores: curScScores.filter(s => !isTargetTestRecord(s))
+              scores: curScScores.filter(s => !isTargetTestRecord(s)),
+              jury_speech_recognitions: curScRecogs.filter(r => !isTargetTestRecord(r))
             }
           };
         }
@@ -17514,7 +17631,7 @@ class StorageService {
       });
       this.setItem(STORAGE_KEYS.EVENTS, updatedEvs);
 
-      // ── 8. DEFENSIVE VERIFICATION OF READ PATH ──
+      // ── 9. DEFENSIVE VERIFICATION OF READ PATH ──
       const postEvaluations = this.getJuryEvaluations(eventId);
       const lingeringTests = postEvaluations.filter(e => isTargetTestRecord(e));
       if (lingeringTests.length > 0) {
@@ -17531,14 +17648,14 @@ class StorageService {
       const deletedCount = uniquePurgedIds.size;
       const remainingRealCount = remoteScores.length > 0 ? remoteRealScores.length : (localRealScores.length > 0 ? localRealScores.length : realEvals.length);
 
-      // ── 9. CACHE INVALIDATION & REALTIME BROADCAST ──
+      // ── 10. CACHE INVALIDATION & REALTIME BROADCAST ──
       this.invalidateCache(eventId);
       this.invalidateCache('events');
       this.invalidateCache('portal_');
       this.invalidateCache('evaluations');
       this.invalidateCache('leaderboard');
 
-      if (deletedCount > 0 && this.realtimeChannel) {
+      if (this.realtimeChannel) {
         try {
           await this.realtimeChannel.send({
             type: 'broadcast',
@@ -17550,6 +17667,9 @@ class StorageService {
 
       this.notify();
       if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('tn_assembly_jury_scoring_reset', { detail: { eventId } }));
+        window.dispatchEvent(new CustomEvent('tn_assembly_jury_recognition_update', { detail: { eventId } }));
+        window.dispatchEvent(new CustomEvent('tn_assembly_speaking_turn_update', { detail: { eventId } }));
         window.dispatchEvent(new Event('storage'));
       }
 
@@ -17557,9 +17677,9 @@ class StorageService {
         success: true,
         deletedCount,
         remainingRealCount,
-        deletedTurnsCount: testTurns.length,
+        deletedTurnsCount: testFloorTurns.length,
         deletedAdjustmentsCount: testAdjs.length,
-        deletedRecognitionsCount: testRecogs.length
+        deletedRecognitionsCount: Math.max(testRecogs.length, remoteTestRecogs.length)
       };
     } catch (err) {
       rollbackLocalState();
@@ -17774,10 +17894,11 @@ class StorageService {
           .eq('event_id', eventId);
         preservedSpeakingTurnsCount = turnCount || 0;
 
-        // Update social_coverage with empty scores array, strictly preserving all other event data
+        // Update social_coverage with empty scores & recognitions array, strictly preserving all other event data
         const updatedSC = {
           ...remoteSC,
           scores: [],
+          jury_speech_recognitions: [],
           updated_at: new Date().toISOString()
         };
 
@@ -17812,6 +17933,11 @@ class StorageService {
           rollbackLocalState();
           throw new Error(`Reset verification failed: ${verifiedScores.length} scores still exist in Supabase.`);
         }
+        const verifiedRecogs = Array.isArray(verifiedSC.jury_speech_recognitions) ? verifiedSC.jury_speech_recognitions : [];
+        if (verifiedRecogs.length > 0) {
+          rollbackLocalState();
+          throw new Error(`Reset verification failed: ${verifiedRecogs.length} speech recognitions still exist in Supabase.`);
+        }
       }
 
       // ── 6. CLEAN LOCAL STORAGE SCORES KEY ──
@@ -17828,7 +17954,8 @@ class StorageService {
             ...ev,
             social_coverage: {
               ...sc,
-              scores: []
+              scores: [],
+              jury_speech_recognitions: []
             }
           };
         }
@@ -17883,53 +18010,190 @@ class StorageService {
     }
   }
 
-  // ── TEST MODE & TEST DATA MANAGEMENT ─────────────────────────────────────
+  // ── AUTHORITATIVE CENTRALIZED SCORING ENVIRONMENT ─────────────────────────
+
+  public getScoringEnvironment(eventId?: string): ScoringEnvironment {
+    if (!eventId) {
+      return { mode: 'live', testRunId: null };
+    }
+    // 1. Check event's remote/cached social_coverage first
+    const event = this.getEvents().find(e => e.id === eventId);
+    const sc = (event?.social_coverage || {}) as Record<string, any>;
+    if (sc.scoring_environment && (sc.scoring_environment.mode === 'test' || sc.scoring_environment.mode === 'live')) {
+      const remoteEnv: ScoringEnvironment = {
+        mode: sc.scoring_environment.mode,
+        testRunId: sc.scoring_environment.mode === 'test' ? (sc.scoring_environment.testRunId || sc.scoring_environment.test_run_id || null) : null,
+        updated_at: sc.scoring_environment.updated_at,
+        updated_by: sc.scoring_environment.updated_by
+      };
+      if (typeof localStorage !== 'undefined') {
+        try {
+          localStorage.setItem(`${STORAGE_KEYS.SCORING_ENVIRONMENT}_${eventId}`, JSON.stringify(remoteEnv));
+          localStorage.setItem(`${STORAGE_KEYS.JURY_TEST_MODE}_${eventId}`, String(remoteEnv.mode === 'test'));
+          if (remoteEnv.testRunId) {
+            localStorage.setItem(`${STORAGE_KEYS.CURRENT_TEST_RUN_ID}_${eventId}`, remoteEnv.testRunId);
+          } else {
+            localStorage.removeItem(`${STORAGE_KEYS.CURRENT_TEST_RUN_ID}_${eventId}`);
+          }
+        } catch {}
+      }
+      return remoteEnv;
+    }
+
+    // 2. Check dedicated localStorage cache
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const cachedStr = localStorage.getItem(`${STORAGE_KEYS.SCORING_ENVIRONMENT}_${eventId}`);
+        if (cachedStr) {
+          const cached = JSON.parse(cachedStr);
+          if (cached && (cached.mode === 'test' || cached.mode === 'live')) {
+            return {
+              mode: cached.mode,
+              testRunId: cached.mode === 'test' ? (cached.testRunId || null) : null,
+              updated_at: cached.updated_at,
+              updated_by: cached.updated_by
+            };
+          }
+        }
+        // Fallback to legacy keys if present
+        const isTestMode = localStorage.getItem(`${STORAGE_KEYS.JURY_TEST_MODE}_${eventId}`) === 'true';
+        const testRunId = localStorage.getItem(`${STORAGE_KEYS.CURRENT_TEST_RUN_ID}_${eventId}`);
+        if (isTestMode && testRunId) {
+          return { mode: 'test', testRunId };
+        }
+      } catch {}
+    }
+
+    return { mode: 'live', testRunId: null };
+  }
+
+  public async setScoringEnvironment(
+    eventId: string,
+    env: { mode: ScoringMode; testRunId?: string | null },
+    updatedBy?: string
+  ): Promise<ScoringEnvironment> {
+    if (!eventId) throw new Error('Event ID is required to configure scoring environment.');
+    if (!this.isAuthorizedToResetScores()) {
+      throw new Error('Unauthorized: Only administrators can configure scoring environment.');
+    }
+
+    const mode = env.mode;
+    let testRunId = mode === 'test' ? (env.testRunId || null) : null;
+    if (mode === 'test' && !testRunId) {
+      testRunId = `TEST-${new Date().toISOString().slice(0, 10)}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+    }
+
+    const now = new Date().toISOString();
+    const nextEnv: ScoringEnvironment = {
+      mode,
+      testRunId,
+      updated_at: now,
+      updated_by: updatedBy || 'Coordinator'
+    };
+
+    // 1. Update localStorage
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem(`${STORAGE_KEYS.SCORING_ENVIRONMENT}_${eventId}`, JSON.stringify(nextEnv));
+        localStorage.setItem(`${STORAGE_KEYS.JURY_TEST_MODE}_${eventId}`, String(mode === 'test'));
+        if (testRunId) {
+          localStorage.setItem(`${STORAGE_KEYS.CURRENT_TEST_RUN_ID}_${eventId}`, testRunId);
+        } else {
+          localStorage.removeItem(`${STORAGE_KEYS.CURRENT_TEST_RUN_ID}_${eventId}`);
+        }
+      } catch {}
+    }
+
+    // 2. Update local event cache
+    const allEvents = this.getEvents();
+    const evIdx = allEvents.findIndex(e => e.id === eventId);
+    if (evIdx >= 0) {
+      const ev = allEvents[evIdx];
+      const sc = (ev.social_coverage || {}) as Record<string, any>;
+      allEvents[evIdx] = {
+        ...ev,
+        social_coverage: {
+          ...sc,
+          scoring_environment: nextEnv,
+          updated_at: now
+        }
+      };
+      this.setItem(STORAGE_KEYS.EVENTS, allEvents);
+    }
+
+    // 3. Persist to Supabase college_events.social_coverage.scoring_environment
+    if (supabase && isSupabaseEnabled) {
+      try {
+        const { data: evData } = await supabase
+          .from('college_events')
+          .select('social_coverage')
+          .eq('id', eventId)
+          .maybeSingle();
+        const sc = (evData?.social_coverage || {}) as Record<string, any>;
+        await supabase
+          .from('college_events')
+          .update({
+            social_coverage: {
+              ...sc,
+              scoring_environment: nextEnv,
+              updated_at: now
+            },
+            updated_at: now
+          })
+          .eq('id', eventId);
+      } catch (sbErr) {
+        console.warn('[setScoringEnvironment] Supabase update warning:', sbErr);
+      }
+    }
+
+    // 4. Realtime broadcast on tn_assembly_live_${eventId}
+    this.broadcast('scoring_environment_changed', {
+      type: 'scoring_environment_changed',
+      eventId,
+      environment: nextEnv
+    }).catch(() => {});
+
+    this.notify();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_scoring_environment_update', {
+        detail: { eventId, environment: nextEnv }
+      }));
+      window.dispatchEvent(new CustomEvent('tn_assembly_test_mode_update', {
+        detail: { eventId, isTestMode: mode === 'test', testRunId }
+      }));
+    }
+
+    return nextEnv;
+  }
+
+  public async startNewTestRun(eventId: string, initiatorName?: string): Promise<string> {
+    const newRunId = `TEST-${new Date().toISOString().slice(0, 10)}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+    await this.setScoringEnvironment(eventId, { mode: 'test', testRunId: newRunId }, initiatorName);
+
+    // Clear only current user's local drafts for this event
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const draftPrefix = `tn_assembly_jury_draft_${eventId}_`;
+        const toRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith(draftPrefix)) toRemove.push(k);
+        }
+        toRemove.forEach(k => localStorage.removeItem(k));
+      } catch {}
+    }
+    return newRunId;
+  }
 
   public getScoringTestMode(eventId?: string): { isTestMode: boolean; testRunId: string | null } {
-    if (typeof localStorage === 'undefined') {
-      return { isTestMode: false, testRunId: null };
-    }
-    try {
-      const modeKey = eventId ? `${STORAGE_KEYS.JURY_TEST_MODE}_${eventId}` : STORAGE_KEYS.JURY_TEST_MODE;
-      const isTestMode = localStorage.getItem(modeKey) === 'true';
-      const runKey = eventId ? `${STORAGE_KEYS.CURRENT_TEST_RUN_ID}_${eventId}` : STORAGE_KEYS.CURRENT_TEST_RUN_ID;
-      const testRunId = localStorage.getItem(runKey);
-      return { isTestMode, testRunId: isTestMode ? testRunId : null };
-    } catch {
-      return { isTestMode: false, testRunId: null };
-    }
+    const env = this.getScoringEnvironment(eventId);
+    return { isTestMode: env.mode === 'test', testRunId: env.testRunId };
   }
 
   public setScoringTestMode(eventId: string, isTestMode: boolean, testRunId?: string): { isTestMode: boolean; testRunId: string | null } {
-    if (!eventId) throw new Error('Event ID is required to configure scoring test mode.');
-    if (!this.isAuthorizedToResetScores()) {
-      throw new Error('Unauthorized: Only administrators can change scoring test mode.');
-    }
-    const modeKey = `${STORAGE_KEYS.JURY_TEST_MODE}_${eventId}`;
-    const runKey = `${STORAGE_KEYS.CURRENT_TEST_RUN_ID}_${eventId}`;
-    const activeRunId = isTestMode ? (testRunId || (typeof localStorage !== 'undefined' ? localStorage.getItem(runKey) : null) || uid('test_run')) : null;
-    
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(modeKey, String(isTestMode));
-      if (activeRunId) {
-        localStorage.setItem(runKey, activeRunId);
-      } else {
-        localStorage.removeItem(runKey);
-      }
-    }
-    this.notify();
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('tn_assembly_test_mode_update', {
-        detail: { eventId, isTestMode, testRunId: activeRunId }
-      }));
-    }
+    const activeRunId = isTestMode ? (testRunId || `TEST-${new Date().toISOString().slice(0, 10)}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`) : null;
+    this.setScoringEnvironment(eventId, { mode: isTestMode ? 'test' : 'live', testRunId: activeRunId }).catch(() => {});
     return { isTestMode, testRunId: activeRunId };
-  }
-
-  public startNewTestRun(eventId: string): string {
-    const newRunId = uid('test_run');
-    this.setScoringTestMode(eventId, true, newRunId);
-    return newRunId;
   }
 
   public getUnclassifiedTestCandidates(eventId: string): Array<{
@@ -18075,6 +18339,7 @@ class StorageService {
       turns: number;
       adjustments: number;
       recognitions: number;
+      testFloorTurns: number;
       currentTestRunId: string | null;
     };
     realData: {
@@ -18082,12 +18347,13 @@ class StorageService {
       turns: number;
       adjustments: number;
       recognitions: number;
+      liveFloorTurns: number;
     };
   } {
     if (!eventId) {
       return {
-        testData: { evaluations: 0, turns: 0, adjustments: 0, recognitions: 0, currentTestRunId: null },
-        realData: { evaluations: 0, turns: 0, adjustments: 0, recognitions: 0 }
+        testData: { evaluations: 0, turns: 0, adjustments: 0, recognitions: 0, testFloorTurns: 0, currentTestRunId: null },
+        realData: { evaluations: 0, turns: 0, adjustments: 0, recognitions: 0, liveFloorTurns: 0 }
       };
     }
     const testMode = this.getScoringTestMode(eventId);
@@ -18108,19 +18374,25 @@ class StorageService {
     const testRecogs = recogs.filter(r => r.is_test || (r.test_run_id != null));
     const realRecogs = recogs.filter(r => !r.is_test && (r.test_run_id == null));
 
+    const floorTurns = this.getSpeakingTurns(eventId);
+    const testFloorTurns = floorTurns.filter(t => t.is_test || !!t.test_run_id || (t.called_by && t.called_by.includes('[TEST')));
+    const liveFloorTurns = floorTurns.filter(t => !testFloorTurns.some(tf => tf.id === t.id));
+
     return {
       testData: {
         evaluations: testEvalIds.size,
         turns: testTurns.length,
         adjustments: testAdjs.length,
         recognitions: testRecogs.length,
+        testFloorTurns: testFloorTurns.length,
         currentTestRunId: testMode.testRunId
       },
       realData: {
         evaluations: realEvals.length,
         turns: realTurns.length,
         adjustments: realAdjs.length,
-        recognitions: realRecogs.length
+        recognitions: realRecogs.length,
+        liveFloorTurns: liveFloorTurns.length
       }
     };
   }

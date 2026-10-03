@@ -2,18 +2,16 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Mic,
   Search,
-  AlertCircle,
-  Play,
   Square,
   LogOut,
   Moon,
   Sun,
   Clock,
-  Users,
-  ChevronRight,
-  X,
   History,
-  Volume2
+  Volume2,
+  RefreshCw,
+  X,
+  Play
 } from 'lucide-react';
 import type { Volunteer, Learner, CollegeEvent, ScoringSession, SpeakingTurn } from '../../types';
 import { storageService } from '../../services/storageService';
@@ -72,17 +70,16 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
     return storageService.getSpeakingTurns(eventId).slice(-15).reverse();
   });
 
-  // Modal and Selection State
-  const [isSelectModalOpen, setIsSelectModalOpen] = useState(false);
+  // Fast Search and Selection State
   const [searchQuery, setSearchQuery] = useState('');
   const [benchFilter, setBenchFilter] = useState<'ALL' | 'Ruling' | 'Opposition' | 'Independent'>('ALL');
-  const [candidateSpeaker, setCandidateSpeaker] = useState<Learner | null>(null);
   const [isStartingTurn, setIsStartingTurn] = useState(false);
   const [isFinishingTurn, setIsFinishingTurn] = useState(false);
 
-  // Live Speaking Timer (client memory derived, 0 database writes)
+  // Live Speaking Timer (client memory derived, zero database writes)
   const [elapsedSec, setElapsedSec] = useState(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   // Sync state with storageService
   const refreshFloorState = () => {
@@ -138,7 +135,7 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
-  // Filtered learners for modal
+  // Filtered learners for instant inline list
   const filteredLearners = useMemo(() => {
     return learners.filter(l => {
       if (benchFilter !== 'ALL' && l.bench !== benchFilter) return false;
@@ -155,7 +152,7 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
     });
   }, [learners, benchFilter, searchQuery]);
 
-  // Handle speaker selection
+  // Handle speaker selection (1-click fast operation)
   const handleSelectSpeaker = async (learner: Learner) => {
     if (isStartingTurn) return;
     setIsStartingTurn(true);
@@ -171,8 +168,6 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
 
       if (res.success && res.turn) {
         setActiveSpeakerTurn(res.turn);
-        setIsSelectModalOpen(false);
-        setCandidateSpeaker(null);
         setSearchQuery('');
         onShowToast?.(
           'Speaker Active',
@@ -210,6 +205,14 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
     }
   };
 
+  // Focus search input
+  const handleSwitchSpeaker = () => {
+    if (searchInputRef.current) {
+      searchInputRef.current.focus();
+      searchInputRef.current.select();
+    }
+  };
+
   // Active Speaker details
   const activeLearner = useMemo(() => {
     if (!activeSpeakerTurn) return null;
@@ -219,35 +222,35 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
   return (
     <div className="min-h-screen font-sans flex flex-col" style={{ backgroundColor: 'var(--bg-base)', color: 'var(--text-primary)' }}>
       {/* Top Header */}
-      <header className="border-b px-6 py-3.5 flex items-center justify-between" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+      <header className="border-b px-4 sm:px-6 py-3 flex items-center justify-between sticky top-0 z-30 shadow-xs" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-600 dark:text-rose-400 shadow-sm">
+          <div className="w-9 h-9 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-600 dark:text-rose-400 shadow-xs">
             <Mic className="w-5 h-5" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-base font-black uppercase tracking-wider text-slate-900 dark:text-white">
+              <h1 className="text-sm sm:text-base font-black uppercase tracking-wider text-slate-900 dark:text-white">
                 SPEAKER AID
               </h1>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-600 border border-rose-500/20">
-                Floor Control
+                Floor Control Console
               </span>
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-              {event?.college_name || 'TN Assembly 2026'} • Official: {volunteer?.name || 'Floor Volunteer'}
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+              {event?.college_name || 'TN Assembly 2026'} • Operator: {volunteer?.name || 'Floor Volunteer'}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           {/* Active Session Dropdown */}
           {sessions.length > 1 && (
             <div className="flex items-center gap-1.5 text-xs">
-              <span className="text-slate-400 text-[11px] font-semibold hidden sm:inline">Session:</span>
+              <span className="text-slate-400 text-[11px] font-semibold hidden md:inline">Session:</span>
               <select
                 value={selectedSessionId}
                 onChange={e => setSelectedSessionId(e.target.value)}
-                className="px-3 py-1.5 rounded-xl border text-xs font-bold bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 cursor-pointer focus:outline-none"
+                className="px-2.5 py-1.5 rounded-xl border text-xs font-bold bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 cursor-pointer focus:outline-none"
               >
                 {sessions.map(s => (
                   <option key={s.id} value={s.id}>{s.name}</option>
@@ -274,23 +277,24 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
             >
               <LogOut className="w-3.5 h-3.5" />
-              <span>Sign Out</span>
+              <span className="hidden sm:inline">Sign Out</span>
             </button>
           )}
         </div>
       </header>
 
-      {/* Main Container */}
-      <main className="flex-1 max-w-4xl w-full mx-auto p-4 sm:p-6 space-y-6">
+      {/* Main Console Container */}
+      <main className="flex-1 max-w-4xl w-full mx-auto p-4 sm:p-6 space-y-5">
+        
         {/* CURRENT SPEAKER CARD */}
         <section
-          className="rounded-3xl border shadow-lg overflow-hidden transition-all"
+          className="rounded-3xl border shadow-md overflow-hidden transition-all"
           style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
         >
           <div className="p-4 sm:p-5 border-b flex items-center justify-between" style={{ borderColor: 'var(--border-soft)' }}>
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-rose-600 animate-pulse"></span>
-              <h2 className="text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              <span className={`w-2.5 h-2.5 rounded-full ${activeSpeakerTurn ? 'bg-rose-600 animate-ping' : 'bg-slate-400'}`}></span>
+              <h2 className="text-xs font-black uppercase tracking-wider text-slate-600 dark:text-slate-300">
                 CURRENT SPEAKER
               </h2>
             </div>
@@ -299,22 +303,22 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
             </span>
           </div>
 
-          <div className="p-6 sm:p-8">
+          <div className="p-5 sm:p-6">
             {activeSpeakerTurn && activeSpeakerTurn.status === 'SPEAKING' ? (
-              <div className="space-y-6">
+              <div className="space-y-5">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="px-3 py-1 rounded-full text-xs font-black bg-rose-600 text-white flex items-center gap-1.5 shadow-sm">
-                        <span className="w-2 h-2 rounded-full bg-white animate-ping"></span>
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-rose-600 text-white flex items-center gap-1.5 shadow-xs">
+                        <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
                         🔴 NOW SPEAKING
                       </span>
-                      <span className="px-3 py-1 rounded-full text-xs font-mono font-black bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30">
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-black bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30">
                         Speaking Turn {activeSpeakerTurn.sequence_number}
                       </span>
                       {activeLearner?.bench && (
                         <span
-                          className="px-2.5 py-1 rounded-full text-xs font-bold border"
+                          className="px-2.5 py-0.5 rounded-full text-[10px] font-bold border"
                           style={{
                             backgroundColor: activeLearner.bench === 'Ruling' ? 'rgba(5,150,105,0.1)' : 'rgba(220,38,38,0.1)',
                             color: activeLearner.bench === 'Ruling' ? '#059669' : '#dc2626',
@@ -326,23 +330,23 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
                       )}
                     </div>
 
-                    <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 dark:text-white pt-1">
+                    <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 dark:text-white">
                       {activeSpeakerTurn.learner_name}
                     </h2>
 
-                    <p className="text-sm font-medium text-slate-600 dark:text-slate-300">
+                    <p className="text-xs sm:text-sm font-medium text-slate-600 dark:text-slate-300">
                       {activeLearner?.constituency_number !== undefined ? `Constituency #${activeLearner.constituency_number} — ` : ''}
                       {activeLearner?.constituency_name || 'Assembly Delegate'}
                       {activeLearner?.party_name ? ` • ${activeLearner.party_name}` : ''}
                     </p>
                   </div>
 
-                  {/* Live Timer */}
+                  {/* Live Timer (0 DB writes) */}
                   <div className="flex flex-col sm:items-end justify-center">
                     <div className="px-5 py-3 rounded-2xl bg-slate-950 text-white border border-slate-800 shadow-inner flex items-center gap-3">
                       <Clock className="w-5 h-5 text-rose-500 animate-pulse" />
                       <div className="text-right">
-                        <div className="text-[10px] uppercase font-bold text-slate-400">Duration</div>
+                        <div className="text-[10px] uppercase font-bold text-slate-400">Speech Duration</div>
                         <div className="font-mono text-2xl font-black tracking-widest text-white">
                           {formatDuration(elapsedSec)}
                         </div>
@@ -351,70 +355,195 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
                   </div>
                 </div>
 
-                {/* Primary Actions */}
-                <div className="pt-4 border-t flex flex-wrap items-center gap-3" style={{ borderColor: 'var(--border-soft)' }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCandidateSpeaker(null);
-                      setSearchQuery('');
-                      setIsSelectModalOpen(true);
-                    }}
-                    className="flex-1 sm:flex-none px-6 py-3.5 rounded-2xl font-black text-sm bg-rose-600 hover:bg-rose-700 text-white shadow-lg shadow-rose-600/25 transition active:scale-95 cursor-pointer flex items-center justify-center gap-2"
-                  >
-                    <Users className="w-4 h-4" />
-                    <span>CHANGE SPEAKER</span>
-                  </button>
-
+                {/* Primary Fast Actions */}
+                <div className="pt-3 border-t flex flex-wrap items-center gap-3" style={{ borderColor: 'var(--border-soft)' }}>
                   <button
                     type="button"
                     disabled={isFinishingTurn}
                     onClick={handleFinishSpeech}
-                    className="flex-1 sm:flex-none px-6 py-3.5 rounded-2xl font-bold text-sm border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 transition active:scale-95 cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
+                    className="flex-1 sm:flex-none px-6 py-3 rounded-xl font-bold text-xs border border-rose-300 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/30 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-700 dark:text-rose-300 transition active:scale-95 cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
                   >
-                    <Square className="w-4 h-4 fill-current text-slate-500" />
-                    <span>FINISH SPEECH</span>
+                    <Square className="w-4 h-4 fill-current text-rose-600 dark:text-rose-400" />
+                    <span>{isFinishingTurn ? 'Finishing...' : 'FINISH SPEECH'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleSwitchSpeaker}
+                    className="flex-1 sm:flex-none px-6 py-3 rounded-xl font-bold text-xs bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 transition active:scale-95 cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>SWITCH SPEAKER</span>
                   </button>
                 </div>
               </div>
             ) : (
               /* Idle state: No MLA speaking */
-              <div className="text-center py-10 space-y-5">
-                <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800/80 mx-auto flex items-center justify-center text-slate-400">
-                  <Volume2 className="w-8 h-8" />
+              <div className="text-center py-6 sm:py-8 space-y-3">
+                <div className="w-12 h-12 rounded-full bg-blue-500/10 text-blue-500 mx-auto flex items-center justify-center">
+                  <Volume2 className="w-6 h-6" />
                 </div>
-                <div className="space-y-1">
-                  <h3 className="text-lg font-black text-slate-800 dark:text-slate-200 flex items-center justify-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
-                    No MLA speaking
+                <div className="space-y-0.5">
+                  <h3 className="text-base font-black text-slate-800 dark:text-slate-200 flex items-center justify-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
+                    🔵 NO SPEAKER ACTIVE
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
-                    The floor is currently idle. Click below to select the delegate who has the floor.
+                    The floor is currently idle. Search and click "START SPEAKING" below to recognize the next MLA.
                   </p>
-                </div>
-
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCandidateSpeaker(null);
-                      setSearchQuery('');
-                      setIsSelectModalOpen(true);
-                    }}
-                    className="px-8 py-4 rounded-2xl font-black text-sm bg-rose-600 hover:bg-rose-700 text-white shadow-xl shadow-rose-600/30 transition active:scale-95 cursor-pointer inline-flex items-center gap-2"
-                  >
-                    <Mic className="w-5 h-5" />
-                    <span>SELECT MLA</span>
-                  </button>
                 </div>
               </div>
             )}
           </div>
         </section>
 
+        {/* FAST INLINE SEARCH & MLA SELECTION ROSTER */}
+        <section
+          className="rounded-3xl border shadow-sm p-5 space-y-4"
+          style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                <Search className="w-4 h-4 text-rose-500" />
+                SEARCH MLA / ROSTER
+              </h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                1-click to start speech. Connects immediately to all Jury dashboards.
+              </p>
+            </div>
+
+            {/* Bench Filters */}
+            <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl">
+              {(['ALL', 'Ruling', 'Opposition', 'Independent'] as const).map(b => (
+                <button
+                  key={b}
+                  type="button"
+                  onClick={() => setBenchFilter(b)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                    benchFilter === b
+                      ? 'bg-rose-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                  }`}
+                >
+                  {b}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Instant Search Bar */}
+          <div className="relative">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Escape') {
+                  setSearchQuery('');
+                } else if (e.key === 'Enter' && filteredLearners.length > 0) {
+                  handleSelectSpeaker(filteredLearners[0]);
+                }
+              }}
+              placeholder="Search by MLA name, seat/constituency #, or constituency name..."
+              className="w-full pl-10 pr-10 py-3 rounded-2xl text-xs sm:text-sm font-medium border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500 transition shadow-inner"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          {/* Fast Delegate Card List */}
+          <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
+            {filteredLearners.length === 0 ? (
+              <div className="p-8 text-center text-xs text-slate-400">
+                No delegates found matching "{searchQuery}".
+              </div>
+            ) : (
+              filteredLearners.map(learner => {
+                const isCurrent = activeSpeakerTurn?.learner_id === learner.id && activeSpeakerTurn?.status === 'SPEAKING';
+                return (
+                  <div
+                    key={learner.id}
+                    data-testid={`speaker-row-${learner.id}`}
+                    className={`p-3 rounded-2xl border flex items-center justify-between gap-3 transition ${
+                      isCurrent
+                        ? 'border-rose-500 bg-rose-500/10 shadow-xs'
+                        : 'border-slate-200 dark:border-slate-800/60 bg-white dark:bg-slate-900/40 hover:bg-slate-50 dark:hover:bg-slate-800/40'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="font-mono text-xs font-black text-blue-600 dark:text-blue-400 w-9 text-right shrink-0">
+                        #{learner.constituency_number ?? '?'}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white truncate">
+                            {learner.full_name}
+                          </h4>
+                          {isCurrent && (
+                            <span className="px-1.5 py-0.2 rounded text-[9px] font-black bg-rose-600 text-white animate-pulse">
+                              SPEAKING
+                            </span>
+                          )}
+                          <span
+                            className="px-2 py-0.5 rounded text-[10px] font-bold border"
+                            style={{
+                              background: learner.bench === 'Ruling' ? 'rgba(5,150,105,0.1)' : 'rgba(220,38,38,0.1)',
+                              color: learner.bench === 'Ruling' ? '#059669' : '#dc2626',
+                              borderColor: learner.bench === 'Ruling' ? '#059669' : '#dc2626'
+                            }}
+                          >
+                            {learner.bench || 'Ruling'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                          {learner.constituency_name || 'Assembly Delegate'} • {learner.party_name || 'Independent'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="shrink-0">
+                      {isCurrent ? (
+                        <button
+                          type="button"
+                          disabled={isFinishingTurn}
+                          onClick={handleFinishSpeech}
+                          className="px-3.5 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white transition active:scale-95 cursor-pointer shadow-xs flex items-center gap-1.5"
+                        >
+                          <Square className="w-3.5 h-3.5 fill-current" />
+                          <span>Finish</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={isStartingTurn}
+                          onClick={() => handleSelectSpeaker(learner)}
+                          className="px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:bg-rose-600 dark:hover:bg-rose-600 hover:text-white dark:hover:text-white transition active:scale-95 cursor-pointer shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-current" />
+                          <span>START SPEAKING</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </section>
+
         {/* RECENT SPEAKING TURNS */}
         <section
-          className="rounded-3xl border shadow-sm overflow-hidden"
+          className="rounded-3xl border shadow-xs overflow-hidden"
           style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
         >
           <div className="p-4 border-b flex items-center justify-between" style={{ borderColor: 'var(--border-soft)' }}>
@@ -429,9 +558,9 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
             </span>
           </div>
 
-          <div className="divide-y" style={{ borderColor: 'var(--border-soft)' }}>
+          <div className="divide-y max-h-56 overflow-y-auto" style={{ borderColor: 'var(--border-soft)' }}>
             {turnsLog.length === 0 ? (
-              <div className="p-8 text-center text-xs text-slate-400">
+              <div className="p-6 text-center text-xs text-slate-400">
                 No recorded speaking turns yet for this session.
               </div>
             ) : (
@@ -449,12 +578,12 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
                 return (
                   <div
                     key={turn.id}
-                    className={`p-4 flex items-center justify-between text-xs transition ${
+                    className={`p-3.5 flex items-center justify-between text-xs transition ${
                       isCurrentlyActive ? 'bg-rose-500/10' : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
                     }`}
                   >
                     <div className="flex items-center gap-3">
-                      <span className="font-mono font-black text-rose-600 dark:text-rose-400 w-16">
+                      <span className="font-mono font-black text-rose-600 dark:text-rose-400 w-14">
                         Turn {turn.sequence_number}
                       </span>
                       <div>
@@ -493,181 +622,6 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
           </div>
         </section>
       </main>
-
-      {/* SELECT MLA MODAL */}
-      {isSelectModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4">
-          <div
-            className="w-full max-w-lg rounded-3xl border shadow-2xl p-6 space-y-4 animate-scale-in flex flex-col max-h-[85vh]"
-            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
-          >
-            {/* Modal Header */}
-            <div className="flex items-center justify-between border-b pb-3" style={{ borderColor: 'var(--border-soft)' }}>
-              <div>
-                <h3 className="text-base font-black uppercase tracking-wider text-slate-900 dark:text-white">
-                  SEARCH MLA
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Select the MLA who is speaking now.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsSelectModalOpen(false);
-                  setCandidateSpeaker(null);
-                }}
-                className="p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Search Input & Bench Filter */}
-            <div className="space-y-2">
-              <div className="relative">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  autoFocus
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  placeholder="Search by name, constituency #, or constituency name..."
-                  className="w-full pl-9 pr-4 py-2.5 rounded-xl text-xs border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
-                />
-              </div>
-
-              <div className="flex items-center gap-1">
-                {(['ALL', 'Ruling', 'Opposition'] as const).map(b => (
-                  <button
-                    key={b}
-                    type="button"
-                    onClick={() => setBenchFilter(b)}
-                    className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex-1 ${
-                      benchFilter === b
-                        ? 'bg-rose-600 text-white'
-                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
-                    }`}
-                  >
-                    {b}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Safety Confirmation Card if speaker selected */}
-            {candidateSpeaker && (
-              <div className="rounded-2xl p-4 border bg-amber-500/10 border-amber-500/30 space-y-3">
-                <div className="text-xs font-bold text-amber-900 dark:text-amber-200 flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 text-amber-600" />
-                  <span>Confirm Speaker Transition</span>
-                </div>
-                <div className="grid grid-cols-2 gap-3 text-xs">
-                  <div className="p-2.5 rounded-xl bg-white/60 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
-                    <span className="text-[10px] text-slate-400 uppercase font-bold block">Current Speaker</span>
-                    <span className="font-bold text-slate-700 dark:text-slate-300">
-                      {activeSpeakerTurn ? `${activeSpeakerTurn.learner_name} (Turn ${activeSpeakerTurn.sequence_number})` : 'None'}
-                    </span>
-                  </div>
-                  <div className="p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/30">
-                    <span className="text-[10px] text-rose-600 dark:text-rose-400 uppercase font-black block">New Speaker</span>
-                    <span className="font-black text-rose-700 dark:text-rose-300">
-                      {candidateSpeaker.full_name} (#{candidateSpeaker.constituency_number ?? '?'})
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-center justify-end gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setCandidateSpeaker(null)}
-                    className="px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    disabled={isStartingTurn}
-                    onClick={() => handleSelectSpeaker(candidateSpeaker)}
-                    className="px-4 py-1.5 rounded-lg text-xs font-black bg-rose-600 hover:bg-rose-700 text-white cursor-pointer shadow-md disabled:opacity-50 flex items-center gap-1.5"
-                  >
-                    <Play className="w-3.5 h-3.5 fill-current" />
-                    <span>Start Speaking Turn</span>
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Delegates List */}
-            <div className="overflow-y-auto space-y-1.5 flex-1 pr-1" style={{ maxHeight: '350px' }}>
-              {filteredLearners.length === 0 ? (
-                <div className="p-8 text-center text-xs text-slate-400">
-                  No delegates found matching "{searchQuery}".
-                </div>
-              ) : (
-                filteredLearners.map(learner => {
-                  const isCurrent = activeSpeakerTurn?.learner_id === learner.id && activeSpeakerTurn?.status === 'SPEAKING';
-                  const isCandidate = candidateSpeaker?.id === learner.id;
-                  return (
-                    <button
-                      type="button"
-                      key={learner.id}
-                      data-testid={`speaker-select-${learner.id}`}
-                      onClick={() => {
-                        if (activeSpeakerTurn) {
-                          setCandidateSpeaker(learner);
-                        } else {
-                          handleSelectSpeaker(learner);
-                        }
-                      }}
-                      className={`w-full text-left p-3 rounded-xl border flex items-center justify-between transition cursor-pointer ${
-                        isCandidate
-                          ? 'border-rose-500 bg-rose-500/10'
-                          : isCurrent
-                          ? 'border-amber-500 bg-amber-500/10'
-                          : 'hover:bg-slate-100 dark:hover:bg-slate-800/60'
-                      }`}
-                      style={{ borderColor: isCandidate ? 'var(--rose-500)' : 'var(--border-soft)' }}
-                    >
-                      <div className="flex items-center gap-3">
-                        <span className="font-mono text-xs font-black text-blue-500 w-10 text-right">
-                          #{learner.constituency_number ?? '?'}
-                        </span>
-                        <div>
-                          <h4 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5">
-                            <span>{learner.full_name}</span>
-                            {isCurrent && (
-                              <span className="px-1.5 py-0.2 rounded text-[9px] font-black bg-rose-600 text-white animate-pulse">
-                                SPEAKING
-                              </span>
-                            )}
-                          </h4>
-                          <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                            {learner.constituency_name || 'Assembly Delegate'} • {learner.party_name || 'Independent'}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="px-2 py-0.5 rounded text-[10px] font-bold border"
-                          style={{
-                            background: learner.bench === 'Ruling' ? 'rgba(5,150,105,0.1)' : 'rgba(220,38,38,0.1)',
-                            color: learner.bench === 'Ruling' ? '#059669' : '#dc2626',
-                            borderColor: learner.bench === 'Ruling' ? '#059669' : '#dc2626'
-                          }}
-                        >
-                          {learner.bench || 'Ruling'}
-                        </span>
-                        <ChevronRight className="w-4 h-4 text-slate-400" />
-                      </div>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
