@@ -171,7 +171,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       selectedLearner.id
     );
     return evals[0] || null;
-  }, [event?.id, selectedSession, jury?.id, jury?.name, selectedLearner?.id, scores]);
+  }, [event?.id, selectedSession, jury?.id, jury?.name, selectedLearner?.id, scores, recogTick]);
 
   // Mount effect: connect realtime, fetch cloud speaking turns, fetch recognitions & reconcile existing evaluation turns
   useEffect(() => {
@@ -245,6 +245,8 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       window.addEventListener('tn_assembly_speaking_turn_update', handleRecogUpdate);
       window.addEventListener('tn_assembly_jury_recognition_update', handleRecogUpdate);
       window.addEventListener('tn_assembly_test_mode_update', handleRecogUpdate);
+      window.addEventListener('tn_assembly_scores_updated', handleRecogUpdate);
+      window.addEventListener('tn_assembly_jury_scoring_reset', handleRecogUpdate);
       window.addEventListener('storage', handleRecogUpdate);
     }
     return () => {
@@ -255,6 +257,8 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
         window.removeEventListener('tn_assembly_speaking_turn_update', handleRecogUpdate);
         window.removeEventListener('tn_assembly_jury_recognition_update', handleRecogUpdate);
         window.removeEventListener('tn_assembly_test_mode_update', handleRecogUpdate);
+        window.removeEventListener('tn_assembly_scores_updated', handleRecogUpdate);
+        window.removeEventListener('tn_assembly_jury_scoring_reset', handleRecogUpdate);
         window.removeEventListener('storage', handleRecogUpdate);
       }
     };
@@ -336,25 +340,20 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
   // Load existing score or draft when selected learner OR selected session changes
   useEffect(() => {
     if (!selectedLearnerId || !selectedSession) return;
-    const currentKey = `${selectedLearnerId}:::${selectedSession.id}`;
+    const currentKey = `${selectedLearnerId}:::${selectedSession.id}:::${currentEvaluation?.id || 'none'}:::${currentEvaluation?.total ?? 'null'}:::${recogTick}`;
     if (loadedKey === currentKey) return;
 
-    // Check if an official evaluation or score already exists (prioritizing canonical resolution)
-    const existing = currentEvaluation || scores.find(s =>
-      s.learner_id === selectedLearnerId &&
-      (!event || !s.event_id || s.event_id === event.id) &&
-      (s.session_id === selectedSession.id || s.session_name === selectedSession.name) &&
-      ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))
-    );
+    // Check if an official evaluation actually exists (strict authoritative source)
+    const existing = currentEvaluation;
 
     if (existing) {
-      setResearchScore(existing.research_constituency ?? (existing as any).policy_knowledge ?? null);
-      setRelevanceScore(existing.relevance_agenda ?? (existing as any).rebuttal_debate ?? null);
-      setCommScore(existing.communication_delivery ?? (existing as any).oratory ?? null);
+      setResearchScore(existing.research_constituency ?? null);
+      setRelevanceScore(existing.relevance_agenda ?? null);
+      setCommScore(existing.communication_delivery ?? null);
       setConductScore(existing.parliamentary_conduct ?? null);
       setOriginalityScore(existing.originality_preparation ?? null);
       setTimeScore(existing.time_management ?? null);
-      setIsLocked(Boolean((existing as any).is_locked || (existing as any).status === 'LOCKED'));
+      setIsLocked(Boolean((existing as any).is_locked || existing.status === 'LOCKED'));
       setFeedback(existing.feedback || '');
       setDraftSavedAt(null);
     } else {
@@ -395,8 +394,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       }
     }
     setLoadedKey(currentKey);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedLearnerId, selectedSession.id, scores, event?.id, jury]);
+  }, [selectedLearnerId, selectedSession.id, currentEvaluation, recogTick, event?.id, jury, loadedKey]);
 
   // Draft save timestamp display
   const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);

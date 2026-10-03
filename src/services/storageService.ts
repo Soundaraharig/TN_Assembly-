@@ -3707,23 +3707,48 @@ class StorageService {
           const socialCoverage = (ev as any).social_coverage;
           if (socialCoverage && typeof socialCoverage === 'object' && Array.isArray(socialCoverage.scores)) {
             const allScores: ScoreRecord[] = socialCoverage.scores;
-            const juryScores = juryId ? allScores.filter((s: ScoreRecord) => s.jury_id === juryId || s.juror_name === juryId) : allScores;
-            if (juryScores.length > 0) {
-              const existingScores = this.getScores(eventId);
-              const mergedMap = new Map<string, ScoreRecord>();
-              existingScores.forEach(s => mergedMap.set(this.getScoreCompositeKey(s, eventId), s));
-              juryScores.forEach(s => {
-                const k = this.getScoreCompositeKey(s, eventId);
-                const cur = mergedMap.get(k);
-                if (!cur) {
-                  mergedMap.set(k, s);
-                } else {
-                  const curT = new Date(cur.updated_at || 0).getTime();
-                  const newT = new Date(s.updated_at || 0).getTime();
-                  if (newT >= curT) mergedMap.set(k, s);
+            if (allScores.length === 0) {
+              // Authoritative remote state has NO scores for this event (e.g. post-reset)
+              const curScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
+              this.setItem(STORAGE_KEYS.SCORES, curScores.filter(s => s.event_id !== eventId));
+              const curEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
+              this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, curEvals.filter(e => e.event_id !== eventId));
+              if (typeof localStorage !== 'undefined') {
+                try {
+                  localStorage.removeItem(`tn_assembly_scores_${eventId}`);
+                  const draftPrefix = `tn_assembly_jury_draft_${eventId}_`;
+                  const keysToRemove: string[] = [];
+                  for (let i = 0; i < localStorage.length; i++) {
+                    const k = localStorage.key(i);
+                    if (k && k.startsWith(draftPrefix)) keysToRemove.push(k);
+                  }
+                  keysToRemove.forEach(k => localStorage.removeItem(k));
+                } catch {}
+              }
+            } else {
+              const juryScores = juryId ? allScores.filter((s: ScoreRecord) => s.jury_id === juryId || s.juror_name === juryId) : allScores;
+              if (juryScores.length > 0) {
+                const existingScores = this.getScores(eventId);
+                const mergedMap = new Map<string, ScoreRecord>();
+                existingScores.forEach(s => mergedMap.set(this.getScoreCompositeKey(s, eventId), s));
+                juryScores.forEach(s => {
+                  const k = this.getScoreCompositeKey(s, eventId);
+                  const cur = mergedMap.get(k);
+                  if (!cur) {
+                    mergedMap.set(k, s);
+                  } else {
+                    const curT = new Date(cur.updated_at || 0).getTime();
+                    const newT = new Date(s.updated_at || 0).getTime();
+                    if (newT >= curT) mergedMap.set(k, s);
+                  }
+                });
+                this.setItem(STORAGE_KEYS.SCORES, Array.from(mergedMap.values()));
+                if (typeof localStorage !== 'undefined') {
+                  try {
+                    localStorage.setItem(`tn_assembly_scores_${eventId}`, JSON.stringify(Array.from(mergedMap.values())));
+                  } catch {}
                 }
-              });
-              this.setItem(STORAGE_KEYS.SCORES, Array.from(mergedMap.values()));
+              }
             }
           }
         } catch (scoreErr) {
@@ -5221,36 +5246,10 @@ class StorageService {
           }
         })
         .on('broadcast', { event: 'scores_reset' }, (msg: any) => {
-          if (msg?.payload?.eventId) {
-            const evId = msg.payload.eventId;
-            const timer = this.scoreSyncTimers.get(evId);
-            if (timer) {
-              clearTimeout(timer);
-              this.scoreSyncTimers.delete(evId);
-            }
-            const curScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
-            this.setItem(STORAGE_KEYS.SCORES, curScores.filter(s => s.event_id !== evId));
-            if (typeof localStorage !== 'undefined') {
-              try {
-                localStorage.removeItem(`tn_assembly_scores_${evId}`);
-              } catch {}
-            }
-            const allEvs = this.getEvents();
-            this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => {
-              if (e.id === evId) {
-                const sc = (e.social_coverage || {}) as Record<string, any>;
-                return { ...e, social_coverage: { ...sc, scores: [] } };
-              }
-              return e;
-            }));
-            this.invalidateCache(evId);
-            this.invalidateCache('events');
-            this.invalidateCache('portal_');
-            this.notify();
-            if (typeof window !== 'undefined') {
-              window.dispatchEvent(new Event('storage'));
-            }
-          }
+          this.handleScoringResetBroadcast(msg?.payload?.eventId);
+        })
+        .on('broadcast', { event: 'jury_scoring_reset' }, (msg: any) => {
+          this.handleScoringResetBroadcast(msg?.payload?.eventId);
         });
 
       channel.subscribe((status: string) => {
@@ -5266,6 +5265,59 @@ class StorageService {
       this.realtimeChannel = channel;
     } catch (e) {
       console.warn('[Supabase] realtime setup error:', e);
+    }
+  }
+
+  private handleScoringResetBroadcast(evId?: string) {
+    if (!evId) return;
+    const timer = this.scoreSyncTimers.get(evId);
+    if (timer) {
+      clearTimeout(timer);
+      this.scoreSyncTimers.delete(evId);
+    }
+    const curScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
+    this.setItem(STORAGE_KEYS.SCORES, curScores.filter(s => s.event_id !== evId));
+
+    const curEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
+    const targetEvalIds = new Set(curEvals.filter(e => e.event_id === evId).map(e => e.id));
+    this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, curEvals.filter(e => e.event_id !== evId));
+
+    const curTurns = this.getItem<JuryEvaluationTurn[]>(STORAGE_KEYS.JURY_EVALUATION_TURNS, []);
+    this.setItem(STORAGE_KEYS.JURY_EVALUATION_TURNS, curTurns.filter(t => !targetEvalIds.has(t.evaluation_id)));
+
+    const curAdjs = this.getItem<JuryEvaluationAdjustment[]>(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, []);
+    this.setItem(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, curAdjs.filter(a => !targetEvalIds.has(a.evaluation_id)));
+
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.removeItem(`tn_assembly_scores_${evId}`);
+        const draftPrefix = `tn_assembly_jury_draft_${evId}_`;
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith(draftPrefix)) keysToRemove.push(k);
+        }
+        keysToRemove.forEach(k => localStorage.removeItem(k));
+      } catch {}
+    }
+    const allEvs = this.getEvents();
+    this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => {
+      if (e.id === evId) {
+        const sc = (e.social_coverage || {}) as Record<string, any>;
+        return { ...e, social_coverage: { ...sc, scores: [] } };
+      }
+      return e;
+    }));
+    this.invalidateCache(evId);
+    this.invalidateCache('events');
+    this.invalidateCache('portal_');
+    this.invalidateCache('evaluations');
+    this.invalidateCache('leaderboard');
+    this.notify();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('storage'));
+      window.dispatchEvent(new CustomEvent('tn_assembly_scores_updated', { detail: { eventId: evId } }));
+      window.dispatchEvent(new CustomEvent('tn_assembly_jury_scoring_reset', { detail: { eventId: evId } }));
     }
   }
 
@@ -5345,6 +5397,32 @@ class StorageService {
         if (sc.projector_settings) {
           this.setItem(`tn_assembly_projector_studio_${eventId}`, sc.projector_settings);
           this.setItem('tn_assembly_projector_studio_v1', sc.projector_settings);
+        }
+
+        // 6. Reconcile Authoritative Scores
+        if (Array.isArray(sc.scores)) {
+          if (sc.scores.length === 0) {
+            const curScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
+            this.setItem(STORAGE_KEYS.SCORES, curScores.filter(s => s.event_id !== eventId));
+            const curEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
+            this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, curEvals.filter(e => e.event_id !== eventId));
+            if (typeof localStorage !== 'undefined') {
+              try {
+                localStorage.removeItem(`tn_assembly_scores_${eventId}`);
+              } catch {}
+            }
+          } else {
+            const otherScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []).filter(s => s.event_id !== eventId);
+            this.setItem(STORAGE_KEYS.SCORES, [...otherScores, ...sc.scores]);
+            if (typeof localStorage !== 'undefined') {
+              try {
+                localStorage.setItem(`tn_assembly_scores_${eventId}`, JSON.stringify(sc.scores));
+              } catch {}
+            }
+          }
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('tn_assembly_scores_updated', { detail: { eventId } }));
+          }
         }
 
         this.notify();
@@ -15451,6 +15529,24 @@ class StorageService {
 
   public getScores(eventId?: string, sessionId?: string, juryId?: string): ScoreRecord[] {
     let all = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, INITIAL_SCORES);
+
+    // If event is specified and its authoritative social_coverage has explicitly 0 scores, prevent stale resurrection
+    if (eventId) {
+      const curEvs = this.getEvents();
+      const targetEv = curEvs.find(e => e.id === eventId);
+      if (targetEv && targetEv.social_coverage && typeof targetEv.social_coverage === 'object') {
+        const sc = targetEv.social_coverage as Record<string, any>;
+        if (Array.isArray(sc.scores) && sc.scores.length === 0) {
+          if (typeof localStorage !== 'undefined') {
+            try {
+              localStorage.removeItem(`tn_assembly_scores_${eventId}`);
+            } catch {}
+          }
+          all = all.filter(s => s.event_id !== eventId);
+          return [];
+        }
+      }
+    }
 
     // Read dedicated backup for event if available
     if (eventId && typeof localStorage !== 'undefined') {

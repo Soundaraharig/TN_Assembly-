@@ -1604,13 +1604,27 @@ export function App() {
       }
     };
 
+    const handleScoresUpdated = (e: any) => {
+      const evId = e?.detail?.eventId;
+      if (evId) {
+        setScores(storageService.getScores(evId));
+      } else {
+        const curEv = storageService.getEvents()[0];
+        if (curEv?.id) setScores(storageService.getScores(curEv.id));
+      }
+    };
+
     checkPathAndRestore();
     window.addEventListener('popstate', checkPathAndRestore);
+    window.addEventListener('tn_assembly_scores_updated', handleScoresUpdated);
+    window.addEventListener('tn_assembly_jury_scoring_reset', handleScoresUpdated);
 
     return () => {
       unsubscribe();
       storageService.setWriteErrorHandler(null);
       window.removeEventListener('popstate', checkPathAndRestore);
+      window.removeEventListener('tn_assembly_scores_updated', handleScoresUpdated);
+      window.removeEventListener('tn_assembly_jury_scoring_reset', handleScoresUpdated);
     };
   }, []);
 
