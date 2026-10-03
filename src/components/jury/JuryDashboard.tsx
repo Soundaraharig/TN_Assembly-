@@ -66,8 +66,6 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
   // ── JURY RECOGNITION STATE & SYNC ──
   const [recogTick, setRecogTick] = useState(0);
   const [isTogglingRecog, setIsTogglingRecog] = useState(false);
-  const [optionalNote, setOptionalNote] = useState('');
-  const [isSavingNote, setIsSavingNote] = useState(false);
 
   const [selectedLearnerId, setSelectedLearnerId] = useState<string>('');
   const [search, setSearch] = useState('');
@@ -277,85 +275,21 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     return learners.find(l => l.id === activeFloorSpeakingTurn.learner_id) || null;
   }, [activeFloorSpeakingTurn, learners]);
 
-  // Target speaking turn for recognition of currently selected delegate
-  const targetTurnForDelegate = useMemo<SpeakingTurn | null>(() => {
-    if (!effectiveDelegateTurns.length) return null;
-    // If selected delegate is the floor speaker, use the authoritative floor turn
-    if (activeFloorSpeakingTurn && activeFloorSpeakingTurn.learner_id === selectedLearner?.id) {
-      return activeFloorSpeakingTurn;
-    }
-    // Otherwise use the most recent completed turn
-    return effectiveDelegateTurns[effectiveDelegateTurns.length - 1] || null;
-  }, [effectiveDelegateTurns, activeFloorSpeakingTurn, selectedLearner?.id]);
-
-  // Pre-calculate recognitions count per participant across all turns in this event
+  // Pre-calculate recognitions count per participant across that MLA's speaking turns for CURRENT JUROR
   const learnerRecognitionsCountMap = useMemo(() => {
     const map = new Map<string, number>();
-    if (!event?.id) return map;
-    const recogs = storageService.getJurySpeechRecognitions(event.id, undefined, undefined, undefined, undefined, false);
+    if (!event?.id || !jury) return map;
+    const juryId = jury.id || jury.name || 'jury';
+    const recogs = storageService.getJurySpeechRecognitions(event.id, undefined, undefined, juryId, undefined, false);
     recogs.forEach(r => {
       if (r.active && r.learner_id) {
         map.set(r.learner_id, (map.get(r.learner_id) || 0) + 1);
       }
     });
     return map;
-  }, [event?.id, recogTick]);
+  }, [event?.id, jury, recogTick]);
 
-  const isTurnRecognizedByCurrentJuror = (turnId: string): boolean => {
-    if (!event?.id || !jury || !turnId) return false;
-    const juryId = jury.id || jury.name || 'jury';
-    const recogs = storageService.getJurySpeechRecognitions(
-      event.id,
-      undefined,
-      turnId,
-      juryId,
-      undefined,
-      false
-    );
-    return Boolean(recogs[0] && recogs[0].active);
-  };
-
-  const getTurnDuration = (turn: SpeakingTurn): string => {
-    if (turn.started_at && turn.completed_at) {
-      const ms = Math.max(0, new Date(turn.completed_at).getTime() - new Date(turn.started_at).getTime());
-      const totalSec = Math.floor(ms / 1000);
-      const mins = Math.floor(totalSec / 60);
-      const secs = totalSec % 60;
-      return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-    }
-    if (turn.started_at && turn.status === 'SPEAKING') {
-      return 'Active';
-    }
-    return '';
-  };
-
-  // Check recognition state for target delegate turn
-  const delegateTurnRecognition = useMemo(() => {
-    if (!targetTurnForDelegate || !event?.id || !jury) return null;
-    const juryId = jury.id || jury.name || 'jury';
-    const recogs = storageService.getJurySpeechRecognitions(
-      event.id,
-      undefined,
-      targetTurnForDelegate.id,
-      juryId,
-      undefined,
-      false
-    );
-    return recogs[0] || null;
-  }, [targetTurnForDelegate, event?.id, jury, recogTick]);
-
-  const isDelegateTurnRecognized = Boolean(delegateTurnRecognition && delegateTurnRecognition.active);
-
-  // Sync note input when target delegate turn changes or recognition changes
-  useEffect(() => {
-    if (delegateTurnRecognition?.note) {
-      setOptionalNote(delegateTurnRecognition.note);
-    } else {
-      setOptionalNote('');
-    }
-  }, [delegateTurnRecognition?.id, delegateTurnRecognition?.note, targetTurnForDelegate?.id]);
-
-  // Check recognition state for floor turn
+  // Check recognition state for floor turn by current juror
   const floorTurnRecognition = useMemo(() => {
     if (!activeFloorSpeakingTurn || !event?.id || !jury) return null;
     const juryId = jury.id || jury.name || 'jury';
@@ -383,8 +317,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
         sessionName: turn.session_name || selectedSession.name,
         speakingTurnId: turn.id,
         juryId,
-        learnerId: turn.learner_id,
-        note: optionalNote.trim() || undefined
+        learnerId: turn.learner_id
       });
       if (res.action === 'RECOGNIZED') {
         onShowToast('Speech Liked', `You liked the speech by ${turn.learner_name || 'Delegate'}.`, 'success');
@@ -395,25 +328,6 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       onShowToast('Like Action Failed', err.message || 'Unable to update like.', 'error');
     } finally {
       setIsTogglingRecog(false);
-    }
-  };
-
-  const handleSaveRecognitionNote = async (turn: SpeakingTurn) => {
-    if (!event?.id || !jury || isSavingNote) return;
-    const juryId = jury.id || jury.name || 'jury';
-    setIsSavingNote(true);
-    try {
-      await storageService.updateJurySpeechRecognitionNote({
-        eventId: event.id,
-        speakingTurnId: turn.id,
-        juryId,
-        note: optionalNote
-      });
-      onShowToast('Note Saved', 'Private recognition note recorded.', 'success');
-    } catch (err: any) {
-      onShowToast('Error', 'Failed to save recognition note.', 'error');
-    } finally {
-      setIsSavingNote(false);
     }
   };
 
@@ -1399,7 +1313,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       title={isFloorTurnRecognized ? 'Click to unlike this speech' : 'Click to like this speech'}
                     >
                       <Star className={`w-5 h-5 ${isFloorTurnRecognized ? 'fill-current text-white' : 'text-amber-500'}`} />
-                      <span>{isFloorTurnRecognized ? '⭐ LIKED ✓' : '⭐ LIKE SPEECH'}</span>
+                      <span>{isFloorTurnRecognized ? '⭐ LIKED ✓' : '⭐ LIKE THIS SPEECH'}</span>
                     </button>
                   </div>
                 </div>
@@ -1462,6 +1376,16 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                           </button>
                         </div>
 
+                        {/* Juror's Speech Likes Count for this MLA */}
+                        <div className="text-center px-3.5 py-1.5 rounded-xl border border-amber-500/20 bg-amber-500/10">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                            Speeches Liked
+                          </p>
+                          <p className="text-xl font-black font-mono text-amber-600 dark:text-amber-400 flex items-center justify-center gap-1">
+                            ⭐ {learnerRecognitionsCountMap.get(selectedLearner.id) || 0}
+                          </p>
+                        </div>
+
                         <div className="text-right">
                           <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                             Current Official Score
@@ -1517,161 +1441,37 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       </div>
                     )}
 
-                    {/* SPEECH IMPACT / JURY RECOGNITION SECTION (CASE A, CASE B, CASE C) */}
-                    {activeFloorSpeakingTurn && activeFloorSpeakingTurn.learner_id === selectedLearner.id ? (
-                      /* CASE A — selected delegate is actively SPEAKING on the floor */
-                      <div className="rounded-xl p-4 bg-gradient-to-r from-rose-500/20 via-amber-500/10 to-transparent border-2 border-rose-500/50 flex flex-wrap items-center justify-between gap-3 shadow-md">
+                    {/* CURRENT SPEECH LIKE ACTION — Only for currently active Speaker-Aid-selected MLA */}
+                    {activeFloorSpeakingTurn && activeFloorSpeakingTurn.learner_id === selectedLearner.id && (
+                      <div className="rounded-xl p-4 bg-gradient-to-r from-rose-500/15 via-amber-500/10 to-transparent border border-rose-500/40 flex flex-wrap items-center justify-between gap-3 shadow-xs">
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-600 text-white flex items-center gap-1 shadow-xs">
                               <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
-                              🔴 NOW SPEAKING
+                              🔴 NOW SPEAKING — {selectedLearner.full_name}
                             </span>
                             <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">
                               Speaking Turn {activeFloorSpeakingTurn.sequence_number || 1}
                             </span>
                           </div>
-                          <h4 className="text-sm font-black text-slate-900 dark:text-white mt-1">
-                            {selectedLearner.full_name} is currently speaking on the floor
+                          <h4 className="text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-200 mt-1.5 flex items-center gap-1">
+                            <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
+                            SPEECH LIKE
                           </h4>
-                          <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                            Recognition is independent of the official score. Like a speech to show appreciation.
-                          </p>
                         </div>
                         <button
                           type="button"
                           disabled={isTogglingRecog}
                           onClick={() => handleToggleRecognition(activeFloorSpeakingTurn)}
                           className={`px-5 py-2.5 rounded-xl text-xs font-black transition flex items-center gap-2 cursor-pointer shadow-md active:scale-95 disabled:opacity-50 ${
-                            isDelegateTurnRecognized
+                            isFloorTurnRecognized
                               ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/25 ring-2 ring-amber-400'
                               : 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 border-2 border-amber-500/50 hover:bg-amber-50 dark:hover:bg-slate-800'
                           }`}
                         >
-                          <Star className={`w-4 h-4 ${isDelegateTurnRecognized ? 'fill-current text-white' : 'text-amber-500'}`} />
-                          <span>{isDelegateTurnRecognized ? '⭐ LIKED ✓' : '⭐ LIKE SPEECH'}</span>
+                          <Star className={`w-4 h-4 ${isFloorTurnRecognized ? 'fill-current text-white' : 'text-amber-500'}`} />
+                          <span>{isFloorTurnRecognized ? '⭐ LIKED ✓' : '⭐ LIKE THIS SPEECH'}</span>
                         </button>
-                      </div>
-                    ) : targetTurnForDelegate ? (
-                      /* CASE B — active speech ended but a valid recorded speaking_turn_id exists */
-                      <div className="p-4 rounded-xl border border-amber-500/30 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent space-y-3">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex items-center gap-2">
-                            <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
-                            <h4 className="text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white">
-                              SPEECH IMPACT
-                            </h4>
-                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">
-                              Speaking Turn {targetTurnForDelegate.sequence_number || currentTurnNumber}
-                            </span>
-                          </div>
-                          <span className="text-[11px] text-slate-500 dark:text-slate-400 italic">
-                            Recognition is independent of the official score. Like a speech to show appreciation.
-                          </span>
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-3 pt-1">
-                          <button
-                            type="button"
-                            disabled={isTogglingRecog}
-                            onClick={() => handleToggleRecognition(targetTurnForDelegate)}
-                            className={`px-4 py-2.5 rounded-xl text-xs font-black transition flex items-center gap-2 cursor-pointer shadow-xs active:scale-98 disabled:opacity-50 ${
-                              isDelegateTurnRecognized
-                                ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/25 ring-2 ring-amber-400'
-                                : 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 border-2 border-amber-500/40 hover:bg-amber-50 dark:hover:bg-slate-800'
-                            }`}
-                          >
-                            <Star className={`w-4 h-4 ${isDelegateTurnRecognized ? 'fill-current text-white' : 'text-amber-500'}`} />
-                            <span>{isDelegateTurnRecognized ? '⭐ LIKED ✓' : '⭐ LIKE THIS SPEECH'}</span>
-                          </button>
-
-                          {isDelegateTurnRecognized && (
-                            <div className="flex-1 min-w-[220px] flex items-center gap-2">
-                              <input
-                                type="text"
-                                placeholder="Why did this speech stand out? (Private note)..."
-                                value={optionalNote}
-                                onChange={e => setOptionalNote(e.target.value)}
-                                className="flex-1 px-3 py-1.5 text-xs rounded-xl border bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-amber-500"
-                              />
-                              <button
-                                type="button"
-                                disabled={isSavingNote}
-                                onClick={() => handleSaveRecognitionNote(targetTurnForDelegate)}
-                                className="px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 transition cursor-pointer"
-                              >
-                                {isSavingNote ? 'Saving...' : 'Save Note'}
-                              </button>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Historical Speaking Turns List for Multi-Turn MLAs */}
-                        {effectiveDelegateTurns.length > 1 && (
-                          <div className="pt-2 border-t border-amber-500/20 space-y-2">
-                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
-                              All Recorded Speaking Turns for this MLA:
-                            </span>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                              {effectiveDelegateTurns.map(turn => {
-                                const isTurnRecog = isTurnRecognizedByCurrentJuror(turn.id);
-                                const dur = getTurnDuration(turn);
-                                const isCurrentTarget = turn.id === targetTurnForDelegate.id;
-                                return (
-                                  <div
-                                    key={turn.id}
-                                    className={`p-2.5 rounded-xl border text-xs flex items-center justify-between transition ${
-                                      isCurrentTarget ? 'bg-amber-500/10 border-amber-500/40' : 'bg-white/60 dark:bg-slate-900/60 border-slate-200 dark:border-slate-800'
-                                    }`}
-                                  >
-                                    <div>
-                                      <div className="flex items-center gap-1.5">
-                                        <span className="font-bold text-slate-900 dark:text-white">
-                                          Turn {turn.sequence_number || 1}
-                                        </span>
-                                        {turn.started_at && (
-                                          <span className="text-[10px] text-slate-400 font-mono">
-                                            {new Date(turn.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                          </span>
-                                        )}
-                                      </div>
-                                      {dur && <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono block">Duration: {dur}</span>}
-                                    </div>
-                                    <button
-                                      type="button"
-                                      disabled={isTogglingRecog}
-                                      onClick={() => handleToggleRecognition(turn)}
-                                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition flex items-center gap-1 cursor-pointer disabled:opacity-50 ${
-                                        isTurnRecog
-                                          ? 'bg-amber-500 text-white border-amber-500 shadow-2xs'
-                                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700 hover:border-amber-400'
-                                      }`}
-                                    >
-                                      <Star className={`w-3 h-3 ${isTurnRecog ? 'fill-current' : 'text-amber-500'}`} />
-                                      <span>{isTurnRecog ? '⭐ Recognized' : '⭐ Recognize'}</span>
-                                    </button>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      /* CASE C — no speaking turn exists */
-                      <div className="p-4 rounded-xl bg-slate-100/70 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs space-y-2">
-                        <div className="flex items-center gap-2">
-                          <Star className="w-4 h-4 text-slate-400" />
-                          <h4 className="font-bold text-slate-800 dark:text-slate-200">
-                            SPEECH IMPACT — Waiting for a recorded speaking turn.
-                          </h4>
-                        </div>
-                        <p className="text-slate-600 dark:text-slate-400 text-[11px] leading-relaxed">
-                          This participant does not yet have a recorded floor speaking turn.
-                        </p>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 italic">
-                          When this MLA is called to speak on the floor by the Speaker, speech recognition will activate automatically here and in the 🔴 NOW SPEAKING banner.
-                        </p>
                       </div>
                     )}
 
@@ -1714,46 +1514,20 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                           <History className="w-3.5 h-3.5" /> Turn History & Audit Trail
                         </h4>
                         <div className="space-y-2">
-                          {currentEvaluation.turns?.map((t, idx) => {
-                            const matchingTurn = effectiveDelegateTurns.find(st => st.id === t.speaking_turn_id) ||
-                              effectiveDelegateTurns.find(st => st.sequence_number === t.turn_number) ||
-                              effectiveDelegateTurns[idx];
-                            const effectiveTurnId = matchingTurn?.id || t.speaking_turn_id;
-                            const isTurnRecog = effectiveTurnId ? isTurnRecognizedByCurrentJuror(effectiveTurnId) : false;
-                            return (
-                              <div key={t.id || idx} className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 text-xs flex items-center justify-between gap-3">
-                                <div className="flex items-center gap-2">
-                                  <span className="font-extrabold text-slate-900 dark:text-white mr-1">Turn {t.turn_number}:</span>
-                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 mr-1">
-                                    {t.action_type.replace(/_/g, ' ')}
-                                  </span>
-                                  {t.notes && <span className="text-slate-500 italic max-w-xs truncate">"{t.notes}"</span>}
-                                </div>
-                                <div className="flex items-center gap-2 shrink-0">
-                                  {matchingTurn ? (
-                                    <button
-                                      type="button"
-                                      disabled={isTogglingRecog}
-                                      onClick={() => handleToggleRecognition(matchingTurn)}
-                                      className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition flex items-center gap-1 cursor-pointer disabled:opacity-50 ${
-                                        isTurnRecog
-                                          ? 'bg-amber-500 text-white border-amber-500 shadow-2xs'
-                                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700 hover:border-amber-400'
-                                      }`}
-                                    >
-                                      <Star className={`w-3 h-3 ${isTurnRecog ? 'fill-current' : 'text-amber-500'}`} />
-                                      <span>{isTurnRecog ? '⭐ Recognized' : '⭐ Recognize'}</span>
-                                    </button>
-                                  ) : (
-                                    <span className="text-[10px] text-slate-400 italic">Floor turn pending</span>
-                                  )}
-                                  <span className="text-[10px] text-slate-400 font-mono">
-                                    {new Date(t.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                  </span>
-                                </div>
+                          {currentEvaluation.turns?.map((t, idx) => (
+                            <div key={t.id || idx} className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 text-xs flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-2">
+                                <span className="font-extrabold text-slate-900 dark:text-white mr-1">Turn {t.turn_number}:</span>
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 mr-1">
+                                  {t.action_type.replace(/_/g, ' ')}
+                                </span>
+                                {t.notes && <span className="text-slate-500 italic max-w-xs truncate">"{t.notes}"</span>}
                               </div>
-                            );
-                          })}
+                              <span className="text-[10px] text-slate-400 font-mono">
+                                {new Date(t.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                          ))}
                           {currentEvaluation.adjustments?.map((a, idx) => (
                             <div key={a.id || idx} className="p-3 rounded-xl border border-amber-500/20 bg-amber-500/5 text-xs flex items-center justify-between">
                               <div>
@@ -1857,6 +1631,16 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                         </button>
                       </div>
 
+                      {/* Juror's Speech Likes Count for this MLA */}
+                      <div className="text-center px-3.5 py-1.5 rounded-xl border border-amber-500/20 bg-amber-500/10">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                          Speeches Liked
+                        </p>
+                        <p className="text-xl font-black font-mono text-amber-600 dark:text-amber-400 flex items-center justify-center gap-1">
+                          ⭐ {learnerRecognitionsCountMap.get(selectedLearner.id) || 0}
+                        </p>
+                      </div>
+
                       <div className="text-right">
                         <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
                           Total Score
@@ -1871,161 +1655,37 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     </div>
                   </div>
 
-                  {/* SPEECH IMPACT / JURY RECOGNITION SECTION (CASE A, CASE B, CASE C) */}
-                  {activeFloorSpeakingTurn && activeFloorSpeakingTurn.learner_id === selectedLearner.id ? (
-                    /* CASE A — selected delegate is actively SPEAKING on the floor */
-                    <div className="rounded-xl p-4 bg-gradient-to-r from-rose-500/20 via-amber-500/10 to-transparent border-2 border-rose-500/50 flex flex-wrap items-center justify-between gap-3 shadow-md">
+                  {/* CURRENT SPEECH LIKE ACTION — Only for currently active Speaker-Aid-selected MLA */}
+                  {activeFloorSpeakingTurn && activeFloorSpeakingTurn.learner_id === selectedLearner.id && (
+                    <div className="rounded-xl p-4 bg-gradient-to-r from-rose-500/15 via-amber-500/10 to-transparent border border-rose-500/40 flex flex-wrap items-center justify-between gap-3 shadow-xs">
                       <div>
                         <div className="flex items-center gap-2">
                           <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-600 text-white flex items-center gap-1 shadow-xs">
                             <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
-                            🔴 NOW SPEAKING
+                            🔴 NOW SPEAKING — {selectedLearner.full_name}
                           </span>
                           <span className="text-xs font-mono font-bold text-amber-600 dark:text-amber-400">
                             Speaking Turn {activeFloorSpeakingTurn.sequence_number || 1}
                           </span>
                         </div>
-                        <h4 className="text-sm font-black text-slate-900 dark:text-white mt-1">
-                          {selectedLearner.full_name} is currently speaking on the floor
+                        <h4 className="text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-200 mt-1.5 flex items-center gap-1">
+                          <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
+                          SPEECH LIKE
                         </h4>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                          Recognition is independent of the official score. Like a speech to show appreciation.
-                        </p>
                       </div>
                       <button
                         type="button"
                         disabled={isTogglingRecog}
                         onClick={() => handleToggleRecognition(activeFloorSpeakingTurn)}
                         className={`px-5 py-2.5 rounded-xl text-xs font-black transition flex items-center gap-2 cursor-pointer shadow-md active:scale-95 disabled:opacity-50 ${
-                          isDelegateTurnRecognized
+                          isFloorTurnRecognized
                             ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/25 ring-2 ring-amber-400'
                             : 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 border-2 border-amber-500/50 hover:bg-amber-50 dark:hover:bg-slate-800'
                         }`}
                       >
-                        <Star className={`w-4 h-4 ${isDelegateTurnRecognized ? 'fill-current text-white' : 'text-amber-500'}`} />
-                        <span>{isDelegateTurnRecognized ? '⭐ LIKED ✓' : '⭐ LIKE SPEECH'}</span>
+                        <Star className={`w-4 h-4 ${isFloorTurnRecognized ? 'fill-current text-white' : 'text-amber-500'}`} />
+                        <span>{isFloorTurnRecognized ? '⭐ LIKED ✓' : '⭐ LIKE THIS SPEECH'}</span>
                       </button>
-                    </div>
-                  ) : targetTurnForDelegate ? (
-                    /* CASE B — active speech ended but a valid recorded speaking_turn_id exists */
-                    <div className="p-4 rounded-xl border border-amber-500/30 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent space-y-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
-                          <h4 className="text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white">
-                            SPEECH IMPACT
-                          </h4>
-                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">
-                            Speaking Turn {targetTurnForDelegate.sequence_number || 1}
-                          </span>
-                        </div>
-                        <span className="text-[11px] text-slate-500 dark:text-slate-400 italic">
-                          Independent qualitative feedback • Does not alter official score
-                        </span>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-3 pt-1">
-                        <button
-                          type="button"
-                          disabled={isTogglingRecog}
-                          onClick={() => handleToggleRecognition(targetTurnForDelegate)}
-                          className={`px-4 py-2.5 rounded-xl text-xs font-black transition flex items-center gap-2 cursor-pointer shadow-xs active:scale-98 disabled:opacity-50 ${
-                            isDelegateTurnRecognized
-                              ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/25 ring-2 ring-amber-400'
-                              : 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 border-2 border-amber-500/40 hover:bg-amber-50 dark:hover:bg-slate-800'
-                          }`}
-                        >
-                          <Star className={`w-4 h-4 ${isDelegateTurnRecognized ? 'fill-current text-white' : 'text-amber-500'}`} />
-                          <span>{isDelegateTurnRecognized ? '⭐ LIKED ✓' : '⭐ LIKE THIS SPEECH'}</span>
-                        </button>
-
-                        {isDelegateTurnRecognized && (
-                          <div className="flex-1 min-w-[220px] flex items-center gap-2">
-                            <input
-                              type="text"
-                              placeholder="Why did this speech stand out? (Private note)..."
-                              value={optionalNote}
-                              onChange={e => setOptionalNote(e.target.value)}
-                              className="flex-1 px-3 py-1.5 text-xs rounded-xl border bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-amber-500"
-                            />
-                            <button
-                              type="button"
-                              disabled={isSavingNote}
-                              onClick={() => handleSaveRecognitionNote(targetTurnForDelegate)}
-                              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 transition cursor-pointer"
-                            >
-                              {isSavingNote ? 'Saving...' : 'Save Note'}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Historical Speaking Turns List */}
-                      {effectiveDelegateTurns.length > 1 && (
-                        <div className="pt-2 border-t border-amber-500/20 space-y-2">
-                          <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 block">
-                            All Recorded Speaking Turns for this MLA:
-                          </span>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                            {effectiveDelegateTurns.map(turn => {
-                              const isTurnRecog = isTurnRecognizedByCurrentJuror(turn.id);
-                              const dur = getTurnDuration(turn);
-                              const isCurrentTarget = turn.id === targetTurnForDelegate.id;
-                              return (
-                                <div
-                                  key={turn.id}
-                                  className={`p-2.5 rounded-xl border text-xs flex items-center justify-between transition ${
-                                    isCurrentTarget ? 'bg-amber-500/10 border-amber-500/40' : 'bg-white/60 dark:bg-slate-900/60 border-slate-200 dark:border-slate-800'
-                                  }`}
-                                >
-                                  <div>
-                                    <div className="flex items-center gap-1.5">
-                                      <span className="font-bold text-slate-900 dark:text-white">
-                                        Turn {turn.sequence_number || 1}
-                                      </span>
-                                      {turn.started_at && (
-                                        <span className="text-[10px] text-slate-400 font-mono">
-                                          {new Date(turn.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                        </span>
-                                      )}
-                                    </div>
-                                    {dur && <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono block">Duration: {dur}</span>}
-                                  </div>
-                                  <button
-                                    type="button"
-                                    disabled={isTogglingRecog}
-                                    onClick={() => handleToggleRecognition(turn)}
-                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition flex items-center gap-1 cursor-pointer disabled:opacity-50 ${
-                                      isTurnRecog
-                                        ? 'bg-amber-500 text-white border-amber-500 shadow-2xs'
-                                        : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700 hover:border-amber-400'
-                                    }`}
-                                  >
-                                    <Star className={`w-3 h-3 ${isTurnRecog ? 'fill-current' : 'text-amber-500'}`} />
-                                    <span>{isTurnRecog ? '⭐ Recognized' : '⭐ Recognize'}</span>
-                                  </button>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    /* CASE C — no speaking turn exists */
-                    <div className="p-4 rounded-xl bg-slate-100/70 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs space-y-2">
-                      <div className="flex items-center gap-2">
-                        <Star className="w-4 h-4 text-slate-400" />
-                        <h4 className="font-bold text-slate-800 dark:text-slate-200">
-                          SPEECH IMPACT — Waiting for a recorded speaking turn.
-                        </h4>
-                      </div>
-                      <p className="text-slate-600 dark:text-slate-400 text-[11px] leading-relaxed">
-                        This participant does not yet have a recorded floor speaking turn.
-                      </p>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 italic">
-                        When this MLA is called to speak on the floor by the Speaker, speech recognition will activate automatically here and in the 🔴 NOW SPEAKING banner.
-                      </p>
                     </div>
                   )}
 
