@@ -72,6 +72,7 @@ import { SpeakerDashboard } from './components/speaker/SpeakerDashboard';
 import { StudentJoinView } from './components/student/StudentJoinModal';
 import { JuryDashboard } from './components/jury/JuryDashboard';
 import { VolunteerDashboard } from './components/volunteer/VolunteerDashboard';
+import { SpeakerAidDashboard } from './components/volunteer/SpeakerAidDashboard';
 import { presenceService, type PresenceUser } from './services/presenceService';
 import { isSupabaseEnabled } from './lib/supabase';
 import { canManageSessionAttendance } from './utils/permissions';
@@ -2615,6 +2616,36 @@ export function App() {
 
   // Dedicated Volunteer Operations Desk
   if (role === 'volunteer') {
+    // Detect Speaker Aid volunteers — same heuristic as VolunteerDashboard
+    const volType = (currentVolunteer?.volunteer_type || currentVolunteer?.role || 'Volunteer') as string;
+    const isSpeakerAidVolunteer =
+      currentVolunteer?.station === "Now Speaking (Speaker's aide)" ||
+      currentVolunteer?.station?.toLowerCase().includes('speaker') ||
+      currentVolunteer?.role === 'Speaker Aid' ||
+      currentVolunteer?.volunteer_type === 'Speaker Aid' ||
+      volType?.toLowerCase().includes('speaker aid');
+
+    if (isSpeakerAidVolunteer) {
+      return (
+        <div className="min-h-screen font-sans" style={{ backgroundColor: 'var(--bg-base)' }}>
+          <SpeakerAidDashboard
+            volunteer={currentVolunteer}
+            event={currentEvent}
+            learners={learners}
+            onLogout={() => {
+              clearSession();
+              setIsAuthenticated(false);
+              setRole('volunteer');
+              if (typeof window !== 'undefined') window.history.pushState({}, '', '/join');
+              addToast('Signed Out', 'You have been signed out from Speaker Aid', 'info');
+            }}
+            onShowToast={addToast}
+          />
+          <ToastContainer toasts={toasts} onDismiss={removeToast} />
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen font-sans" style={{ backgroundColor: 'var(--bg-base)' }}>
         <VolunteerDashboard

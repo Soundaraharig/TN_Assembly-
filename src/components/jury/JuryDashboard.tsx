@@ -387,12 +387,12 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
         note: optionalNote.trim() || undefined
       });
       if (res.action === 'RECOGNIZED') {
-        onShowToast('Jury Recognition Recorded', `Recognized speech by ${turn.learner_name || 'Delegate'}.`, 'success');
+        onShowToast('Speech Liked', `You liked the speech by ${turn.learner_name || 'Delegate'}.`, 'success');
       } else {
-        onShowToast('Jury Recognition Revoked', `Recognition removed for ${turn.learner_name || 'Delegate'}.`, 'info');
+        onShowToast('Like Removed', `Like removed for ${turn.learner_name || 'Delegate'}.`, 'info');
       }
     } catch (err: any) {
-      onShowToast('Recognition Action Failed', err.message || 'Unable to update recognition.', 'error');
+      onShowToast('Like Action Failed', err.message || 'Unable to update like.', 'error');
     } finally {
       setIsTogglingRecog(false);
     }
@@ -1396,10 +1396,10 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                           ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/30 ring-2 ring-amber-400'
                           : 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 border-2 border-amber-500/60 hover:bg-amber-50 dark:hover:bg-slate-800'
                       }`}
-                      title={isFloorTurnRecognized ? 'Click to revoke recognition (UNRECOGNIZE)' : 'Click to recognize this speech'}
+                      title={isFloorTurnRecognized ? 'Click to unlike this speech' : 'Click to like this speech'}
                     >
                       <Star className={`w-5 h-5 ${isFloorTurnRecognized ? 'fill-current text-white' : 'text-amber-500'}`} />
-                      <span>{isFloorTurnRecognized ? '⭐ RECOGNIZED (Recorded)' : '⭐ RECOGNIZE SPEECH'}</span>
+                      <span>{isFloorTurnRecognized ? '⭐ LIKED ✓' : '⭐ LIKE SPEECH'}</span>
                     </button>
                   </div>
                 </div>
@@ -1409,7 +1409,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     <span className="w-2 h-2 rounded-full bg-slate-400"></span>
                     No MLA is currently speaking on the floor.
                   </span>
-                  <span className="text-[11px] italic">Recognition activates automatically when an MLA begins speaking.</span>
+                  <span className="text-[11px] italic">Like button activates automatically when an MLA begins speaking.</span>
                 </div>
               )}
 
@@ -1535,7 +1535,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             {selectedLearner.full_name} is currently speaking on the floor
                           </h4>
                           <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                            Recognition is independent of the official score.
+                            Recognition is independent of the official score. Like a speech to show appreciation.
                           </p>
                         </div>
                         <button
@@ -1549,7 +1549,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                           }`}
                         >
                           <Star className={`w-4 h-4 ${isDelegateTurnRecognized ? 'fill-current text-white' : 'text-amber-500'}`} />
-                          <span>{isDelegateTurnRecognized ? '⭐ RECOGNIZED (Recorded)' : '⭐ RECOGNIZE SPEECH'}</span>
+                          <span>{isDelegateTurnRecognized ? '⭐ LIKED ✓' : '⭐ LIKE SPEECH'}</span>
                         </button>
                       </div>
                     ) : targetTurnForDelegate ? (
@@ -1566,7 +1566,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             </span>
                           </div>
                           <span className="text-[11px] text-slate-500 dark:text-slate-400 italic">
-                            Recognition is independent of the official score.
+                            Recognition is independent of the official score. Like a speech to show appreciation.
                           </span>
                         </div>
 
@@ -1582,7 +1582,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             }`}
                           >
                             <Star className={`w-4 h-4 ${isDelegateTurnRecognized ? 'fill-current text-white' : 'text-amber-500'}`} />
-                            <span>{isDelegateTurnRecognized ? '⭐ RECOGNIZED (Recorded)' : '⭐ RECOGNIZE THIS SPEECH'}</span>
+                            <span>{isDelegateTurnRecognized ? '⭐ LIKED ✓' : '⭐ LIKE THIS SPEECH'}</span>
                           </button>
 
                           {isDelegateTurnRecognized && (
@@ -1889,7 +1889,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                           {selectedLearner.full_name} is currently speaking on the floor
                         </h4>
                         <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                          Recognition is independent of the official score.
+                          Recognition is independent of the official score. Like a speech to show appreciation.
                         </p>
                       </div>
                       <button
@@ -1903,7 +1903,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                         }`}
                       >
                         <Star className={`w-4 h-4 ${isDelegateTurnRecognized ? 'fill-current text-white' : 'text-amber-500'}`} />
-                        <span>{isDelegateTurnRecognized ? '⭐ RECOGNIZED (Recorded)' : '⭐ RECOGNIZE SPEECH'}</span>
+                        <span>{isDelegateTurnRecognized ? '⭐ LIKED ✓' : '⭐ LIKE SPEECH'}</span>
                       </button>
                     </div>
                   ) : targetTurnForDelegate ? (
@@ -1936,7 +1936,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                           }`}
                         >
                           <Star className={`w-4 h-4 ${isDelegateTurnRecognized ? 'fill-current text-white' : 'text-amber-500'}`} />
-                          <span>{isDelegateTurnRecognized ? '⭐ RECOGNIZED (Recorded)' : '⭐ RECOGNIZE THIS SPEECH'}</span>
+                          <span>{isDelegateTurnRecognized ? '⭐ LIKED ✓' : '⭐ LIKE THIS SPEECH'}</span>
                         </button>
 
                         {isDelegateTurnRecognized && (
