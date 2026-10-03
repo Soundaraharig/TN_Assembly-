@@ -1,12 +1,15 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = ((typeof import.meta !== 'undefined' && import.meta?.env?.VITE_SUPABASE_URL) || (typeof process !== 'undefined' && process?.env?.VITE_SUPABASE_URL) || '') as string;
-const supabaseAnonKey = ((typeof import.meta !== 'undefined' && import.meta?.env?.VITE_SUPABASE_ANON_KEY) || (typeof process !== 'undefined' && process?.env?.VITE_SUPABASE_ANON_KEY) || '') as string;
+const DEFAULT_SUPABASE_URL = 'https://qyijhztjvxansctqhpkd.supabase.co';
+const DEFAULT_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5aWpoenRqdnhhbnNjdHFocGtkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAyNDY5NzIsImV4cCI6MjEwNTgyMjk3Mn0.uhh-wH2-G1nxuoGDzGmg_SrDDZlZIJWG8IOuO1NHG0g';
+
+const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_URL) as string;
+const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY) as string;
 
 // Check if credentials are real (not placeholders)
 const isConfigured =
-  supabaseUrl &&
-  supabaseAnonKey &&
+  Boolean(supabaseUrl) &&
+  Boolean(supabaseAnonKey) &&
   supabaseUrl !== 'https://your-project-id.supabase.co' &&
   supabaseAnonKey !== 'your-anon-public-key-here';
 

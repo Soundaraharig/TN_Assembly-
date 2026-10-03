@@ -24,9 +24,9 @@
     "semantic_hash": ""
   },
   "src/App.tsx": {
-    "mtime": 1791005270.1916404,
-    "seen": 1791005882.575448,
-    "ast_hash": "95c6a40648521d7e5a6f38119c0dc80d",
+    "mtime": 1790926244.9853756,
+    "seen": 1790934769.3676915,
+    "ast_hash": "ddcc627d9e059276f464cefeb8e4354d",
     "semantic_hash": ""
   },
   "src/components/admin/CreateEventModal.tsx": {
@@ -276,9 +276,9 @@
     "semantic_hash": "fa5314fe5afc9779f21497b6295a37d9"
   },
   "src/components/coordinator/ScoreGridTab.tsx": {
-    "mtime": 1791002059.5480213,
-    "seen": 1791005882.6212595,
-    "ast_hash": "20922e67d8b1e245e2ac9e11f14c01d2",
+    "mtime": 1790960232.209495,
+    "seen": 1790962237.460597,
+    "ast_hash": "dbb34878cc808426e7fc87f844fa3635",
     "semantic_hash": ""
   },
   "src/components/coordinator/TeamTab.tsx": {
@@ -294,9 +294,9 @@
     "semantic_hash": ""
   },
   "src/components/jury/JuryDashboard.tsx": {
-    "mtime": 1791005541.4958892,
-    "seen": 1791005882.6235235,
-    "ast_hash": "bd136b2780b0043d9795072683289141",
+    "mtime": 1790961953.9077892,
+    "seen": 1790962237.4608536,
+    "ast_hash": "6d5e767301911dfe91db90ccf34c3026",
     "semantic_hash": ""
   },
   "src/components/student/StudentDashboard.tsx": {
@@ -336,9 +336,9 @@
     "semantic_hash": "afa3ca0f66920661c446aba282c862ef"
   },
   "src/lib/supabase.ts": {
-    "mtime": 1791005605.516505,
-    "seen": 1791005882.6316094,
-    "ast_hash": "af761b8fc58daf42b5f830bf1d6887d3",
+    "mtime": 1790356475.1441114,
+    "seen": 1790356848.899196,
+    "ast_hash": "5c48affc67e5c5c07f955d333793540e",
     "semantic_hash": ""
   },
   "src/lib/theme.ts": {
@@ -354,9 +354,9 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1791004444.1608047,
-    "seen": 1791005882.6344118,
-    "ast_hash": "acbea4e6fe8633bdc8bce63cd55bd9af",
+    "mtime": 1790961762.8878846,
+    "seen": 1790962237.4620304,
+    "ast_hash": "7201089db59673b0804034d0407893d5",
     "semantic_hash": ""
   },
   "src/types/index.ts": {

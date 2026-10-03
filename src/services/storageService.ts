@@ -10607,7 +10607,10 @@ class StorageService {
   }
 
   public getSpeakingTurns(eventId?: string, sessionId?: string): SpeakingTurn[] {
-    const all = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+    let all = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+    if (!all || all.length === 0) {
+      all = this.getItem<SpeakingTurn[]>('tn_assembly_speaking_turns_v6' as any, []);
+    }
     return all.filter(t => (!eventId || t.event_id === eventId) && (!sessionId || t.session_id === sessionId));
   }
 
@@ -15888,6 +15891,96 @@ class StorageService {
     return evaluation;
   }
 
+  /**
+   * Safely associates existing JuryEvaluationTurn records with authoritative speaking_turns rows.
+   * Matches by (eventId, learnerId, canonicalSessionId) and chronological order.
+   * ONLY updates when the match is unambiguous.
+   */
+  public reconcileEvaluationSpeakingTurns(eventId: string): { reconciledCount: number; evaluatedLearners: number } {
+    if (!eventId) return { reconciledCount: 0, evaluatedLearners: 0 };
+    const allEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
+    const eventEvals = allEvals.filter(e => e.event_id === eventId);
+    if (!eventEvals.length) return { reconciledCount: 0, evaluatedLearners: 0 };
+
+    const allFloorTurns = this.getSpeakingTurns(eventId).filter(t => t.status !== 'CANCELLED');
+    const allEvalTurns = this.getItem<JuryEvaluationTurn[]>(STORAGE_KEYS.JURY_EVALUATION_TURNS, []);
+    const agendaItems = this.getAgenda(eventId);
+
+    let reconciledCount = 0;
+    let evalTurnsUpdated = false;
+
+    eventEvals.forEach(evaluation => {
+      // Find authoritative floor turns for this learner in this canonical session
+      const evalResolved = resolveCanonicalSession(evaluation.session_id, evaluation.session_name, agendaItems);
+      const learnerTurns = allFloorTurns
+        .filter(t => {
+          if (t.learner_id !== evaluation.learner_id) return false;
+          const turnResolved = resolveCanonicalSession(t.session_id, t.session_name, agendaItems);
+          return turnResolved.canonicalId === evalResolved.canonicalId;
+        })
+        .sort((a, b) => {
+          const tA = new Date(a.started_at || a.called_at || a.created_at || 0).getTime();
+          const tB = new Date(b.started_at || b.called_at || b.created_at || 0).getTime();
+          return tA - tB;
+        });
+
+      if (!learnerTurns.length) return;
+
+      let evalTurnList = allEvalTurns
+        .filter(t => t.evaluation_id === evaluation.id)
+        .sort((a, b) => (a.turn_number || 0) - (b.turn_number || 0));
+
+      if (evalTurnList.length === 0 && Array.isArray(evaluation.turns) && evaluation.turns.length > 0) {
+        // Hydrate from evaluation.turns if separate turn rows were not stored
+        evalTurnList = evaluation.turns.map((t, idx) => ({
+          id: (t as any).id || uid('eval_turn'),
+          evaluation_id: evaluation.id,
+          speaking_turn_id: (t as any).speaking_turn_id || (t as any).turn_id || '',
+          turn_number: t.turn_number || (idx + 1),
+          action_type: (t as any).action_type || (t as any).mode || 'CONTRIBUTION_ONLY',
+          recorded_by: (t as any).recorded_by || evaluation.jury_id,
+          recorded_by_name: (t as any).recorded_by_name || evaluation.jury_name,
+          notes: (t as any).notes || '',
+          is_test: evaluation.is_test,
+          test_run_id: evaluation.test_run_id,
+          created_at: (t as any).created_at || evaluation.created_at || new Date().toISOString()
+        }));
+        allEvalTurns.push(...evalTurnList);
+        evalTurnsUpdated = true;
+      }
+
+      evalTurnList.forEach((et, idx) => {
+        const currentTurnId = et.speaking_turn_id || (et as any).turn_id || '';
+        const isSynthetic = !currentTurnId ||
+          currentTurnId.startsWith('turn_init_') ||
+          currentTurnId.startsWith('turn_contrib_') ||
+          currentTurnId.startsWith('turn_adj_');
+
+        if (isSynthetic) {
+          // Look for matching turn by sequence_number or ordinal index
+          const candidateTurn = learnerTurns.find(lt => lt.sequence_number === et.turn_number) || learnerTurns[idx];
+          if (candidateTurn) {
+            et.speaking_turn_id = candidateTurn.id;
+            (et as any).turn_id = candidateTurn.id;
+            reconciledCount++;
+            evalTurnsUpdated = true;
+          }
+        }
+      });
+
+      // Also ensure evaluation.turns is synced
+      evaluation.turns = evalTurnList;
+    });
+
+    if (evalTurnsUpdated) {
+      this.setItem(STORAGE_KEYS.JURY_EVALUATION_TURNS, allEvalTurns);
+      this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, allEvals);
+      this.notify();
+    }
+
+    return { reconciledCount, evaluatedLearners: eventEvals.length };
+  }
+
   // ── JURY RECOGNITION / SPEECH IMPACT ENGINE ──
 
   private recognitionInFlightMap = new Map<string, Promise<{ recognition: JurySpeechRecognition; action: 'RECOGNIZED' | 'REVOKED' }>>();
@@ -15990,6 +16083,9 @@ class StorageService {
       const foreignTurn = rawTurns.find(t => t.id === speakingTurnId);
       if (foreignTurn && foreignTurn.event_id !== eventId) {
         throw new Error('Cross-event recognition rejected: turn belongs to different event.');
+      }
+      if (!foreignTurn) {
+        throw new Error('Invalid speaking turn: recognition requires an authoritative recorded speaking turn.');
       }
     }
 

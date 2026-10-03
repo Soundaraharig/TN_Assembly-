@@ -1099,7 +1099,7 @@ export function App() {
         event_id: initialSession.currentEventId || '',
         access_code: code,
         name: initialSession.name || 'Jury Evaluator',
-        assigned_bench: 'Ruling'
+        assigned_bench: (initialSession as any).assignedBench || 'Both'
       };
     }
     return null;
