@@ -192,12 +192,17 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     }
   }, [event?.id, propLearners]);
 
+  const testMode = useMemo(() => {
+    return storageService.getScoringTestMode(event?.id);
+  }, [event?.id, recogTick]);
+  const currentEnvironment = testMode.isTestMode ? 'test' : 'live';
+
   // Speaking turns for this delegate in the current canonical session
   const delegateSpeakingTurns = useMemo(() => {
     if (!event?.id || !selectedLearner) return [];
     const agendaItems = storageService.getAgenda(event.id);
     const resolved = resolveCanonicalSession(selectedSession.id, selectedSession.name, agendaItems);
-    return storageService.getSpeakingTurns(event.id)
+    return storageService.getSpeakingTurns(event.id, undefined, currentEnvironment, testMode.testRunId)
       .filter(t => {
         if (t.event_id !== event.id || t.learner_id !== selectedLearner.id || t.status === 'CANCELLED') {
           return false;
@@ -210,19 +215,19 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
         const timeB = new Date(b.started_at || b.called_at || b.created_at || 0).getTime();
         return timeA - timeB;
       });
-  }, [event?.id, selectedSession, selectedLearner, recogTick]);
+  }, [event?.id, selectedSession, selectedLearner, currentEnvironment, testMode.testRunId, recogTick]);
 
   // All speaking turns for this delegate across the event (fallback if session was recorded under general agenda)
   const allDelegateSpeakingTurns = useMemo(() => {
     if (!event?.id || !selectedLearner) return [];
-    return storageService.getSpeakingTurns(event.id)
+    return storageService.getSpeakingTurns(event.id, undefined, currentEnvironment, testMode.testRunId)
       .filter(t => t.event_id === event.id && t.learner_id === selectedLearner.id && t.status !== 'CANCELLED')
       .sort((a, b) => {
         const timeA = new Date(a.started_at || a.called_at || a.created_at || 0).getTime();
         const timeB = new Date(b.started_at || b.called_at || b.created_at || 0).getTime();
         return timeA - timeB;
       });
-  }, [event?.id, selectedLearner, recogTick]);
+  }, [event?.id, selectedLearner, currentEnvironment, testMode.testRunId, recogTick]);
 
   const effectiveDelegateTurns = delegateSpeakingTurns.length > 0 ? delegateSpeakingTurns : allDelegateSpeakingTurns;
 
@@ -237,11 +242,11 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
   // On mount: auto-select currently active floor speaker if one exists
   useEffect(() => {
     if (!event?.id) return;
-    const active = storageService.getAuthoritativeCurrentSpeaker(event.id);
+    const active = storageService.getAuthoritativeCurrentSpeaker(event.id, undefined, currentEnvironment, testMode.testRunId);
     if (active && active.status === 'SPEAKING' && active.learner_id) {
       setSelectedLearnerId(active.learner_id);
     }
-  }, [event?.id]);
+  }, [event?.id, currentEnvironment, testMode.testRunId]);
 
   useEffect(() => {
     const unsub = storageService.subscribe(() => {
@@ -251,7 +256,14 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     const handleSpeakerChanged = (evt: Event) => {
       const customEvt = evt as CustomEvent;
       const detail = customEvt?.detail;
+      const env = storageService.getScoringTestMode(event?.id);
       if (detail) {
+        if (detail.isTest !== undefined && detail.isTest !== env.isTestMode) {
+          return;
+        }
+        if (env.isTestMode && env.testRunId && detail.testRunId && detail.testRunId !== env.testRunId) {
+          return;
+        }
         if (detail.version && typeof detail.version === 'number') {
           if (detail.version < lastSpeakerVersionRef.current) {
             // Drop stale out-of-order event (Phase 19)
@@ -265,7 +277,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
         }
       } else {
         if (event?.id) {
-          const active = storageService.getAuthoritativeCurrentSpeaker(event.id);
+          const active = storageService.getAuthoritativeCurrentSpeaker(event.id, undefined, env.isTestMode ? 'test' : 'live', env.testRunId);
           if (active && active.status === 'SPEAKING' && active.learner_id) {
             setSelectedLearnerId(active.learner_id);
           }
@@ -305,15 +317,11 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     };
   }, [event?.id]);
 
-  const testMode = useMemo(() => {
-    return storageService.getScoringTestMode(event?.id);
-  }, [event?.id, recogTick]);
-
   // Floor speaking turn currently active on the floor (status === 'SPEAKING' across entire event floor)
   const activeFloorSpeakingTurn = useMemo<SpeakingTurn | null>(() => {
     if (!event?.id) return null;
-    return storageService.getAuthoritativeCurrentSpeaker(event.id);
-  }, [event?.id, recogTick]);
+    return storageService.getAuthoritativeCurrentSpeaker(event.id, undefined, currentEnvironment, testMode.testRunId);
+  }, [event?.id, currentEnvironment, testMode.testRunId, recogTick]);
 
   const activeFloorLearner = useMemo(() => {
     if (!activeFloorSpeakingTurn) return null;
@@ -325,14 +333,22 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     const map = new Map<string, number>();
     if (!event?.id || !jury) return map;
     const juryId = jury.id || jury.name || 'jury';
-    const recogs = storageService.getJurySpeechRecognitions(event.id, undefined, undefined, juryId, undefined, false);
+    const recogs = storageService.getJurySpeechRecognitions(
+      event.id,
+      undefined,
+      undefined,
+      juryId,
+      undefined,
+      false,
+      { environment: currentEnvironment, testRunId: testMode.testRunId }
+    );
     recogs.forEach(r => {
       if (r.active && r.learner_id) {
         map.set(r.learner_id, (map.get(r.learner_id) || 0) + 1);
       }
     });
     return map;
-  }, [event?.id, jury, recogTick]);
+  }, [event?.id, jury, currentEnvironment, testMode.testRunId, recogTick]);
 
   // Check recognition state for floor turn by current juror
   const floorTurnRecognition = useMemo(() => {
@@ -344,10 +360,11 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       activeFloorSpeakingTurn.id,
       juryId,
       undefined,
-      false
+      false,
+      { environment: currentEnvironment, testRunId: testMode.testRunId }
     );
     return recogs[0] || null;
-  }, [activeFloorSpeakingTurn, event?.id, jury, recogTick]);
+  }, [activeFloorSpeakingTurn, event?.id, jury, currentEnvironment, testMode.testRunId, recogTick]);
 
   const isFloorTurnRecognized = Boolean(floorTurnRecognition && floorTurnRecognition.active);
 
@@ -362,7 +379,9 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
         sessionName: turn.session_name || selectedSession.name,
         speakingTurnId: turn.id,
         juryId,
-        learnerId: turn.learner_id
+        learnerId: turn.learner_id,
+        isTest: testMode.isTestMode,
+        testRunId: testMode.testRunId || undefined
       });
       if (res.action === 'RECOGNIZED') {
         onShowToast('Speech Liked', `You liked the speech by ${turn.learner_name || 'Delegate'}.`, 'success');

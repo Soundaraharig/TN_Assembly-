@@ -61,6 +61,7 @@ import type {
   JurySpeechRecognition,
   ParticipantRecognitionSummary,
   SpeechImpactSummary,
+  RecognitionFilterOptions,
   ScoringMode,
   ScoringEnvironment
 } from '../types';
@@ -5095,23 +5096,26 @@ class StorageService {
           if (p?.eventId) {
             const allTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
             const now = new Date().toISOString();
+            const payloadIsTest = Boolean(p.isTest || (p.turn && (p.turn.is_test || (p.turn.called_by && p.turn.called_by.includes('[TEST')))));
             if (p.status === 'SPEAKING' && p.speakingTurnId) {
               const nextTurns = allTurns.map(t => {
-                if (t.event_id === p.eventId && t.id !== p.speakingTurnId && t.status === 'SPEAKING') {
+                const tIsTest = Boolean(t.is_test || (t.called_by && t.called_by.includes('[TEST')));
+                if (t.event_id === p.eventId && t.id !== p.speakingTurnId && t.status === 'SPEAKING' && tIsTest === payloadIsTest) {
                   return { ...t, status: 'SPOKEN' as SpeakingTurnStatus, completed_at: p.startedAt || now };
                 }
                 if (t.id === p.speakingTurnId) {
-                  return { ...t, status: 'SPEAKING' as SpeakingTurnStatus, started_at: p.startedAt || t.started_at || now };
+                  return { ...t, status: 'SPEAKING' as SpeakingTurnStatus, started_at: p.startedAt || t.started_at || now, is_test: payloadIsTest };
                 }
                 return t;
               });
               if (p.turn && !nextTurns.some(t => t.id === p.speakingTurnId)) {
-                nextTurns.push(p.turn);
+                nextTurns.push({ ...p.turn, is_test: payloadIsTest });
               }
               this.setItem(STORAGE_KEYS.SPEAKING_TURNS, nextTurns);
             } else if (p.status === 'IDLE' || p.status === 'SPOKEN') {
               const nextTurns = allTurns.map(t => {
-                if (t.event_id === p.eventId && t.status === 'SPEAKING') {
+                const tIsTest = Boolean(t.is_test || (t.called_by && t.called_by.includes('[TEST')));
+                if (t.event_id === p.eventId && t.status === 'SPEAKING' && (p.isTest === undefined || tIsTest === payloadIsTest)) {
                   return { ...t, status: 'SPOKEN' as SpeakingTurnStatus, completed_at: now };
                 }
                 return t;
@@ -5131,15 +5135,17 @@ class StorageService {
           const p = msg?.payload;
           if (p?.turn) {
             const turn = p.turn as SpeakingTurn;
+            const turnIsTest = Boolean(turn.is_test || (turn.called_by && turn.called_by.includes('[TEST')));
             const allTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
-            // Enforce single active speaker rule: if incoming turn is SPEAKING, close any other active turns for this event
+            // Enforce single active speaker rule per environment: only close matching test/live turns
             const nextTurns = allTurns.map(t => {
-              if (turn.status === 'SPEAKING' && t.event_id === turn.event_id && t.id !== turn.id && t.status === 'SPEAKING') {
+              const tIsTest = Boolean(t.is_test || (t.called_by && t.called_by.includes('[TEST')));
+              if (turn.status === 'SPEAKING' && t.event_id === turn.event_id && t.id !== turn.id && t.status === 'SPEAKING' && tIsTest === turnIsTest) {
                 return { ...t, status: 'SPOKEN' as SpeakingTurnStatus, completed_at: turn.started_at || new Date().toISOString() };
               }
               return t;
             }).filter(t => t.id !== turn.id);
-            nextTurns.push(turn);
+            nextTurns.push({ ...turn, is_test: turnIsTest });
             this.setItem(STORAGE_KEYS.SPEAKING_TURNS, nextTurns);
 
             if (p.requestId) {
@@ -10792,21 +10798,46 @@ class StorageService {
     return all.filter(r => (!eventId || r.event_id === eventId) && (!sessionId || r.session_id === sessionId));
   }
 
-  public getSpeakingTurns(eventId?: string, sessionId?: string): SpeakingTurn[] {
+  public getSpeakingTurns(
+    eventId?: string,
+    sessionId?: string,
+    environment?: 'live' | 'test' | 'all',
+    testRunId?: string | null
+  ): SpeakingTurn[] {
     let all = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
     if (!all || all.length === 0) {
       all = this.getItem<SpeakingTurn[]>('tn_assembly_speaking_turns_v6' as any, []);
     }
-    return all.filter(t => (!eventId || t.event_id === eventId) && (!sessionId || t.session_id === sessionId));
+    return all.filter(t => {
+      if (eventId && t.event_id !== eventId) return false;
+      if (sessionId && t.session_id !== sessionId) return false;
+
+      const isTestTurn = Boolean(t.is_test || (t.called_by && t.called_by.includes('[TEST')));
+      if (environment === 'test') {
+        if (!isTestTurn) return false;
+        if (testRunId && t.test_run_id && t.test_run_id !== testRunId) return false;
+        if (testRunId && t.called_by && t.called_by.includes('[TEST:') && !t.called_by.includes(testRunId)) return false;
+        return true;
+      }
+      if (environment === 'live') {
+        return !isTestTurn;
+      }
+      return true;
+    });
   }
 
-  public getSpeakingTurnCounts(eventId: string, currentSessionId?: string): {
+  public getSpeakingTurnCounts(
+    eventId: string,
+    currentSessionId?: string,
+    environment?: 'live' | 'test' | 'all',
+    testRunId?: string | null
+  ): {
     sessionCounts: Record<string, number>;
     totalCounts: Record<string, number>;
   } {
     const sessionCounts: Record<string, number> = {};
     const totalCounts: Record<string, number> = {};
-    const turns = this.getSpeakingTurns(eventId);
+    const turns = this.getSpeakingTurns(eventId, undefined, environment, testRunId);
 
     for (const t of turns) {
       if (t.status === 'CANCELLED') continue;
@@ -10879,6 +10910,19 @@ class StorageService {
         }
         const { data, error } = await query.order('called_at', { ascending: true });
         if (!error && data) {
+          let testTurnIdsSet = new Set<string>();
+          try {
+            const { data: evData } = await supabase
+              .from('college_events')
+              .select('social_coverage')
+              .eq('id', eventId)
+              .maybeSingle();
+            const sc = (evData?.social_coverage || {}) as Record<string, any>;
+            if (Array.isArray(sc.test_speaking_turn_ids)) {
+              sc.test_speaking_turn_ids.forEach((id: string) => testTurnIdsSet.add(id));
+            }
+          } catch {}
+
           const rawRecords = data as unknown as SpeakingTurn[];
           const records = rawRecords.map(r => {
             let isTest = r.is_test;
@@ -10889,6 +10933,9 @@ class StorageService {
               if (match && match[1] && match[1] !== 'RUN') {
                 testRunId = match[1];
               }
+            }
+            if (testTurnIdsSet.has(r.id)) {
+              isTest = true;
             }
             return {
               ...r,
@@ -11035,9 +11082,18 @@ class StorageService {
 
   private currentSpeakerLockMap = new Map<string, Promise<{ success: boolean; turn?: SpeakingTurn; error?: string }>>();
 
-  public getAuthoritativeCurrentSpeaker(eventId: string, sessionId?: string): SpeakingTurn | null {
+  public getAuthoritativeCurrentSpeaker(
+    eventId: string,
+    sessionId?: string,
+    environment?: 'live' | 'test',
+    testRunId?: string | null
+  ): SpeakingTurn | null {
     if (!eventId) return null;
-    const turns = this.getSpeakingTurns(eventId, sessionId);
+    const env = this.getScoringEnvironment(eventId);
+    const targetMode = environment || env.mode;
+    const targetRunId = testRunId !== undefined ? testRunId : (targetMode === 'test' ? env.testRunId : null);
+
+    const turns = this.getSpeakingTurns(eventId, sessionId, targetMode, targetRunId);
     const active = turns.filter(t => t.event_id === eventId && t.status === 'SPEAKING');
     if (active.length === 0) return null;
     if (active.length === 1) return active[0];
@@ -11055,6 +11111,8 @@ class StorageService {
     calledBy?: string;
     speakerAidId?: string;
     requestId?: string;
+    isTest?: boolean;
+    testRunId?: string | null;
   }): Promise<{ success: boolean; turn?: SpeakingTurn; error?: string }> {
     const { eventId, sessionId, learnerId, calledBy = 'Speaker Aid', speakerAidId, requestId } = params;
     if (!eventId || !sessionId || !learnerId) {
@@ -11088,29 +11146,33 @@ class StorageService {
         sessionName = a?.title || 'Floor Proceedings';
       }
 
-      // 1. Authoritative local storage: Close ALL currently SPEAKING turns for this event
+      // Authoritative scoring environment check
+      const env = this.getScoringEnvironment(eventId);
+      const isTest = params.isTest !== undefined ? params.isTest : env.mode === 'test';
+      const testRunId = isTest ? (params.testRunId !== undefined ? params.testRunId : env.testRunId) : null;
+
+      // 1. Authoritative local storage: Close ALL currently SPEAKING turns in the SAME environment for this event
       const allTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
       const closedTurns = allTurns.map(t => {
         if (t.event_id === eventId && t.status === 'SPEAKING') {
-          return {
-            ...t,
-            status: 'SPOKEN' as SpeakingTurnStatus,
-            completed_at: t.completed_at || now
-          };
+          const tIsTest = Boolean(t.is_test || (t.called_by && t.called_by.includes('[TEST')));
+          if (tIsTest === isTest) {
+            return {
+              ...t,
+              status: 'SPOKEN' as SpeakingTurnStatus,
+              completed_at: t.completed_at || now
+            };
+          }
         }
         return t;
       });
 
-      // 2. Compute sequence number from existing non-cancelled session turns
+      // 2. Compute sequence number from existing non-cancelled session turns in this environment
       const sessionTurns = closedTurns.filter(
-        t => t.event_id === eventId && t.session_id === sessionId && t.status !== 'CANCELLED'
+        t => t.event_id === eventId && t.session_id === sessionId && t.status !== 'CANCELLED' && Boolean(t.is_test || (t.called_by && t.called_by.includes('[TEST'))) === isTest
       );
       const nextSeq = sessionTurns.length + 1;
 
-      // Authoritative scoring environment check
-      const env = this.getScoringEnvironment(eventId);
-      const isTest = env.mode === 'test';
-      const testRunId = isTest ? (env.testRunId || null) : null;
       let effectiveCalledBy = speakerAidId || calledBy;
       if (isTest) {
         effectiveCalledBy = `${effectiveCalledBy} [TEST:${testRunId || 'RUN'}]`;
@@ -11141,7 +11203,7 @@ class StorageService {
       // Also update request if one exists
       if (requestId) {
         const allReqs = this.getItem<SpeakingRequest[]>(STORAGE_KEYS.SPEAKING_REQUESTS, []);
-        const nextReqs = allReqs.map(r => r.id === requestId ? { ...r, status: 'CALLED' as SpeakingRequestStatus, called_at: now, updated_at: now } : r);
+        const nextReqs = allReqs.map(r => r.id === requestId ? { ...r, status: 'CALLED' as SpeakingRequestStatus, called_at: now, updated_at: now, is_test: isTest, test_run_id: testRunId } : r);
         this.setItem(STORAGE_KEYS.SPEAKING_REQUESTS, nextReqs);
       }
       this.notify();
@@ -11157,12 +11219,22 @@ class StorageService {
       // 4. Persist to Supabase tables
       if (supabase && isSupabaseEnabled) {
         try {
-          // Close active turns in Supabase first
-          await supabase
-            .from('speaking_turns')
-            .update({ status: 'SPOKEN', completed_at: now })
-            .eq('event_id', eventId)
-            .eq('status', 'SPEAKING');
+          // Close active turns in Supabase for the SAME environment only
+          if (isTest) {
+            await supabase
+              .from('speaking_turns')
+              .update({ status: 'SPOKEN', completed_at: now })
+              .eq('event_id', eventId)
+              .eq('status', 'SPEAKING')
+              .like('called_by', '%[TEST%');
+          } else {
+            await supabase
+              .from('speaking_turns')
+              .update({ status: 'SPOKEN', completed_at: now })
+              .eq('event_id', eventId)
+              .eq('status', 'SPEAKING')
+              .not('called_by', 'like', '%[TEST%');
+          }
 
           if (requestId) {
             await supabase
@@ -11266,16 +11338,24 @@ class StorageService {
     eventId: string;
     sessionId?: string;
     turnId?: string;
+    isTest?: boolean;
   }): Promise<{ success: boolean; error?: string }> {
-    const { eventId, sessionId, turnId } = params;
+    const { eventId, sessionId, turnId, isTest } = params;
     const now = new Date().toISOString();
+
+    const env = this.getScoringEnvironment(eventId);
+    const targetIsTest = isTest !== undefined ? isTest : (env.mode === 'test');
 
     const allTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
     let turnToCloseId = turnId;
+    let closedTurnIsTest = targetIsTest;
 
     const nextTurns = allTurns.map(t => {
-      if (t.event_id === eventId && (t.status === 'SPEAKING' || (turnId && t.id === turnId))) {
+      const tIsTest = Boolean(t.is_test || (t.called_by && t.called_by.includes('[TEST')));
+      const matchesTarget = turnId ? t.id === turnId : (t.event_id === eventId && t.status === 'SPEAKING' && tIsTest === targetIsTest);
+      if (matchesTarget) {
         turnToCloseId = t.id;
+        closedTurnIsTest = tIsTest;
         return {
           ...t,
           status: 'SPOKEN' as SpeakingTurnStatus,
@@ -11298,6 +11378,11 @@ class StorageService {
           q = q.eq('id', turnToCloseId);
         } else {
           q = q.eq('status', 'SPEAKING');
+          if (closedTurnIsTest) {
+            q = q.like('called_by', '%[TEST%');
+          } else {
+            q = q.not('called_by', 'like', '%[TEST%');
+          }
         }
         await q;
       } catch (err) {
@@ -11321,6 +11406,7 @@ class StorageService {
       turnNumber: 0,
       status: 'IDLE',
       startedAt: null,
+      isTest: closedTurnIsTest,
       version: speakerVersion
     };
 
@@ -16442,10 +16528,15 @@ class StorageService {
     speakingTurnId?: string,
     juryId?: string,
     learnerId?: string,
-    activeOnly: boolean = true
+    activeOnly: boolean = true,
+    options?: { environment?: 'live' | 'test' | 'all'; testRunId?: string | null; isTest?: boolean }
   ): JurySpeechRecognition[] {
     const all = this.getItem<JurySpeechRecognition[]>(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, []);
     const agendaItems = eventId ? this.getAgenda(eventId) : [];
+
+    const env = eventId ? this.getScoringEnvironment(eventId) : { mode: 'live', testRunId: null };
+    const targetMode = options?.environment || (options?.isTest !== undefined ? (options.isTest ? 'test' : 'live') : (options ? env.mode : 'all'));
+    const targetRunId = options?.testRunId !== undefined ? options.testRunId : (targetMode === 'test' ? env.testRunId : null);
 
     return all.filter(r => {
       if (activeOnly && !r.active) return false;
@@ -16453,6 +16544,14 @@ class StorageService {
       if (speakingTurnId && r.speaking_turn_id !== speakingTurnId) return false;
       if (juryId && r.jury_id !== juryId) return false;
       if (learnerId && r.learner_id !== learnerId) return false;
+
+      if (targetMode === 'test') {
+        if (!r.is_test) return false;
+        if (targetRunId && r.test_run_id && r.test_run_id !== targetRunId) return false;
+      } else if (targetMode === 'live') {
+        if (r.is_test) return false;
+      }
+
       if (sessionId) {
         const targetResolved = resolveCanonicalSession(sessionId, undefined, agendaItems);
         const itemResolved = resolveCanonicalSession(r.session_id, undefined, agendaItems);
@@ -16763,25 +16862,31 @@ class StorageService {
 
   public getMostRecognizedParticipants(
     eventId: string,
-    sessionId?: string
+    sessionId?: string,
+    options?: RecognitionFilterOptions
   ): ParticipantRecognitionSummary[] {
     if (!eventId) return [];
+
+    const env = this.getScoringEnvironment(eventId);
+    const targetMode = options?.environment || (options?.isTest !== undefined ? (options.isTest ? 'test' : 'live') : (env.mode as 'live' | 'test'));
+    const targetRunId = options?.testRunId !== undefined ? options.testRunId : (targetMode === 'test' ? env.testRunId : null);
 
     const agendaItems = this.getAgenda(eventId);
     const targetSession = sessionId ? resolveCanonicalSession(sessionId, undefined, agendaItems) : null;
 
-    // Get active recognitions
+    // Get active recognitions filtered strictly by environment
     const recognitions = this.getJurySpeechRecognitions(
       eventId,
       targetSession?.canonicalId,
       undefined,
       undefined,
       undefined,
-      true
+      true,
+      { environment: targetMode, testRunId: targetRunId }
     );
 
-    // Get all non-cancelled speaking turns
-    const allTurns = this.getSpeakingTurns(eventId).filter(t => {
+    // Get non-cancelled speaking turns filtered strictly by environment
+    const allTurns = this.getSpeakingTurns(eventId, undefined, targetMode, targetRunId).filter(t => {
       if (t.status === 'CANCELLED') return false;
       if (targetSession) {
         const res = resolveCanonicalSession(t.session_id, t.session_name, agendaItems);
@@ -16816,7 +16921,7 @@ class StorageService {
       recogByLearner.get(r.learner_id)!.push(r);
     });
 
-    // Candidate set: all learners who spoke OR received recognition
+    // Candidate set: all learners who spoke OR received recognition in THIS environment
     const candidateLearnerIds = new Set<string>([
       ...recogByLearner.keys(),
       ...turnsByLearner.keys()
@@ -16865,9 +16970,14 @@ class StorageService {
 
   public getSpeechImpactSummaries(
     eventId: string,
-    sessionId?: string
+    sessionId?: string,
+    options?: RecognitionFilterOptions
   ): SpeechImpactSummary[] {
     if (!eventId) return [];
+
+    const env = this.getScoringEnvironment(eventId);
+    const targetMode = options?.environment || (options?.isTest !== undefined ? (options.isTest ? 'test' : 'live') : (env.mode as 'live' | 'test'));
+    const targetRunId = options?.testRunId !== undefined ? options.testRunId : (targetMode === 'test' ? env.testRunId : null);
 
     const agendaItems = this.getAgenda(eventId);
     const targetSession = sessionId ? resolveCanonicalSession(sessionId, undefined, agendaItems) : null;
@@ -16883,14 +16993,15 @@ class StorageService {
     const learnerMap = new Map<string, Learner>();
     learners.forEach(l => learnerMap.set(l.id, l));
 
-    // Active recognitions
+    // Active recognitions filtered strictly by environment
     const recognitions = this.getJurySpeechRecognitions(
       eventId,
       targetSession?.canonicalId,
       undefined,
       undefined,
       undefined,
-      true
+      true,
+      { environment: targetMode, testRunId: targetRunId }
     );
 
     // Group recognitions by speaking_turn_id
@@ -16902,8 +17013,8 @@ class StorageService {
       recogsByTurn.get(r.speaking_turn_id)!.push(r);
     });
 
-    // Speaking turns
-    const allTurns = this.getSpeakingTurns(eventId).filter(t => {
+    // Speaking turns filtered strictly by environment
+    const allTurns = this.getSpeakingTurns(eventId, undefined, targetMode, targetRunId).filter(t => {
       if (t.status === 'CANCELLED') return false;
       if (targetSession) {
         const res = resolveCanonicalSession(t.session_id, t.session_name, agendaItems);
@@ -17079,21 +17190,29 @@ class StorageService {
   public getSessionLeaderboard(
     eventId: string,
     sessionId: string,
-    options?: { includeTestTurns?: boolean }
+    options?: { environment?: 'live' | 'test'; testRunId?: string | null; includeTestTurns?: boolean }
   ): SessionLeaderboardRow[] {
     if (!eventId || !sessionId) return [];
 
+    const env = this.getScoringEnvironment(eventId);
+    const targetMode = options?.environment || env.mode;
+    const targetRunId = options?.testRunId !== undefined ? options.testRunId : (targetMode === 'test' ? env.testRunId : null);
+
     const agendaItems = this.getAgenda(eventId);
     const targetSession = resolveCanonicalSession(sessionId, undefined, agendaItems);
-    const evals = this.getJuryEvaluations(eventId, targetSession.canonicalId).filter(e => !e.is_test);
+    const evals = this.getJuryEvaluations(eventId, targetSession.canonicalId, undefined, undefined, targetMode === 'test')
+      .filter(e => {
+        if (targetMode === 'test') {
+          return e.is_test === true && (!targetRunId || e.test_run_id === targetRunId);
+        }
+        return !e.is_test && !this.isTestScore(e as any);
+      });
     const learners = this.getLearners(eventId);
     const learnerMap = new Map<string, Learner>();
     learners.forEach(l => learnerMap.set(l.id, l));
 
-    const speakingTurns = this.getSpeakingTurns(eventId).filter(t => {
+    const speakingTurns = this.getSpeakingTurns(eventId, undefined, targetMode, targetRunId).filter(t => {
       const res = resolveCanonicalSession(t.session_id, t.session_name, agendaItems);
-      const isTestTurn = t.is_test || !!t.test_run_id || (t.called_by && t.called_by.includes('[TEST'));
-      if (options?.includeTestTurns !== true && isTestTurn) return false;
       return res.canonicalId === targetSession.canonicalId && t.status !== 'CANCELLED';
     });
 
@@ -17231,15 +17350,22 @@ class StorageService {
     return rows;
   }
 
-  public getOverallLeaderboard(eventId: string): OverallLeaderboardRow[] {
+  public getOverallLeaderboard(
+    eventId: string,
+    options?: { environment?: 'live' | 'test'; testRunId?: string | null }
+  ): OverallLeaderboardRow[] {
     if (!eventId) return [];
+
+    const env = this.getScoringEnvironment(eventId);
+    const targetMode = options?.environment || env.mode;
+    const targetRunId = options?.testRunId !== undefined ? options.testRunId : (targetMode === 'test' ? env.testRunId : null);
 
     const canonicalSessions = this.getScoringSessions(eventId);
     const learners = this.getLearners(eventId);
     const learnerMap = new Map<string, Learner>();
     learners.forEach(l => learnerMap.set(l.id, l));
 
-    const speakingTurns = this.getSpeakingTurns(eventId).filter(t => t.status !== 'CANCELLED');
+    const speakingTurns = this.getSpeakingTurns(eventId, undefined, targetMode, targetRunId).filter(t => t.status !== 'CANCELLED');
     const speakingCountsByLearner = new Map<string, number>();
     speakingTurns.forEach(st => {
       if (st.learner_id) {
@@ -17257,7 +17383,7 @@ class StorageService {
     }>>();
 
     canonicalSessions.forEach(session => {
-      const sessionRows = this.getSessionLeaderboard(eventId, session.id);
+      const sessionRows = this.getSessionLeaderboard(eventId, session.id, { environment: targetMode, testRunId: targetRunId });
       sessionRows.forEach(row => {
         if (row.sessionScore > 0 || row.jurorCount > 0) {
           if (!learnerSessionScores.has(row.learnerId)) {
@@ -17434,6 +17560,8 @@ class StorageService {
     const snapshotAdjs = this.getItem<JuryEvaluationAdjustment[]>(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, []);
     const snapshotRecogs = this.getItem<JurySpeechRecognition[]>(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, []);
     const snapshotScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
+    const snapshotFloorTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+    const snapshotRequests = this.getItem<SpeakingRequest[]>(STORAGE_KEYS.SPEAKING_REQUESTS, []);
     const snapshotBackup = typeof localStorage !== 'undefined' ? localStorage.getItem(`tn_assembly_scores_${eventId}`) : null;
     const snapshotEvents = this.getItem<CollegeEvent[]>(STORAGE_KEYS.EVENTS, []);
 
@@ -17444,6 +17572,8 @@ class StorageService {
         this.setItem(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, snapshotAdjs);
         this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, snapshotRecogs);
         this.setItem(STORAGE_KEYS.SCORES, snapshotScores);
+        this.setItem(STORAGE_KEYS.SPEAKING_TURNS, snapshotFloorTurns);
+        this.setItem(STORAGE_KEYS.SPEAKING_REQUESTS, snapshotRequests);
         if (typeof localStorage !== 'undefined') {
           if (snapshotBackup !== null) {
             localStorage.setItem(`tn_assembly_scores_${eventId}`, snapshotBackup);
@@ -17491,12 +17621,7 @@ class StorageService {
 
       const allRecogs = snapshotRecogs;
       const testRecogs = allRecogs.filter(r =>
-        r.event_id === eventId && (
-          r.is_test === true ||
-          (options?.testRunId ? r.test_run_id === options.testRunId : r.test_run_id != null) ||
-          testEvalLearnerIds.has(r.learner_id) ||
-          this.isTestScore({ id: r.id, learner_id: r.learner_id, jury_id: r.jury_id } as any)
-        )
+        r.event_id === eventId && isTargetTestRecord(r)
       );
       const remainingRecogs = allRecogs.filter(r => !testRecogs.some(tr => tr.id === r.id));
       this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, remainingRecogs);
@@ -17533,8 +17658,8 @@ class StorageService {
         }
       }
 
-      // ── 5. CLEAN TEST SPEAKING TURNS FROM LOCAL STORAGE & SUPABASE ──
-      const allFloorTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+      // ── 5. CLEAN TEST SPEAKING TURNS & REQUESTS FROM LOCAL STORAGE & SUPABASE ──
+      const allFloorTurns = snapshotFloorTurns;
       const isTargetTestTurn = (t: SpeakingTurn): boolean => {
         if (t.event_id !== eventId) return false;
         if (options?.testRunId) {
@@ -17550,14 +17675,53 @@ class StorageService {
       const remainingFloorTurns = allFloorTurns.filter(t => !isTargetTestTurn(t));
       this.setItem(STORAGE_KEYS.SPEAKING_TURNS, remainingFloorTurns);
 
-      if (supabase && isSupabaseEnabled && testFloorTurns.length > 0) {
-        try {
-          const testTurnIds = testFloorTurns.map(t => t.id);
-          await supabase.from('speaking_turns').delete().in('id', testTurnIds).eq('event_id', eventId);
-        } catch (turnErr) {
-          console.warn('[resetTestScores] Error deleting test speaking turns:', turnErr);
+      const allFloorReqs = snapshotRequests;
+      const isTargetTestReq = (r: SpeakingRequest): boolean => {
+        if (r.event_id !== eventId) return false;
+        if (options?.testRunId) {
+          return r.test_run_id === options.testRunId;
+        }
+        return r.is_test === true || r.test_run_id != null;
+      };
+      const testFloorReqs = allFloorReqs.filter(isTargetTestReq);
+      const remainingFloorReqs = allFloorReqs.filter(r => !isTargetTestReq(r));
+      this.setItem(STORAGE_KEYS.SPEAKING_REQUESTS, remainingFloorReqs);
+
+      if (supabase && isSupabaseEnabled) {
+        if (testFloorTurns.length > 0) {
+          try {
+            const testTurnIds = testFloorTurns.map(t => t.id);
+            await supabase.from('speaking_turns').delete().in('id', testTurnIds).eq('event_id', eventId);
+          } catch (turnErr) {
+            console.warn('[resetTestScores] Error deleting test speaking turns:', turnErr);
+          }
+        }
+        if (testFloorReqs.length > 0) {
+          try {
+            const testReqIds = testFloorReqs.map(r => r.id);
+            await supabase.from('speaking_requests').delete().in('id', testReqIds).eq('event_id', eventId);
+          } catch (reqErr) {
+            console.warn('[resetTestScores] Error deleting test speaking requests:', reqErr);
+          }
         }
       }
+
+      // Clear active TEST current speaker in memory / local state
+      if (typeof localStorage !== 'undefined') {
+        try {
+          localStorage.removeItem(`tn_assembly_current_speaker_test_${eventId}`);
+        } catch {}
+      }
+      this.broadcast('current_speaker_changed', {
+        type: 'current_speaker_changed',
+        eventId,
+        speakingTurnId: null,
+        learnerId: null,
+        learnerName: null,
+        status: 'IDLE',
+        isTest: true,
+        testRunId: options?.testRunId || null
+      }).catch(() => {});
 
       // ── 6. CLEAN LEGACY social_coverage.scores & jury_speech_recognitions IN SUPABASE ──
       let remoteScores: ScoreRecord[] = [];
@@ -17590,6 +17754,9 @@ class StorageService {
         const curTestTurnIds = Array.isArray(remoteSC.test_speaking_turn_ids) ? remoteSC.test_speaking_turn_ids : [];
         const remainingTestTurnIds = curTestTurnIds.filter((tid: string) => !testFloorTurns.some(t => t.id === tid));
 
+        const curSpeakingReqs = Array.isArray(remoteSC.speaking_requests) ? (remoteSC.speaking_requests as SpeakingRequest[]) : [];
+        const remainingSpeakingReqs = curSpeakingReqs.filter(r => !isTargetTestReq(r));
+
         // Audit Logging (Required by Section 4)
         console.log(`[StorageService.resetTestScores] Event ID: ${eventId}`);
         console.log(`[StorageService.resetTestScores] Legacy score count before: ${remoteScores.length}`);
@@ -17598,12 +17765,13 @@ class StorageService {
         console.log(`[StorageService.resetTestScores] Test recognitions before: ${remoteTestRecogs.length}`);
         console.log(`[StorageService.resetTestScores] Test floor turns before: ${testFloorTurns.length}`);
 
-        if (remoteTestScores.length > 0 || remoteTestRecogs.length > 0 || testFloorTurns.length > 0) {
+        if (remoteTestScores.length > 0 || remoteTestRecogs.length > 0 || testFloorTurns.length > 0 || testFloorReqs.length > 0) {
           const updatedSC = {
             ...remoteSC,
             scores: remoteRealScores,
             jury_speech_recognitions: remoteRealRecogs,
             test_speaking_turn_ids: remainingTestTurnIds,
+            speaking_requests: remainingSpeakingReqs,
             updated_at: new Date().toISOString()
           };
 
@@ -17669,12 +17837,16 @@ class StorageService {
           const sc = (ev.social_coverage || {}) as Record<string, any>;
           const curScScores = Array.isArray(sc.scores) ? (sc.scores as ScoreRecord[]) : [];
           const curScRecogs = Array.isArray(sc.jury_speech_recognitions) ? (sc.jury_speech_recognitions as JurySpeechRecognition[]) : [];
+          const curScTurns = Array.isArray(sc.test_speaking_turn_ids) ? sc.test_speaking_turn_ids : [];
+          const curScReqs = Array.isArray(sc.speaking_requests) ? (sc.speaking_requests as SpeakingRequest[]) : [];
           return {
             ...ev,
             social_coverage: {
               ...sc,
               scores: curScScores.filter(s => !isTargetTestRecord(s)),
-              jury_speech_recognitions: curScRecogs.filter(r => !isTargetTestRecord(r))
+              jury_speech_recognitions: curScRecogs.filter(r => !isTargetTestRecord(r)),
+              test_speaking_turn_ids: curScTurns.filter((tid: string) => !testFloorTurns.some(t => t.id === tid)),
+              speaking_requests: curScReqs.filter(r => !isTargetTestReq(r))
             }
           };
         }
@@ -17736,6 +17908,17 @@ class StorageService {
       rollbackLocalState();
       throw err;
     }
+  }
+
+  public async resetTestRun(eventId: string, testRunId?: string): Promise<{
+    success: boolean;
+    deletedCount: number;
+    remainingRealCount: number;
+    deletedTurnsCount?: number;
+    deletedAdjustmentsCount?: number;
+    deletedRecognitionsCount?: number;
+  }> {
+    return this.resetTestScores(eventId, { testRunId });
   }
 
   public resetScores(eventId?: string) {
@@ -18221,6 +18404,14 @@ class StorageService {
     const newRunId = `TEST-${new Date().toISOString().slice(0, 10)}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
     await this.setScoringEnvironment(eventId, { mode: 'test', testRunId: newRunId }, initiatorName);
 
+    // Close any active test turns and broadcast IDLE for test mode
+    await this.endAuthoritativeCurrentSpeaker({ eventId, isTest: true }).catch(() => {});
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.removeItem(`tn_assembly_current_speaker_test_${eventId}`);
+      } catch {}
+    }
+
     // Clear only current user's local drafts for this event
     if (typeof localStorage !== 'undefined') {
       try {
@@ -18408,26 +18599,55 @@ class StorageService {
       };
     }
     const testMode = this.getScoringTestMode(eventId);
+    const activeRunId = testMode.testRunId;
+
     const evals = this.getJuryEvaluations(eventId, undefined, undefined, undefined, true);
     const turns = this.getItem<JuryEvaluationTurn[]>(STORAGE_KEYS.JURY_EVALUATION_TURNS, []);
     const adjs = this.getItem<JuryEvaluationAdjustment[]>(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, []);
-    const recogs = this.getJurySpeechRecognitions(eventId, undefined, undefined, undefined, undefined, false);
+    const recogs = this.getJurySpeechRecognitions(eventId, undefined, undefined, undefined, undefined, false, { environment: 'all' });
 
-    const testEvalIds = new Set(evals.filter(e => e.is_test || this.isTestScore(e as any)).map(e => e.id));
+    // When testRunId is set, filter test counts strictly to the active run
+    const isTargetTestEval = (e: JuryEvaluation) => {
+      if (!e.is_test && !this.isTestScore(e as any)) return false;
+      if (activeRunId) {
+        return e.test_run_id === activeRunId || (!e.test_run_id && e.is_test);
+      }
+      return true;
+    };
+
+    const testEvals = evals.filter(isTargetTestEval);
+    const testEvalIds = new Set(testEvals.map(e => e.id));
     const realEvals = evals.filter(e => !e.is_test && !this.isTestScore(e as any));
 
-    const testTurns = turns.filter(t => t.is_test || testEvalIds.has(t.evaluation_id));
+    const testTurns = turns.filter(t => {
+      if (activeRunId) return t.test_run_id === activeRunId || testEvalIds.has(t.evaluation_id);
+      return t.is_test || testEvalIds.has(t.evaluation_id);
+    });
     const realTurns = turns.filter(t => !t.is_test && !testEvalIds.has(t.evaluation_id));
 
-    const testAdjs = adjs.filter(a => a.is_test || testEvalIds.has(a.evaluation_id));
+    const testAdjs = adjs.filter(a => {
+      if (activeRunId) return a.test_run_id === activeRunId || testEvalIds.has(a.evaluation_id);
+      return a.is_test || testEvalIds.has(a.evaluation_id);
+    });
     const realAdjs = adjs.filter(a => !a.is_test && !testEvalIds.has(a.evaluation_id));
 
-    const testRecogs = recogs.filter(r => r.is_test || (r.test_run_id != null));
-    const realRecogs = recogs.filter(r => !r.is_test && (r.test_run_id == null));
+    const testRecogs = recogs.filter(r => {
+      if (!r.is_test && r.test_run_id == null) return false;
+      if (activeRunId) return r.test_run_id === activeRunId || (r.is_test && !r.test_run_id);
+      return true;
+    });
+    const realRecogs = recogs.filter(r => !r.is_test && r.test_run_id == null);
 
-    const floorTurns = this.getSpeakingTurns(eventId);
-    const testFloorTurns = floorTurns.filter(t => t.is_test || !!t.test_run_id || (t.called_by && t.called_by.includes('[TEST')));
-    const liveFloorTurns = floorTurns.filter(t => !testFloorTurns.some(tf => tf.id === t.id));
+    const floorTurns = this.getSpeakingTurns(eventId, undefined, 'all');
+    const testFloorTurns = floorTurns.filter(t => {
+      const isTestTurn = t.is_test || !!t.test_run_id || (t.called_by && t.called_by.includes('[TEST'));
+      if (!isTestTurn) return false;
+      if (activeRunId) {
+        return t.test_run_id === activeRunId || (t.called_by && t.called_by.includes(`[TEST:${activeRunId}]`)) || (!t.test_run_id && t.is_test);
+      }
+      return true;
+    });
+    const liveFloorTurns = floorTurns.filter(t => !t.is_test && !t.test_run_id && !(t.called_by && t.called_by.includes('[TEST')));
 
     return {
       testData: {

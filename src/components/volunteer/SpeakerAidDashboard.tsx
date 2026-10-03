@@ -60,14 +60,23 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
     };
   }, [sessions, selectedSessionId]);
 
+  const [envTick, setEnvTick] = useState(0);
+  const testMode = useMemo(() => {
+    return storageService.getScoringTestMode(eventId);
+  }, [eventId, envTick]);
+  const isTestMode = testMode.isTestMode;
+  const activeTestRunId = testMode.testRunId;
+
   // Active speaking turn
   const [activeSpeakerTurn, setActiveSpeakerTurn] = useState<SpeakingTurn | null>(() => {
-    return storageService.getAuthoritativeCurrentSpeaker(eventId, selectedSessionId);
+    const tm = storageService.getScoringTestMode(eventId);
+    return storageService.getAuthoritativeCurrentSpeaker(eventId, selectedSessionId, tm.isTestMode ? 'test' : 'live', tm.testRunId);
   });
 
   // Recent speaking turns log
   const [turnsLog, setTurnsLog] = useState<SpeakingTurn[]>(() => {
-    return storageService.getSpeakingTurns(eventId).slice(-15).reverse();
+    const tm = storageService.getScoringTestMode(eventId);
+    return storageService.getSpeakingTurns(eventId, undefined, tm.isTestMode ? 'test' : 'live', tm.testRunId).slice(-15).reverse();
   });
 
   // Fast Search and Selection State
@@ -83,10 +92,13 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
 
   // Sync state with storageService
   const refreshFloorState = () => {
-    const active = storageService.getAuthoritativeCurrentSpeaker(eventId, selectedSessionId);
+    const tm = storageService.getScoringTestMode(eventId);
+    const mode = tm.isTestMode ? 'test' : 'live';
+    const active = storageService.getAuthoritativeCurrentSpeaker(eventId, selectedSessionId, mode, tm.testRunId);
     setActiveSpeakerTurn(active);
-    const all = storageService.getSpeakingTurns(eventId);
+    const all = storageService.getSpeakingTurns(eventId, undefined, mode, tm.testRunId);
     setTurnsLog(all.slice(-15).reverse());
+    setEnvTick(t => t + 1);
   };
 
   useEffect(() => {
@@ -99,12 +111,20 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
 
     window.addEventListener('tn_assembly_current_speaker_changed', handleSpeakerChanged);
     window.addEventListener('tn_assembly_speaking_turn_update', handleSpeakerChanged);
+    window.addEventListener('tn_assembly_speaking_update', handleSpeakerChanged);
+    window.addEventListener('tn_assembly_scoring_environment_update', handleSpeakerChanged);
+    window.addEventListener('tn_assembly_test_mode_update', handleSpeakerChanged);
+    window.addEventListener('tn_assembly_jury_scoring_reset', handleSpeakerChanged);
     window.addEventListener('storage', handleSpeakerChanged);
 
     return () => {
       unsub();
       window.removeEventListener('tn_assembly_current_speaker_changed', handleSpeakerChanged);
       window.removeEventListener('tn_assembly_speaking_turn_update', handleSpeakerChanged);
+      window.removeEventListener('tn_assembly_speaking_update', handleSpeakerChanged);
+      window.removeEventListener('tn_assembly_scoring_environment_update', handleSpeakerChanged);
+      window.removeEventListener('tn_assembly_test_mode_update', handleSpeakerChanged);
+      window.removeEventListener('tn_assembly_jury_scoring_reset', handleSpeakerChanged);
       window.removeEventListener('storage', handleSpeakerChanged);
     };
   }, [eventId, selectedSessionId]);
@@ -146,7 +166,9 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
         const nameMatches = l.full_name?.toLowerCase().includes(q);
         const constNameMatches = l.constituency_name?.toLowerCase().includes(q);
         const partyMatches = l.party_name?.toLowerCase().includes(q);
-        return constMatches || nameMatches || constNameMatches || partyMatches;
+        const rollMatches = l.roll_no ? l.roll_no.toLowerCase().includes(q) : false;
+        const seatMatches = (l as any).seat_number ? String((l as any).seat_number).toLowerCase().includes(q) : false;
+        return constMatches || nameMatches || constNameMatches || partyMatches || rollMatches || seatMatches;
       }
       return true;
     });
@@ -157,13 +179,16 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
     if (isStartingTurn) return;
     setIsStartingTurn(true);
     try {
+      const tm = storageService.getScoringTestMode(eventId);
       const res = await storageService.setAuthoritativeCurrentSpeaker({
         eventId,
         sessionId: selectedSession.id,
         sessionName: selectedSession.name,
         learnerId: learner.id,
         learnerName: learner.full_name,
-        calledBy: volunteer?.name ? `Speaker Aid (${volunteer.name})` : 'Speaker Aid'
+        calledBy: volunteer?.name ? `Speaker Aid (${volunteer.name})` : 'Speaker Aid',
+        isTest: tm.isTestMode,
+        testRunId: tm.testRunId
       });
 
       if (res.success && res.turn) {
@@ -189,10 +214,12 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
     if (isFinishingTurn || !activeSpeakerTurn) return;
     setIsFinishingTurn(true);
     try {
+      const tm = storageService.getScoringTestMode(eventId);
       const res = await storageService.endAuthoritativeCurrentSpeaker({
         eventId,
         sessionId: activeSpeakerTurn.session_id,
-        turnId: activeSpeakerTurn.id
+        turnId: activeSpeakerTurn.id,
+        isTest: tm.isTestMode
       });
       if (res.success) {
         setActiveSpeakerTurn(null);
@@ -282,6 +309,28 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
           )}
         </div>
       </header>
+
+      {/* Test / Live Mode Banner */}
+      <div className={`px-4 sm:px-6 py-2.5 border-b flex flex-wrap items-center justify-between gap-2 text-xs font-bold ${
+        isTestMode
+          ? 'bg-amber-500/15 border-amber-500/30 text-amber-900 dark:text-amber-200'
+          : 'bg-emerald-500/10 border-emerald-500/25 text-emerald-900 dark:text-emerald-200'
+      }`}>
+        <div className="flex items-center gap-2.5">
+          <span className={`w-2.5 h-2.5 rounded-full ${isTestMode ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'}`}></span>
+          <span className="uppercase tracking-wider font-black">
+            {isTestMode ? '🟠 TEST SPEAKER AID' : '🟢 LIVE SPEAKER AID'}
+          </span>
+          {isTestMode && activeTestRunId && (
+            <span className="font-mono text-[11px] px-2.5 py-0.5 rounded-md bg-amber-500/20 text-amber-950 dark:text-amber-100 border border-amber-500/40 font-bold">
+              CURRENT TEST RUN: {activeTestRunId}
+            </span>
+          )}
+        </div>
+        <span className="text-[11px] font-medium opacity-85">
+          {isTestMode ? 'Speaking turns in test mode are completely isolated from production' : 'Official live assembly floor proceedings'}
+        </span>
+      </div>
 
       {/* Main Console Container */}
       <main className="flex-1 max-w-4xl w-full mx-auto p-4 sm:p-6 space-y-5">
@@ -530,7 +579,7 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
                           className="px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:bg-rose-600 dark:hover:bg-rose-600 hover:text-white dark:hover:text-white transition active:scale-95 cursor-pointer shadow-xs flex items-center gap-1.5 disabled:opacity-50"
                         >
                           <Play className="w-3.5 h-3.5 fill-current" />
-                          <span>START SPEAKING</span>
+                          <span>SELECT & START</span>
                         </button>
                       )}
                     </div>

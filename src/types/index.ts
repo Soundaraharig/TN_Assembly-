@@ -974,6 +974,8 @@ export interface SpeakingRequest {
   called_at?: string;
   resolved_at?: string;
   resolved_by?: string;
+  is_test?: boolean;
+  test_run_id?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -1064,4 +1066,10 @@ export interface SpeechImpactSummary {
     note?: string | null;
     createdAt: string;
   }>;
+}
+
+export interface RecognitionFilterOptions {
+  environment?: 'live' | 'test' | 'all';
+  testRunId?: string | null;
+  isTest?: boolean;
 }

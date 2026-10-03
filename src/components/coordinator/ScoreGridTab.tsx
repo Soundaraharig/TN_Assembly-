@@ -243,7 +243,10 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   // VIEW: Session Leaderboard
   // ──────────────────────────────────────────────────────────────────────────
   const sessionLeaderboardRows = useMemo(() => {
-    const rows = storageService.getSessionLeaderboard(eventId, activeSessionId);
+    const rows = storageService.getSessionLeaderboard(eventId, activeSessionId, {
+      environment: testMode.isTestMode ? 'test' : 'live',
+      testRunId: testMode.testRunId
+    });
     return rows.filter(r => {
       // Participant status filter
       if (selectedParticipantStatus !== 'ALL') {
@@ -281,7 +284,10 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
     selectedAdjustmentFilter,
     searchQuery,
     learnerMap,
-    eventScores
+    eventScores,
+    testMode.isTestMode,
+    testMode.testRunId,
+    auditTick
   ]);
 
   const displayedSessionLeaderboardRows = useMemo(() => {
@@ -295,7 +301,10 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   // VIEW: Overall Leaderboard
   // ──────────────────────────────────────────────────────────────────────────
   const overallLeaderboardRows = useMemo(() => {
-    const rows = storageService.getOverallLeaderboard(eventId);
+    const rows = storageService.getOverallLeaderboard(eventId, {
+      environment: testMode.isTestMode ? 'test' : 'live',
+      testRunId: testMode.testRunId
+    });
     return rows.filter(r => {
       // Participant status filter
       if (selectedParticipantStatus !== 'ALL') {
@@ -325,7 +334,10 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
     selectedBenchFilter,
     searchQuery,
     learnerMap,
-    eventScores
+    eventScores,
+    testMode.isTestMode,
+    testMode.testRunId,
+    auditTick
   ]);
 
   const displayedOverallLeaderboardRows = useMemo(() => {
@@ -372,7 +384,11 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   const mostRecognizedParticipants = useMemo(() => {
     const raw = storageService.getMostRecognizedParticipants(
       eventId,
-      selectedSessionFilter !== 'ALL' ? selectedSessionFilter : undefined
+      selectedSessionFilter !== 'ALL' ? selectedSessionFilter : undefined,
+      {
+        environment: testMode.isTestMode ? 'test' : 'live',
+        testRunId: testMode.testRunId
+      }
     );
     return raw.filter(p => {
       // Participant status filter
@@ -404,13 +420,20 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
     selectedBenchFilter,
     searchQuery,
     learnerMap,
-    recogTick
+    recogTick,
+    testMode.isTestMode,
+    testMode.testRunId,
+    auditTick
   ]);
 
   const speechImpactSummaries = useMemo(() => {
     const raw = storageService.getSpeechImpactSummaries(
       eventId,
-      selectedSessionFilter !== 'ALL' ? selectedSessionFilter : undefined
+      selectedSessionFilter !== 'ALL' ? selectedSessionFilter : undefined,
+      {
+        environment: testMode.isTestMode ? 'test' : 'live',
+        testRunId: testMode.testRunId
+      }
     );
     return raw.filter(s => {
       // Participant status filter
@@ -453,7 +476,10 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
     recogFilterTurn,
     searchQuery,
     learnerMap,
-    recogTick
+    recogTick,
+    testMode.isTestMode,
+    testMode.testRunId,
+    auditTick
   ]);
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -1528,10 +1554,11 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
               <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 block">
                 PRODUCTION
               </span>
-              <div className="grid grid-cols-3 gap-2 text-slate-700 dark:text-slate-300 font-medium">
+              <div className="grid grid-cols-4 gap-2 text-slate-700 dark:text-slate-300 font-medium">
                 <div>Evaluations: <strong className="font-mono text-emerald-600 dark:text-emerald-400">{auditData.realData.evaluations || realScoresCount}</strong></div>
                 <div>Recognitions: <strong className="font-mono text-emerald-600 dark:text-emerald-400">{auditData.realData.recognitions}</strong></div>
                 <div>Adjustments: <strong className="font-mono text-emerald-600 dark:text-emerald-400">{auditData.realData.adjustments}</strong></div>
+                <div>Turns: <strong className="font-mono text-emerald-600 dark:text-emerald-400">{auditData.realData.liveFloorTurns || 0}</strong></div>
               </div>
             </div>
 
@@ -1542,10 +1569,10 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
                 </span>
               </div>
               <div className="grid grid-cols-4 gap-2 text-slate-700 dark:text-slate-300 font-medium">
-                <div>Evals: <strong className="font-mono text-rose-500">{auditData.testData.evaluations || testScoresCount}</strong></div>
+                <div>Evals: <strong className="font-mono text-rose-500">{auditData.testData.evaluations}</strong></div>
                 <div>Recogs: <strong className="font-mono text-amber-500">{auditData.testData.recognitions}</strong></div>
                 <div>Adjs: <strong className="font-mono text-slate-600 dark:text-slate-400">{auditData.testData.adjustments}</strong></div>
-                <div>Turns: <strong className="font-mono text-slate-600 dark:text-slate-400">{auditData.testData.testFloorTurns || auditData.testData.turns}</strong></div>
+                <div>Turns: <strong className="font-mono text-slate-600 dark:text-slate-400">{auditData.testData.testFloorTurns || 0}</strong></div>
               </div>
             </div>
 
@@ -2988,7 +3015,7 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
                 <div>
                   <span className="text-slate-400 block text-[10px]">Test Evaluations:</span>
                   <span className="font-mono font-black text-rose-500 text-sm">
-                    {auditData.testData.evaluations || testScoresCount}
+                    {auditData.testData.evaluations}
                   </span>
                 </div>
                 <div>
@@ -3000,7 +3027,7 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
                 <div>
                   <span className="text-slate-400 block text-[10px]">Test Speaking Turns:</span>
                   <span className="font-mono font-bold text-slate-700 dark:text-slate-300">
-                    {auditData.testData.testFloorTurns || auditData.testData.turns}
+                    {auditData.testData.testFloorTurns || 0}
                   </span>
                 </div>
                 <div>
