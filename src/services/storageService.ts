@@ -10815,6 +10815,7 @@ class StorageService {
       const isTestTurn = Boolean(t.is_test || (t.called_by && t.called_by.includes('[TEST')));
       if (environment === 'test') {
         if (!isTestTurn) return false;
+        if (t.called_by && t.called_by.includes('[TEST:PURGED')) return false;
         if (testRunId && t.test_run_id && t.test_run_id !== testRunId) return false;
         if (testRunId && t.called_by && t.called_by.includes('[TEST:') && !t.called_by.includes(testRunId)) return false;
         return true;
@@ -17692,6 +17693,15 @@ class StorageService {
           try {
             const testTurnIds = testFloorTurns.map(t => t.id);
             await supabase.from('speaking_turns').delete().in('id', testTurnIds).eq('event_id', eventId);
+            // In case Supabase RLS policy prevents anon DELETE on speaking_turns, also update status and mark as PURGED
+            await supabase
+              .from('speaking_turns')
+              .update({
+                status: 'CANCELLED',
+                called_by: `[TEST:PURGED_${options?.testRunId || 'ALL'}]`
+              })
+              .in('id', testTurnIds)
+              .eq('event_id', eventId);
           } catch (turnErr) {
             console.warn('[resetTestScores] Error deleting test speaking turns:', turnErr);
           }
@@ -18642,6 +18652,7 @@ class StorageService {
     const testFloorTurns = floorTurns.filter(t => {
       const isTestTurn = t.is_test || !!t.test_run_id || (t.called_by && t.called_by.includes('[TEST'));
       if (!isTestTurn) return false;
+      if (t.called_by && t.called_by.includes('[TEST:PURGED')) return false;
       if (activeRunId) {
         return t.test_run_id === activeRunId || (t.called_by && t.called_by.includes(`[TEST:${activeRunId}]`)) || (!t.test_run_id && t.is_test);
       }
