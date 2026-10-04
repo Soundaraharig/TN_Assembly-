@@ -38,6 +38,7 @@ import type {
   EventDeadline,
   EventAgendaProgress,
   ProceedingsQuestion,
+  QuestionEditAuditEntry,
   ProceedingsMotion,
   SecurityAuditLog,
   ProjectorStudioSettings,
@@ -207,7 +208,8 @@ import {
   resolveCanonicalEventId as resolveCanonicalEventIdUtil,
   logQuestionAuthDiagnostic,
   canFinalApproveQuestions,
-  canUseSpeakerAid
+  canUseSpeakerAid,
+  canEditProceedingsQuestion
 } from '../utils/permissions';
 import { saveAudioConfigToIDB, getAudioConfigFromIDB } from '../utils/audioStorage';
 
@@ -5963,10 +5965,12 @@ class StorageService {
             mergedStatus = localCanonical || remoteCanonical || q.status;
           }
 
-          // Full text preservation: never truncate or lose Tamil / English question text
-          const bestText = (q.question_text && q.question_text.length >= (existing.question_text || '').length)
-            ? q.question_text
-            : (existing.question_text || q.question_text);
+          // Full text preservation: if local is newer, local text wins; otherwise preserve longest
+          const bestText = localT > remoteT
+            ? (q.question_text || existing.question_text)
+            : ((existing.question_text && existing.question_text.length >= (q.question_text || '').length)
+                ? existing.question_text
+                : (q.question_text || existing.question_text));
 
           pqMap.set(q.id, {
             ...(localT >= remoteT ? q : existing),
@@ -20938,6 +20942,218 @@ class StorageService {
           console.warn('[updateProceedingsQuestionStatus] Verification check warning:', vErr);
         }
       }
+    }
+
+    return { success: true, question: updatedQ };
+  }
+
+  public async updateProceedingsQuestion(
+    questionId: string,
+    updates: {
+      ministry: string;
+      question_text?: string;
+      bench?: 'Ruling' | 'Opposition';
+    },
+    userContext?: {
+      role?: string;
+      volunteer?: Volunteer;
+      name?: string;
+      email?: string;
+      activeEventId?: string;
+      actorEventId?: string;
+      assignedEventIds?: string[];
+    }
+  ): Promise<{ success: boolean; question?: ProceedingsQuestion; error?: string }> {
+    const list: ProceedingsQuestion[] = this.getItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+    const targetQ = list.find(q => q.id === questionId);
+    if (!targetQ) {
+      return { success: false, error: 'Question not found.' };
+    }
+
+    const actorRole = userContext?.role || (userContext?.volunteer ? (userContext.volunteer.role || userContext.volunteer.volunteer_type) : undefined);
+    if (!canEditProceedingsQuestion(actorRole, userContext)) {
+      return {
+        success: false,
+        error: 'Unauthorized: Only administrators are permitted to edit Question Hour questions.'
+      };
+    }
+
+    const trimmedMinistry = (updates.ministry || '').trim();
+    if (!trimmedMinistry) {
+      return {
+        success: false,
+        error: 'Target Ministry is required and cannot be empty.'
+      };
+    }
+
+    const targetEventId = targetQ.event_id || userContext?.activeEventId;
+    const actorName = userContext?.name || 'Administrator';
+    const resolvedRole = userContext?.role || 'admin';
+    const now = new Date().toISOString();
+
+    const changes: string[] = [];
+    const auditEntries: QuestionEditAuditEntry[] = targetQ.edit_history ? [...targetQ.edit_history] : [];
+
+    if (trimmedMinistry !== targetQ.ministry) {
+      auditEntries.push({
+        timestamp: now,
+        admin_id: userContext?.volunteer?.id,
+        admin_name: actorName,
+        admin_role: resolvedRole,
+        field: 'Target Ministry',
+        old_value: targetQ.ministry || 'None',
+        new_value: trimmedMinistry
+      });
+      changes.push(`Target Ministry changed from "${targetQ.ministry}" to "${trimmedMinistry}"`);
+    }
+
+    const trimmedText = updates.question_text !== undefined ? updates.question_text.trim() : undefined;
+    if (trimmedText !== undefined && trimmedText !== targetQ.question_text) {
+      auditEntries.push({
+        timestamp: now,
+        admin_id: userContext?.volunteer?.id,
+        admin_name: actorName,
+        admin_role: resolvedRole,
+        field: 'Question Text',
+        old_value: targetQ.question_text ? targetQ.question_text.substring(0, 50) : '',
+        new_value: trimmedText.substring(0, 50)
+      });
+      changes.push('Question text updated');
+    }
+
+    if (updates.bench && updates.bench !== targetQ.bench) {
+      auditEntries.push({
+        timestamp: now,
+        admin_id: userContext?.volunteer?.id,
+        admin_name: actorName,
+        admin_role: resolvedRole,
+        field: 'Bench',
+        old_value: targetQ.bench,
+        new_value: updates.bench
+      });
+      changes.push(`Bench changed from "${targetQ.bench}" to "${updates.bench}"`);
+    }
+
+    // Status, ID, question_number, calling_order, and student identifiers are strictly preserved
+    const updatedQ: ProceedingsQuestion = {
+      ...targetQ,
+      status: targetQ.status,
+      ministry: trimmedMinistry,
+      target_ministry_name: trimmedMinistry,
+      target_ministry_id: trimmedMinistry,
+      target: trimmedMinistry,
+      target_name: trimmedMinistry,
+      question_text: trimmedText !== undefined ? trimmedText : targetQ.question_text,
+      bench: updates.bench || targetQ.bench,
+      updated_at: now,
+      last_edited_by: actorName,
+      last_edited_at: now,
+      edit_history: auditEntries
+    };
+
+    // 1. Update local storage
+    const updatedList = list.map(q => q.id === questionId ? updatedQ : q);
+    this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, updatedList);
+
+    if (targetEventId) {
+      const evPQs = this.getItem<ProceedingsQuestion[]>(`tn_assembly_proceedings_questions_${targetEventId}`, []);
+      this.setItem(`tn_assembly_proceedings_questions_${targetEventId}`, evPQs.map(q => q.id === questionId ? updatedQ : q));
+    }
+
+    // 2. Update event social_coverage cache
+    const allEvs = this.getEvents();
+    const matched = findEventBySlug(allEvs, targetEventId) || allEvs.find(e => e.id === targetEventId);
+    const syncId = matched?.id || targetEventId;
+
+    if (matched) {
+      const sc = (matched.social_coverage || {}) as Record<string, any>;
+      const curPQs = Array.isArray(sc.proceedings_questions) ? sc.proceedings_questions : [];
+      if (!curPQs.some((q: any) => q.id === questionId)) {
+        sc.proceedings_questions = [...curPQs, updatedQ];
+      } else {
+        sc.proceedings_questions = curPQs.map((q: any) => q.id === questionId ? updatedQ : q);
+      }
+      sc.questions = sc.proceedings_questions;
+
+      // Update in official_approved_questions if approved
+      if (Array.isArray(sc.official_approved_questions)) {
+        sc.official_approved_questions = sc.official_approved_questions.map((q: any) => q.id === questionId ? updatedQ : q);
+      }
+
+      matched.social_coverage = sc;
+      this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
+    }
+
+    // 3. Security Audit Logging
+    if (targetEventId) {
+      this.logAudit({
+        event_id: targetEventId,
+        action: 'QUESTION_EDITED',
+        actor_role: resolvedRole,
+        actor_name: actorName,
+        details: `Question #${targetQ.question_number || questionId} edited by ${actorName} (${resolvedRole}): ${changes.join('; ') || 'No changes'}`
+      });
+    }
+
+    // 4. Remote Supabase Persistence (Immediate, non-delayed write)
+    if (syncId && isSupabaseEnabled && supabase) {
+      try {
+        await this.syncEventStateToSupabase(syncId, true);
+        await this.updateQuestionSnapshot(syncId).catch(() => {});
+      } catch (err: any) {
+        console.error('[Supabase] updateProceedingsQuestion sync error:', err);
+        // Rollback local state
+        this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, list);
+        return {
+          success: false,
+          question: targetQ,
+          error: err?.message || 'Failed to persist question edits to remote database.'
+        };
+      }
+
+      // 5. Authoritative read-after-write verification
+      try {
+        const { data: verifyEv, error: verifyErr } = await supabase
+          .from('college_events')
+          .select('id, social_coverage')
+          .eq('id', syncId)
+          .maybeSingle();
+
+        if (!verifyErr && verifyEv?.social_coverage) {
+          const vSC = verifyEv.social_coverage as Record<string, any>;
+          const vPQs: any[] = Array.isArray(vSC.proceedings_questions) ? vSC.proceedings_questions : [];
+          const remoteVerifiedQ = vPQs.find(q => q.id === questionId);
+          if (!remoteVerifiedQ || remoteVerifiedQ.ministry !== updatedQ.ministry) {
+            console.warn('[updateProceedingsQuestion] Verification check mismatch; re-patching social_coverage...');
+            const patchedPQs = vPQs.map(q => q.id === questionId ? updatedQ : q);
+            await this.patchSocialCoverageSafe(syncId, {
+              proceedings_questions: patchedPQs,
+              questions: patchedPQs,
+              official_approved_questions: Array.isArray(vSC.official_approved_questions)
+                ? vSC.official_approved_questions.map((q: any) => q.id === questionId ? updatedQ : q)
+                : undefined
+            });
+          }
+        }
+      } catch (vErr) {
+        console.warn('[updateProceedingsQuestion] Verification check warning:', vErr);
+      }
+    }
+
+    // 6. Realtime Broadcast & Local Dispatch
+    this.notify();
+    if (targetEventId) {
+      this.broadcast('question_update', {
+        eventId: targetEventId,
+        question: updatedQ,
+        action: 'edited'
+      }).catch(() => {});
+    }
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tn_assembly_proceedings_question_update', { detail: { eventId: targetEventId, question: updatedQ } }));
+      window.dispatchEvent(new CustomEvent('tn_assembly_question_update', { detail: { eventId: targetEventId, question: updatedQ } }));
+      window.dispatchEvent(new Event('storage'));
     }
 
     return { success: true, question: updatedQ };

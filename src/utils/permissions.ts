@@ -89,6 +89,54 @@ export function canFinalApproveQuestions(role?: UserRole | string, volunteerType
 }
 
 /**
+ * Checks if the user role has administrative permission to edit Question Hour questions
+ * (Target Ministry, Question Text, Bench).
+ * Authorized: Super Admin, Admin, Coordinator, Organiser.
+ * Strictly prohibited: Students, Jury, Ordinary Volunteers, Journalists, Floor Staff.
+ */
+export function canEditProceedingsQuestion(role?: UserRole | string, session?: any | null): boolean {
+  if (!role && !session) return false;
+  const normalizedRole = ((role || session?.role || '') as string).toLowerCase().trim();
+  const email = ((session?.email || '') as string).toLowerCase().trim();
+
+  // Explicitly prohibited roles
+  if (
+    normalizedRole === 'student' ||
+    normalizedRole === 'learner' ||
+    normalizedRole === 'jury' ||
+    normalizedRole === 'speaker'
+  ) {
+    return false;
+  }
+
+  // Normal volunteers cannot edit unless they are designated Administrator volunteers
+  if (normalizedRole === 'volunteer') {
+    const volType = ((session?.volunteerType || session?.volunteer?.volunteer_type || session?.volunteer?.role || '') as string).toLowerCase().trim();
+    if (volType !== 'administrator' && volType !== 'admin') {
+      return false;
+    }
+  }
+
+  // Permitted administrative roles
+  if (
+    normalizedRole === 'super_admin' ||
+    normalizedRole === 'superadmin' ||
+    normalizedRole === 'coordinator' ||
+    normalizedRole === 'organiser' ||
+    normalizedRole === 'administrator' ||
+    normalizedRole === 'admin' ||
+    email.includes('admin') ||
+    email.includes('superadmin') ||
+    email.includes('coordinator') ||
+    email.includes('organiser')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Checks if the user has access to review student parliamentary questions in the approval queue.
  * Authorized roles:
  * - Super Admin, Admin, and Coordinator (Main Admin)

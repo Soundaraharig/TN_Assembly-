@@ -24,6 +24,7 @@ import {
   Lock,
   Unlock,
   Eye,
+  Edit3,
   ArrowUpDown,
   Copy,
   CheckCircle2,
@@ -33,6 +34,8 @@ import {
 } from 'lucide-react';
 import { ArrangeQuestionOrderModal } from './ArrangeQuestionOrderModal';
 import { SubmissionListModal, type SubmittedMemberRecord } from './SubmissionListModal';
+import { EditQuestionModal } from './EditQuestionModal';
+import { canEditProceedingsQuestion } from '../../utils/permissions';
 import { isLearnerQuestion, isLearnerQuestionMatch, areNamesMatching } from '../../utils/memberIdentity';
 import { filterProceedingsQuestions } from '../../utils/questionUtils';
 
@@ -71,9 +74,12 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
   const [motions, setMotions] = useState<ProceedingsMotion[]>(() => storageService.getProceedingsMotions(authoritativeEventId || eventSlug || ''));
   const [isTogglingDeadline, setIsTogglingDeadline] = useState(false);
   const [selectedQuestion, setSelectedQuestion] = useState<ProceedingsQuestion | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingQuestion, setEditingQuestion] = useState<ProceedingsQuestion | null>(null);
   const [isArrangeOrderOpen, setIsArrangeOrderOpen] = useState(false);
   const [updatingQuestionId, setUpdatingQuestionId] = useState<string | null>(null);
   const [updatingActionStatus, setUpdatingActionStatus] = useState<string | null>(null);
+  const canEdit = canEditProceedingsQuestion(userRole || userSession?.role, userSession);
 
   // Filters
   const [statusFilter, setStatusFilter] = useState<'All' | 'Submitted' | 'Under Review' | 'Approved' | 'Starred' | 'Rejected'>('All');
@@ -1543,6 +1549,20 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                                   <Eye className="w-3.5 h-3.5 stroke-2" />
                                 </button>
 
+                                {canEdit && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingQuestion(q);
+                                      setIsEditModalOpen(true);
+                                    }}
+                                    title="Edit Question / Target Ministry"
+                                    className="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500 hover:text-white text-amber-600 dark:text-amber-400 transition-all duration-200 cursor-pointer flex items-center justify-center"
+                                  >
+                                    <Edit3 className="w-3.5 h-3.5 stroke-2" />
+                                  </button>
+                                )}
+
                                 <button
                                   type="button"
                                   disabled={Boolean(updatingQuestionId)}
@@ -1708,6 +1728,19 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                           >
                             <Eye className="w-3 h-3" /> View
                           </button>
+                          {canEdit && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingQuestion(q);
+                                setIsEditModalOpen(true);
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold text-xs flex items-center gap-1 cursor-pointer"
+                              title="Edit Question / Target Ministry"
+                            >
+                              <Edit3 className="w-3 h-3" /> Edit
+                            </button>
+                          )}
                           <button
                             type="button"
                             disabled={Boolean(updatingQuestionId)}
@@ -2087,6 +2120,22 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                     </button>
 
                     <div className="flex items-center gap-2">
+                      {canEdit && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const qToEdit = selectedQuestion;
+                            setSelectedQuestion(null);
+                            setEditingQuestion(qToEdit);
+                            setIsEditModalOpen(true);
+                          }}
+                          className="px-3.5 py-2 rounded-xl text-xs font-bold border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500 hover:text-white text-amber-600 dark:text-amber-400 transition-colors cursor-pointer flex items-center gap-1.5"
+                          title="Edit Question / Target Ministry"
+                        >
+                          <Edit3 className="w-4 h-4 stroke-2" />
+                          <span>Edit Question</span>
+                        </button>
+                      )}
                       <button
                         type="button"
                         disabled={Boolean(updatingQuestionId)}
@@ -2673,6 +2722,32 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
         initialTab={submissionModalTab}
         onShowToast={onShowToast}
       />
+
+      {/* Edit Question Modal */}
+      {isEditModalOpen && editingQuestion && (
+        <EditQuestionModal
+          isOpen={isEditModalOpen}
+          question={editingQuestion}
+          eventId={authoritativeEventId || eventId}
+          availableMinistries={availableMinistries}
+          userSession={userSession}
+          userRole={userRole}
+          onClose={() => {
+            setIsEditModalOpen(false);
+            setEditingQuestion(null);
+          }}
+          onSuccess={(updatedQuestion) => {
+            setIsEditModalOpen(false);
+            setEditingQuestion(null);
+            setQuestions(prev => prev.map(q => q.id === updatedQuestion.id ? updatedQuestion : q));
+            if (selectedQuestion && selectedQuestion.id === updatedQuestion.id) {
+              setSelectedQuestion(updatedQuestion);
+            }
+            refreshData();
+          }}
+          onShowToast={onShowToast}
+        />
+      )}
 
     </div>
   );

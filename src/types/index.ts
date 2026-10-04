@@ -721,6 +721,19 @@ export interface ProceedingsQuestion {
   reviewer_role?: string;
   rejection_reason?: string;
   seat_number?: string;
+  last_edited_by?: string;
+  last_edited_at?: string;
+  edit_history?: QuestionEditAuditEntry[];
+}
+
+export interface QuestionEditAuditEntry {
+  timestamp: string;
+  admin_id?: string;
+  admin_name: string;
+  admin_role: string;
+  field: string;
+  old_value: string;
+  new_value: string;
 }
 
 export interface QuestionSnapshot {
