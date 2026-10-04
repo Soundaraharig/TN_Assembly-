@@ -38,11 +38,18 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
   const eventId = event?.id || '';
 
   // Effective learners list
-  const learners = useMemo(() => {
+  const [internalLearners, setInternalLearners] = useState<Learner[]>(() => {
     if (propLearners && propLearners.length > 0) return propLearners;
     if (eventId) return storageService.getLearners(eventId);
     return [];
-  }, [propLearners, eventId]);
+  });
+
+  const learners = useMemo(() => {
+    if (propLearners && propLearners.length > 0) return propLearners;
+    if (internalLearners.length > 0) return internalLearners;
+    if (eventId) return storageService.getLearners(eventId);
+    return [];
+  }, [propLearners, internalLearners, eventId]);
 
   // Available sessions
   const sessions = useMemo<ScoringSession[]>(() => {
@@ -113,6 +120,14 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
       storageService.fetchSpeakingTurns(eventId).then(() => {
         refreshFloorState();
       }).catch(() => {});
+      const cur = storageService.getLearners(eventId);
+      if (cur.length === 0) {
+        storageService.fetchPaginatedLearners(eventId, { limit: 500 }).then(res => {
+          if (res.data && res.data.length > 0) {
+            setInternalLearners(res.data);
+          }
+        }).catch(() => {});
+      }
     }
   }, [eventId]);
 

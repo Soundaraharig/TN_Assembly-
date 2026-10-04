@@ -354,19 +354,29 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   const [recogTick, setRecogTick] = useState<number>(0);
 
   useEffect(() => {
-    // 1. Fetch authoritative speaking turns & jury recognitions on mount
+    // 1. Fetch authoritative scoring environment, speaking turns & jury recognitions on mount
     if (eventId) {
+      storageService.syncScoringEnvironment(eventId).then(() => {
+        setTestMode(storageService.getScoringTestMode(eventId));
+        setRecogTick(t => t + 1);
+        setAuditTick(t => t + 1);
+      }).catch(() => {});
       storageService.fetchSpeakingTurns(eventId).then(() => { setRecogTick(t => t + 1); setAuditTick(t => t + 1); }).catch(() => {});
       storageService.fetchJurySpeechRecognitions(eventId).then(() => { setRecogTick(t => t + 1); setAuditTick(t => t + 1); }).catch(() => {});
     }
 
     const unsub = storageService.subscribe(() => { setRecogTick(t => t + 1); setAuditTick(t => t + 1); });
-    const handleRecogUpdate = () => { setRecogTick(t => t + 1); setAuditTick(t => t + 1); };
+    const handleRecogUpdate = () => {
+      setTestMode(storageService.getScoringTestMode(eventId));
+      setRecogTick(t => t + 1);
+      setAuditTick(t => t + 1);
+    };
     if (typeof window !== 'undefined') {
       window.addEventListener('tn_assembly_jury_recognition_update', handleRecogUpdate);
       window.addEventListener('tn_assembly_current_speaker_changed', handleRecogUpdate);
       window.addEventListener('tn_assembly_speaking_turn_update', handleRecogUpdate);
       window.addEventListener('tn_assembly_speaking_update', handleRecogUpdate);
+      window.addEventListener('tn_assembly_scoring_environment_update', handleRecogUpdate);
       window.addEventListener('storage', handleRecogUpdate);
     }
     return () => {
@@ -376,6 +386,7 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
         window.removeEventListener('tn_assembly_current_speaker_changed', handleRecogUpdate);
         window.removeEventListener('tn_assembly_speaking_turn_update', handleRecogUpdate);
         window.removeEventListener('tn_assembly_speaking_update', handleRecogUpdate);
+        window.removeEventListener('tn_assembly_scoring_environment_update', handleRecogUpdate);
         window.removeEventListener('storage', handleRecogUpdate);
       }
     };
@@ -1179,7 +1190,7 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
       auditData.testData.adjustments +
       (auditData.testData.testFloorTurns || 0);
 
-    if (currentTestCount === 0 && testScoresCount === 0) {
+    if (currentTestCount === 0 && testScoresCount === 0 && !testMode.isTestMode) {
       onShowToast(
         'No Test Data Found',
         `No test scores, recognitions, or test turns found for this event. Real production data is completely protected.`,
@@ -1410,7 +1421,7 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
           <button
             type="button"
             onClick={handleOpenResetTestModal}
-            disabled={isDeletingTestScores || (auditData.testData.evaluations === 0 && auditData.testData.recognitions === 0 && auditData.testData.turns === 0 && (auditData.testData.testFloorTurns || 0) === 0 && testScoresCount === 0)}
+            disabled={isDeletingTestScores || (!testMode.isTestMode && auditData.testData.evaluations === 0 && auditData.testData.recognitions === 0 && auditData.testData.turns === 0 && (auditData.testData.testFloorTurns || 0) === 0 && testScoresCount === 0)}
             className="px-3 py-1.5 rounded-xl font-bold text-xs border flex items-center gap-1.5 transition cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
             title="Safely remove test/demo score records without deleting real production scores"
           >

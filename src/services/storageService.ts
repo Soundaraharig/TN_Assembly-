@@ -16861,44 +16861,28 @@ class StorageService {
 
       // 2. Persist to Supabase if configured (dedicated table with social_coverage fallback)
       if (supabase && isSupabaseEnabled) {
-        supabase
-          .from('jury_speech_recognitions')
-          .upsert({
-            id: record.id,
-            event_id: record.event_id,
-            session_id: record.session_id,
-            speaking_turn_id: record.speaking_turn_id,
-            jury_id: record.jury_id,
-            learner_id: record.learner_id,
-            active: record.active,
-            note: record.note,
-            revoked_at: record.revoked_at || null,
-            updated_at: record.updated_at
-          }, { onConflict: 'event_id,speaking_turn_id,jury_id' })
-          .then(() => {}, async () => {
-            const sb = supabase;
-            if (!sb) return;
-            try {
-              const { data: evData } = await sb
-                .from('college_events')
-                .select('social_coverage')
-                .eq('id', eventId)
-                .maybeSingle();
-              const sc = (evData?.social_coverage || {}) as Record<string, any>;
-              const curRecogs = Array.isArray(sc.jury_speech_recognitions) ? sc.jury_speech_recognitions : [];
-              const updatedRecogs = [...curRecogs.filter((r: any) => !(r.event_id === record.event_id && r.speaking_turn_id === record.speaking_turn_id && r.jury_id === record.jury_id)), record];
-              await sb
-                .from('college_events')
-                .update({
-                  social_coverage: {
-                    ...sc,
-                    jury_speech_recognitions: updatedRecogs,
-                    updated_at: now
-                  }
-                })
-                .eq('id', eventId);
-            } catch {}
-          });
+        try {
+          const { data: evData } = await supabase
+            .from('college_events')
+            .select('social_coverage')
+            .eq('id', eventId)
+            .maybeSingle();
+          const sc = (evData?.social_coverage || {}) as Record<string, any>;
+          const curRecogs = Array.isArray(sc.jury_speech_recognitions) ? sc.jury_speech_recognitions : [];
+          const updatedRecogs = [...curRecogs.filter((r: any) => !(r.event_id === record.event_id && r.speaking_turn_id === record.speaking_turn_id && r.jury_id === record.jury_id)), record];
+          await supabase
+            .from('college_events')
+            .update({
+              social_coverage: {
+                ...sc,
+                jury_speech_recognitions: updatedRecogs,
+                updated_at: now
+              }
+            })
+            .eq('id', eventId);
+        } catch (scErr) {
+          console.warn('[toggleJurySpeechRecognition] Error persisting to social_coverage:', scErr);
+        }
       }
 
       // 3. Compact realtime broadcast
@@ -18387,7 +18371,32 @@ class StorageService {
     if (!eventId) {
       return { mode: 'live', testRunId: null };
     }
-    // 1. Check event's remote/cached social_coverage first
+
+    // 1. Check dedicated localStorage cache first
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const cachedStr = localStorage.getItem(`${STORAGE_KEYS.SCORING_ENVIRONMENT}_${eventId}`);
+        if (cachedStr) {
+          const cached = JSON.parse(cachedStr);
+          if (cached && (cached.mode === 'test' || cached.mode === 'live')) {
+            return {
+              mode: cached.mode,
+              testRunId: cached.mode === 'test' ? (cached.testRunId || null) : null,
+              updated_at: cached.updated_at,
+              updated_by: cached.updated_by
+            };
+          }
+        }
+        // Fallback to legacy keys if present
+        const isTestMode = localStorage.getItem(`${STORAGE_KEYS.JURY_TEST_MODE}_${eventId}`) === 'true';
+        const testRunId = localStorage.getItem(`${STORAGE_KEYS.CURRENT_TEST_RUN_ID}_${eventId}`);
+        if (isTestMode !== undefined && (isTestMode || testRunId)) {
+          return { mode: isTestMode ? 'test' : 'live', testRunId: isTestMode ? testRunId : null };
+        }
+      } catch {}
+    }
+
+    // 2. Check event's remote/cached social_coverage
     const event = this.getEvents().find(e => e.id === eventId);
     const sc = (event?.social_coverage || {}) as Record<string, any>;
     if (sc.scoring_environment && (sc.scoring_environment.mode === 'test' || sc.scoring_environment.mode === 'live')) {
@@ -18409,30 +18418,6 @@ class StorageService {
         } catch {}
       }
       return remoteEnv;
-    }
-
-    // 2. Check dedicated localStorage cache
-    if (typeof localStorage !== 'undefined') {
-      try {
-        const cachedStr = localStorage.getItem(`${STORAGE_KEYS.SCORING_ENVIRONMENT}_${eventId}`);
-        if (cachedStr) {
-          const cached = JSON.parse(cachedStr);
-          if (cached && (cached.mode === 'test' || cached.mode === 'live')) {
-            return {
-              mode: cached.mode,
-              testRunId: cached.mode === 'test' ? (cached.testRunId || null) : null,
-              updated_at: cached.updated_at,
-              updated_by: cached.updated_by
-            };
-          }
-        }
-        // Fallback to legacy keys if present
-        const isTestMode = localStorage.getItem(`${STORAGE_KEYS.JURY_TEST_MODE}_${eventId}`) === 'true';
-        const testRunId = localStorage.getItem(`${STORAGE_KEYS.CURRENT_TEST_RUN_ID}_${eventId}`);
-        if (isTestMode && testRunId) {
-          return { mode: 'test', testRunId };
-        }
-      } catch {}
     }
 
     return { mode: 'live', testRunId: null };
