@@ -1,4 +1,4 @@
-import type { UserRole } from '../types';
+import type { UserRole, Volunteer } from '../types';
 
 /**
  * Checks if the current user role has permission to delete data
@@ -112,6 +112,121 @@ export function canReviewQuestions(role?: UserRole | string, volunteerType?: str
   }
   return false;
 }
+
+/**
+ * Authoritative permission check for Speaker Aid Floor Control.
+ *
+ * ONLY a specifically designated Speaker Aid volunteer may have access.
+ * Strictly returns false for:
+ * - Super Admin, Admin, Administrator
+ * - Coordinator, Organiser
+ * - Journalist (including Press / Question Reviewers)
+ * - Jury, Student
+ * - Normal Volunteers (Floating, Attendance, Registration, Kiosks, YUVA, etc.)
+ * - Unauthenticated users
+ */
+export function isSpeakerAidVolunteer(
+  volunteer?: Volunteer | null,
+  role?: UserRole | string,
+  userSession?: any
+): boolean {
+  if (!volunteer && !userSession) return false;
+
+  const rawRole = (
+    role ||
+    userSession?.role ||
+    volunteer?.role ||
+    ''
+  ).toLowerCase().trim();
+
+  // Strict exclusion: Non-volunteer roles must NEVER access Speaker Aid
+  if (
+    rawRole === 'super_admin' ||
+    rawRole === 'superadmin' ||
+    rawRole === 'admin' ||
+    rawRole === 'administrator' ||
+    rawRole === 'coordinator' ||
+    rawRole === 'organiser' ||
+    rawRole === 'jury' ||
+    rawRole === 'student'
+  ) {
+    return false;
+  }
+
+  // Strict exclusion: Journalist / Press / Media roles must NEVER access Speaker Aid
+  const rawType = (
+    volunteer?.volunteer_type ||
+    userSession?.volunteerType ||
+    userSession?.volunteerRole ||
+    ''
+  ).toLowerCase().trim();
+
+  if (
+    rawRole === 'journalist' ||
+    rawType === 'journalist' ||
+    rawType.includes('journalist') ||
+    rawType.includes('press') ||
+    rawType.includes('media')
+  ) {
+    return false;
+  }
+
+  // Strict exclusion: Administrator volunteer types must NEVER access Speaker Aid
+  if (rawType === 'administrator' || rawType === 'admin' || rawType.includes('admin')) {
+    return false;
+  }
+
+  // Must be in volunteer domain
+  if (rawRole !== 'volunteer' && rawRole !== '') {
+    return false;
+  }
+
+  // Authoritative Speaker Aid Discriminator:
+  const station = (
+    volunteer?.station ||
+    userSession?.station ||
+    userSession?.volunteerStation ||
+    ''
+  ).toLowerCase().trim();
+
+  const vRole = (
+    volunteer?.role ||
+    userSession?.volunteerRole ||
+    ''
+  ).toLowerCase().trim();
+
+  const vType = (
+    volunteer?.volunteer_type ||
+    userSession?.volunteerType ||
+    ''
+  ).toLowerCase().trim();
+
+  const isDesignatedStation =
+    station === "now speaking (speaker's aide)".toLowerCase() ||
+    station.includes("speaker's aide") ||
+    station.includes("speaker aid") ||
+    station.includes("now speaking");
+
+  const isDesignatedRole =
+    vRole === 'speaker aid' ||
+    vRole === 'speaker_aid' ||
+    vType === 'speaker aid' ||
+    vType === 'speaker_aid';
+
+  return isDesignatedStation || isDesignatedRole;
+}
+
+/**
+ * Authoritative alias for isSpeakerAidVolunteer
+ */
+export function canUseSpeakerAid(
+  volunteer?: Volunteer | null,
+  role?: UserRole | string,
+  userSession?: any
+): boolean {
+  return isSpeakerAidVolunteer(volunteer, role, userSession);
+}
+
 
 export interface AuthorizationActor {
   role?: string;

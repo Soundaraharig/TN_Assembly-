@@ -11,11 +11,13 @@ import {
   Volume2,
   RefreshCw,
   X,
-  Play
+  Play,
+  ShieldAlert
 } from 'lucide-react';
 import type { Volunteer, Learner, CollegeEvent, ScoringSession, SpeakingTurn } from '../../types';
 import { storageService } from '../../services/storageService';
 import { useTheme } from '../../lib/theme';
+import { canUseSpeakerAid } from '../../utils/permissions';
 
 interface SpeakerAidDashboardProps {
   volunteer?: Volunteer | null;
@@ -101,6 +103,19 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
     setEnvTick(t => t + 1);
   };
 
+  // Mount effect: connect realtime sync, fetch cloud speaking turns & sync scoring environment
+  useEffect(() => {
+    if (eventId) {
+      storageService.setupRealtimeSync(eventId);
+      storageService.syncScoringEnvironment(eventId).then(() => {
+        refreshFloorState();
+      }).catch(() => {});
+      storageService.fetchSpeakingTurns(eventId).then(() => {
+        refreshFloorState();
+      }).catch(() => {});
+    }
+  }, [eventId]);
+
   useEffect(() => {
     refreshFloorState();
     const unsub = storageService.subscribe(refreshFloorState);
@@ -163,19 +178,67 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
         const q = searchQuery.toLowerCase().trim();
         const constNumStr = l.constituency_number !== undefined && l.constituency_number !== null ? String(l.constituency_number) : '';
         const constMatches = constNumStr === q || constNumStr.includes(q) || `#${constNumStr}`.includes(q);
-        const nameMatches = l.full_name?.toLowerCase().includes(q);
-        const constNameMatches = l.constituency_name?.toLowerCase().includes(q);
-        const partyMatches = l.party_name?.toLowerCase().includes(q);
-        const rollMatches = l.roll_no ? l.roll_no.toLowerCase().includes(q) : false;
-        const seatMatches = (l as any).seat_number ? String((l as any).seat_number).toLowerCase().includes(q) : false;
-        return constMatches || nameMatches || constNameMatches || partyMatches || rollMatches || seatMatches;
+        const nameMatches = l.full_name ? l.full_name.toLowerCase().includes(q) : false;
+        const constNameMatches = l.constituency_name ? l.constituency_name.toLowerCase().includes(q) : false;
+        const partyMatches = l.party_name ? l.party_name.toLowerCase().includes(q) : false;
+        const codeMatches = l.access_code ? l.access_code.toLowerCase().includes(q) : false;
+        return constMatches || nameMatches || constNameMatches || partyMatches || codeMatches;
       }
       return true;
     });
   }, [learners, benchFilter, searchQuery]);
 
+  // Active Speaker details
+  const activeLearner = useMemo(() => {
+    if (!activeSpeakerTurn) return null;
+    return learners.find(l => l.id === activeSpeakerTurn.learner_id);
+  }, [activeSpeakerTurn, learners]);
+
+  // Authoritative operational role check: ONLY genuine Speaker Aid may access this dashboard
+  const isAuthorized = canUseSpeakerAid(volunteer, 'volunteer', null);
+
+  if (!isAuthorized) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6" style={{ backgroundColor: 'var(--bg-base)' }}>
+        <div
+          className="max-w-md w-full rounded-3xl p-8 border shadow-2xl text-center space-y-4"
+          style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+        >
+          <div className="w-16 h-16 mx-auto rounded-2xl bg-rose-500/10 flex items-center justify-center text-rose-500 border border-rose-500/20 shadow-inner">
+            <ShieldAlert className="w-8 h-8" />
+          </div>
+          <div className="space-y-1">
+            <h2 className="text-xl font-black text-rose-600 tracking-tight">Access Restricted</h2>
+            <p className="text-xs uppercase tracking-widest font-bold text-slate-500 dark:text-slate-400">
+              Speaker Aid Console
+            </p>
+          </div>
+          <p className="text-sm text-slate-400 leading-relaxed">
+            This operational console is strictly reserved for designated Speaker Aid volunteers.
+            Your current assignment ({volunteer?.station || volunteer?.volunteer_type || volunteer?.role || 'Unauthorized'}) does not have permission to control the assembly floor.
+          </p>
+          <div className="pt-2">
+            <button
+              onClick={() => {
+                if (onLogout) {
+                  onLogout();
+                } else if (typeof window !== 'undefined') {
+                  window.location.href = '/join';
+                }
+              }}
+              className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-all cursor-pointer shadow-md"
+            >
+              Return to Login / Join
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // Handle speaker selection (1-click fast operation)
   const handleSelectSpeaker = async (learner: Learner) => {
+    if (!isAuthorized) return;
     if (isStartingTurn) return;
     setIsStartingTurn(true);
     try {
@@ -211,6 +274,7 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
 
   // Handle finish speech
   const handleFinishSpeech = async () => {
+    if (!isAuthorized) return;
     if (isFinishingTurn || !activeSpeakerTurn) return;
     setIsFinishingTurn(true);
     try {
@@ -240,11 +304,6 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
     }
   };
 
-  // Active Speaker details
-  const activeLearner = useMemo(() => {
-    if (!activeSpeakerTurn) return null;
-    return learners.find(l => l.id === activeSpeakerTurn.learner_id);
-  }, [activeSpeakerTurn, learners]);
 
   return (
     <div className="min-h-screen font-sans flex flex-col" style={{ backgroundColor: 'var(--bg-base)', color: 'var(--text-primary)' }}>

@@ -206,7 +206,8 @@ import {
   verifyQuestionReviewAuthorization,
   resolveCanonicalEventId as resolveCanonicalEventIdUtil,
   logQuestionAuthDiagnostic,
-  canFinalApproveQuestions
+  canFinalApproveQuestions,
+  canUseSpeakerAid
 } from '../utils/permissions';
 import { saveAudioConfigToIDB, getAudioConfigFromIDB } from '../utils/audioStorage';
 
@@ -11103,6 +11104,46 @@ class StorageService {
     return active[0];
   }
 
+  public isAuthorizedForSpeakerAid(calledBy?: string, speakerAidId?: string, isInternal?: boolean): boolean {
+    if (isInternal) return true;
+    if (typeof localStorage === 'undefined') return true;
+    try {
+      const raw = localStorage.getItem('tn_assembly_auth_session');
+      if (!raw) {
+        if (calledBy && (calledBy.includes('Test Reset') || calledBy.includes('Migration') || calledBy.includes('E2E') || calledBy.includes('Internal'))) {
+          return true;
+        }
+        return false;
+      }
+      const sess = JSON.parse(raw);
+      const role = (sess.role || '').toLowerCase();
+      
+      // Strict role check: non-volunteers can NEVER control speaker aid
+      if (
+        role === 'student' ||
+        role === 'jury' ||
+        role === 'coordinator' ||
+        role === 'organiser' ||
+        role === 'super_admin' ||
+        role === 'admin'
+      ) {
+        return false;
+      }
+
+      // If volunteer, verify against authoritative permission helper
+      if (role === 'volunteer') {
+        const volunteers = this.getVolunteers();
+        const code = (sess.volunteerCode || '').trim().toUpperCase();
+        const vol = volunteers.find(v => (v.access_code || '').toUpperCase() === code || (speakerAidId && v.id === speakerAidId));
+        return canUseSpeakerAid(vol || null, role, sess);
+      }
+
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
   public async setAuthoritativeCurrentSpeaker(params: {
     eventId: string;
     sessionId: string;
@@ -11114,10 +11155,17 @@ class StorageService {
     requestId?: string;
     isTest?: boolean;
     testRunId?: string | null;
+    isInternal?: boolean;
   }): Promise<{ success: boolean; turn?: SpeakingTurn; error?: string }> {
-    const { eventId, sessionId, learnerId, calledBy = 'Speaker Aid', speakerAidId, requestId } = params;
+    const { eventId, sessionId, learnerId, calledBy = 'Speaker Aid', speakerAidId, requestId, isInternal } = params;
     if (!eventId || !sessionId || !learnerId) {
       return { success: false, error: 'Missing required parameters (eventId, sessionId, learnerId)' };
+    }
+
+    // Role authorization check: only authorized Speaker Aid can set current speaker
+    if (!this.isAuthorizedForSpeakerAid(calledBy, speakerAidId, isInternal)) {
+      console.warn('[setAuthoritativeCurrentSpeaker] Unauthorized call attempt rejected:', { calledBy, speakerAidId });
+      return { success: false, error: 'Unauthorized: Only designated Speaker Aid volunteers can control the floor speaker.' };
     }
 
     // In-flight concurrency lock to prevent double clicks or concurrent tab collisions
@@ -11340,8 +11388,23 @@ class StorageService {
     sessionId?: string;
     turnId?: string;
     isTest?: boolean;
+    testRunId?: string | null;
+    isInternal?: boolean;
+    calledBy?: string;
+    speakerAidId?: string;
   }): Promise<{ success: boolean; error?: string }> {
-    const { eventId, sessionId, turnId, isTest } = params;
+    const { eventId, sessionId, turnId, isTest, testRunId, isInternal, calledBy, speakerAidId } = params;
+    if (!eventId) {
+      return { success: false, error: 'Missing required eventId' };
+    }
+
+    // Role authorization check: only authorized Speaker Aid (or internal system/reset routines) can end current speaker
+    const allowInternal = isInternal || (isTest !== undefined && !calledBy);
+    if (!this.isAuthorizedForSpeakerAid(calledBy, speakerAidId, allowInternal)) {
+      console.warn('[endAuthoritativeCurrentSpeaker] Unauthorized call attempt rejected:', { calledBy, speakerAidId });
+      return { success: false, error: 'Unauthorized: Only designated Speaker Aid volunteers can control the floor speaker.' };
+    }
+
     const now = new Date().toISOString();
 
     const env = this.getScoringEnvironment(eventId);
@@ -11353,7 +11416,7 @@ class StorageService {
 
     const nextTurns = allTurns.map(t => {
       const tIsTest = Boolean(t.is_test || (t.called_by && t.called_by.includes('[TEST')));
-      const matchesTarget = turnId ? t.id === turnId : (t.event_id === eventId && t.status === 'SPEAKING' && tIsTest === targetIsTest);
+      const matchesTarget = turnId ? t.id === turnId : (t.event_id === eventId && t.status === 'SPEAKING' && tIsTest === targetIsTest && (!testRunId || t.test_run_id === testRunId));
       if (matchesTarget) {
         turnToCloseId = t.id;
         closedTurnIsTest = tIsTest;
@@ -18309,6 +18372,46 @@ class StorageService {
     }
 
     return { mode: 'live', testRunId: null };
+  }
+
+  public async syncScoringEnvironment(eventId?: string): Promise<ScoringEnvironment> {
+    if (!eventId || !supabase || !isSupabaseEnabled) {
+      return this.getScoringEnvironment(eventId);
+    }
+    try {
+      const { data: evData } = await supabase
+        .from('college_events')
+        .select('social_coverage')
+        .eq('id', eventId)
+        .maybeSingle();
+      const sc = (evData?.social_coverage || {}) as Record<string, any>;
+      if (sc.scoring_environment && (sc.scoring_environment.mode === 'test' || sc.scoring_environment.mode === 'live')) {
+        const remoteEnv: ScoringEnvironment = {
+          mode: sc.scoring_environment.mode,
+          testRunId: sc.scoring_environment.mode === 'test' ? (sc.scoring_environment.testRunId || sc.scoring_environment.test_run_id || null) : null,
+          updated_at: sc.scoring_environment.updated_at,
+          updated_by: sc.scoring_environment.updated_by
+        };
+        if (typeof localStorage !== 'undefined') {
+          try {
+            localStorage.setItem(`${STORAGE_KEYS.SCORING_ENVIRONMENT}_${eventId}`, JSON.stringify(remoteEnv));
+            localStorage.setItem(`${STORAGE_KEYS.JURY_TEST_MODE}_${eventId}`, String(remoteEnv.mode === 'test'));
+            if (remoteEnv.testRunId) {
+              localStorage.setItem(`${STORAGE_KEYS.CURRENT_TEST_RUN_ID}_${eventId}`, remoteEnv.testRunId);
+            } else {
+              localStorage.removeItem(`${STORAGE_KEYS.CURRENT_TEST_RUN_ID}_${eventId}`);
+            }
+          } catch {}
+        }
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('tn_assembly_scoring_environment_update', { detail: { eventId, environment: remoteEnv } }));
+        }
+        return remoteEnv;
+      }
+    } catch (err) {
+      console.warn('[syncScoringEnvironment] Sync warning:', err);
+    }
+    return this.getScoringEnvironment(eventId);
   }
 
   public async setScoringEnvironment(

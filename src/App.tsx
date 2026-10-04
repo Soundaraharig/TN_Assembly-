@@ -75,7 +75,7 @@ import { VolunteerDashboard } from './components/volunteer/VolunteerDashboard';
 import { SpeakerAidDashboard } from './components/volunteer/SpeakerAidDashboard';
 import { presenceService, type PresenceUser } from './services/presenceService';
 import { isSupabaseEnabled } from './lib/supabase';
-import { canManageSessionAttendance } from './utils/permissions';
+import { canManageSessionAttendance, canUseSpeakerAid } from './utils/permissions';
 
 const SESSION_KEY = 'tn_assembly_auth_session';
 
@@ -88,6 +88,9 @@ interface SavedAuthSession {
   student?: Learner;
   juryCode?: string;
   volunteerCode?: string;
+  volunteer?: Volunteer;
+  station?: string;
+  volunteerType?: string;
   currentEventId?: string;
   activeNavTab?: ActiveNavTab;
 }
@@ -1106,16 +1109,26 @@ export function App() {
     return null;
   });
   const [currentVolunteer, setCurrentVolunteer] = useState<Volunteer | null>(() => {
-    if (initialSession?.role === 'volunteer' && initialSession.volunteerCode) {
-      const code = initialSession.volunteerCode.trim().toUpperCase();
-      const all = storageService.getVolunteers();
-      return all.find(v => v.access_code?.toUpperCase() === code) || {
-        id: 'vol',
-        event_id: initialSession.currentEventId || '',
-        access_code: code,
-        name: initialSession.name || 'Floor Volunteer',
-        station: 'Main Floor'
-      };
+    if (initialSession?.role === 'volunteer') {
+      if (initialSession.volunteer) {
+        return initialSession.volunteer;
+      }
+      if (initialSession.volunteerCode) {
+        const code = initialSession.volunteerCode.trim().toUpperCase();
+        const all = storageService.getVolunteers();
+        const found = all.find(v => v.access_code?.toUpperCase() === code);
+        if (found) return found;
+
+        return {
+          id: 'vol',
+          event_id: initialSession.currentEventId || '',
+          access_code: code,
+          name: initialSession.name || 'Floor Volunteer',
+          station: initialSession.station || 'Main Floor',
+          role: initialSession.volunteerType || 'Volunteer',
+          volunteer_type: initialSession.volunteerType
+        };
+      }
     }
     return null;
   });
@@ -1408,12 +1421,14 @@ export function App() {
             const cleanCode = sess.volunteerCode.trim().toUpperCase();
             const allVols = storageService.getVolunteers();
             const foundVol = allVols.find(v => (v.access_code || '').toUpperCase() === cleanCode);
-            const volObj: Volunteer = foundVol || {
+            const volObj: Volunteer = foundVol || sess.volunteer || {
               id: 'vol',
               event_id: sess.currentEventId || (evs[0]?.id || ''),
               access_code: cleanCode,
               name: sess.name || 'Floor Volunteer',
-              station: 'Main Floor'
+              station: sess.station || 'Main Floor',
+              role: sess.volunteerType || 'Volunteer',
+              volunteer_type: sess.volunteerType
             };
             setIsAuthenticated(true);
             setRole('volunteer');
@@ -1546,12 +1561,14 @@ export function App() {
           const cleanCode = sess.volunteerCode.trim().toUpperCase();
           const allVols = storageService.getVolunteers();
           const foundVol = allVols.find(v => v.access_code?.toUpperCase() === cleanCode);
-          const volObj: Volunteer = foundVol || {
+          const volObj: Volunteer = foundVol || sess.volunteer || {
             id: 'vol',
             event_id: sess.currentEventId || (evs[0]?.id || ''),
             access_code: cleanCode,
             name: sess.name || 'Floor Volunteer',
-            station: 'Main Floor'
+            station: sess.station || 'Main Floor',
+            role: sess.volunteerType || 'Volunteer',
+            volunteer_type: sess.volunteerType
           };
           setIsAuthenticated(true);
           setRole('volunteer');
@@ -2408,6 +2425,9 @@ export function App() {
         role: 'volunteer',
         volunteerCode: vol.access_code,
         name: vol.name,
+        volunteer: vol,
+        station: vol.station,
+        volunteerType: vol.volunteer_type || vol.role,
         currentEventId: targetEv?.id || vol.event_id
       });
       if (typeof window !== 'undefined') navigate('/volunteer');
@@ -2628,18 +2648,34 @@ export function App() {
     );
   }
 
+  // Direct /speaker-aid URL route guard for any role or URL state
+  if (typeof window !== 'undefined' && (window.location.pathname === '/speaker-aid' || window.location.pathname.endsWith('/speaker-aid'))) {
+    return (
+      <div className="min-h-screen font-sans" style={{ backgroundColor: 'var(--bg-base)' }}>
+        <SpeakerAidDashboard
+          volunteer={currentVolunteer}
+          event={currentEvent}
+          learners={learners}
+          onLogout={() => {
+            clearSession();
+            setIsAuthenticated(false);
+            setRole('volunteer');
+            if (typeof window !== 'undefined') window.history.pushState({}, '', '/join');
+            addToast('Signed Out', 'You have been signed out from Speaker Aid', 'info');
+          }}
+          onShowToast={addToast}
+        />
+        <ToastContainer toasts={toasts} onDismiss={removeToast} />
+      </div>
+    );
+  }
+
   // Dedicated Volunteer Operations Desk
   if (role === 'volunteer') {
-    // Detect Speaker Aid volunteers — same heuristic as VolunteerDashboard
-    const volType = (currentVolunteer?.volunteer_type || currentVolunteer?.role || 'Volunteer') as string;
-    const isSpeakerAidVolunteer =
-      currentVolunteer?.station === "Now Speaking (Speaker's aide)" ||
-      currentVolunteer?.station?.toLowerCase().includes('speaker') ||
-      currentVolunteer?.role === 'Speaker Aid' ||
-      currentVolunteer?.volunteer_type === 'Speaker Aid' ||
-      volType?.toLowerCase().includes('speaker aid');
+    // Authoritative Speaker Aid permission check — strictly isolates Speaker Aid from other volunteers/journalists
+    const isSpeakerAid = canUseSpeakerAid(currentVolunteer, role, initialSession);
 
-    if (isSpeakerAidVolunteer) {
+    if (isSpeakerAid) {
       return (
         <div className="min-h-screen font-sans" style={{ backgroundColor: 'var(--bg-base)' }}>
           <SpeakerAidDashboard
@@ -2867,6 +2903,44 @@ export function App() {
                   }}
                   onShowToast={addToast}
                   targetEventId={undefined}
+                />
+              }
+            />
+
+            {/* Direct Speaker Aid Route with Strict Authorization Guard */}
+            <Route
+              path="/speaker-aid"
+              element={
+                <SpeakerAidDashboard
+                  volunteer={currentVolunteer}
+                  event={currentEvent}
+                  learners={learners}
+                  onLogout={() => {
+                    clearSession();
+                    setIsAuthenticated(false);
+                    setRole('volunteer');
+                    if (typeof window !== 'undefined') window.history.pushState({}, '', '/join');
+                    addToast('Signed Out', 'You have been signed out from Speaker Aid', 'info');
+                  }}
+                  onShowToast={addToast}
+                />
+              }
+            />
+            <Route
+              path="/events/:eventSlug/speaker-aid"
+              element={
+                <SpeakerAidDashboard
+                  volunteer={currentVolunteer}
+                  event={currentEvent}
+                  learners={learners}
+                  onLogout={() => {
+                    clearSession();
+                    setIsAuthenticated(false);
+                    setRole('volunteer');
+                    if (typeof window !== 'undefined') window.history.pushState({}, '', '/join');
+                    addToast('Signed Out', 'You have been signed out from Speaker Aid', 'info');
+                  }}
+                  onShowToast={addToast}
                 />
               }
             />

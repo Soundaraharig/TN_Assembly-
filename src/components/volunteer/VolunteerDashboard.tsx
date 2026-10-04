@@ -51,7 +51,7 @@ import { getRecordSessionStatuses, formatMarkedBy, getCanonicalQuestionStatus } 
 import { useTheme } from '../../lib/theme';
 import { storageService, getResolvedPartyName, getResolvedCommitteeName } from '../../services/storageService';
 import { presenceService } from '../../services/presenceService';
-import { canReviewQuestions, verifyQuestionReviewAuthorization, logQuestionAuthDiagnostic } from '../../utils/permissions';
+import { canReviewQuestions, verifyQuestionReviewAuthorization, logQuestionAuthDiagnostic, canUseSpeakerAid } from '../../utils/permissions';
 import { filterProceedingsQuestions, parseQuestionNumber } from '../../utils/questionUtils';
 
 export interface YuvaAssignment {
@@ -154,12 +154,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   const isJournalist = volunteerType === 'Journalist';
   const hasQuestionReviewAccess = isAdministrator || isJournalist || canReviewQuestions('volunteer', volunteerType);
 
-  const isSpeakerAid = volunteer?.station === "Now Speaking (Speaker's aide)" ||
-    volunteer?.station?.toLowerCase().includes('speaker') ||
-    volunteer?.role === 'Speaker Aid' ||
-    volunteer?.volunteer_type === 'Speaker Aid' ||
-    volunteerType?.toLowerCase().includes('speaker aid') ||
-    isAdministrator;
+  const isSpeakerAid = canUseSpeakerAid(volunteer, 'volunteer', null);
 
   const [selectedDay] = useState<1 | 2>(1);
   const [search, setSearch] = useState('');
@@ -168,6 +163,13 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   const [activeTab, setActiveTab] = useState<'speaker_aid' | 'questions' | 'attendance' | 'yuvadesk' | 'checkin' | 'walkin' | 'checklist'>(
     isSpeakerAid ? 'speaker_aid' : (hasQuestionReviewAccess ? 'questions' : 'attendance')
   );
+
+  // Authoritative tab enforcement: prevent non-Speaker Aid volunteers or journalists from holding speaker_aid tab
+  useEffect(() => {
+    if (!isSpeakerAid && activeTab === 'speaker_aid') {
+      setActiveTab(hasQuestionReviewAccess ? 'questions' : 'attendance');
+    }
+  }, [isSpeakerAid, activeTab, hasQuestionReviewAccess]);
 
   // Speaker Aid floor control state
   const [speakerAidTick, setSpeakerAidTick] = useState<number>(0);
@@ -227,6 +229,10 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   }, [activeSpeakerTurn?.id, activeSpeakerTurn?.started_at, activeSpeakerTurn?.status]);
 
   const handleSelectSpeaker = async (learner: Learner) => {
+    if (!isSpeakerAid) {
+      onShowToast('Unauthorized', 'Only designated Speaker Aid volunteers can control the floor speaker.', 'error');
+      return;
+    }
     if (!learner || isStartingTurn) return;
     setIsStartingTurn(true);
     try {
@@ -257,6 +263,10 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   };
 
   const handleEndSpeakingTurn = async () => {
+    if (!isSpeakerAid) {
+      onShowToast('Unauthorized', 'Only designated Speaker Aid volunteers can control the floor speaker.', 'error');
+      return;
+    }
     if (!activeSpeakerTurn || isEndingTurn) return;
     setIsEndingTurn(true);
     try {
@@ -1288,23 +1298,25 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
         {/* View Tabs */}
         <div className="flex items-center justify-between flex-wrap gap-3 border-b pb-3" style={{ borderColor: 'var(--border)' }}>
           <div className="flex rounded-xl p-1 border flex-wrap gap-1" style={{ background: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
-            {/* Speaker Aid Tab Button */}
-            <button
-              onClick={() => setActiveTab('speaker_aid')}
-              className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-                activeTab === 'speaker_aid' ? 'shadow-sm ring-1 ring-rose-500/50' : 'opacity-70 hover:opacity-100'
-              }`}
-              style={{
-                background: activeTab === 'speaker_aid' ? '#e11d48' : 'transparent',
-                color: activeTab === 'speaker_aid' ? '#fff' : 'var(--text-primary)'
-              }}
-            >
-              <Mic className="w-3.5 h-3.5" />
-              <span>Speaker Aid / Floor Control</span>
-              {activeSpeakerTurn && (
-                <span className="w-2 h-2 rounded-full bg-white animate-ping ml-0.5" />
-              )}
-            </button>
+            {/* Speaker Aid Tab Button — strictly rendered ONLY for genuine Speaker Aid */}
+            {isSpeakerAid && (
+              <button
+                onClick={() => setActiveTab('speaker_aid')}
+                className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                  activeTab === 'speaker_aid' ? 'shadow-sm ring-1 ring-rose-500/50' : 'opacity-70 hover:opacity-100'
+                }`}
+                style={{
+                  background: activeTab === 'speaker_aid' ? '#e11d48' : 'transparent',
+                  color: activeTab === 'speaker_aid' ? '#fff' : 'var(--text-primary)'
+                }}
+              >
+                <Mic className="w-3.5 h-3.5" />
+                <span>Speaker Aid / Floor Control</span>
+                {activeSpeakerTurn && (
+                  <span className="w-2 h-2 rounded-full bg-white animate-ping ml-0.5" />
+                )}
+              </button>
+            )}
             {hasQuestionReviewAccess && (
               <button
                 onClick={() => setActiveTab('questions')}
@@ -2864,8 +2876,8 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
           </div>
         )}
 
-        {/* Tab: Speaker Aid Floor Control Desk */}
-        {activeTab === 'speaker_aid' && (
+        {/* Tab: Speaker Aid Floor Control Desk — STRICTLY guarded by isSpeakerAid */}
+        {isSpeakerAid && activeTab === 'speaker_aid' && (
           <div className="space-y-6">
             {/* Floor Status Card */}
             <div
