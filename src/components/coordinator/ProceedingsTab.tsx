@@ -214,12 +214,18 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
     setUpdatingActionStatus(nextStatus);
 
     try {
+      const resolvedEvId = authoritativeEventId || eventId || targetSlug;
       const res = await storageService.updateProceedingsQuestionStatus(
         id,
         nextStatus,
         actorName,
-        authoritativeEventId || eventId || targetSlug,
-        { role: userRole || 'super_admin', name: actorName }
+        resolvedEvId,
+        {
+          role: userRole || 'super_admin',
+          name: actorName,
+          activeEventId: resolvedEvId,
+          actorEventId: resolvedEvId
+        }
       );
 
       if (!res.success) {
@@ -1552,6 +1558,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                                 {canEdit && (
                                   <button
                                     type="button"
+                                    data-testid={`edit-question-${q.id}`}
                                     onClick={() => {
                                       setEditingQuestion(q);
                                       setIsEditModalOpen(true);
@@ -1731,6 +1738,7 @@ export const ProceedingsTab: React.FC<ProceedingsTabProps> = ({
                           {canEdit && (
                             <button
                               type="button"
+                              data-testid={`edit-question-${q.id}`}
                               onClick={() => {
                                 setEditingQuestion(q);
                                 setIsEditModalOpen(true);

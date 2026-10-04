@@ -720,6 +720,8 @@ export interface ProceedingsQuestion {
   reviewer_name?: string;
   reviewer_role?: string;
   rejection_reason?: string;
+  rejected_by?: string;
+  rejected_at?: string;
   seat_number?: string;
   last_edited_by?: string;
   last_edited_at?: string;

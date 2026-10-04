@@ -44,6 +44,7 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
   const [bench, setBench] = useState<'Ruling' | 'Opposition'>('Ruling');
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
 
   useEffect(() => {
     if (question) {
@@ -51,6 +52,7 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
       setQuestionText(question.question_text || '');
       setBench(question.bench || 'Ruling');
       setErrorMessage(null);
+      setShowConfirmDialog(false);
     }
   }, [question]);
 
@@ -67,39 +69,12 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
     ].filter(Boolean) as string[])
   );
 
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isAuthorized) {
-      setErrorMessage('You are not authorized to edit this question.');
-      onShowToast('Unauthorized', 'Only administrators can edit Question Hour questions.', 'error');
-      return;
-    }
-
+  const executeSave = async () => {
     const trimmedMinistry = ministry.trim();
-    if (!trimmedMinistry) {
-      setErrorMessage('Please select a Target Ministry.');
-      return;
-    }
-
     const trimmedText = questionText.trim();
-    if (!trimmedText) {
-      setErrorMessage('Question text cannot be empty.');
-      return;
-    }
-
-    // Check if anything actually changed
-    const ministryChanged = trimmedMinistry !== question.ministry;
-    const textChanged = trimmedText !== question.question_text;
-    const benchChanged = bench !== question.bench;
-
-    if (!ministryChanged && !textChanged && !benchChanged) {
-      onShowToast('No Changes', 'No edits were made to this question.', 'info');
-      onClose();
-      return;
-    }
-
     setIsSaving(true);
     setErrorMessage(null);
+    setShowConfirmDialog(false);
 
     try {
       const res = await storageService.updateProceedingsQuestion(
@@ -139,6 +114,49 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isAuthorized) {
+      setErrorMessage('You are not authorized to edit this question.');
+      onShowToast('Unauthorized', 'Only administrators can edit Question Hour questions.', 'error');
+      return;
+    }
+
+    const trimmedMinistry = ministry.trim();
+    if (!trimmedMinistry) {
+      setErrorMessage('Please select a Target Ministry.');
+      return;
+    }
+
+    const trimmedText = questionText.trim();
+    if (!trimmedText) {
+      setErrorMessage('Question text cannot be empty.');
+      return;
+    }
+
+    // Check if anything actually changed
+    const ministryChanged = trimmedMinistry !== question.ministry;
+    const textChanged = trimmedText !== question.question_text;
+    const benchChanged = bench !== question.bench;
+
+    if (!ministryChanged && !textChanged && !benchChanged) {
+      onShowToast('No Changes', 'No edits were made to this question.', 'info');
+      onClose();
+      return;
+    }
+
+    // PART 7 — APPROVED QUESTION EDIT SAFETY
+    // If an already-approved question's ministry is edited:
+    // Show a clear confirmation: "Change target ministry?"
+    const isApprovedStatus = question.status === 'Approved' || question.status === 'Starred';
+    if (isApprovedStatus && ministryChanged) {
+      setShowConfirmDialog(true);
+      return;
+    }
+
+    await executeSave();
   };
 
   const getStatusBadgeClass = (status: string) => {
@@ -390,6 +408,65 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
             </button>
           </div>
         </form>
+
+        {/* Part 7: Confirmation Dialog for Approved Question Ministry Edit */}
+        {showConfirmDialog && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in duration-150">
+            <div
+              className="w-full max-w-md rounded-2xl border shadow-2xl p-6 space-y-4"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400 flex items-center justify-center font-bold">
+                  <AlertCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-base font-black text-slate-900 dark:text-white">
+                    Change target ministry?
+                  </h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">
+                    {question.question_number || question.id}
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-800 dark:text-amber-300 space-y-2">
+                <p>
+                  <strong>{question.question_number || question.id}</strong> is currently approved.
+                </p>
+                <p>
+                  Changing the target ministry will move this question to another Cabinet/Minister queue.
+                </p>
+                <div className="text-[11px] pt-1 border-t border-amber-500/20 flex items-center justify-between">
+                  <span>Current: <strong>{question.ministry || 'None'}</strong></span>
+                  <span>→</span>
+                  <span>New: <strong>{ministry}</strong></span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  disabled={isSaving}
+                  onClick={() => setShowConfirmDialog(false)}
+                  className="px-4 py-2 rounded-xl border text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors disabled:opacity-50 cursor-pointer"
+                  style={{ borderColor: 'var(--border)' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isSaving}
+                  onClick={executeSave}
+                  className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold shadow-md shadow-amber-500/20 transition-all cursor-pointer flex items-center gap-2"
+                >
+                  {isSaving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>Confirm Change</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -5955,9 +5955,13 @@ class StorageService {
           const localCanonical = getCanonicalQuestionStatus(q);
 
           // Most recent timestamp wins to ensure Admin Approve, Reject, Star, or Revert to Pending
-          // persists immediately and is never blocked by stale remote or local status
+          // persists immediately and is never blocked by stale remote or local status.
+          // If local action has an explicit status change (especially Reject or Submitted) and localT >= remoteT,
+          // localCanonical strictly wins.
           let mergedStatus = remoteCanonical || existing.status;
-          if (localT > remoteT) {
+          if (localCanonical && (localCanonical === 'Rejected' || localCanonical === 'Submitted' || localCanonical === 'Approved' || localCanonical === 'Starred') && localT >= remoteT) {
+            mergedStatus = localCanonical;
+          } else if (localT > remoteT) {
             mergedStatus = localCanonical || q.status;
           } else if (remoteT > localT) {
             mergedStatus = remoteCanonical || existing.status;
@@ -20503,15 +20507,21 @@ class StorageService {
             const bestText = (lq.question_text && lq.question_text.length >= (remote.question_text || '').length)
               ? lq.question_text
               : (remote.question_text || lq.question_text);
+            const bestMinistry = (localT > remoteT)
+              ? (lq.ministry || remote.ministry)
+              : (remote.ministry || lq.ministry);
+            const bestTargetName = (localT > remoteT)
+              ? (lq.target_name || lq.target || lq.target_ministry_name || remote.target_name || remote.target || bestMinistry)
+              : (remote.target_name || remote.target || remote.target_ministry_name || lq.target_name || lq.target || bestMinistry);
 
             pqMap.set(lq.id, {
               ...remote,
               ...lq,
               question_text: bestText,
-              target: lq.target || remote.target || lq.target_ministry_name || remote.target_ministry_name || lq.ministry || remote.ministry,
-              target_name: lq.target_name || remote.target_name || lq.target_ministry_name || remote.target_ministry_name || lq.ministry || remote.ministry,
-              target_ministry_name: lq.target_ministry_name || remote.target_ministry_name || lq.ministry || remote.ministry,
-              ministry: lq.ministry || remote.ministry,
+              target: bestTargetName,
+              target_name: bestTargetName,
+              target_ministry_name: bestMinistry,
+              ministry: bestMinistry,
               constituency_number: lq.constituency_number !== undefined ? lq.constituency_number : remote.constituency_number,
               status: mergedStatus,
               calling_order: remote.calling_order !== undefined ? remote.calling_order : lq.calling_order,
@@ -20826,6 +20836,8 @@ class StorageService {
     let targetEventId: string | undefined = fallbackEventId;
     let updatedQ: ProceedingsQuestion | undefined;
     const isApproved = status === 'Approved' || status === 'Starred';
+    const isRejected = status === 'Rejected';
+    const nowIso = new Date().toISOString();
     const updated = list.map(q => {
       if (q.id === questionId) {
         targetEventId = q.event_id || fallbackEventId;
@@ -20834,9 +20846,11 @@ class StorageService {
           status,
           calling_order: isApproved ? q.calling_order : undefined,
           called_status: isApproved ? q.called_status : undefined,
-          updated_at: new Date().toISOString(),
-          approved_by: isApproved ? (approvedBy || userContext?.name || 'Main Admin') : q.approved_by,
-          approved_at: isApproved ? (q.approved_at || new Date().toISOString()) : q.approved_at
+          updated_at: nowIso,
+          approved_by: isApproved ? (approvedBy || userContext?.name || 'Main Admin') : undefined,
+          approved_at: isApproved ? (q.approved_at || nowIso) : undefined,
+          rejected_by: isRejected ? (approvedBy || userContext?.name || 'Main Admin') : q.rejected_by,
+          rejected_at: isRejected ? nowIso : q.rejected_at
         };
         return updatedQ;
       }
@@ -20848,6 +20862,10 @@ class StorageService {
     }
 
     this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, updated);
+    if (targetEventId) {
+      const evPQs = this.getItem<ProceedingsQuestion[]>(`tn_assembly_proceedings_questions_${targetEventId}`, []);
+      this.setItem(`tn_assembly_proceedings_questions_${targetEventId}`, evPQs.map(q => q.id === questionId ? updatedQ! : q));
+    }
     this.notify();
 
     if (targetEventId) {
@@ -20923,17 +20941,35 @@ class StorageService {
             .maybeSingle();
           if (!verifyErr && verifyEv?.social_coverage) {
             const vSC = verifyEv.social_coverage as Record<string, any>;
+            const vPQs: any[] = Array.isArray(vSC.proceedings_questions) ? vSC.proceedings_questions : [];
             const vOff: any[] = Array.isArray(vSC.official_approved_questions) ? vSC.official_approved_questions : [];
             const vCalling: string[] = Array.isArray(vSC.question_calling_order) ? vSC.question_calling_order : [];
+            const remoteQ = vPQs.find(q => q.id === questionId);
             const isInOfficial = vOff.some(q => q.id === questionId);
             const isInCalling = vCalling.includes(questionId);
 
             if (status === 'Rejected' || status === 'Submitted') {
-              if (isInOfficial || isInCalling) {
-                console.warn(`[Authoritative Verification] Question ${questionId} is ${status} but remote official list or calling order still contains it! Performing cleanup patch...`);
+              if (isInOfficial || isInCalling || (remoteQ && remoteQ.status !== status)) {
+                console.warn(`[Authoritative Verification] Question ${questionId} is ${status} but remote state mismatch detected! Performing authoritative cleanup patch...`);
+                const patchedPQs = vPQs.map(q => q.id === questionId ? updatedQ : q);
                 await this.patchSocialCoverageSafe(syncId, {
+                  proceedings_questions: patchedPQs,
+                  questions: patchedPQs,
                   official_approved_questions: vOff.filter(q => q.id !== questionId),
                   question_calling_order: vCalling.filter(id => id !== questionId)
+                });
+              }
+            } else if (isApproved) {
+              if (!isInOfficial || (remoteQ && remoteQ.status !== status)) {
+                console.warn(`[Authoritative Verification] Question ${questionId} is ${status} but not reflected in remote official list! Performing authoritative patch...`);
+                const patchedPQs = vPQs.map(q => q.id === questionId ? updatedQ : q);
+                const patchedOfficial = vOff.some(q => q.id === questionId)
+                  ? vOff.map(q => q.id === questionId ? updatedQ : q)
+                  : [...vOff, updatedQ];
+                await this.patchSocialCoverageSafe(syncId, {
+                  proceedings_questions: patchedPQs,
+                  questions: patchedPQs,
+                  official_approved_questions: patchedOfficial
                 });
               }
             }
@@ -22021,7 +22057,7 @@ export function getMinisterAssignedMinistry(role?: string): { ministryShort: str
 }
 
 export function isQuestionForMinister(
-  q: { ministry?: string; target_ministry_name?: string; target_ministry_id?: string },
+  q: { ministry?: string; target_ministry_name?: string; target_ministry_id?: string; target?: string; target_name?: string },
   ministerRole?: string
 ): boolean {
   if (!ministerRole) return false;
@@ -22032,13 +22068,18 @@ export function isQuestionForMinister(
   const qKey1 = normalizeMinistryKey(q.ministry);
   const qKey2 = normalizeMinistryKey(q.target_ministry_name);
   const qKey3 = normalizeMinistryKey(q.target_ministry_id);
+  const qKey4 = normalizeMinistryKey(q.target);
+  const qKey5 = normalizeMinistryKey(q.target_name);
   return (
     (Boolean(qKey1) && ministerKey === qKey1) ||
     (Boolean(qKey2) && ministerKey === qKey2) ||
-    (Boolean(qKey3) && ministerKey === qKey3)
+    (Boolean(qKey3) && ministerKey === qKey3) ||
+    (Boolean(qKey4) && ministerKey === qKey4) ||
+    (Boolean(qKey5) && ministerKey === qKey5)
   );
 }
 
 if (typeof window !== 'undefined') {
   (window as any).storageService = storageService;
 }
+

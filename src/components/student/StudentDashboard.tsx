@@ -2620,7 +2620,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800/80 pb-2.5">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
-                                #{q.calling_order ?? q.queue_order ?? (idx + 1)}
+                                {q.question_number || `#${q.calling_order ?? q.queue_order ?? (idx + 1)}`}
                               </span>
                               <span className="font-bold text-xs text-slate-900 dark:text-white">
                                 {q.student_name}
