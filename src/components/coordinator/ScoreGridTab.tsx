@@ -356,12 +356,12 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   useEffect(() => {
     // 1. Fetch authoritative speaking turns & jury recognitions on mount
     if (eventId) {
-      storageService.fetchSpeakingTurns(eventId).then(() => setRecogTick(t => t + 1)).catch(() => {});
-      storageService.fetchJurySpeechRecognitions(eventId).then(() => setRecogTick(t => t + 1)).catch(() => {});
+      storageService.fetchSpeakingTurns(eventId).then(() => { setRecogTick(t => t + 1); setAuditTick(t => t + 1); }).catch(() => {});
+      storageService.fetchJurySpeechRecognitions(eventId).then(() => { setRecogTick(t => t + 1); setAuditTick(t => t + 1); }).catch(() => {});
     }
 
-    const unsub = storageService.subscribe(() => setRecogTick(t => t + 1));
-    const handleRecogUpdate = () => setRecogTick(t => t + 1);
+    const unsub = storageService.subscribe(() => { setRecogTick(t => t + 1); setAuditTick(t => t + 1); });
+    const handleRecogUpdate = () => { setRecogTick(t => t + 1); setAuditTick(t => t + 1); };
     if (typeof window !== 'undefined') {
       window.addEventListener('tn_assembly_jury_recognition_update', handleRecogUpdate);
       window.addEventListener('tn_assembly_current_speaker_changed', handleRecogUpdate);

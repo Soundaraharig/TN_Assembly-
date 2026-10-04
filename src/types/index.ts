@@ -61,6 +61,7 @@ export interface Learner {
   school_name?: string;
   academic_year: AcademicYear;
   constituency_number?: number;
+  roll_no?: number | string;
   constituency_name?: string;
   district?: string;
   party_name?: string;

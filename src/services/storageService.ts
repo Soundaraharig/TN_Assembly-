@@ -3528,7 +3528,27 @@ class StorageService {
         }
         if (daysData && Array.isArray(daysData)) {
           const otherDays = this.getEventDays().filter(d => d.event_id && d.event_id !== eventId);
-          this.setItem(STORAGE_KEYS.EVENT_DAYS, [...otherDays, ...(daysData as unknown as EventDay[])]);
+          // Preserve main_day from local cache: Supabase event_days table has no main_day column,
+          // so fetched rows always have main_day=undefined. Without this merge, clicking D1/D2
+          // appears to succeed locally but reverts once hydration overwrites with stale rows.
+          const localDaysForEvent = this.getEventDays(eventId);
+          const localMainDayMap = new Map<string, number | null>();
+          localDaysForEvent.forEach(ld => {
+            if (ld.main_day !== undefined && ld.main_day !== null) {
+              localMainDayMap.set(`${ld.event_id}:::${ld.day_number}`, ld.main_day);
+            }
+          });
+          const mergedDays = (daysData as unknown as EventDay[]).map(d => {
+            const key = `${d.event_id}:::${d.day_number}`;
+            const preservedMainDay = localMainDayMap.get(key);
+            return {
+              ...d,
+              main_day: (d.main_day !== undefined && d.main_day !== null)
+                ? d.main_day
+                : (preservedMainDay ?? null)
+            };
+          });
+          this.setItem(STORAGE_KEYS.EVENT_DAYS, [...otherDays, ...mergedDays]);
         }
 
         // Resync main days attendance
@@ -3881,7 +3901,25 @@ class StorageService {
 
       if (daysData) {
         const otherDays = this.getEventDays().filter(d => d.event_id && d.event_id !== eventId);
-        this.setItem(STORAGE_KEYS.EVENT_DAYS, [...otherDays, ...(daysData as unknown as EventDay[])]);
+        // Preserve main_day from local cache (Supabase event_days table has no main_day column)
+        const localDaysForEvent = this.getEventDays(eventId);
+        const localMainDayMap = new Map<string, number | null>();
+        localDaysForEvent.forEach(ld => {
+          if (ld.main_day !== undefined && ld.main_day !== null) {
+            localMainDayMap.set(`${ld.event_id}:::${ld.day_number}`, ld.main_day);
+          }
+        });
+        const mergedDays = (daysData as unknown as EventDay[]).map(d => {
+          const key = `${d.event_id}:::${d.day_number}`;
+          const preservedMainDay = localMainDayMap.get(key);
+          return {
+            ...d,
+            main_day: (d.main_day !== undefined && d.main_day !== null)
+              ? d.main_day
+              : (preservedMainDay ?? null)
+          };
+        });
+        this.setItem(STORAGE_KEYS.EVENT_DAYS, [...otherDays, ...mergedDays]);
       }
 
       if (learnersData) {
@@ -9118,7 +9156,25 @@ class StorageService {
               const days = daysRes.data as unknown as EventDay[];
               const curDays = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []);
               const otherDays = curDays.filter(d => d.event_id !== eventId);
-              this.setItem(STORAGE_KEYS.EVENT_DAYS, [...otherDays, ...days]);
+              // Preserve main_day from local cache (Supabase event_days table has no main_day column)
+              const localDaysForEvent = curDays.filter(d => d.event_id === eventId);
+              const localMainDayMap = new Map<string, number | null>();
+              localDaysForEvent.forEach(ld => {
+                if (ld.main_day !== undefined && ld.main_day !== null) {
+                  localMainDayMap.set(`${ld.event_id}:::${ld.day_number}`, ld.main_day);
+                }
+              });
+              const mergedDays = days.map(d => {
+                const key = `${d.event_id}:::${d.day_number}`;
+                const preservedMainDay = localMainDayMap.get(key);
+                return {
+                  ...d,
+                  main_day: (d.main_day !== undefined && d.main_day !== null)
+                    ? d.main_day
+                    : (preservedMainDay ?? null)
+                };
+              });
+              this.setItem(STORAGE_KEYS.EVENT_DAYS, [...otherDays, ...mergedDays]);
             }
 
             if (attRes.data && Array.isArray(attRes.data) && attRes.data.length > 0) {
