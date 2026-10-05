@@ -35,7 +35,17 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
   onShowToast
 }) => {
   const { theme, toggleTheme } = useTheme();
-  const eventId = event?.id || '';
+  const eventId = event?.id || volunteer?.event_id || (() => {
+    if (typeof window === 'undefined') return '';
+    try {
+      const auth = localStorage.getItem('tn_assembly_auth_session');
+      if (auth) {
+        const parsed = JSON.parse(auth);
+        return parsed.currentEventId || parsed.volunteer?.event_id || '';
+      }
+    } catch {}
+    return '';
+  })() || '';
 
   // Effective learners list
   const [internalLearners, setInternalLearners] = useState<Learner[]>(() => {
@@ -110,28 +120,31 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
     setEnvTick(t => t + 1);
   };
 
+  // Authoritative operational role check: ONLY genuine Speaker Aid may access this dashboard
+  const isAuthorized = canUseSpeakerAid(volunteer, 'volunteer', null);
+
   // Mount effect: connect realtime sync, fetch cloud speaking turns & sync scoring environment
   useEffect(() => {
-    if (eventId) {
-      storageService.setupRealtimeSync(eventId);
-      storageService.syncScoringEnvironment(eventId).then(() => {
-        refreshFloorState();
+    if (!isAuthorized || !eventId) return;
+    storageService.setupRealtimeSync(eventId);
+    storageService.syncScoringEnvironment(eventId).then(() => {
+      refreshFloorState();
+    }).catch(() => {});
+    storageService.fetchSpeakingTurns(eventId).then(() => {
+      refreshFloorState();
+    }).catch(() => {});
+    const cur = storageService.getLearners(eventId);
+    if (cur.length === 0) {
+      storageService.fetchPaginatedLearners(eventId, { limit: 500 }).then(res => {
+        if (res.data && res.data.length > 0) {
+          setInternalLearners(res.data);
+        }
       }).catch(() => {});
-      storageService.fetchSpeakingTurns(eventId).then(() => {
-        refreshFloorState();
-      }).catch(() => {});
-      const cur = storageService.getLearners(eventId);
-      if (cur.length === 0) {
-        storageService.fetchPaginatedLearners(eventId, { limit: 500 }).then(res => {
-          if (res.data && res.data.length > 0) {
-            setInternalLearners(res.data);
-          }
-        }).catch(() => {});
-      }
     }
-  }, [eventId]);
+  }, [isAuthorized, eventId]);
 
   useEffect(() => {
+    if (!isAuthorized) return;
     refreshFloorState();
     const unsub = storageService.subscribe(refreshFloorState);
 
@@ -157,7 +170,7 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
       window.removeEventListener('tn_assembly_jury_scoring_reset', handleSpeakerChanged);
       window.removeEventListener('storage', handleSpeakerChanged);
     };
-  }, [eventId, selectedSessionId]);
+  }, [isAuthorized, eventId, selectedSessionId]);
 
   // Timer Tick (in-memory)
   useEffect(() => {
@@ -209,8 +222,6 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
     return learners.find(l => l.id === activeSpeakerTurn.learner_id);
   }, [activeSpeakerTurn, learners]);
 
-  // Authoritative operational role check: ONLY genuine Speaker Aid may access this dashboard
-  const isAuthorized = canUseSpeakerAid(volunteer, 'volunteer', null);
 
   if (!isAuthorized) {
     return (
@@ -257,9 +268,10 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
     if (isStartingTurn) return;
     setIsStartingTurn(true);
     try {
-      const tm = storageService.getScoringTestMode(eventId);
+      const targetEventId = eventId || volunteer?.event_id || learner.event_id || '';
+      const tm = storageService.getScoringTestMode(targetEventId);
       const res = await storageService.setAuthoritativeCurrentSpeaker({
-        eventId,
+        eventId: targetEventId,
         sessionId: selectedSession.id,
         sessionName: selectedSession.name,
         learnerId: learner.id,
@@ -293,9 +305,10 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
     if (isFinishingTurn || !activeSpeakerTurn) return;
     setIsFinishingTurn(true);
     try {
-      const tm = storageService.getScoringTestMode(eventId);
+      const targetEventId = eventId || volunteer?.event_id || activeSpeakerTurn.event_id || '';
+      const tm = storageService.getScoringTestMode(targetEventId);
       const res = await storageService.endAuthoritativeCurrentSpeaker({
-        eventId,
+        eventId: targetEventId,
         sessionId: activeSpeakerTurn.session_id,
         turnId: activeSpeakerTurn.id,
         isTest: tm.isTestMode

@@ -392,6 +392,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       onShowToast('Like Action Failed', err.message || 'Unable to update like.', 'error');
     } finally {
       setIsTogglingRecog(false);
+      setRecogTick(t => t + 1);
     }
   };
 

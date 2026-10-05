@@ -280,6 +280,7 @@ const STORAGE_KEYS = {
 export const SUPABASE_COLUMNS: Record<string, string> = {
   COLLEGE_EVENTS_LIST: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,elections_count,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at',
   COLLEGE_EVENTS: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at,social_coverage',
+  COORDINATORS_PUBLIC: 'id,event_id,name,email,created_at,updated_at',
   COORDINATORS: 'id,event_id,name,email,password_hash,raw_temp_password,created_at,updated_at',
   LEARNERS: 'id,event_id,access_code,full_name,email,phone,department,academic_year,constituency_number,constituency_name,party_id,party_name,party_group_link,bench,role,committee_id,committee_name,committee_group_link,school_name,day1_checked_in,day2_checked_in,district,created_at,updated_at',
   POLITICAL_PARTIES: 'id,event_id,name,bench,color,leader,manifesto,created_at,whatsapp_group_link',
@@ -995,6 +996,7 @@ class StorageService {
           // Never delete preserved auth / session / theme keys
           if (preserveKeys.has(key)) continue;
           if (key.includes('auth_token') || key.includes('sb-') || key.endsWith('-auth-token')) continue;
+          if (key.includes('scoring_environment') || key.includes('test_mode') || key.includes('test_run_id')) continue;
 
           // Clear stale event and portal storage keys
           if (
@@ -2267,7 +2269,7 @@ class StorageService {
         .select((targetEventId ? SUPABASE_COLUMNS.COLLEGE_EVENTS : SUPABASE_COLUMNS.COLLEGE_EVENTS_LIST) as any)
         .order('created_at', { ascending: false });
 
-      let coordQuery = sb.from('coordinators').select(SUPABASE_COLUMNS.COORDINATORS);
+      let coordQuery = sb.from('coordinators').select(SUPABASE_COLUMNS.COORDINATORS_PUBLIC);
 
       let learnersQuery = sb.from('learners').select(SUPABASE_COLUMNS.LEARNERS);
       if (targetEventId) {
@@ -5288,6 +5290,8 @@ class StorageService {
                 ...all[idx],
                 active: p.active !== false,
                 note: p.note !== undefined ? p.note : all[idx].note,
+                is_test: p.isTest !== undefined ? p.isTest : all[idx].is_test,
+                test_run_id: p.testRunId !== undefined ? p.testRunId : all[idx].test_run_id,
                 revoked_at: p.active === false ? now : null,
                 updated_at: now
               };
@@ -5301,6 +5305,8 @@ class StorageService {
                 learner_id: p.learnerId || '',
                 active: true,
                 note: p.note || null,
+                is_test: p.isTest,
+                test_run_id: p.testRunId,
                 created_at: now,
                 updated_at: now
               });
@@ -11261,8 +11267,8 @@ class StorageService {
 
       // Authoritative scoring environment check
       const env = this.getScoringEnvironment(eventId);
-      const isTest = params.isTest !== undefined ? params.isTest : env.mode === 'test';
-      const testRunId = isTest ? (params.testRunId !== undefined ? params.testRunId : env.testRunId) : null;
+      const isTest = env.mode === 'test' || Boolean(params.isTest);
+      const testRunId = isTest ? (params.testRunId || env.testRunId || null) : null;
 
       // 1. Authoritative local storage: Close ALL currently SPEAKING turns in the SAME environment for this event
       const allTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
@@ -16768,7 +16774,28 @@ class StorageService {
 
     // Cross-event boundary check & speaking turn verification
     const allTurns = this.getSpeakingTurns(eventId);
-    const targetTurn = allTurns.find(t => t.id === speakingTurnId);
+    let targetTurn = allTurns.find(t => t.id === speakingTurnId);
+    if (!targetTurn) {
+      const rawTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+      let foreignTurn = rawTurns.find(t => t.id === speakingTurnId);
+      if (!foreignTurn && supabase && isSupabaseEnabled) {
+        try {
+          const { data: dbTurn } = await supabase
+            .from('speaking_turns')
+            .select('id, event_id, learner_id, learner_name, status, called_by, session_id, session_name')
+            .eq('id', speakingTurnId)
+            .maybeSingle();
+          if (dbTurn) {
+            foreignTurn = dbTurn as unknown as SpeakingTurn;
+            rawTurns.push(foreignTurn);
+            this.setItem(STORAGE_KEYS.SPEAKING_TURNS, rawTurns);
+          }
+        } catch {}
+      }
+      if (foreignTurn) {
+        targetTurn = foreignTurn;
+      }
+    }
     if (targetTurn) {
       if (targetTurn.event_id !== eventId) {
         throw new Error('Cross-event recognition rejected: turn belongs to different event.');
@@ -16777,14 +16804,7 @@ class StorageService {
         throw new Error('Invalid recognition: turn does not belong to specified learner.');
       }
     } else {
-      const rawTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
-      const foreignTurn = rawTurns.find(t => t.id === speakingTurnId);
-      if (foreignTurn && foreignTurn.event_id !== eventId) {
-        throw new Error('Cross-event recognition rejected: turn belongs to different event.');
-      }
-      if (!foreignTurn) {
-        throw new Error('Invalid speaking turn: recognition requires an authoritative recorded speaking turn.');
-      }
+      throw new Error('Invalid speaking turn: recognition requires an authoritative recorded speaking turn.');
     }
 
     // In-flight locking key to prevent race conditions & double-click duplicate creation
@@ -16858,6 +16878,13 @@ class StorageService {
 
       // 1. Authoritative local storage persist
       this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, all);
+      this.notify();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('tn_assembly_jury_recognition_update', {
+          detail: { eventId, speakingTurnId, juryId, learnerId, active: record.active, isTest: record.is_test, testRunId: record.test_run_id }
+        }));
+        window.dispatchEvent(new Event('storage'));
+      }
 
       // 2. Persist to Supabase if configured (dedicated table with social_coverage fallback)
       if (supabase && isSupabaseEnabled) {
@@ -16870,7 +16897,7 @@ class StorageService {
           const sc = (evData?.social_coverage || {}) as Record<string, any>;
           const curRecogs = Array.isArray(sc.jury_speech_recognitions) ? sc.jury_speech_recognitions : [];
           const updatedRecogs = [...curRecogs.filter((r: any) => !(r.event_id === record.event_id && r.speaking_turn_id === record.speaking_turn_id && r.jury_id === record.jury_id)), record];
-          await supabase
+          const { error: updErr } = await supabase
             .from('college_events')
             .update({
               social_coverage: {
@@ -16880,8 +16907,13 @@ class StorageService {
               }
             })
             .eq('id', eventId);
+          if (updErr) {
+            console.error('[toggleJurySpeechRecognition] Error persisting to social_coverage:', updErr);
+          } else {
+            console.log('[toggleJurySpeechRecognition] Successfully persisted recognition to social_coverage. Recog ID:', record.id, 'Turn ID:', record.speaking_turn_id);
+          }
         } catch (scErr) {
-          console.warn('[toggleJurySpeechRecognition] Error persisting to social_coverage:', scErr);
+          console.warn('[toggleJurySpeechRecognition] Exception persisting to social_coverage:', scErr);
         }
       }
 
@@ -16895,13 +16927,15 @@ class StorageService {
         learnerId: record.learner_id,
         juryId: record.jury_id,
         active: record.active,
-        note: record.note
+        note: record.note,
+        isTest: record.is_test,
+        testRunId: record.test_run_id
       }).catch(() => {});
 
       this.notify();
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('tn_assembly_jury_recognition_update', {
-          detail: { eventId, speakingTurnId, juryId, learnerId, active: record.active }
+          detail: { eventId, speakingTurnId, juryId, learnerId, active: record.active, isTest: record.is_test, testRunId: record.test_run_id }
         }));
       }
 
@@ -18795,7 +18829,7 @@ class StorageService {
 
     const testRecogs = recogs.filter(r => {
       if (!r.is_test && r.test_run_id == null) return false;
-      if (activeRunId) return r.test_run_id === activeRunId || (r.is_test && !r.test_run_id);
+      if (activeRunId) return r.test_run_id === activeRunId;
       return true;
     });
     const realRecogs = recogs.filter(r => !r.is_test && r.test_run_id == null);
@@ -18806,7 +18840,7 @@ class StorageService {
       if (!isTestTurn) return false;
       if (t.called_by && t.called_by.includes('[TEST:PURGED')) return false;
       if (activeRunId) {
-        return t.test_run_id === activeRunId || (t.called_by && t.called_by.includes(`[TEST:${activeRunId}]`)) || (!t.test_run_id && t.is_test);
+        return t.test_run_id === activeRunId || (t.called_by && t.called_by.includes(`[TEST:${activeRunId}]`));
       }
       return true;
     });
@@ -21347,7 +21381,25 @@ class StorageService {
   }
 
 
-  public deleteProceedingsQuestion(questionId: string, fallbackEventId?: string): void {
+  public deleteProceedingsQuestion(
+    questionId: string,
+    fallbackEventId?: string,
+    userContext?: { role?: string; name?: string }
+  ): { success: boolean; error?: string } {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('tn_assembly_auth_session') : null;
+    let callerRole = (userContext?.role || '').toLowerCase().trim();
+    if (!callerRole && raw) {
+      try {
+        const sess = JSON.parse(raw);
+        callerRole = (sess.role || '').toLowerCase().trim();
+      } catch {}
+    }
+    const isAuthorized = callerRole === 'super_admin' || callerRole === 'coordinator';
+    if (!isAuthorized) {
+      console.warn('[deleteProceedingsQuestion] Unauthorized delete rejected:', { questionId, callerRole });
+      return { success: false, error: 'Unauthorized: Only Super Admin and Coordinators can delete proceedings questions.' };
+    }
+
     // Record persistent deletion tombstone — stored in STORAGE_KEYS.DELETED_QUESTION_IDS so it
     // survives cache version migrations and is filtered everywhere via getProceedingsQuestions().
     const deletedQIds = this.getItem<string[]>(STORAGE_KEYS.DELETED_QUESTION_IDS, []);
@@ -21421,6 +21473,7 @@ class StorageService {
         detail: { type: 'delete', questionId, eventId: syncId }
       }));
     }
+    return { success: true };
   }
 
   // ── OFFICIAL QUESTION CALLING ORDER & SPEAKER SESSION MANAGEMENT ───────────

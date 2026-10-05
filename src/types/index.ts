@@ -46,7 +46,7 @@ export interface Coordinator {
   event_id: string;
   name: string;
   email: string;
-  password_hash: string;
+  password_hash?: string;
   raw_temp_password?: string;
 }
 
