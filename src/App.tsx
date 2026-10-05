@@ -76,6 +76,7 @@ import { SpeakerAidDashboard } from './components/volunteer/SpeakerAidDashboard'
 import { presenceService, type PresenceUser } from './services/presenceService';
 import { isSupabaseEnabled } from './lib/supabase';
 import { canManageSessionAttendance, canUseSpeakerAid } from './utils/permissions';
+import { adminApiService } from './services/adminApiService';
 
 const SESSION_KEY = 'tn_assembly_auth_session';
 
@@ -1170,6 +1171,7 @@ export function App() {
   const clearSession = () => {
     try {
       localStorage.removeItem(SESSION_KEY);
+      adminApiService.clearSession();
       storageService.clearUserCache();
       setUserSession(null);
       setCurrentStudent(null);
@@ -2513,6 +2515,9 @@ export function App() {
             }
 
             if (sess) {
+              // Acquire signed server session token asynchronously for administrative API calls
+              adminApiService.loginCoordinator(emailInput, passTrim).catch(() => {});
+
               // Fetch ONLY assigned events for this coordinator from Supabase
               const assignedEvents = await storageService.fetchEventsForCoordinator(emailInput, true);
               setEvents(assignedEvents);

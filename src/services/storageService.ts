@@ -200,6 +200,7 @@ import type {
   ConstituencyAllocationOptions
 } from '../utils/allocationEngine';
 import { supabase, isSupabaseEnabled } from '../lib/supabase';
+import { adminApiService } from './adminApiService';
 import { getEventSlug, findEventBySlug } from '../utils/slug';
 import { ARTS_PROCEEDINGS_QUESTIONS } from '../data/artsProceedingsQuestions';
 import {
@@ -8701,6 +8702,18 @@ class StorageService {
         supabase.from('college_events').update({ participant_count: remainingCount }).eq('id', target.event_id).then();
       }
     }
+    // 1. Attempt secure server-side deletion via API boundary
+    if (target.event_id) {
+      const serverRes = await adminApiService.invokeAdminAction('delete_learner', target.event_id, { learnerId });
+      if (serverRes.handledByServer) {
+        if (!serverRes.success) {
+          console.warn('[deleteLearner] Server deletion warning:', serverRes.error);
+        }
+        this.invalidateCache(target.event_id);
+        return;
+      }
+    }
+
     await this.sbDelete('learners', learnerId);
     if (target.event_id) {
       this.invalidateCache(target.event_id);
@@ -8730,6 +8743,20 @@ class StorageService {
       this.setItem(STORAGE_KEYS.EVENTS, events);
       if (supabase) {
         supabase.from('college_events').update({ participant_count: remainingCount }).eq('id', eventId).then();
+      }
+    }
+
+    // 1. Attempt secure server-side batch deletion via API boundary
+    if (eventId) {
+      const serverRes = await adminApiService.invokeAdminAction('delete_learners_batch', eventId, {
+        learnerIds: Array.from(idsActuallyDeleted)
+      });
+      if (serverRes.handledByServer) {
+        if (!serverRes.success) {
+          console.warn('[deleteLearners] Server batch deletion warning:', serverRes.error);
+        }
+        this.invalidateCache(eventId);
+        return;
       }
     }
 
@@ -20994,6 +21021,19 @@ class StorageService {
         this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === matched.id ? matched : e));
       }
 
+      // 1. Attempt secure server-side status transition via API boundary
+      if (syncId && adminApiService.getSessionToken()) {
+        const serverRes = await adminApiService.invokeAdminAction('question_status', syncId, {
+          questionId,
+          status
+        });
+        if (serverRes.handledByServer && serverRes.success) {
+          await this.updateQuestionSnapshot(syncId).catch(() => {});
+          this.invalidateCache(syncId);
+          return { success: true, question: updatedQ };
+        }
+      }
+
       try {
         await this.syncEventStateToSupabase(syncId, true);
         await this.updateQuestionSnapshot(syncId).catch(() => {});
@@ -21208,6 +21248,18 @@ class StorageService {
 
     // 4. Remote Supabase Persistence (Immediate, non-delayed write)
     if (syncId && isSupabaseEnabled && supabase) {
+      if (updates.ministry && adminApiService.getSessionToken()) {
+        const serverRes = await adminApiService.invokeAdminAction('question_ministry', syncId, {
+          questionId,
+          ministry: updates.ministry
+        });
+        if (serverRes.handledByServer && serverRes.success) {
+          await this.updateQuestionSnapshot(syncId).catch(() => {});
+          this.invalidateCache(syncId);
+          return { success: true, question: updatedQ };
+        }
+      }
+
       try {
         await this.syncEventStateToSupabase(syncId, true);
         await this.updateQuestionSnapshot(syncId).catch(() => {});
