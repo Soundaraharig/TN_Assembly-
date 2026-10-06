@@ -69,7 +69,7 @@ export const Header: React.FC<HeaderProps> = ({
       : '';
 
   return (
-    <header className="header-theme sticky top-0 z-40 px-3 sm:px-4 lg:px-8 py-2.5 shadow-sm">
+    <header className="header-theme sticky top-0 z-40 px-3 sm:px-4 lg:px-8 py-2.5 shadow-sm max-w-full overflow-hidden">
       <div className="max-w-full mx-auto flex items-center justify-between gap-3">
 
         {/* Left Side: Mobile Menu Button + Brand */}
@@ -155,7 +155,7 @@ export const Header: React.FC<HeaderProps> = ({
           {currentEvent && (
             <div
               onClick={handleCopyEventId}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl border text-xs font-mono select-all transition-all hover:border-amber-500/50 cursor-pointer shadow-sm"
+              className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-xl border text-xs font-mono select-all transition-all hover:border-amber-500/50 cursor-pointer shadow-sm"
               style={{
                 backgroundColor: 'var(--bg-elevated)',
                 borderColor: 'var(--border)',

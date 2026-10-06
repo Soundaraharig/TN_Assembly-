@@ -867,7 +867,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     >
       {/* Header */}
       <header
-        className="px-6 py-4 border-b flex flex-wrap items-center justify-between gap-4 sticky top-0 z-30 shadow-sm"
+        className="px-3 sm:px-6 py-3 border-b flex flex-wrap items-center justify-between gap-2.5 sm:gap-4 sticky top-0 z-30 shadow-sm max-w-full overflow-hidden"
         style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
       >
         <div className="flex items-center gap-3">
@@ -1095,7 +1095,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsMobileKeypadOpen(!isMobileKeypadOpen)}
-                  className={`px-2.5 py-1 rounded-xl text-xs font-bold font-mono border transition flex items-center gap-1 cursor-pointer ${
+                  className={`px-3 py-1.5 min-h-[44px] rounded-xl text-xs font-bold font-mono border transition flex items-center justify-center gap-1 cursor-pointer ${
                     isMobileKeypadOpen
                       ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-sm'
                       : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
@@ -1260,7 +1260,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
               )}
 
               {/* Bench filter pills */}
-              <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 shrink-0 mr-1">
                   Bench:
                 </span>
@@ -1269,7 +1269,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     key={b}
                     type="button"
                     onClick={() => setFilterBench(b)}
-                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition cursor-pointer shrink-0 ${
+                    className={`px-3 py-1.5 min-h-[44px] inline-flex items-center justify-center rounded-xl text-xs font-bold border transition cursor-pointer shrink-0 ${
                       filterBench === b
                         ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-2xs font-extrabold'
                         : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -1327,14 +1327,14 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
             <div className="lg:col-span-8 space-y-6">
               {/* NOW SPEAKING Floor Banner (Phase 7, 11, 12, 32) */}
               {activeFloorSpeakingTurn && activeFloorSpeakingTurn.status === 'SPEAKING' ? (
-                <div className="rounded-2xl p-5 border bg-gradient-to-r from-rose-500/15 via-amber-500/10 to-transparent border-rose-500/40 flex flex-wrap items-center justify-between gap-4 shadow-md">
-                  <div className="flex items-center gap-3.5">
-                    <div className="w-12 h-12 rounded-2xl bg-rose-600 text-white flex items-center justify-center font-black shadow-md shrink-0 ring-4 ring-rose-500/20">
-                      <Mic className="w-6 h-6 animate-pulse" />
+                <div className="rounded-2xl p-3.5 sm:p-5 border bg-gradient-to-r from-rose-500/15 via-amber-500/10 to-transparent border-rose-500/40 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4 shadow-md max-w-full overflow-hidden">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-rose-600 text-white flex items-center justify-center font-black shadow-md shrink-0 ring-4 ring-rose-500/20">
+                      <Mic className="w-5 h-5 sm:w-6 sm:h-6 animate-pulse" />
                     </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-600 text-white shadow-xs flex items-center gap-1">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-600 text-white shadow-xs flex items-center gap-1 shrink-0">
                           <span className="w-2 h-2 rounded-full bg-white animate-ping"></span>
                           🔴 NOW SPEAKING
                         </span>
@@ -1342,23 +1342,23 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                           Speaking Turn {activeFloorSpeakingTurn.sequence_number || 1}
                         </span>
                       </div>
-                      <h3 className="text-xl font-black text-slate-900 dark:text-white mt-0.5 tracking-tight">
+                      <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white mt-0.5 tracking-tight truncate">
                         {activeFloorSpeakingTurn.learner_name}
                       </h3>
-                      <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">
+                      <p className="text-xs text-slate-600 dark:text-slate-300 font-medium truncate">
                         {activeFloorLearner?.constituency_number !== undefined ? `Constituency #${activeFloorLearner.constituency_number} — ` : ''}
                         {activeFloorLearner?.constituency_name || 'Assembly Delegate'} • {activeFloorLearner?.bench || 'Ruling'} Bench
                       </p>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-3">
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 shrink-0">
                     {/* Compact personal like count beside MLA */}
-                    <div className="text-center px-3.5 py-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 shadow-xs">
+                    <div className="text-center px-3 py-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 shadow-xs flex sm:flex-col items-center justify-between sm:justify-center">
                       <p className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
                         Speeches Liked
                       </p>
-                      <p className="text-base font-black font-mono text-amber-600 dark:text-amber-400 flex items-center justify-center gap-1">
+                      <p className="text-sm sm:text-base font-black font-mono text-amber-600 dark:text-amber-400 flex items-center justify-center gap-1">
                         ⭐ {learnerRecognitionsCountMap.get(activeFloorSpeakingTurn.learner_id) || 0}
                       </p>
                     </div>
@@ -1368,7 +1368,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       type="button"
                       disabled={isTogglingRecog}
                       onClick={() => handleToggleRecognition(activeFloorSpeakingTurn)}
-                      className={`px-6 py-3 rounded-xl text-xs font-black transition flex items-center gap-2 cursor-pointer shadow-lg active:scale-95 disabled:opacity-50 ${
+                      className={`w-full sm:w-auto px-5 py-3 min-h-[44px] rounded-xl text-xs font-black transition flex items-center justify-center gap-2 cursor-pointer shadow-lg active:scale-95 disabled:opacity-50 ${
                         isFloorTurnRecognized
                           ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/30 ring-2 ring-amber-400'
                           : 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 border-2 border-amber-500/60 hover:bg-amber-50 dark:hover:bg-slate-800'
@@ -1392,7 +1392,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
 
               {selectedLearner ? (
                 currentEvaluation ? (
-                  <div className="rounded-2xl p-6 border space-y-6 shadow-sm" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+                  <div className="rounded-2xl p-3.5 sm:p-6 border space-y-4 sm:space-y-6 shadow-sm max-w-full overflow-hidden" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
                     {/* Header: Existing Evaluation Banner */}
                     <div className="flex flex-wrap items-center justify-between pb-4 border-b gap-3" style={{ borderColor: 'var(--border)' }}>
                       <div>
@@ -1514,7 +1514,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
 
                   </div>
                 ) : (
-                <form onSubmit={handleSaveEvaluation} className="rounded-2xl p-6 border space-y-6 shadow-sm" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
+                <form onSubmit={handleSaveEvaluation} className="rounded-2xl p-3.5 sm:p-6 border space-y-4 sm:space-y-6 shadow-sm max-w-full overflow-hidden" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
                   
                   {/* Delegate Header Info & Stepper */}
                   <div className="flex flex-wrap items-center justify-between pb-4 border-b gap-3" style={{ borderColor: 'var(--border)' }}>
@@ -1660,7 +1660,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             type="button"
                             disabled={isLocked}
                             onClick={() => handleSelectScore('research', val)}
-                            className={`px-3 py-2 sm:py-1.5 min-h-[40px] sm:min-h-[36px] min-w-[36px] inline-flex items-center justify-center rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            className={`px-3 py-2 sm:py-1.5 min-h-[44px] min-w-[44px] sm:min-h-[38px] sm:min-w-[36px] inline-flex items-center justify-center rounded-lg text-xs font-bold transition-all cursor-pointer ${
                               researchScore === val
                                 ? 'bg-blue-600 text-white shadow-md scale-105'
                                 : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -1705,7 +1705,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             type="button"
                             disabled={isLocked}
                             onClick={() => handleSelectScore('relevance', val)}
-                            className={`px-3 py-2 sm:py-1.5 min-h-[40px] sm:min-h-[36px] min-w-[36px] inline-flex items-center justify-center rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            className={`px-3 py-2 sm:py-1.5 min-h-[44px] min-w-[44px] sm:min-h-[38px] sm:min-w-[36px] inline-flex items-center justify-center rounded-lg text-xs font-bold transition-all cursor-pointer ${
                               relevanceScore === val
                                 ? 'bg-blue-600 text-white shadow-md scale-105'
                                 : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -1750,7 +1750,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             type="button"
                             disabled={isLocked}
                             onClick={() => handleSelectScore('comm', val)}
-                            className={`px-3 py-2 sm:py-1.5 min-h-[40px] sm:min-h-[36px] min-w-[36px] inline-flex items-center justify-center rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            className={`px-3 py-2 sm:py-1.5 min-h-[44px] min-w-[44px] sm:min-h-[38px] sm:min-w-[36px] inline-flex items-center justify-center rounded-lg text-xs font-bold transition-all cursor-pointer ${
                               commScore === val
                                 ? 'bg-blue-600 text-white shadow-md scale-105'
                                 : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -1795,7 +1795,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             type="button"
                             disabled={isLocked}
                             onClick={() => handleSelectScore('conduct', val)}
-                            className={`px-3 py-2 sm:py-1.5 min-h-[40px] sm:min-h-[36px] min-w-[36px] inline-flex items-center justify-center rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            className={`px-3 py-2 sm:py-1.5 min-h-[44px] min-w-[44px] sm:min-h-[38px] sm:min-w-[36px] inline-flex items-center justify-center rounded-lg text-xs font-bold transition-all cursor-pointer ${
                               conductScore === val
                                 ? 'bg-blue-600 text-white shadow-md scale-105'
                                 : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -1840,7 +1840,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             type="button"
                             disabled={isLocked}
                             onClick={() => handleSelectScore('originality', val)}
-                            className={`px-3 py-2 sm:py-1.5 min-h-[40px] sm:min-h-[36px] min-w-[36px] inline-flex items-center justify-center rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            className={`px-3 py-2 sm:py-1.5 min-h-[44px] min-w-[44px] sm:min-h-[38px] sm:min-w-[36px] inline-flex items-center justify-center rounded-lg text-xs font-bold transition-all cursor-pointer ${
                               originalityScore === val
                                 ? 'bg-blue-600 text-white shadow-md scale-105'
                                 : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -1885,7 +1885,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             type="button"
                             disabled={isLocked}
                             onClick={() => handleSelectScore('time', val)}
-                            className={`px-3 py-2 sm:py-1.5 min-h-[40px] sm:min-h-[36px] min-w-[36px] inline-flex items-center justify-center rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            className={`px-3 py-2 sm:py-1.5 min-h-[44px] min-w-[44px] sm:min-h-[38px] sm:min-w-[36px] inline-flex items-center justify-center rounded-lg text-xs font-bold transition-all cursor-pointer ${
                               timeScore === val
                                 ? 'bg-blue-600 text-white shadow-md scale-105'
                                 : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -2021,9 +2021,9 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       </button>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 sm:gap-3 w-full sm:w-auto">
                       {draftSavedAt && (
-                        <span className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
+                        <span className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center justify-center gap-1.5 bg-slate-100 dark:bg-slate-800 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
                           <CheckCircle2 className="w-3.5 h-3.5 text-blue-500" />
                           <span>Draft saved locally at {draftSavedAt}</span>
                         </span>
@@ -2033,21 +2033,21 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                         type="button"
                         onClick={handleSaveDraft}
                         disabled={isLocked || answeredCategoriesCount === 0}
-                        className="px-4 py-2.5 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                        className="w-full sm:w-auto px-4 py-2.5 min-h-[44px] rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
                       >
                         <Save className="w-3.5 h-3.5 text-slate-500" />
                         <span>Save Draft</span>
                       </button>
 
                       {!isEvaluationComplete && (
-                        <span className="text-xs font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                        <span className="text-xs font-semibold text-amber-600 dark:text-amber-400 flex items-center justify-center gap-1.5 text-center">
                           <AlertCircle className="w-4 h-4 shrink-0" />
                           Complete all 6 categories ({6 - answeredCategoriesCount} remaining to submit)
                         </span>
                       )}
 
                       {isSavedRecently && (
-                        <span className="text-xs font-bold flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                        <span className="text-xs font-bold flex items-center justify-center gap-1.5 text-emerald-600 dark:text-emerald-400">
                           <CheckCircle className="w-4 h-4" /> ✓ Official Evaluation Saved
                         </span>
                       )}
@@ -2055,7 +2055,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       <button
                         type="submit"
                         disabled={isLocked || !isEvaluationComplete || isSubmittingEvaluation}
-                        className="btn-primary px-6 py-2.5 min-h-[44px] text-xs font-bold shadow-md cursor-pointer hover:scale-102 transition-transform disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                        className="btn-primary w-full sm:w-auto px-6 py-2.5 min-h-[44px] text-xs font-bold shadow-md cursor-pointer hover:scale-102 transition-transform disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                       >
                         <CheckCircle className="w-4 h-4 text-emerald-400" />
                         <span>{isSubmittingEvaluation ? 'Submitting Official Evaluation...' : 'Submit Official Evaluation'}</span>

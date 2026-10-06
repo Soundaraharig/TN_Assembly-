@@ -1139,7 +1139,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     >
       {/* Top Header */}
       <header
-        className="px-6 py-4 border-b flex flex-wrap items-center justify-between gap-4 sticky top-0 z-30 shadow-sm"
+        className="px-3.5 sm:px-6 py-3 border-b flex flex-wrap items-center justify-between gap-2.5 sm:gap-4 sticky top-0 z-30 shadow-sm max-w-full overflow-hidden"
         style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
       >
         <div className="flex items-center gap-3">
@@ -1231,7 +1231,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 space-y-6">
         {/* Metric Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-4">
           <div className="p-4 rounded-2xl border" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
             <div className="flex items-center justify-between">
               <div>

@@ -1119,7 +1119,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             type="button"
             id="tab-btn-desk"
             onClick={() => setActiveTab('desk')}
-            className={`py-2.5 px-2 sm:px-4 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 transition-all cursor-pointer ${
+            className={`py-2.5 px-2 sm:px-4 min-h-[44px] rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 transition-all cursor-pointer ${
               activeTab === 'desk'
                 ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/30'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60'
@@ -1134,7 +1134,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             type="button"
             id="tab-btn-voting"
             onClick={() => setActiveTab('voting')}
-            className={`relative py-2.5 px-2 sm:px-4 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 transition-all cursor-pointer ${
+            className={`relative py-2.5 px-2 sm:px-4 min-h-[44px] rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 transition-all cursor-pointer ${
               activeTab === 'voting'
                 ? 'bg-amber-500 text-white shadow-md shadow-amber-900/30'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60'
@@ -1154,7 +1154,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             type="button"
             id="tab-btn-agenda"
             onClick={() => setActiveTab('agenda')}
-            className={`py-2.5 px-2 sm:px-4 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 transition-all cursor-pointer ${
+            className={`py-2.5 px-2 sm:px-4 min-h-[44px] rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 transition-all cursor-pointer ${
               activeTab === 'agenda'
                 ? 'bg-blue-600 text-white shadow-md shadow-blue-900/30'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60'
@@ -2152,7 +2152,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 type="button"
                 onClick={handleRequestFloor}
                 disabled={isSubmittingFloorRequest || (!isHandRaiseEnabled && !activeSpeakingRequest)}
-                className={`px-5 py-2.5 rounded-xl font-bold text-xs shadow-lg transition-all flex items-center gap-2 ${
+                className={`w-full sm:w-auto min-h-[44px] justify-center px-5 py-2.5 rounded-xl font-bold text-xs shadow-lg transition-all flex items-center gap-2 cursor-pointer ${
                   activeSpeakingRequest?.status === 'CALLED'
                     ? 'bg-emerald-600 text-white shadow-emerald-950/50 animate-pulse ring-2 ring-emerald-400 cursor-default'
                     : activeSpeakingRequest?.status === 'WAITING'
@@ -2522,7 +2522,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 />
               </div>
 
-              <div className="flex items-center justify-between pt-1">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-1">
                 <span className="text-[11px] font-bold text-slate-400">
                   Status: <strong className={isQuestionWindowOpen ? "text-emerald-500 font-extrabold" : "text-rose-500 font-extrabold"}>{isQuestionWindowOpen ? 'Open for Submissions' : 'Submission Window Closed'}</strong>
                 </span>
@@ -2530,7 +2530,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <button
                   type="submit"
                   disabled={!isQuestionWindowOpen || !questionText.trim() || eventMinistries.length === 0 || isSubmittingQuestion}
-                  className="px-5 py-2.5 rounded-xl font-bold text-xs bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white shadow-lg flex items-center gap-2 cursor-pointer transition-all"
+                  className="w-full sm:w-auto min-h-[44px] justify-center px-5 py-2.5 rounded-xl font-bold text-xs bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white shadow-lg flex items-center gap-2 cursor-pointer transition-all"
                 >
                   <Send className="w-4 h-4" />
                   <span>{isSubmittingQuestion ? 'Submitting...' : 'Submit Question'}</span>
