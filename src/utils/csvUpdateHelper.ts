@@ -1,5 +1,3 @@
-import Papa from 'papaparse';
-import * as XLSX from 'xlsx';
 import type { Learner, Party, Committee } from '../types';
 import { TN_CONSTITUENCIES } from '../data/tnConstituencies';
 
@@ -535,6 +533,7 @@ export async function parseUpdateCSVFile(
 
   if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
     const data = await file.arrayBuffer();
+    const XLSX = await import('xlsx');
     const workbook = XLSX.read(data, { type: 'array' });
     const firstSheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[firstSheetName];
@@ -543,11 +542,13 @@ export async function parseUpdateCSVFile(
   }
 
   // Otherwise handle as standard CSV via PapaParse
+  const PapaModule = await import('papaparse');
+  const Papa = PapaModule.default || PapaModule;
   return new Promise((resolve, reject) => {
     Papa.parse<Record<string, unknown>>(file, {
       header: true,
       skipEmptyLines: 'greedy',
-      complete: (results) => {
+      complete: (results: any) => {
         try {
           const parsed = processUpdateRows(results.data, existingLearners, configuredParties, configuredCommittees);
           resolve(parsed);
@@ -555,7 +556,7 @@ export async function parseUpdateCSVFile(
           reject(err);
         }
       },
-      error: (error) => reject(error)
+      error: (error: any) => reject(error)
     });
   });
 }

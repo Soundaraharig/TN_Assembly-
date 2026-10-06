@@ -1,5 +1,3 @@
-import Papa from 'papaparse';
-import * as XLSX from 'xlsx';
 import type { Learner, AcademicYear, BenchType, Party, Committee } from '../types';
 import { generateAccessCode } from './accessCodeGenerator';
 import { getResolvedPartyName, getResolvedCommitteeName, storageService, getAllocationCheckStatus } from '../services/storageService';
@@ -449,14 +447,15 @@ export function parseCSVFile(
     rowsWithMissingOptional: 0
   };
 
-  return new Promise((resolve) => {
+  return new Promise(async (resolve) => {
     const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
 
     if (isExcel) {
       const reader = new FileReader();
-      reader.onload = (e) => {
+      reader.onload = async (e) => {
         try {
           const data = new Uint8Array(e.target?.result as ArrayBuffer);
+          const XLSX = await import('xlsx');
           const workbook = XLSX.read(data, { type: 'array' });
           const firstSheet = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[firstSheet];
@@ -485,24 +484,37 @@ export function parseCSVFile(
         });
       reader.readAsArrayBuffer(file);
     } else {
-      Papa.parse(file, {
-        header: true,
-        skipEmptyLines: true,
-        complete: (results) => {
-          const result = processRows(results.data, eventId, existingCodes);
-          resolve(result);
-        },
-        error: (err) => {
-          resolve({
-            learners: [],
-            errors: [err.message],
-            detectedHeaders: [],
-            mappedFields: [],
-            unmappedHeaders: [],
-            stats: emptyStats
-          });
-        }
-      });
+      try {
+        const PapaModule = await import('papaparse');
+        const Papa = PapaModule.default || PapaModule;
+        Papa.parse(file, {
+          header: true,
+          skipEmptyLines: true,
+          complete: (results: any) => {
+            const result = processRows(results.data, eventId, existingCodes);
+            resolve(result);
+          },
+          error: (err: any) => {
+            resolve({
+              learners: [],
+              errors: [err.message],
+              detectedHeaders: [],
+              mappedFields: [],
+              unmappedHeaders: [],
+              stats: emptyStats
+            });
+          }
+        });
+      } catch (err: any) {
+        resolve({
+          learners: [],
+          errors: [`CSV parse error: ${err.message}`],
+          detectedHeaders: [],
+          mappedFields: [],
+          unmappedHeaders: [],
+          stats: emptyStats
+        });
+      }
     }
   });
 }
@@ -663,7 +675,7 @@ export interface CustomExportOptions {
   committees?: Committee[];
 }
 
-export function exportCustomParticipantData(options: CustomExportOptions): number {
+export async function exportCustomParticipantData(options: CustomExportOptions): Promise<number> {
   const {
     learners,
     selectedKeys,
@@ -694,11 +706,14 @@ export function exportCustomParticipantData(options: CustomExportOptions): numbe
     : `${eventName.replace(/\s+/g, '_')}_${dedupedLearners.length}_Delegates`;
 
   if (format === 'xlsx') {
+    const XLSX = await import('xlsx');
     const worksheet = XLSX.utils.json_to_sheet(exportData);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Participants');
     XLSX.writeFile(workbook, `${baseName}.xlsx`);
   } else {
+    const PapaModule = await import('papaparse');
+    const Papa = PapaModule.default || PapaModule;
     const csv = Papa.unparse(exportData);
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -713,7 +728,7 @@ export function exportCustomParticipantData(options: CustomExportOptions): numbe
   return dedupedLearners.length;
 }
 
-export function exportFullParticipantDataToExcel(
+export async function exportFullParticipantDataToExcel(
   learners: Learner[],
   eventName: string = 'TN_Assembly',
   customFileName?: string,
@@ -722,7 +737,7 @@ export function exportFullParticipantDataToExcel(
 ) {
   const deduped = deduplicateLearners(learners);
   const defaultKeys = EXPORT_COLUMNS_REGISTRY.filter(c => c.defaultSelected).map(c => c.key);
-  exportCustomParticipantData({
+  return exportCustomParticipantData({
     learners: deduped,
     selectedKeys: defaultKeys,
     format: 'xlsx',
@@ -733,7 +748,7 @@ export function exportFullParticipantDataToExcel(
   });
 }
 
-export function exportFullParticipantDataToCSV(
+export async function exportFullParticipantDataToCSV(
   learners: Learner[],
   eventName: string = 'TN_Assembly',
   customFileName?: string,
@@ -742,7 +757,7 @@ export function exportFullParticipantDataToCSV(
 ) {
   const deduped = deduplicateLearners(learners);
   const defaultKeys = EXPORT_COLUMNS_REGISTRY.filter(c => c.defaultSelected).map(c => c.key);
-  exportCustomParticipantData({
+  return exportCustomParticipantData({
     learners: deduped,
     selectedKeys: defaultKeys,
     format: 'csv',
@@ -753,7 +768,7 @@ export function exportFullParticipantDataToCSV(
   });
 }
 
-export function exportAllocationTemplateCSV() {
+export async function exportAllocationTemplateCSV() {
   const sampleAllocation = [
     {
       'Student Name': 'V. vishnu',
@@ -797,6 +812,8 @@ export function exportAllocationTemplateCSV() {
     }
   ];
 
+  const PapaModule = await import('papaparse');
+  const Papa = PapaModule.default || PapaModule;
   const csv = Papa.unparse(sampleAllocation);
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);

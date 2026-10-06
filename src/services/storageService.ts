@@ -733,6 +733,14 @@ class StorageService {
   private syncDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private hydratedEventIds = new Set<string>();
   private eventsFetched = false;
+
+  public getCurrentRealtimeEventId(): string | null {
+    return this.currentRealtimeEventId;
+  }
+
+  public isRealtimeActive(): boolean {
+    return !!this.realtimeChannel;
+  }
   private isLoginRecordsConfigured: boolean = false;
   private lastEventsError: string | null = null;
   private realtimeCleanupPromise: Promise<void> | null = null;
@@ -876,8 +884,11 @@ class StorageService {
     const ttl = options.ttl ?? this.FETCH_TTL;
     const cacheStatus = this.getCacheStatus<T>(key, ttl);
 
-    // 1. Return from memory/localStorage cache if fresh and not forced
-    if (!options.force && cacheStatus.status === 'fresh' && cacheStatus.entry) {
+    // If cache was just populated within the last 15 seconds, avoid redundant immediate re-fetch
+    const isVeryRecent = !!(cacheStatus.entry && (Date.now() - cacheStatus.entry.cachedAt < 15000));
+
+    // 1. Return from memory/localStorage cache if fresh and not forced (or if just fetched within 15s)
+    if ((!options.force || isVeryRecent) && cacheStatus.status === 'fresh' && cacheStatus.entry) {
       return cacheStatus.entry.data;
     }
 
@@ -1036,7 +1047,7 @@ class StorageService {
     this.initDefaults();
     this.isHydrated = true;
     if (isSupabaseEnabled) {
-      this.setupRealtimeSync();
+      // NOTE: Realtime is scoped strictly to authenticated events; do not mount unauthenticated global channel here
       setTimeout(() => {
         const isAuthOrDisplay = typeof window !== 'undefined' && (
           window.location.pathname.startsWith('/join') ||
@@ -3313,38 +3324,31 @@ class StorageService {
     return this.fetchCached<Learner[]>(cacheKey, async () => {
       try {
         let learnersData: any[] | null = null;
-        // Query learners for this event, including legacy delegates with null event_id
-        const { data, error } = await sb
+        // Strictly query learners belonging to this event
+        const { data: eqData, error: eqErr } = await sb
           .from('learners')
           .select(SUPABASE_COLUMNS.LEARNERS)
-          .or(`event_id.eq.${eventId},event_id.is.null`);
+          .eq('event_id', eventId);
 
-        if (!error && data && Array.isArray(data)) {
-          learnersData = data;
-        } else {
-          if (error) {
-            console.warn('[StorageService] fetchEventLearners .or query warning, falling back to eq:', error.message);
-          }
-          const { data: eqData, error: eqErr } = await sb
-            .from('learners')
-            .select(SUPABASE_COLUMNS.LEARNERS)
-            .eq('event_id', eventId);
-          if (!eqErr && eqData && Array.isArray(eqData)) {
-            learnersData = eqData;
-          }
+        if (!eqErr && eqData && Array.isArray(eqData)) {
+          learnersData = eqData;
         }
 
         if (learnersData && Array.isArray(learnersData)) {
-          // Normalize null event_id to this eventId
           const normalized: Learner[] = learnersData.map((l: any) => ({
             ...l,
-            event_id: l.event_id || eventId
+            event_id: eventId
           }));
 
           const curLearners = this.getLearners();
           const otherLearners = curLearners.filter(l => l.event_id && l.event_id !== eventId);
           const merged = sortLearnersStably([...otherLearners, ...normalized]);
           this.setItem(STORAGE_KEYS.LEARNERS, merged);
+          if (typeof localStorage !== 'undefined') {
+            try {
+              localStorage.setItem(`tn_assembly_learners_${eventId}`, JSON.stringify(normalized));
+            } catch {}
+          }
           this.notify();
           if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
           return this.getLearners(eventId);
@@ -3730,9 +3734,10 @@ class StorageService {
   public async fetchJuryPortalData(eventId: string, juryId: string, force = false): Promise<void> {
     const sb = supabase;
     if (!sb || !eventId) return;
-    const cacheKey = `portal_jury_${eventId}_${juryId}`;
+    const resolvedJuryId = juryId || this.getJury().find(j => j.event_id === eventId)?.id || '';
+    const cacheKey = `portal_jury_${eventId}_${resolvedJuryId}`;
 
-    return this.fetchCached<void>(cacheKey, () => this.executeJuryPortalFetch(eventId, juryId, cacheKey), { force });
+    return this.fetchCached<void>(cacheKey, () => this.executeJuryPortalFetch(eventId, resolvedJuryId, cacheKey), { force });
   }
 
   private async executeJuryPortalFetch(eventId: string, juryId: string, cacheKey: string): Promise<void> {
@@ -3831,11 +3836,17 @@ class StorageService {
           return {
             ...existing,
             ...l,
+            event_id: eventId,
             access_code: l.access_code || existing?.access_code || '',
             constituency_number: constNum
           } as Learner;
         });
         this.setItem(STORAGE_KEYS.LEARNERS, [...otherLearners, ...normalizedJuryLearners]);
+        if (typeof localStorage !== 'undefined') {
+          try {
+            localStorage.setItem(`tn_assembly_learners_${eventId}`, JSON.stringify(normalizedJuryLearners));
+          } catch {}
+        }
       }
 
       this.setCacheEntry(cacheKey, {
@@ -7221,24 +7232,9 @@ class StorageService {
             this.setItem(STORAGE_KEYS.VOLUNTEERS, [...vols, matchedVol as unknown as Volunteer]);
           }
 
-          // Step 2: Fetch and cache the volunteer's assigned event metadata
-          let matchedEvent: CollegeEvent | undefined;
-          if (matchedVol.event_id) {
-            const { data: eventRow } = await supabase
-              .from('college_events')
-              .select(SUPABASE_COLUMNS.COLLEGE_EVENTS)
-              .eq('id', matchedVol.event_id)
-              .maybeSingle();
-
-            if (eventRow) {
-              matchedEvent = this.normalizeEvent(eventRow as unknown as CollegeEvent);
-              const curEvents = this.getEvents();
-              this.setItem(STORAGE_KEYS.EVENTS, [...curEvents.filter(e => e.id !== matchedEvent!.id), matchedEvent]);
-            }
-          }
-
-          // Await volunteer portal data so learners, days, and attendance are loaded for this specific event
+          // Step 2: Fetch and cache volunteer portal data (event metadata + learners + attendance)
           await this.fetchVolunteerPortalData(matchedVol.event_id, matchedVol.id, true);
+          const matchedEvent = this.getEvents().find(e => e.id === matchedVol.event_id);
 
           this.logAudit({
             event_id: matchedVol.event_id,
@@ -7288,23 +7284,9 @@ class StorageService {
             this.setItem(STORAGE_KEYS.JURY, [...juries, matchedJury as unknown as JuryMember]);
           }
 
-          // Step 2: Fetch and cache the jury member's assigned event metadata
-          let matchedEvent: CollegeEvent | undefined;
-          if (matchedJury.event_id) {
-            const { data: eventRow } = await supabase
-              .from('college_events')
-              .select(SUPABASE_COLUMNS.COLLEGE_EVENTS)
-              .eq('id', matchedJury.event_id)
-              .maybeSingle();
-
-            if (eventRow) {
-              matchedEvent = this.normalizeEvent(eventRow as unknown as CollegeEvent);
-              const curEvents = this.getEvents();
-              this.setItem(STORAGE_KEYS.EVENTS, [...curEvents.filter(e => e.id !== matchedEvent!.id), matchedEvent]);
-            }
-          }
-
+          // Step 2: Fetch and cache jury portal data (event metadata + learners + scores)
           await this.fetchJuryPortalData(matchedJury.event_id, matchedJury.id, true);
+          const matchedEvent = this.getEvents().find(e => e.id === matchedJury.event_id);
 
           this.logAudit({
             event_id: matchedJury.event_id,
@@ -8125,6 +8107,21 @@ class StorageService {
   // ── LEARNERS ──────────────────────────────────────────────────────────────
 
   public getLearners(eventId?: string): Learner[] {
+    if (eventId && typeof localStorage !== 'undefined') {
+      try {
+        const scopedRaw = localStorage.getItem(`tn_assembly_learners_${eventId}`);
+        if (scopedRaw) {
+          const parsed = JSON.parse(scopedRaw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const scopedList = parsed.filter((l: Learner) => l && l.event_id === eventId);
+            if (scopedList.length > 0) {
+              return sortLearnersStably(scopedList);
+            }
+          }
+        }
+      } catch {}
+    }
+
     const all = this.getItem<Learner[]>(STORAGE_KEYS.LEARNERS, INITIAL_LEARNERS);
     const seenIds = new Set<string>();
     const unique: Learner[] = [];
@@ -11010,17 +11007,23 @@ class StorageService {
         const { data, error } = await query.order('called_at', { ascending: true });
         if (!error && data) {
           let testTurnIdsSet = new Set<string>();
-          try {
-            const { data: evData } = await supabase
-              .from('college_events')
-              .select('social_coverage')
-              .eq('id', eventId)
-              .maybeSingle();
-            const sc = (evData?.social_coverage || {}) as Record<string, any>;
-            if (Array.isArray(sc.test_speaking_turn_ids)) {
-              sc.test_speaking_turn_ids.forEach((id: string) => testTurnIdsSet.add(id));
-            }
-          } catch {}
+          const cachedEv = this.getEvents().find(e => e.id === eventId);
+          const cachedSc = (cachedEv?.social_coverage || {}) as Record<string, any>;
+          if (Array.isArray(cachedSc.test_speaking_turn_ids)) {
+            cachedSc.test_speaking_turn_ids.forEach((id: string) => testTurnIdsSet.add(id));
+          } else {
+            try {
+              const { data: evData } = await supabase
+                .from('college_events')
+                .select('social_coverage')
+                .eq('id', eventId)
+                .maybeSingle();
+              const sc = (evData?.social_coverage || {}) as Record<string, any>;
+              if (Array.isArray(sc.test_speaking_turn_ids)) {
+                sc.test_speaking_turn_ids.forEach((id: string) => testTurnIdsSet.add(id));
+              }
+            } catch {}
+          }
 
           const rawRecords = data as unknown as SpeakingTurn[];
           const records = rawRecords.map(r => {
@@ -15690,6 +15693,15 @@ class StorageService {
       console.warn('[StorageService] IDB read warning:', err);
     }
 
+    const cachedEv = this.getEvents().find(e => e.id === eventId);
+    const cachedSc = (cachedEv?.social_coverage || {}) as Record<string, any>;
+    if (cachedSc.timer_audio_config && typeof cachedSc.timer_audio_config === 'object') {
+      const config = cachedSc.timer_audio_config as TimerAudioConfig;
+      this.timerAudioMemoryCache.set(eventId, config);
+      this.setItemSafe(`tn_assembly_timer_audio_${eventId}`, config);
+      return config;
+    }
+
     // 2. Fetch directly from authoritative Supabase storage
     if (supabase && isValidUuid(eventId)) {
       try {
@@ -16727,32 +16739,22 @@ class StorageService {
     sessionId?: string
   ): Promise<JurySpeechRecognition[]> {
     if (!eventId) return [];
+    // Authoritative recognition state is persisted via college_events.social_coverage.jury_speech_recognitions and local storage
     if (supabase && isSupabaseEnabled) {
       try {
-        let query = supabase
-          .from('jury_speech_recognitions')
-          .select(SUPABASE_COLUMNS.JURY_SPEECH_RECOGNITIONS)
-          .eq('event_id', eventId);
-        if (sessionId) {
-          const agendaItems = this.getAgenda(eventId);
-          const resolved = resolveCanonicalSession(sessionId, undefined, agendaItems);
-          query = query.eq('session_id', resolved.canonicalId);
-        }
-        const { data, error } = await query.order('created_at', { ascending: true });
-        if (!error && data) {
-          const records = data as unknown as JurySpeechRecognition[];
-          const all = this.getItem<JurySpeechRecognition[]>(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, []);
-          const other = all.filter(r => r.event_id !== eventId || (sessionId && r.session_id !== sessionId));
-          const merged = [...other, ...records];
-          this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, merged);
-          return records;
-        }
-      } catch (err) {
-        console.warn('[fetchJurySpeechRecognitions] Supabase table error, trying social_coverage:', err);
-      }
+        const cachedEv = this.getEvents().find(e => e.id === eventId);
+        const cachedSc = (cachedEv?.social_coverage || {}) as Record<string, any>;
+        const cachedRecogs = Array.isArray(cachedSc.jury_speech_recognitions) ? (cachedSc.jury_speech_recognitions as JurySpeechRecognition[]) : [];
 
-      // Resilient fallback: social_coverage.jury_speech_recognitions
-      try {
+        if (cachedRecogs.length > 0) {
+          const all = this.getItem<JurySpeechRecognition[]>(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, []);
+          const other = all.filter(r => r.event_id !== eventId);
+          const merged = [...other, ...cachedRecogs];
+          this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, merged);
+          return sessionId ? cachedRecogs.filter(r => r.session_id === sessionId) : cachedRecogs;
+        }
+
+        // If not in local events cache, fetch social_coverage directly from college_events
         const { data: evData } = await supabase
           .from('college_events')
           .select('social_coverage')
@@ -16768,7 +16770,7 @@ class StorageService {
           return sessionId ? recogs.filter(r => r.session_id === sessionId) : recogs;
         }
       } catch (e) {
-        console.warn('[fetchJurySpeechRecognitions] Fallback error:', e);
+        console.warn('[fetchJurySpeechRecognitions] Fetch error:', e);
       }
     }
     return this.getJurySpeechRecognitions(eventId, sessionId, undefined, undefined, undefined, false);
@@ -17004,11 +17006,34 @@ class StorageService {
     this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, all);
 
     if (supabase && isSupabaseEnabled) {
-      supabase
-        .from('jury_speech_recognitions')
-        .update({ note: updated.note, updated_at: now })
-        .eq('id', updated.id)
-        .then();
+      (async () => {
+        try {
+          const { data: evData } = await supabase
+            .from('college_events')
+            .select('social_coverage')
+            .eq('id', eventId)
+            .maybeSingle();
+          const sc = (evData?.social_coverage || {}) as Record<string, any>;
+          const curRecogs = Array.isArray(sc.jury_speech_recognitions) ? sc.jury_speech_recognitions : [];
+          const updatedRecogs = curRecogs.map((r: any) =>
+            r.id === updated.id || (r.event_id === eventId && r.speaking_turn_id === speakingTurnId && r.jury_id === juryId)
+              ? { ...r, note: updated.note, updated_at: now }
+              : r
+          );
+          await supabase
+            .from('college_events')
+            .update({
+              social_coverage: {
+                ...sc,
+                jury_speech_recognitions: updatedRecogs,
+                updated_at: now
+              }
+            })
+            .eq('id', eventId);
+        } catch (e) {
+          console.warn('[updateJurySpeechRecognitionNote] Error persisting note to social_coverage:', e);
+        }
+      })();
     }
 
     this.broadcast('jury_recognition', {

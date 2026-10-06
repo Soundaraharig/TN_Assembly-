@@ -77,7 +77,7 @@ export const DownloadModal: React.FC<DownloadModalProps> = ({
     setSelectedKeys(EXPORT_COLUMNS_REGISTRY.filter(c => c.defaultSelected).map(c => c.key));
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (targetLearners.length === 0) {
       onShowToast('No Records', 'There are no delegates in the chosen scope to export.', 'error');
       return;
@@ -90,7 +90,7 @@ export const DownloadModal: React.FC<DownloadModalProps> = ({
     const scopeLabel = scope === 'FILTERED' ? 'Filtered' : 'All';
     const fileName = `${eventName.replace(/\s+/g, '_')}_${scopeLabel}_${targetLearners.length}_Delegates`;
 
-    const exportedCount = exportCustomParticipantData({
+    const exportedCount = await exportCustomParticipantData({
       learners: targetLearners,
       selectedKeys,
       format,

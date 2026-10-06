@@ -1,12 +1,12 @@
-import jsPDF from 'jspdf';
 import type { Learner, Party } from '../types';
 import { getResolvedPartyName } from '../services/storageService';
 
-export function generateDelegateBadgesPDF(
+export async function generateDelegateBadgesPDF(
   learners: Learner[],
   eventName: string = 'Youth TN Assembly',
   parties?: Party[]
 ) {
+  const { default: jsPDF } = await import('jspdf');
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',

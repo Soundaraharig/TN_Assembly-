@@ -19,7 +19,6 @@ import {
   Phone,
   Pencil
 } from 'lucide-react';
-import Papa from 'papaparse';
 
 interface VolunteersTabProps {
   volunteers: Volunteer[];
@@ -280,7 +279,7 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
     onShowToast('Assignment Removed', 'Unassigned YUVA volunteer', 'info');
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       setImportFile(file);
@@ -288,6 +287,8 @@ export const VolunteersTab: React.FC<VolunteersTabProps> = ({
       const normalizeHeader = (h: string) =>
         h ? h.replace(/^\uFEFF/, '').trim().toLowerCase().replace(/[^a-z0-9]/g, '') : '';
 
+      const PapaModule = await import('papaparse');
+      const Papa = PapaModule.default || PapaModule;
       Papa.parse(file, {
         header: true,
         skipEmptyLines: true,

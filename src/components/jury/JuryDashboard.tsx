@@ -72,11 +72,17 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
   const [filterBench, setFilterBench] = useState<'ALL' | 'Ruling' | 'Opposition' | 'Independent'>('ALL');
   const [activeTab, setActiveTab] = useState<'evaluate' | 'history' | 'agenda'>('evaluate');
 
-  // Effective learners list with fallback to storageService
+  // Effective learners list with strict event scoping (P0 event isolation)
   const learners = useMemo(() => {
-    if (propLearners && propLearners.length > 0) return propLearners;
-    if (event?.id) return storageService.getLearners(event.id);
-    return [];
+    if (!event?.id) return [];
+    const scopedPropLearners = (propLearners || []).filter(
+      learner => learner && learner.event_id === event.id
+    );
+    if (scopedPropLearners.length > 0) return scopedPropLearners;
+    const scopedCached = storageService.getLearners(event.id).filter(
+      learner => learner && learner.event_id === event.id
+    );
+    return scopedCached;
   }, [propLearners, event?.id, recogTick]);
 
   // Available Scoring Sessions (Zero Hour, Question Hour, Bill Presenting, etc.)
@@ -93,6 +99,21 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     const found = availableSessions.find(s => s.id === selectedSessionId);
     return found || availableSessions[0] || { id: 'zero_hour', name: 'Zero Hour', is_canonical: true };
   }, [availableSessions, selectedSessionId]);
+
+  // Memoized O(1) Score Map for the active session (P1 Mobile CPU optimization)
+  const currentSessionScoreMap = useMemo(() => {
+    const map = new Map<string, ScoreRecord>();
+    for (const s of scores) {
+      if (
+        (!event || !s.event_id || s.event_id === event.id) &&
+        (s.session_id === selectedSession.id || s.session_name === selectedSession.name) &&
+        ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))
+      ) {
+        map.set(s.learner_id, s);
+      }
+    }
+    return map;
+  }, [scores, event?.id, selectedSession.id, selectedSession.name, jury?.id, jury?.name]);
 
   const handleSessionChange = (newSessionId: string) => {
     setSelectedSessionId(newSessionId);
@@ -184,10 +205,14 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       storageService.fetchJurySpeechRecognitions(event.id).then(() => {
         setRecogTick(t => t + 1);
       }).catch(() => {});
-      if (!propLearners || propLearners.length === 0) {
-        storageService.fetchEventLearners(event.id).then(() => {
-          setRecogTick(t => t + 1);
-        }).catch(() => {});
+      const scopedProps = (propLearners || []).filter(l => l && l.event_id === event.id);
+      if (scopedProps.length === 0) {
+        const cached = storageService.getLearners(event.id).filter(l => l && l.event_id === event.id);
+        if (cached.length === 0) {
+          storageService.fetchEventLearners(event.id).then(() => {
+            setRecogTick(t => t + 1);
+          }).catch(() => {});
+        }
       }
     }
   }, [event?.id, propLearners]);
@@ -1119,7 +1144,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       <button
                         type="button"
                         onClick={handleKeypadClear}
-                        className="text-[10px] font-bold text-rose-500 hover:underline"
+                        className="text-[11px] font-bold text-rose-500 hover:underline min-h-[44px] min-w-[44px] inline-flex items-center justify-center p-1 cursor-pointer"
                       >
                         Clear
                       </button>
@@ -1131,7 +1156,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                         key={num}
                         type="button"
                         onClick={() => handleKeypadPress(num)}
-                        className="py-2.5 rounded-xl border border-amber-200/80 dark:border-slate-700 bg-white dark:bg-slate-700 text-slate-900 dark:text-white font-mono font-extrabold text-sm hover:bg-amber-100 dark:hover:bg-slate-600 active:scale-95 transition cursor-pointer shadow-2xs"
+                        className="py-2.5 min-h-[44px] rounded-xl border border-amber-200/80 dark:border-slate-700 bg-white dark:bg-slate-700 text-slate-900 dark:text-white font-mono font-extrabold text-sm hover:bg-amber-100 dark:hover:bg-slate-600 active:scale-95 transition cursor-pointer shadow-2xs flex items-center justify-center"
                       >
                         {num}
                       </button>
@@ -1139,7 +1164,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     <button
                       type="button"
                       onClick={handleKeypadBackspace}
-                      className="py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-200/70 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center justify-center cursor-pointer active:scale-95"
+                      className="py-2.5 min-h-[44px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-200/70 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center justify-center cursor-pointer active:scale-95"
                       title="Backspace"
                     >
                       <Delete className="w-4 h-4" />
@@ -1147,7 +1172,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     <button
                       type="button"
                       onClick={() => setIsMobileKeypadOpen(false)}
-                      className="py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-emerald-500 text-white font-bold text-xs flex items-center justify-center cursor-pointer active:scale-95"
+                      className="py-2.5 min-h-[44px] rounded-xl border border-slate-200 dark:border-slate-700 bg-emerald-500 text-white font-bold text-xs flex items-center justify-center cursor-pointer active:scale-95"
                       title="Done"
                     >
                       ✓
@@ -1164,7 +1189,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     <button
                       type="button"
                       onClick={() => setIsMobileSearchOpen(false)}
-                      className="text-amber-500 hover:underline cursor-pointer"
+                      className="text-amber-500 hover:underline cursor-pointer min-h-[44px] min-w-[44px] inline-flex items-center justify-center"
                     >
                       Close ✕
                     </button>
@@ -1176,12 +1201,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                   ) : (
                     filteredLearners.slice(0, 20).map(learner => {
                       const isSelected = learner.id === selectedLearnerId;
-                      const existingScore = scores.find(s =>
-                        s.learner_id === learner.id &&
-                        (!event || !s.event_id || s.event_id === event.id) &&
-                        (s.session_id === selectedSession.id || s.session_name === selectedSession.name) &&
-                        ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))
-                      );
+                      const existingScore = currentSessionScoreMap.get(learner.id);
                       const constNum = learner.constituency_number ?? (learner as any).roll_no;
                       const constName = learner.constituency_name || learner.role || 'Assembly Seat';
 
@@ -1267,7 +1287,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     type="button"
                     onClick={handlePrevDelegate}
                     disabled={currentIndex <= 0}
-                    className="p-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 disabled:opacity-30 cursor-pointer"
+                    className="p-1.5 min-h-[44px] min-w-[44px] rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 disabled:opacity-30 cursor-pointer flex items-center justify-center"
                     title="Previous Student"
                   >
                     <ChevronLeft className="w-4 h-4" />
@@ -1293,7 +1313,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     type="button"
                     onClick={handleNextDelegate}
                     disabled={currentIndex >= learners.length - 1}
-                    className="p-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 disabled:opacity-30 cursor-pointer"
+                    className="p-1.5 min-h-[44px] min-w-[44px] rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 disabled:opacity-30 cursor-pointer flex items-center justify-center"
                     title="Next Student"
                   >
                     <ChevronRight className="w-4 h-4" />
@@ -1561,7 +1581,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                           type="button"
                           onClick={handlePrevDelegate}
                           disabled={currentIndex <= 0}
-                          className="p-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 disabled:opacity-30 cursor-pointer"
+                          className="p-1.5 min-h-[44px] min-w-[44px] rounded-lg text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 disabled:opacity-30 cursor-pointer flex items-center justify-center"
                           title="Previous Delegate"
                         >
                           <ChevronLeft className="w-4 h-4" />
@@ -1573,7 +1593,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                           type="button"
                           onClick={handleNextDelegate}
                           disabled={currentIndex >= learners.length - 1}
-                          className="p-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 disabled:opacity-30 cursor-pointer"
+                          className="p-1.5 min-h-[44px] min-w-[44px] rounded-lg text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 disabled:opacity-30 cursor-pointer flex items-center justify-center"
                           title="Next Delegate"
                         >
                           <ChevronRight className="w-4 h-4" />
@@ -1640,7 +1660,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             type="button"
                             disabled={isLocked}
                             onClick={() => handleSelectScore('research', val)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            className={`px-3 py-2 sm:py-1.5 min-h-[40px] sm:min-h-[36px] min-w-[36px] inline-flex items-center justify-center rounded-lg text-xs font-bold transition-all cursor-pointer ${
                               researchScore === val
                                 ? 'bg-blue-600 text-white shadow-md scale-105'
                                 : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -1685,7 +1705,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             type="button"
                             disabled={isLocked}
                             onClick={() => handleSelectScore('relevance', val)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            className={`px-3 py-2 sm:py-1.5 min-h-[40px] sm:min-h-[36px] min-w-[36px] inline-flex items-center justify-center rounded-lg text-xs font-bold transition-all cursor-pointer ${
                               relevanceScore === val
                                 ? 'bg-blue-600 text-white shadow-md scale-105'
                                 : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -1730,7 +1750,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             type="button"
                             disabled={isLocked}
                             onClick={() => handleSelectScore('comm', val)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            className={`px-3 py-2 sm:py-1.5 min-h-[40px] sm:min-h-[36px] min-w-[36px] inline-flex items-center justify-center rounded-lg text-xs font-bold transition-all cursor-pointer ${
                               commScore === val
                                 ? 'bg-blue-600 text-white shadow-md scale-105'
                                 : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -1775,7 +1795,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             type="button"
                             disabled={isLocked}
                             onClick={() => handleSelectScore('conduct', val)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            className={`px-3 py-2 sm:py-1.5 min-h-[40px] sm:min-h-[36px] min-w-[36px] inline-flex items-center justify-center rounded-lg text-xs font-bold transition-all cursor-pointer ${
                               conductScore === val
                                 ? 'bg-blue-600 text-white shadow-md scale-105'
                                 : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -1820,7 +1840,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             type="button"
                             disabled={isLocked}
                             onClick={() => handleSelectScore('originality', val)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            className={`px-3 py-2 sm:py-1.5 min-h-[40px] sm:min-h-[36px] min-w-[36px] inline-flex items-center justify-center rounded-lg text-xs font-bold transition-all cursor-pointer ${
                               originalityScore === val
                                 ? 'bg-blue-600 text-white shadow-md scale-105'
                                 : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -1865,7 +1885,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             type="button"
                             disabled={isLocked}
                             onClick={() => handleSelectScore('time', val)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            className={`px-3 py-2 sm:py-1.5 min-h-[40px] sm:min-h-[36px] min-w-[36px] inline-flex items-center justify-center rounded-lg text-xs font-bold transition-all cursor-pointer ${
                               timeScore === val
                                 ? 'bg-blue-600 text-white shadow-md scale-105'
                                 : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
@@ -2035,7 +2055,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       <button
                         type="submit"
                         disabled={isLocked || !isEvaluationComplete || isSubmittingEvaluation}
-                        className="btn-primary px-6 py-2.5 text-xs font-bold shadow-md cursor-pointer hover:scale-102 transition-transform disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+                        className="btn-primary px-6 py-2.5 min-h-[44px] text-xs font-bold shadow-md cursor-pointer hover:scale-102 transition-transform disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                       >
                         <CheckCircle className="w-4 h-4 text-emerald-400" />
                         <span>{isSubmittingEvaluation ? 'Submitting Official Evaluation...' : 'Submit Official Evaluation'}</span>
@@ -2055,8 +2075,8 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
             {/* Right: Keypad Widget & Delegate Roster (4 cols) */}
             <div className="lg:col-span-4 space-y-5">
               
-              {/* "JUMP TO PARTICIPANT #" Keypad Card Widget */}
-              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 shadow-sm space-y-3">
+              {/* "JUMP TO PARTICIPANT #" Keypad Card Widget (Hidden on mobile to eliminate duplicate keypad DOM) */}
+              <div className="hidden lg:block rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 shadow-sm space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                     JUMP TO PARTICIPANT #
@@ -2064,7 +2084,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                   <button
                     type="button"
                     onClick={() => setIsKeypadOpen(!isKeypadOpen)}
-                    className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                    className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
                     title={isKeypadOpen ? 'Collapse Keypad' : 'Expand Keypad'}
                   >
                     <ChevronUp className={`w-4 h-4 transition-transform duration-200 ${isKeypadOpen ? '' : 'rotate-180'}`} />
@@ -2083,7 +2103,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     <button
                       type="button"
                       onClick={handleKeypadClear}
-                      className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                      className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 min-h-[32px] min-w-[32px] flex items-center justify-center"
                     >
                       <X className="w-4 h-4" />
                     </button>
@@ -2097,7 +2117,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                         key={num}
                         type="button"
                         onClick={() => handleKeypadPress(num)}
-                        className="py-2.5 rounded-xl border border-amber-200/80 dark:border-slate-700 bg-amber-50/50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-extrabold text-sm hover:bg-amber-100 dark:hover:bg-slate-700 transition cursor-pointer active:scale-95 shadow-2xs"
+                        className="py-2.5 min-h-[44px] rounded-xl border border-amber-200/80 dark:border-slate-700 bg-amber-50/50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-extrabold text-sm hover:bg-amber-100 dark:hover:bg-slate-700 transition cursor-pointer active:scale-95 shadow-2xs flex items-center justify-center"
                       >
                         {num}
                       </button>
@@ -2105,7 +2125,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     <button
                       type="button"
                       onClick={handleKeypadBackspace}
-                      className="py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold text-xs hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center justify-center cursor-pointer active:scale-95"
+                      className="py-2.5 min-h-[44px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold text-xs hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center justify-center cursor-pointer active:scale-95"
                       title="Backspace"
                     >
                       <Delete className="w-4 h-4" />
@@ -2113,7 +2133,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                     <button
                       type="button"
                       onClick={handleKeypadClear}
-                      className="py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold text-xs hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center justify-center cursor-pointer active:scale-95"
+                      className="py-2.5 min-h-[44px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold text-xs hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center justify-center cursor-pointer active:scale-95"
                       title="Clear Input"
                     >
                       <X className="w-4 h-4" />
@@ -2175,12 +2195,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                   ) : (
                     filteredLearners.map(learner => {
                       const isSelected = learner.id === selectedLearnerId;
-                      const existingScore = scores.find(s =>
-                        s.learner_id === learner.id &&
-                        (!event || !s.event_id || s.event_id === event.id) &&
-                        (s.session_id === selectedSession.id || s.session_name === selectedSession.name) &&
-                        ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))
-                      );
+                      const existingScore = currentSessionScoreMap.get(learner.id);
                       const constNum = learner.constituency_number ?? (learner as any).roll_no;
                       const constName = learner.constituency_name || learner.role || 'Assembly Seat';
                       const recogCount = learnerRecognitionsCountMap.get(learner.id) || 0;

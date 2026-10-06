@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import { Routes, Route, Navigate, useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { getEventSlug, findEventBySlug, extractEventFromUrl, pathToTab, tabToPath, isStandaloneDisplayPath, extractEventSlugCandidateFromUrl } from './utils/slug';
 import type {
@@ -30,49 +30,63 @@ import { storageService, isSpeakerRole, isDeputySpeakerRole, areJsonbObjectsEqua
 import { Header } from './components/common/Header';
 import { Sidebar, type ActiveNavTab } from './components/common/Sidebar';
 import { ToastContainer, type ToastMessage } from './components/common/Toast';
-import { StandaloneProjectorDisplay } from './components/common/StandaloneProjectorDisplay';
 import { useTheme } from './lib/theme';
 import { ShieldAlert } from 'lucide-react';
 
 import { UnifiedLoginPage } from './components/auth/UnifiedLoginPage';
-import { MyEventsDashboard } from './components/admin/MyEventsDashboard';
-import { EventOverviewTab } from './components/admin/EventOverviewTab';
-import { DaysActivitiesTab } from './components/admin/DaysActivitiesTab';
-
-import { ParticipantsTab } from './components/coordinator/ParticipantsTab';
-import { AllocationTab } from './components/coordinator/AllocationTab';
-import { AllocationCheckTab } from './components/coordinator/AllocationCheckTab';
-import { CabinetTab } from './components/coordinator/CabinetTab';
-import { JuryTab } from './components/coordinator/JuryTab';
-import { VolunteersTab } from './components/coordinator/VolunteersTab';
-import { PartiesTab } from './components/coordinator/PartiesTab';
-import { CommitteesTab } from './components/coordinator/CommitteesTab';
-import { AgendaTab } from './components/coordinator/AgendaTab';
-import { NominationsTab } from './components/coordinator/NominationsTab';
-import { ElectionsTab } from './components/coordinator/ElectionsTab';
-import { ControlTab } from './components/coordinator/ControlTab';
-import { ProjectorTab } from './components/coordinator/ProjectorTab';
-import { ProceedingsTab } from './components/coordinator/ProceedingsTab';
-import { ScoreGridTab } from './components/coordinator/ScoreGridTab';
-import { AwardsTab } from './components/coordinator/AwardsTab';
-import { FeedbackTab } from './components/coordinator/FeedbackTab';
-import { ReportTab } from './components/coordinator/ReportTab';
-import { TeamTab } from './components/coordinator/TeamTab';
-import { ChatTab } from './components/coordinator/ChatTab';
-import { ChecklistTab } from './components/coordinator/ChecklistTab';
-import { QuestionnaireTab } from './components/coordinator/QuestionnaireTab';
-import { MediaTab } from './components/coordinator/MediaTab';
-import { ChapterAwardsTab } from './components/coordinator/ChapterAwardsTab';
-import { AddLearnerModal } from './components/coordinator/AddLearnerModal';
-import { CsvImportModal } from './components/coordinator/CsvImportModal';
-import { AllocationModal } from './components/coordinator/AllocationModal';
-
-import { StudentDashboard } from './components/student/StudentDashboard';
-import { SpeakerDashboard } from './components/speaker/SpeakerDashboard';
 import { StudentJoinView } from './components/student/StudentJoinModal';
-import { JuryDashboard } from './components/jury/JuryDashboard';
-import { VolunteerDashboard } from './components/volunteer/VolunteerDashboard';
-import { SpeakerAidDashboard } from './components/volunteer/SpeakerAidDashboard';
+
+// Lightweight Loading Fallback for Lazy Chunks
+const LazyFallback: React.FC<{ label?: string }> = ({ label = 'Loading…' }) => (
+  <div className="min-h-[40vh] flex flex-col items-center justify-center p-6 text-center animate-fade-in">
+    <div className="w-8 h-8 border-3 border-amber-500 border-t-transparent rounded-full animate-spin mb-3" />
+    <span className="text-xs font-semibold tracking-wide" style={{ color: 'var(--text-muted)' }}>
+      {label}
+    </span>
+  </div>
+);
+
+// Role-based Dashboards (Lazy loaded on demand)
+const JuryDashboard = lazy(() => import('./components/jury/JuryDashboard').then(m => ({ default: m.JuryDashboard })));
+const StudentDashboard = lazy(() => import('./components/student/StudentDashboard').then(m => ({ default: m.StudentDashboard })));
+const VolunteerDashboard = lazy(() => import('./components/volunteer/VolunteerDashboard').then(m => ({ default: m.VolunteerDashboard })));
+const SpeakerDashboard = lazy(() => import('./components/speaker/SpeakerDashboard').then(m => ({ default: m.SpeakerDashboard })));
+const SpeakerAidDashboard = lazy(() => import('./components/volunteer/SpeakerAidDashboard').then(m => ({ default: m.SpeakerAidDashboard })));
+const StandaloneProjectorDisplay = lazy(() => import('./components/common/StandaloneProjectorDisplay').then(m => ({ default: m.StandaloneProjectorDisplay })));
+const MyEventsDashboard = lazy(() => import('./components/admin/MyEventsDashboard').then(m => ({ default: m.MyEventsDashboard })));
+
+// Coordinator & Admin Tabs (Lazy loaded on demand)
+const EventOverviewTab = lazy(() => import('./components/admin/EventOverviewTab').then(m => ({ default: m.EventOverviewTab })));
+const DaysActivitiesTab = lazy(() => import('./components/admin/DaysActivitiesTab').then(m => ({ default: m.DaysActivitiesTab })));
+const ParticipantsTab = lazy(() => import('./components/coordinator/ParticipantsTab').then(m => ({ default: m.ParticipantsTab })));
+const AllocationTab = lazy(() => import('./components/coordinator/AllocationTab').then(m => ({ default: m.AllocationTab })));
+const AllocationCheckTab = lazy(() => import('./components/coordinator/AllocationCheckTab').then(m => ({ default: m.AllocationCheckTab })));
+const CabinetTab = lazy(() => import('./components/coordinator/CabinetTab').then(m => ({ default: m.CabinetTab })));
+const JuryTab = lazy(() => import('./components/coordinator/JuryTab').then(m => ({ default: m.JuryTab })));
+const VolunteersTab = lazy(() => import('./components/coordinator/VolunteersTab').then(m => ({ default: m.VolunteersTab })));
+const PartiesTab = lazy(() => import('./components/coordinator/PartiesTab').then(m => ({ default: m.PartiesTab })));
+const CommitteesTab = lazy(() => import('./components/coordinator/CommitteesTab').then(m => ({ default: m.CommitteesTab })));
+const AgendaTab = lazy(() => import('./components/coordinator/AgendaTab').then(m => ({ default: m.AgendaTab })));
+const NominationsTab = lazy(() => import('./components/coordinator/NominationsTab').then(m => ({ default: m.NominationsTab })));
+const ElectionsTab = lazy(() => import('./components/coordinator/ElectionsTab').then(m => ({ default: m.ElectionsTab })));
+const ControlTab = lazy(() => import('./components/coordinator/ControlTab').then(m => ({ default: m.ControlTab })));
+const ProjectorTab = lazy(() => import('./components/coordinator/ProjectorTab').then(m => ({ default: m.ProjectorTab })));
+const ProceedingsTab = lazy(() => import('./components/coordinator/ProceedingsTab').then(m => ({ default: m.ProceedingsTab })));
+const ScoreGridTab = lazy(() => import('./components/coordinator/ScoreGridTab').then(m => ({ default: m.ScoreGridTab })));
+const AwardsTab = lazy(() => import('./components/coordinator/AwardsTab').then(m => ({ default: m.AwardsTab })));
+const FeedbackTab = lazy(() => import('./components/coordinator/FeedbackTab').then(m => ({ default: m.FeedbackTab })));
+const ReportTab = lazy(() => import('./components/coordinator/ReportTab').then(m => ({ default: m.ReportTab })));
+const TeamTab = lazy(() => import('./components/coordinator/TeamTab').then(m => ({ default: m.TeamTab })));
+const ChatTab = lazy(() => import('./components/coordinator/ChatTab').then(m => ({ default: m.ChatTab })));
+const ChecklistTab = lazy(() => import('./components/coordinator/ChecklistTab').then(m => ({ default: m.ChecklistTab })));
+const QuestionnaireTab = lazy(() => import('./components/coordinator/QuestionnaireTab').then(m => ({ default: m.QuestionnaireTab })));
+const MediaTab = lazy(() => import('./components/coordinator/MediaTab').then(m => ({ default: m.MediaTab })));
+const ChapterAwardsTab = lazy(() => import('./components/coordinator/ChapterAwardsTab').then(m => ({ default: m.ChapterAwardsTab })));
+
+// Modals (Lazy loaded on demand)
+const AddLearnerModal = lazy(() => import('./components/coordinator/AddLearnerModal').then(m => ({ default: m.AddLearnerModal })));
+const CsvImportModal = lazy(() => import('./components/coordinator/CsvImportModal').then(m => ({ default: m.CsvImportModal })));
+const AllocationModal = lazy(() => import('./components/coordinator/AllocationModal').then(m => ({ default: m.AllocationModal })));
 import { presenceService, type PresenceUser } from './services/presenceService';
 import { isSupabaseEnabled } from './lib/supabase';
 import { canManageSessionAttendance, canUseSpeakerAid } from './utils/permissions';
@@ -457,63 +471,67 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
 
     if (props.currentStudent && isPresiding) {
       return (
-        <SpeakerDashboard
-          speaker={props.currentStudent}
-          event={activeEvent}
-          learners={currentLearners}
-          agenda={currentAgenda}
-          elections={studentElections}
-          flashVotes={studentFlashVotes}
-          onShowToast={props.addToast}
-          onLogout={props.onLogout}
-        />
+        <Suspense fallback={<LazyFallback label="Loading Presiding Officer Desk..." />}>
+          <SpeakerDashboard
+            speaker={props.currentStudent}
+            event={activeEvent}
+            learners={currentLearners}
+            agenda={currentAgenda}
+            elections={studentElections}
+            flashVotes={studentFlashVotes}
+            onShowToast={props.addToast}
+            onLogout={props.onLogout}
+          />
+        </Suspense>
       );
     }
 
     return props.currentStudent ? (
-      <StudentDashboard
-        student={props.currentStudent}
-        event={activeEvent}
-        agenda={currentAgenda}
-        party={props.activeParty || null}
-        committee={props.activeCommittee || null}
-        nominations={studentNominations}
-        openNominationPositions={props.openNominationPositions}
-        elections={studentElections}
-        flashVotes={studentFlashVotes}
-        onFileNomination={(nom) => {
-          if (props.currentStudent?.role?.toLowerCase().includes('speaker')) {
-            props.addToast('Nomination Ineligible', 'Assigned Speaker / Deputy Speaker delegates cannot file nominations.', 'error');
-            return;
-          }
-          const existingNoms = storageService.getNominations(activeEvent?.id, 'student', props.currentStudent!.id);
-          if (existingNoms.some(n => n.position === nom.position && n.status !== 'Rejected')) {
-            props.addToast('Already Nominated', `You have already filed a nomination for ${nom.position}. Each member is eligible only once per post.`, 'error');
-            return;
-          }
-          try {
-            storageService.addNomination(nom);
-            if (activeEvent) {
-              props.setNominations(storageService.getNominations(activeEvent.id, 'student', props.currentStudent!.id));
+      <Suspense fallback={<LazyFallback label="Loading Delegate Portal..." />}>
+        <StudentDashboard
+          student={props.currentStudent}
+          event={activeEvent}
+          agenda={currentAgenda}
+          party={props.activeParty || null}
+          committee={props.activeCommittee || null}
+          nominations={studentNominations}
+          openNominationPositions={props.openNominationPositions}
+          elections={studentElections}
+          flashVotes={studentFlashVotes}
+          onFileNomination={(nom) => {
+            if (props.currentStudent?.role?.toLowerCase().includes('speaker')) {
+              props.addToast('Nomination Ineligible', 'Assigned Speaker / Deputy Speaker delegates cannot file nominations.', 'error');
+              return;
             }
-          } catch (err: any) {
-            props.addToast('Nomination Error', err?.message || 'Failed to file nomination', 'error');
-          }
-        }}
-        onCastVote={(elecId, candId, delId) => {
-          storageService.castVoteInElection(elecId, candId, delId || props.currentStudent!.id);
-          if (activeEvent) {
-            props.setElections(storageService.getElections(activeEvent.id, 'student', props.currentStudent!.id));
-          }
-        }}
-        onCastFlashVote={(vId, l, dec) => {
-          storageService.castFlashVote(vId, l, dec);
-          if (activeEvent) {
-            props.setFlashVotes(storageService.getFlashVotes(activeEvent.id, 'student', props.currentStudent!.id));
-          }
-        }}
-        onShowToast={props.addToast}
-      />
+            const existingNoms = storageService.getNominations(activeEvent?.id, 'student', props.currentStudent!.id);
+            if (existingNoms.some(n => n.position === nom.position && n.status !== 'Rejected')) {
+              props.addToast('Already Nominated', `You have already filed a nomination for ${nom.position}. Each member is eligible only once per post.`, 'error');
+              return;
+            }
+            try {
+              storageService.addNomination(nom);
+              if (activeEvent) {
+                props.setNominations(storageService.getNominations(activeEvent.id, 'student', props.currentStudent!.id));
+              }
+            } catch (err: any) {
+              props.addToast('Nomination Error', err?.message || 'Failed to file nomination', 'error');
+            }
+          }}
+          onCastVote={(elecId, candId, delId) => {
+            storageService.castVoteInElection(elecId, candId, delId || props.currentStudent!.id);
+            if (activeEvent) {
+              props.setElections(storageService.getElections(activeEvent.id, 'student', props.currentStudent!.id));
+            }
+          }}
+          onCastFlashVote={(vId, l, dec) => {
+            storageService.castFlashVote(vId, l, dec);
+            if (activeEvent) {
+              props.setFlashVotes(storageService.getFlashVotes(activeEvent.id, 'student', props.currentStudent!.id));
+            }
+          }}
+          onShowToast={props.addToast}
+        />
+      </Suspense>
     ) : (
       <div className="p-8 text-center" style={{ color: 'var(--text-muted)' }}>
         No student delegate details found. Please sign in with your access code.
@@ -546,7 +564,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
   }
 
   return (
-    <>
+    <Suspense fallback={<LazyFallback label="Loading tab..." />}>
       {activeTabFromPath === 'overview' && (
         <EventOverviewTab
           event={activeEvent}
@@ -1035,7 +1053,7 @@ function EventTabRouteHandler(props: EventTabRouteHandlerProps) {
           onShowToast={props.addToast}
         />
       )}
-    </>
+    </Suspense>
   );
 }
 
@@ -1173,6 +1191,7 @@ export function App() {
       localStorage.removeItem(SESSION_KEY);
       adminApiService.clearSession();
       storageService.clearUserCache();
+      storageService.cleanupRealtimeSync().catch(() => {});
       setUserSession(null);
       setCurrentStudent(null);
       setCurrentVolunteer(null);
@@ -1180,6 +1199,9 @@ export function App() {
       setEvents([]);
       setCurrentEvent(null);
       currentEventRef.current = null;
+      setLearners([]);
+      setScores([]);
+      setAgenda([]);
       storageService.invalidateCache();
       presenceService.leave().catch(() => {});
     } catch (e) {
@@ -1226,10 +1248,22 @@ export function App() {
     const volunteerEventId = (role === 'volunteer' && currentVolunteer?.event_id) ? currentVolunteer.event_id : undefined;
     const juryEventId = (role === 'jury' && currentJury?.event_id) ? currentJury.event_id : undefined;
     const roleEventId = studentEventId || volunteerEventId || juryEventId;
-    const activeId = targetEventId || roleEventId || urlEvent?.id || currentEventRef.current?.id || savedEventId;
-    let activeEv = evs.find(e => e.id === activeId) || urlEvent || (role === 'student' ? null : (evs.find(e => (e as any).is_active) || evs[0]));
 
-    if (activeEv) {
+    const currentPath = typeof window !== 'undefined' ? window.location.pathname.toLowerCase() : '';
+    const isUnauthenticatedPortalRoute = !isAuthenticated && !userSession && (
+      currentPath.startsWith('/jury') ||
+      currentPath.startsWith('/volunteer') ||
+      currentPath.includes('/join') ||
+      currentPath.includes('/student') ||
+      role === 'jury' ||
+      role === 'volunteer' ||
+      role === 'student'
+    );
+
+    const activeId = targetEventId || roleEventId || urlEvent?.id || (!isUnauthenticatedPortalRoute ? (currentEventRef.current?.id || savedEventId) : undefined);
+    let activeEv = evs.find(e => e.id === activeId) || urlEvent || (isUnauthenticatedPortalRoute || role === 'student' ? null : (evs.find(e => (e as any).is_active) || evs[0]));
+
+    if (activeEv && (!isUnauthenticatedPortalRoute || isAuthenticated)) {
       setCurrentEvent(activeEv);
       currentEventRef.current = activeEv;
       saveSession({ currentEventId: activeEv.id });
@@ -1332,6 +1366,10 @@ export function App() {
       } catch (e) {
         console.error('Session sync error:', e);
       }
+    } else if (isUnauthenticatedPortalRoute) {
+      setCurrentEvent(null);
+      currentEventRef.current = null;
+      setLearners([]);
     }
   };
 
@@ -2360,6 +2398,15 @@ export function App() {
     eventId: string;
     event?: CollegeEvent;
   }) => {
+    // Role-based route chunk preloading (Phase 2H)
+    if (authResult.role === 'jury') {
+      import('./components/jury/JuryDashboard');
+    } else if (authResult.role === 'student') {
+      import('./components/student/StudentDashboard');
+    } else if (authResult.role === 'volunteer') {
+      import('./components/volunteer/VolunteerDashboard');
+    }
+
     // Strictly isolate student / delegate login:
     // No calls to volunteers, event_day_attendance, committees, session_agenda, or full learners
     if (authResult.role === 'student') {
@@ -2400,26 +2447,23 @@ export function App() {
     if (allEvs.length > 0) {
       setEvents(allEvs);
     }
-    if (targetEv) {
-      setCurrentEvent(targetEv);
-      currentEventRef.current = targetEv;
-      setLearners(storageService.getLearners(targetEv.id));
-      setParties(storageService.getParties(targetEv.id));
-      setCommittees(storageService.getCommittees(targetEv.id));
-      setAgenda(storageService.getAgenda(targetEv.id));
-      setOpenNominationPositions(storageService.getOpenNominationPositions(targetEv.id));
-      setNominations(storageService.getNominations(targetEv.id));
-      setElections(storageService.getElections(targetEv.id));
-      setFlashVotes(storageService.getFlashVotes(targetEv.id));
-      setEventDays(storageService.getEventDays(targetEv.id));
-      setDayAttendance(storageService.getDayAttendance(targetEv.id));
-      setVolunteers(storageService.getVolunteers(targetEv.id));
-    }
-
-    setIsAuthenticated(true);
 
     if (authResult.role === 'volunteer') {
       const vol = authResult.user as Volunteer;
+      if (targetEv) {
+        setCurrentEvent(targetEv);
+        currentEventRef.current = targetEv;
+        const verifiedLearners = storageService.getLearners(targetEv.id).filter(l => l && l.event_id === targetEv.id);
+        setLearners(verifiedLearners);
+        setParties(storageService.getParties(targetEv.id));
+        setCommittees(storageService.getCommittees(targetEv.id));
+        setElections(storageService.getElections(targetEv.id));
+        setFlashVotes(storageService.getFlashVotes(targetEv.id));
+        setEventDays(storageService.getEventDays(targetEv.id));
+        setDayAttendance(storageService.getDayAttendance(targetEv.id));
+        storageService.setupRealtimeSync(targetEv.id);
+      }
+      setIsAuthenticated(true);
       setRole('volunteer');
       setCurrentVolunteer(vol);
       setUserSession({ role: 'volunteer', name: vol.name });
@@ -2439,6 +2483,23 @@ export function App() {
 
     if (authResult.role === 'jury') {
       const jury = authResult.user as JuryMember;
+      if (targetEv) {
+        setCurrentEvent(targetEv);
+        currentEventRef.current = targetEv;
+        // 1. Load only target event learners and verify every learner belongs to target event
+        const rawLearners = storageService.getLearners(targetEv.id);
+        const verifiedLearners = rawLearners.filter(l => l && l.event_id === targetEv.id);
+        setLearners(verifiedLearners);
+        // 2. Load jury-specific scores and agenda
+        setScores(storageService.getScores(targetEv.id));
+        const freshJuryAgenda = storageService.getAgenda(targetEv.id);
+        setAgenda(prev => (areJsonbObjectsEqual(prev, freshJuryAgenda) ? prev : freshJuryAgenda));
+        // 3. Start event-scoped realtime sync
+        storageService.setupRealtimeSync(targetEv.id);
+      } else {
+        setLearners([]);
+      }
+      setIsAuthenticated(true);
       setRole('jury');
       setCurrentJury(jury);
       setUserSession({ role: 'jury', name: jury.name });
@@ -2453,6 +2514,25 @@ export function App() {
       return { id: jury.id, name: jury.name, full_name: jury.name, role: 'jury', access_code: jury.access_code };
     }
 
+    if (targetEv) {
+      setCurrentEvent(targetEv);
+      currentEventRef.current = targetEv;
+      setLearners(storageService.getLearners(targetEv.id));
+      setParties(storageService.getParties(targetEv.id));
+      setCommittees(storageService.getCommittees(targetEv.id));
+      setAgenda(storageService.getAgenda(targetEv.id));
+      setOpenNominationPositions(storageService.getOpenNominationPositions(targetEv.id));
+      setNominations(storageService.getNominations(targetEv.id));
+      setElections(storageService.getElections(targetEv.id));
+      setFlashVotes(storageService.getFlashVotes(targetEv.id));
+      setEventDays(storageService.getEventDays(targetEv.id));
+      setDayAttendance(storageService.getDayAttendance(targetEv.id));
+      setVolunteers(storageService.getVolunteers(targetEv.id));
+      storageService.setupRealtimeSync(targetEv.id);
+    }
+
+    setIsAuthenticated(true);
+
     return null;
   };
 
@@ -2463,13 +2543,15 @@ export function App() {
     const activeEv = extractEventFromUrl(events) || currentEvent || events[0];
     const evId = activeEv?.id || '';
     return (
-      <StandaloneProjectorDisplay
-        currentEvent={activeEv}
-        agenda={storageService.getAgenda(evId)}
-        elections={storageService.getElections(evId)}
-        flashVotes={storageService.getFlashVotes(evId)}
-        learners={storageService.getLearners(evId)}
-      />
+      <Suspense fallback={<LazyFallback label="Connecting Display..." />}>
+        <StandaloneProjectorDisplay
+          currentEvent={activeEv}
+          agenda={storageService.getAgenda(evId)}
+          elections={storageService.getElections(evId)}
+          flashVotes={storageService.getFlashVotes(evId)}
+          learners={storageService.getLearners(evId)}
+        />
+      </Suspense>
     );
   }
 
@@ -2602,18 +2684,8 @@ export function App() {
           }}
           onLoginAccessCode={async (code: string): Promise<any> => {
             const cleanCode = code.trim().replace(/\s+/g, '').toUpperCase();
-            // Search across ALL events in Supabase
             const authRes = await storageService.authenticateAccessCodeAsync(cleanCode);
             if (!authRes) return null;
-            // Scoped data sync strictly by authenticated role
-            if (authRes.eventId && isSupabaseEnabled) {
-              if (authRes.role === 'volunteer') {
-                await storageService.fetchVolunteerPortalData(authRes.eventId, authRes.user?.id || '', true);
-              } else if (authRes.role === 'jury') {
-                await storageService.fetchJuryPortalData(authRes.eventId, authRes.user?.id || '', true);
-              }
-              loadState(authRes.eventId);
-            }
             return handleAccessCodeLogin(authRes);
           }}
           onShowToast={addToast}
@@ -2629,25 +2701,27 @@ export function App() {
   if (role === 'jury') {
     return (
       <div className="min-h-screen font-sans" style={{ backgroundColor: 'var(--bg-base)' }}>
-        <JuryDashboard
-          jury={currentJury}
-          event={currentEvent}
-          learners={learners}
-          agenda={agenda}
-          scores={scores}
-          onSaveScore={(s) => {
-            storageService.saveScoreRecord(s);
-            setScores(storageService.getScores(currentEvent?.id));
-          }}
-          onLogout={() => {
-            clearSession();
-            setIsAuthenticated(false);
-            setRole('volunteer');
-            if (typeof window !== 'undefined') window.history.pushState({}, '', '/join');
-            addToast('Signed Out', 'You have been signed out from Jury Portal', 'info');
-          }}
-          onShowToast={addToast}
-        />
+        <Suspense fallback={<LazyFallback label="Loading Jury Portal..." />}>
+          <JuryDashboard
+            jury={currentJury}
+            event={currentEvent}
+            learners={learners}
+            agenda={agenda}
+            scores={scores}
+            onSaveScore={(s) => {
+              storageService.saveScoreRecord(s);
+              setScores(storageService.getScores(currentEvent?.id));
+            }}
+            onLogout={() => {
+              clearSession();
+              setIsAuthenticated(false);
+              setRole('volunteer');
+              if (typeof window !== 'undefined') window.history.pushState({}, '', '/join');
+              addToast('Signed Out', 'You have been signed out from Jury Portal', 'info');
+            }}
+            onShowToast={addToast}
+          />
+        </Suspense>
         <ToastContainer toasts={toasts} onDismiss={removeToast} />
       </div>
     );
@@ -2657,32 +2731,7 @@ export function App() {
   if (typeof window !== 'undefined' && (window.location.pathname === '/speaker-aid' || window.location.pathname.endsWith('/speaker-aid'))) {
     return (
       <div className="min-h-screen font-sans" style={{ backgroundColor: 'var(--bg-base)' }}>
-        <SpeakerAidDashboard
-          volunteer={currentVolunteer}
-          event={currentEvent}
-          learners={learners}
-          onLogout={() => {
-            clearSession();
-            setIsAuthenticated(false);
-            setRole('volunteer');
-            if (typeof window !== 'undefined') window.history.pushState({}, '', '/join');
-            addToast('Signed Out', 'You have been signed out from Speaker Aid', 'info');
-          }}
-          onShowToast={addToast}
-        />
-        <ToastContainer toasts={toasts} onDismiss={removeToast} />
-      </div>
-    );
-  }
-
-  // Dedicated Volunteer Operations Desk
-  if (role === 'volunteer') {
-    // Authoritative Speaker Aid permission check — strictly isolates Speaker Aid from other volunteers/journalists
-    const isSpeakerAid = canUseSpeakerAid(currentVolunteer, role, initialSession);
-
-    if (isSpeakerAid) {
-      return (
-        <div className="min-h-screen font-sans" style={{ backgroundColor: 'var(--bg-base)' }}>
+        <Suspense fallback={<LazyFallback label="Loading Speaker Aid..." />}>
           <SpeakerAidDashboard
             volunteer={currentVolunteer}
             event={currentEvent}
@@ -2696,6 +2745,35 @@ export function App() {
             }}
             onShowToast={addToast}
           />
+        </Suspense>
+        <ToastContainer toasts={toasts} onDismiss={removeToast} />
+      </div>
+    );
+  }
+
+  // Dedicated Volunteer Operations Desk
+  if (role === 'volunteer') {
+    // Authoritative Speaker Aid permission check — strictly isolates Speaker Aid from other volunteers/journalists
+    const isSpeakerAid = canUseSpeakerAid(currentVolunteer, role, initialSession);
+
+    if (isSpeakerAid) {
+      return (
+        <div className="min-h-screen font-sans" style={{ backgroundColor: 'var(--bg-base)' }}>
+          <Suspense fallback={<LazyFallback label="Loading Speaker Aid..." />}>
+            <SpeakerAidDashboard
+              volunteer={currentVolunteer}
+              event={currentEvent}
+              learners={learners}
+              onLogout={() => {
+                clearSession();
+                setIsAuthenticated(false);
+                setRole('volunteer');
+                if (typeof window !== 'undefined') window.history.pushState({}, '', '/join');
+                addToast('Signed Out', 'You have been signed out from Speaker Aid', 'info');
+              }}
+              onShowToast={addToast}
+            />
+          </Suspense>
           <ToastContainer toasts={toasts} onDismiss={removeToast} />
         </div>
       );
@@ -2703,42 +2781,44 @@ export function App() {
 
     return (
       <div className="min-h-screen font-sans" style={{ backgroundColor: 'var(--bg-base)' }}>
-        <VolunteerDashboard
-          volunteer={currentVolunteer}
-          event={currentEvent}
-          learners={learners}
-          checklist={checklist}
-          parties={parties}
-          committees={committees}
-          elections={elections}
-          flashVotes={flashVotes}
-          eventDays={eventDays}
-          dayAttendance={dayAttendance}
-          onToggleCheckIn={handleToggleCheckIn}
-          onCheckInAll={handleCheckInAll}
-          onSetStudentDayAttendance={handleSetStudentDayAttendance}
-          onAddWalkIn={(l) => {
-            handleAddLearner(l);
-            setLearners(storageService.getLearners(currentEvent?.id));
-          }}
-          onCastVote={(elecId, candId, delId) => {
-            storageService.castVoteInElection(elecId, candId, delId);
-            if (currentEvent) setElections(storageService.getElections(currentEvent.id));
-          }}
-          onCastFlashVote={(vId, l, dec) => {
-            storageService.castFlashVote(vId, l, dec);
-            if (currentEvent) setFlashVotes(storageService.getFlashVotes(currentEvent.id));
-          }}
-          onToggleVolunteerArrival={(id) => storageService.toggleVolunteerArrival(id)}
-          onLogout={() => {
-            clearSession();
-            setIsAuthenticated(false);
-            setRole('volunteer');
-            if (typeof window !== 'undefined') window.history.pushState({}, '', '/join');
-            addToast('Signed Out', 'You have been signed out from Volunteer Operations Desk', 'info');
-          }}
-          onShowToast={addToast}
-        />
+        <Suspense fallback={<LazyFallback label="Loading Volunteer Desk..." />}>
+          <VolunteerDashboard
+            volunteer={currentVolunteer}
+            event={currentEvent}
+            learners={learners}
+            checklist={checklist}
+            parties={parties}
+            committees={committees}
+            elections={elections}
+            flashVotes={flashVotes}
+            eventDays={eventDays}
+            dayAttendance={dayAttendance}
+            onToggleCheckIn={handleToggleCheckIn}
+            onCheckInAll={handleCheckInAll}
+            onSetStudentDayAttendance={handleSetStudentDayAttendance}
+            onAddWalkIn={(l) => {
+              handleAddLearner(l);
+              setLearners(storageService.getLearners(currentEvent?.id));
+            }}
+            onCastVote={(elecId, candId, delId) => {
+              storageService.castVoteInElection(elecId, candId, delId);
+              if (currentEvent) setElections(storageService.getElections(currentEvent.id));
+            }}
+            onCastFlashVote={(vId, l, dec) => {
+              storageService.castFlashVote(vId, l, dec);
+              if (currentEvent) setFlashVotes(storageService.getFlashVotes(currentEvent.id));
+            }}
+            onToggleVolunteerArrival={(id) => storageService.toggleVolunteerArrival(id)}
+            onLogout={() => {
+              clearSession();
+              setIsAuthenticated(false);
+              setRole('volunteer');
+              if (typeof window !== 'undefined') window.history.pushState({}, '', '/join');
+              addToast('Signed Out', 'You have been signed out from Volunteer Operations Desk', 'info');
+            }}
+            onShowToast={addToast}
+          />
+        </Suspense>
         <ToastContainer toasts={toasts} onDismiss={removeToast} />
       </div>
     );
@@ -2916,37 +2996,41 @@ export function App() {
             <Route
               path="/speaker-aid"
               element={
-                <SpeakerAidDashboard
-                  volunteer={currentVolunteer}
-                  event={currentEvent}
-                  learners={learners}
-                  onLogout={() => {
-                    clearSession();
-                    setIsAuthenticated(false);
-                    setRole('volunteer');
-                    if (typeof window !== 'undefined') window.history.pushState({}, '', '/join');
-                    addToast('Signed Out', 'You have been signed out from Speaker Aid', 'info');
-                  }}
-                  onShowToast={addToast}
-                />
+                <Suspense fallback={<LazyFallback label="Loading Speaker Aid..." />}>
+                  <SpeakerAidDashboard
+                    volunteer={currentVolunteer}
+                    event={currentEvent}
+                    learners={learners}
+                    onLogout={() => {
+                      clearSession();
+                      setIsAuthenticated(false);
+                      setRole('volunteer');
+                      if (typeof window !== 'undefined') window.history.pushState({}, '', '/join');
+                      addToast('Signed Out', 'You have been signed out from Speaker Aid', 'info');
+                    }}
+                    onShowToast={addToast}
+                  />
+                </Suspense>
               }
             />
             <Route
               path="/events/:eventSlug/speaker-aid"
               element={
-                <SpeakerAidDashboard
-                  volunteer={currentVolunteer}
-                  event={currentEvent}
-                  learners={learners}
-                  onLogout={() => {
-                    clearSession();
-                    setIsAuthenticated(false);
-                    setRole('volunteer');
-                    if (typeof window !== 'undefined') window.history.pushState({}, '', '/join');
-                    addToast('Signed Out', 'You have been signed out from Speaker Aid', 'info');
-                  }}
-                  onShowToast={addToast}
-                />
+                <Suspense fallback={<LazyFallback label="Loading Speaker Aid..." />}>
+                  <SpeakerAidDashboard
+                    volunteer={currentVolunteer}
+                    event={currentEvent}
+                    learners={learners}
+                    onLogout={() => {
+                      clearSession();
+                      setIsAuthenticated(false);
+                      setRole('volunteer');
+                      if (typeof window !== 'undefined') window.history.pushState({}, '', '/join');
+                      addToast('Signed Out', 'You have been signed out from Speaker Aid', 'info');
+                    }}
+                    onShowToast={addToast}
+                  />
+                </Suspense>
               }
             />
 
@@ -2971,75 +3055,79 @@ export function App() {
                     const speakerAgenda = presidingEventId ? storageService.getAgenda(presidingEventId) : agenda;
 
                     return (
-                      <SpeakerDashboard
-                        speaker={currentStudent}
-                        event={presidingEvent}
-                        learners={storageService.getLearners(presidingEventId)}
-                        agenda={speakerAgenda && speakerAgenda.length > 0 ? speakerAgenda : agenda}
-                        elections={storageService.getElections(presidingEventId, 'student', currentStudent.id)}
-                        flashVotes={storageService.getFlashVotes(presidingEventId, 'student', currentStudent.id)}
-                        onShowToast={addToast}
-                        onLogout={() => {
-                          clearSession();
-                          setIsAuthenticated(false);
-                          setRole('coordinator');
-                          navigate('/');
-                          addToast('Signed Out', 'You have been signed out', 'info');
-                        }}
-                      />
+                      <Suspense fallback={<LazyFallback label="Loading Speaker Desk..." />}>
+                        <SpeakerDashboard
+                          speaker={currentStudent}
+                          event={presidingEvent}
+                          learners={storageService.getLearners(presidingEventId)}
+                          agenda={speakerAgenda && speakerAgenda.length > 0 ? speakerAgenda : agenda}
+                          elections={storageService.getElections(presidingEventId, 'student', currentStudent.id)}
+                          flashVotes={storageService.getFlashVotes(presidingEventId, 'student', currentStudent.id)}
+                          onShowToast={addToast}
+                          onLogout={() => {
+                            clearSession();
+                            setIsAuthenticated(false);
+                            setRole('coordinator');
+                            navigate('/');
+                            addToast('Signed Out', 'You have been signed out', 'info');
+                          }}
+                        />
+                      </Suspense>
                     );
                   })() : (
-                    <StudentDashboard
-                      student={currentStudent}
-                      event={
-                        (currentStudent.event_id ? events.find(e => e.id === currentStudent.event_id || e.slug === currentStudent.event_id) : null) ||
-                        currentEvent ||
-                        events[0] ||
-                        null
-                      }
-                      agenda={agenda}
-                    party={activeParty || null}
-                    committee={activeCommittee || null}
-                    nominations={storageService.getNominations(currentEvent?.id || events[0]?.id, 'student', currentStudent.id)}
-                    openNominationPositions={openNominationPositions}
-                    elections={storageService.getElections(currentEvent?.id || events[0]?.id, 'student', currentStudent.id)}
-                    flashVotes={storageService.getFlashVotes(currentEvent?.id || events[0]?.id, 'student', currentStudent.id)}
-                    onFileNomination={(nom) => {
-                      if (currentStudent.role?.toLowerCase().includes('speaker')) {
-                        addToast('Nomination Ineligible', 'Assigned Speaker / Deputy Speaker delegates cannot file nominations.', 'error');
-                        return;
-                      }
-                      const targetId = currentEvent?.id || events[0]?.id;
-                      const existingNoms = storageService.getNominations(targetId, 'student', currentStudent.id);
-                      if (existingNoms.some(n => n.position === nom.position && n.status !== 'Rejected')) {
-                        addToast('Already Nominated', `You have already filed a nomination for ${nom.position}. Each member is eligible only once per post.`, 'error');
-                        return;
-                      }
-                      try {
-                        storageService.addNomination(nom);
-                        if (targetId) {
-                          setNominations(storageService.getNominations(targetId, 'student', currentStudent.id));
+                    <Suspense fallback={<LazyFallback label="Loading Delegate Portal..." />}>
+                      <StudentDashboard
+                        student={currentStudent}
+                        event={
+                          (currentStudent.event_id ? events.find(e => e.id === currentStudent.event_id || e.slug === currentStudent.event_id) : null) ||
+                          currentEvent ||
+                          events[0] ||
+                          null
                         }
-                      } catch (err: any) {
-                        addToast('Nomination Error', err?.message || 'Failed to file nomination', 'error');
-                      }
-                    }}
-                    onCastVote={(elecId, candId, delId) => {
-                      storageService.castVoteInElection(elecId, candId, delId || currentStudent.id);
-                      const targetId = currentEvent?.id || events[0]?.id;
-                      if (targetId) {
-                        setElections(storageService.getElections(targetId, 'student', currentStudent.id));
-                      }
-                    }}
-                    onCastFlashVote={(vId, l, dec) => {
-                      storageService.castFlashVote(vId, l, dec);
-                      const targetId = currentEvent?.id || events[0]?.id;
-                      if (targetId) {
-                        setFlashVotes(storageService.getFlashVotes(targetId, 'student', currentStudent.id));
-                      }
-                    }}
-                    onShowToast={addToast}
-                  />
+                        agenda={agenda}
+                      party={activeParty || null}
+                      committee={activeCommittee || null}
+                      nominations={storageService.getNominations(currentEvent?.id || events[0]?.id, 'student', currentStudent.id)}
+                      openNominationPositions={openNominationPositions}
+                      elections={storageService.getElections(currentEvent?.id || events[0]?.id, 'student', currentStudent.id)}
+                      flashVotes={storageService.getFlashVotes(currentEvent?.id || events[0]?.id, 'student', currentStudent.id)}
+                      onFileNomination={(nom) => {
+                        if (currentStudent.role?.toLowerCase().includes('speaker')) {
+                          addToast('Nomination Ineligible', 'Assigned Speaker / Deputy Speaker delegates cannot file nominations.', 'error');
+                          return;
+                        }
+                        const targetId = currentEvent?.id || events[0]?.id;
+                        const existingNoms = storageService.getNominations(targetId, 'student', currentStudent.id);
+                        if (existingNoms.some(n => n.position === nom.position && n.status !== 'Rejected')) {
+                          addToast('Already Nominated', `You have already filed a nomination for ${nom.position}. Each member is eligible only once per post.`, 'error');
+                          return;
+                        }
+                        try {
+                          storageService.addNomination(nom);
+                          if (targetId) {
+                            setNominations(storageService.getNominations(targetId, 'student', currentStudent.id));
+                          }
+                        } catch (err: any) {
+                          addToast('Nomination Error', err?.message || 'Failed to file nomination', 'error');
+                        }
+                      }}
+                      onCastVote={(elecId, candId, delId) => {
+                        storageService.castVoteInElection(elecId, candId, delId || currentStudent.id);
+                        const targetId = currentEvent?.id || events[0]?.id;
+                        if (targetId) {
+                          setElections(storageService.getElections(targetId, 'student', currentStudent.id));
+                        }
+                      }}
+                      onCastFlashVote={(vId, l, dec) => {
+                        storageService.castFlashVote(vId, l, dec);
+                        const targetId = currentEvent?.id || events[0]?.id;
+                        if (targetId) {
+                          setFlashVotes(storageService.getFlashVotes(targetId, 'student', currentStudent.id));
+                        }
+                      }}
+                      onShowToast={addToast}
+                    />
+                  </Suspense>
                 )
               ) : (
                 <Navigate to="/join" replace />
@@ -3054,30 +3142,32 @@ export function App() {
                 role === 'student' ? (
                   <Navigate to={currentEvent ? `/events/${getEventSlug(currentEvent)}/dashboard` : '/dashboard'} replace />
                 ) : (
-                  <MyEventsDashboard
-                    events={events}
-                    coordinators={coordinators}
-                    role={role}
-                    userEmail={userSession?.email}
-                    onCreateEvent={handleCreateEvent}
-                    onUpdateEvent={async (upd) => {
-                      const res = await storageService.updateEvent(upd);
-                      if (res && res.success) {
-                        setEvents(storageService.getEvents());
-                      }
-                      return res;
-                    }}
-                    onDeleteEvent={(evId) => storageService.deleteEvent(evId)}
-                    onUpdateCoordinator={handleUpdateCoordinator}
-                    onSelectEvent={(ev) => {
-                      handleEventChange(ev);
-                      const slug = getEventSlug(ev);
-                      navigate(`/events/${slug}/overview`);
-                      addToast('Event Selected', `Opened ${ev.college_name}`, 'info');
-                    }}
-                    onShowToast={addToast}
-                    learners={storageService.getLearners()}
-                  />
+                  <Suspense fallback={<LazyFallback label="Loading Events..." />}>
+                    <MyEventsDashboard
+                      events={events}
+                      coordinators={coordinators}
+                      role={role}
+                      userEmail={userSession?.email}
+                      onCreateEvent={handleCreateEvent}
+                      onUpdateEvent={async (upd) => {
+                        const res = await storageService.updateEvent(upd);
+                        if (res && res.success) {
+                          setEvents(storageService.getEvents());
+                        }
+                        return res;
+                      }}
+                      onDeleteEvent={(evId) => storageService.deleteEvent(evId)}
+                      onUpdateCoordinator={handleUpdateCoordinator}
+                      onSelectEvent={(ev) => {
+                        handleEventChange(ev);
+                        const slug = getEventSlug(ev);
+                        navigate(`/events/${slug}/overview`);
+                        addToast('Event Selected', `Opened ${ev.college_name}`, 'info');
+                      }}
+                      onShowToast={addToast}
+                      learners={storageService.getLearners()}
+                    />
+                  </Suspense>
                 )
               }
             />
@@ -3304,68 +3394,74 @@ export function App() {
         const activeEvModal = extractEventFromUrl(events) || currentEvent;
         if (!activeEvModal) return null;
         return (
-          <>
-            <AddLearnerModal
-              isOpen={isAddWalkInOpen}
-              onClose={() => setIsAddWalkInOpen(false)}
-              eventId={activeEvModal.id}
-              existingCodes={existingCodesSet}
-              parties={parties}
-              committees={committees}
-              existingLearners={learners}
-              onAddLearner={async (l) => {
-                await handleAddLearner({ ...l, event_id: activeEvModal.id });
-                addToast('Walk-in Added', `Registered ${l.full_name} with access code ${l.access_code}`, 'success');
-              }}
-            />
+          <Suspense fallback={null}>
+            {isAddWalkInOpen && (
+              <AddLearnerModal
+                isOpen={isAddWalkInOpen}
+                onClose={() => setIsAddWalkInOpen(false)}
+                eventId={activeEvModal.id}
+                existingCodes={existingCodesSet}
+                parties={parties}
+                committees={committees}
+                existingLearners={learners}
+                onAddLearner={async (l) => {
+                  await handleAddLearner({ ...l, event_id: activeEvModal.id });
+                  addToast('Walk-in Added', `Registered ${l.full_name} with access code ${l.access_code}`, 'success');
+                }}
+              />
+            )}
 
-            <CsvImportModal
-              isOpen={isImportCsvOpen}
-              onClose={() => setIsImportCsvOpen(false)}
-              eventId={activeEvModal.id}
-              existingCodes={existingCodesSet}
-              learners={learners}
-              parties={parties}
-              committees={committees}
-              onImportSuccess={async (imported: Partial<Learner>[]) => {
-                const res = await storageService.importLearners(imported, activeEvModal.id);
-                if (!res.success) {
-                  throw new Error(res.error?.message || 'Failed to save imported participants to database.');
-                }
-                setLearners(storageService.getLearners(activeEvModal.id));
-                setParties(storageService.getParties(activeEvModal.id));
-                setCommittees(storageService.getCommittees(activeEvModal.id));
-                addToast('Import Successful', `Processed ${imported.length} delegate participants (saved to Supabase)`, 'success');
-              }}
-              onParticipantsUpdated={() => {
-                setLearners(storageService.getLearners(activeEvModal.id));
-                setParties(storageService.getParties(activeEvModal.id));
-                setCommittees(storageService.getCommittees(activeEvModal.id));
-              }}
-              onShowToast={addToast}
-            />
+            {isImportCsvOpen && (
+              <CsvImportModal
+                isOpen={isImportCsvOpen}
+                onClose={() => setIsImportCsvOpen(false)}
+                eventId={activeEvModal.id}
+                existingCodes={existingCodesSet}
+                learners={learners}
+                parties={parties}
+                committees={committees}
+                onImportSuccess={async (imported: Partial<Learner>[]) => {
+                  const res = await storageService.importLearners(imported, activeEvModal.id);
+                  if (!res.success) {
+                    throw new Error(res.error?.message || 'Failed to save imported participants to database.');
+                  }
+                  setLearners(storageService.getLearners(activeEvModal.id));
+                  setParties(storageService.getParties(activeEvModal.id));
+                  setCommittees(storageService.getCommittees(activeEvModal.id));
+                  addToast('Import Successful', `Processed ${imported.length} delegate participants (saved to Supabase)`, 'success');
+                }}
+                onParticipantsUpdated={() => {
+                  setLearners(storageService.getLearners(activeEvModal.id));
+                  setParties(storageService.getParties(activeEvModal.id));
+                  setCommittees(storageService.getCommittees(activeEvModal.id));
+                }}
+                onShowToast={addToast}
+              />
+            )}
 
-            <AllocationModal
-              isOpen={isAllocationModalOpen}
-              onClose={() => setIsAllocationModalOpen(false)}
-              learners={learners}
-              parties={parties}
-              committees={committees}
-              eventId={activeEvModal.id}
-              onExecuteAllocation={(ratio) => {
-                return handleExecuteAllocation(ratio, activeEvModal.id);
-              }}
-              onAllocateParties={(options) => {
-                return handleAllocateParties(options, activeEvModal.id);
-              }}
-              onAllocateCommittees={(options) => {
-                return handleAllocateCommittees(options, activeEvModal.id);
-              }}
-              onAllocateConstituencies={(options) => {
-                return handleAllocateConstituencies(options, activeEvModal.id);
-              }}
-            />
-          </>
+            {isAllocationModalOpen && (
+              <AllocationModal
+                isOpen={isAllocationModalOpen}
+                onClose={() => setIsAllocationModalOpen(false)}
+                learners={learners}
+                parties={parties}
+                committees={committees}
+                eventId={activeEvModal.id}
+                onExecuteAllocation={(ratio) => {
+                  return handleExecuteAllocation(ratio, activeEvModal.id);
+                }}
+                onAllocateParties={(options) => {
+                  return handleAllocateParties(options, activeEvModal.id);
+                }}
+                onAllocateCommittees={(options) => {
+                  return handleAllocateCommittees(options, activeEvModal.id);
+                }}
+                onAllocateConstituencies={(options) => {
+                  return handleAllocateConstituencies(options, activeEvModal.id);
+                }}
+              />
+            )}
+          </Suspense>
         );
       })()}
 
