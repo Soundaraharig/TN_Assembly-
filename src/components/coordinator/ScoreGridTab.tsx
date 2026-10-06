@@ -219,9 +219,17 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
     };
     window.addEventListener('storage', handleSync);
     window.addEventListener('tn_assembly_storage_update', handleSync);
+    window.addEventListener('tn_assembly_speaking_turn_update', handleSync);
+    window.addEventListener('tn_assembly_speaking_update', handleSync);
+    window.addEventListener('tn_assembly_jury_scoring_reset', handleSync);
+    window.addEventListener('tn_assembly_scores_updated', handleSync);
     return () => {
       window.removeEventListener('storage', handleSync);
       window.removeEventListener('tn_assembly_storage_update', handleSync);
+      window.removeEventListener('tn_assembly_speaking_turn_update', handleSync);
+      window.removeEventListener('tn_assembly_speaking_update', handleSync);
+      window.removeEventListener('tn_assembly_jury_scoring_reset', handleSync);
+      window.removeEventListener('tn_assembly_scores_updated', handleSync);
     };
   }, [eventId]);
 

@@ -100,20 +100,68 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     return found || availableSessions[0] || { id: 'zero_hour', name: 'Zero Hour', is_canonical: true };
   }, [availableSessions, selectedSessionId]);
 
+  const testMode = useMemo(() => {
+    return storageService.getScoringTestMode(event?.id);
+  }, [event?.id, recogTick]);
+  const currentEnvironment = testMode.isTestMode ? 'test' : 'live';
+
   // Memoized O(1) Score Map for the active session (P1 Mobile CPU optimization)
   const currentSessionScoreMap = useMemo(() => {
     const map = new Map<string, ScoreRecord>();
+    const isTest = testMode.isTestMode;
+    const testRunId = testMode.testRunId;
+
     for (const s of scores) {
       if (
         (!event || !s.event_id || s.event_id === event.id) &&
         (s.session_id === selectedSession.id || s.session_name === selectedSession.name) &&
         ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))
       ) {
-        map.set(s.learner_id, s);
+        if (isTest) {
+          if (s.is_test && (!testRunId || s.test_run_id === testRunId)) {
+            map.set(s.learner_id, s);
+          }
+        } else {
+          if (!s.is_test) {
+            map.set(s.learner_id, s);
+          }
+        }
+      }
+    }
+
+    if (event?.id) {
+      const evals = storageService.getJuryEvaluations(
+        event.id,
+        selectedSession.id,
+        jury?.id || jury?.name,
+        undefined,
+        isTest
+      );
+      for (const e of evals) {
+        if (!isTest && e.is_test) continue;
+        if (isTest && (!e.is_test || (testRunId && e.test_run_id !== testRunId))) continue;
+        if (!map.has(e.learner_id)) {
+          map.set(e.learner_id, {
+            id: e.id,
+            event_id: e.event_id,
+            session_id: e.session_id,
+            session_name: e.session_name,
+            learner_id: e.learner_id,
+            learner_name: e.learner_name,
+            jury_id: e.jury_id,
+            juror_name: e.jury_name,
+            total: e.total,
+            feedback: e.feedback,
+            is_test: e.is_test,
+            test_run_id: e.test_run_id,
+            created_at: e.created_at,
+            updated_at: e.updated_at
+          } as any);
+        }
       }
     }
     return map;
-  }, [scores, event?.id, selectedSession.id, selectedSession.name, jury?.id, jury?.name]);
+  }, [scores, event?.id, selectedSession.id, selectedSession.name, jury?.id, jury?.name, testMode.isTestMode, testMode.testRunId, recogTick]);
 
   const handleSessionChange = (newSessionId: string) => {
     setSelectedSessionId(newSessionId);
@@ -189,10 +237,11 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       event.id,
       resolved.canonicalId,
       jury?.id || jury?.name,
-      selectedLearner.id
+      selectedLearner.id,
+      testMode.isTestMode
     );
     return evals[0] || null;
-  }, [event?.id, selectedSession, jury?.id, jury?.name, selectedLearner?.id, scores, recogTick]);
+  }, [event?.id, selectedSession, jury?.id, jury?.name, selectedLearner?.id, scores, recogTick, testMode.isTestMode]);
 
   // Mount effect: connect realtime, fetch cloud speaking turns, fetch recognitions & reconcile existing evaluation turns
   useEffect(() => {
@@ -216,11 +265,6 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       }
     }
   }, [event?.id, propLearners]);
-
-  const testMode = useMemo(() => {
-    return storageService.getScoringTestMode(event?.id);
-  }, [event?.id, recogTick]);
-  const currentEnvironment = testMode.isTestMode ? 'test' : 'live';
 
   // Speaking turns for this delegate in the current canonical session
   const delegateSpeakingTurns = useMemo(() => {
@@ -375,23 +419,65 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     return map;
   }, [event?.id, jury, currentEnvironment, testMode.testRunId, recogTick]);
 
-  // Check recognition state for floor turn by current juror
-  const floorTurnRecognition = useMemo(() => {
-    if (!activeFloorSpeakingTurn || !event?.id || !jury) return null;
+  // Memoized Set of learnerIds recognized by current juror (O(1) lookup per student row)
+  const recognizedLearnerIdsSet = useMemo(() => {
+    const set = new Set<string>();
+    if (!event?.id || !jury) return set;
     const juryId = jury.id || jury.name || 'jury';
     const recogs = storageService.getJurySpeechRecognitions(
       event.id,
       undefined,
-      activeFloorSpeakingTurn.id,
+      undefined,
       juryId,
       undefined,
-      false,
+      true, // activeOnly
       { environment: currentEnvironment, testRunId: testMode.testRunId }
     );
-    return recogs[0] || null;
-  }, [activeFloorSpeakingTurn, event?.id, jury, currentEnvironment, testMode.testRunId, recogTick]);
+    recogs.forEach(r => {
+      if (r.active && r.learner_id) {
+        set.add(r.learner_id);
+      }
+    });
+    return set;
+  }, [event?.id, jury, currentEnvironment, testMode.testRunId, recogTick]);
 
-  const isFloorTurnRecognized = Boolean(floorTurnRecognition && floorTurnRecognition.active);
+  const isFloorTurnRecognized = Boolean(
+    activeFloorSpeakingTurn && recognizedLearnerIdsSet.has(activeFloorSpeakingTurn.learner_id)
+  );
+
+  const handleToggleLearnerRecognition = async (learner: Learner, e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    if (!event?.id || !jury || isTogglingRecog) return;
+    const juryId = jury.id || jury.name || 'jury';
+    setIsTogglingRecog(true);
+    try {
+      const activeTurn = (activeFloorSpeakingTurn?.learner_id === learner.id ? activeFloorSpeakingTurn : null) ||
+        delegateSpeakingTurns.find(t => t.learner_id === learner.id);
+      const res = await storageService.toggleJurySpeechRecognition({
+        eventId: event.id,
+        sessionId: selectedSession.id,
+        sessionName: selectedSession.name,
+        speakingTurnId: activeTurn?.id,
+        juryId,
+        learnerId: learner.id,
+        isTest: testMode.isTestMode,
+        testRunId: testMode.testRunId || undefined
+      });
+      if (res.action === 'RECOGNIZED') {
+        onShowToast('Delegate Recognized', `Recognized speech/performance by ${learner.full_name}.`, 'success');
+      } else {
+        onShowToast('Recognition Removed', `Removed recognition for ${learner.full_name}.`, 'info');
+      }
+    } catch (err: any) {
+      onShowToast('Recognition Failed', err?.message || 'Unable to update recognition.', 'error');
+    } finally {
+      setIsTogglingRecog(false);
+      setRecogTick(t => t + 1);
+    }
+  };
 
   const handleToggleRecognition = async (turn: SpeakingTurn) => {
     if (!event?.id || !jury || isTogglingRecog) return;
@@ -803,12 +889,15 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
           rebuttal_debate: savedEval.relevance_agenda,
           total: savedEval.total,
           feedback: savedEval.feedback || '',
+          is_test: savedEval.is_test,
+          test_run_id: savedEval.test_run_id,
           is_locked: false,
           created_at: savedEval.created_at,
           updated_at: savedEval.updated_at
         });
       }
 
+      setRecogTick(t => t + 1);
       setIsSavedRecently(true);
       setDraftSavedAt(null);
       setTimeout(() => setIsSavedRecently(false), 3000);
@@ -1205,22 +1294,26 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       const constNum = learner.constituency_number ?? (learner as any).roll_no;
                       const constName = learner.constituency_name || learner.role || 'Assembly Seat';
 
+                      const isRecognized = recognizedLearnerIdsSet.has(learner.id);
+
                       return (
-                        <button
+                        <div
                           key={learner.id}
-                          type="button"
-                          onClick={() => {
-                            setSelectedLearnerId(learner.id);
-                            setIsMobileSearchOpen(false);
-                            setSearch('');
-                          }}
-                          className={`w-full text-left p-2.5 rounded-xl border transition flex items-center justify-between cursor-pointer ${
+                          className={`w-full p-2.5 rounded-xl border transition flex items-center justify-between gap-1.5 ${
                             isSelected
                               ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-400 dark:border-amber-600 shadow-xs'
                               : 'bg-slate-50 dark:bg-slate-800/60 border-transparent hover:border-slate-300 dark:hover:border-slate-700'
                           }`}
                         >
-                          <div className="min-w-0 pr-2 flex-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedLearnerId(learner.id);
+                              setIsMobileSearchOpen(false);
+                              setSearch('');
+                            }}
+                            className="min-w-0 pr-1 flex-1 text-left cursor-pointer"
+                          >
                             <div className="flex items-center gap-1.5">
                               <span className="font-extrabold text-xs text-slate-900 dark:text-white truncate">
                                 {learner.full_name}
@@ -1235,24 +1328,52 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
                               {learner.party_name || 'Independent'} • {learner.bench || 'Ruling'}
                             </p>
+                          </button>
+
+                          <div className="shrink-0 flex items-center gap-1.5">
+                            {/* Small Star Recognition Button */}
+                            <button
+                              type="button"
+                              onClick={(e) => handleToggleLearnerRecognition(learner, e)}
+                              aria-label={isRecognized ? `Remove recognition for ${learner.full_name}` : `Recognize ${learner.full_name}`}
+                              title={isRecognized ? `Remove recognition for ${learner.full_name}` : `Recognize ${learner.full_name}`}
+                              className={`p-1.5 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg transition-colors cursor-pointer select-none ${
+                                isRecognized
+                                  ? 'text-amber-500 hover:text-amber-600 bg-amber-500/10'
+                                  : 'text-slate-400 dark:text-slate-500 hover:text-amber-500 hover:bg-slate-200/50 dark:hover:bg-slate-700/50'
+                              }`}
+                            >
+                              <span className="text-base font-bold leading-none" aria-hidden="true">
+                                {isRecognized ? '★' : '☆'}
+                              </span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedLearnerId(learner.id);
+                                setIsMobileSearchOpen(false);
+                                setSearch('');
+                              }}
+                              className="text-right shrink-0 flex flex-col items-end justify-center gap-1 cursor-pointer"
+                            >
+                              {constNum !== undefined && constNum !== null && (
+                                <span className="text-[10px] font-mono font-extrabold px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
+                                  #{constNum}
+                                </span>
+                              )}
+                              {existingScore ? (
+                                <span className="text-[10px] font-black text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-800">
+                                  {existingScore.total}/100
+                                </span>
+                              ) : (
+                                <span className="text-[9px] font-semibold text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
+                                  Score Now
+                                </span>
+                              )}
+                            </button>
                           </div>
-                          <div className="text-right shrink-0 flex flex-col items-end justify-center gap-1">
-                            {constNum !== undefined && constNum !== null && (
-                              <span className="text-[10px] font-mono font-extrabold px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
-                                #{constNum}
-                              </span>
-                            )}
-                            {existingScore ? (
-                              <span className="text-[10px] font-black text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-800">
-                                {existingScore.total}/100
-                              </span>
-                            ) : (
-                              <span className="text-[9px] font-semibold text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
-                                Score Now
-                              </span>
-                            )}
-                          </div>
-                        </button>
+                        </div>
                       );
                     })
                   )}
@@ -2201,11 +2322,12 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       const recogCount = learnerRecognitionsCountMap.get(learner.id) || 0;
                       const isCurrentlySpeaking = activeFloorSpeakingTurn?.learner_id === learner.id;
 
+                      const isRecognized = recognizedLearnerIdsSet.has(learner.id);
+
                       return (
-                        <button
+                        <div
                           key={learner.id}
-                          onClick={() => setSelectedLearnerId(learner.id)}
-                          className={`w-full text-left p-2.5 rounded-xl border transition flex items-center justify-between cursor-pointer ${
+                          className={`w-full p-2.5 rounded-xl border transition flex items-center justify-between gap-1.5 ${
                             isSelected ? 'shadow-sm scale-[1.01]' : 'hover:scale-[1.005]'
                           } ${isCurrentlySpeaking ? 'ring-2 ring-rose-500/50 bg-rose-500/5' : ''}`}
                           style={{
@@ -2213,7 +2335,11 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                             borderColor: isCurrentlySpeaking ? 'rgb(244, 63, 94)' : (isSelected ? 'var(--accent)' : 'var(--border)')
                           }}
                         >
-                          <div className="min-w-0 pr-2 flex-1">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedLearnerId(learner.id)}
+                            className="min-w-0 pr-1 flex-1 text-left cursor-pointer"
+                          >
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <p className="font-extrabold text-xs truncate" style={{ color: 'var(--text-primary)' }}>
                                 {learner.full_name}
@@ -2241,27 +2367,51 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                                 </span>
                               )}
                             </div>
+                          </button>
+
+                          <div className="shrink-0 flex items-center gap-1.5">
+                            {/* Small Star Recognition Button */}
+                            <button
+                              type="button"
+                              onClick={(e) => handleToggleLearnerRecognition(learner, e)}
+                              aria-label={isRecognized ? `Remove recognition for ${learner.full_name}` : `Recognize ${learner.full_name}`}
+                              title={isRecognized ? `Remove recognition for ${learner.full_name}` : `Recognize ${learner.full_name}`}
+                              className={`p-1.5 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg transition-colors cursor-pointer select-none ${
+                                isRecognized
+                                  ? 'text-amber-500 hover:text-amber-600 bg-amber-500/10'
+                                  : 'text-slate-400 dark:text-slate-500 hover:text-amber-500 hover:bg-slate-200/50 dark:hover:bg-slate-700/50'
+                              }`}
+                            >
+                              <span className="text-base font-bold leading-none" aria-hidden="true">
+                                {isRecognized ? '★' : '☆'}
+                              </span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setSelectedLearnerId(learner.id)}
+                              className="text-right flex-shrink-0 flex flex-col items-end justify-center gap-1 cursor-pointer"
+                            >
+                              {constNum !== undefined && constNum !== null && (
+                                <span
+                                  className="text-[10px] font-mono font-extrabold px-1.5 py-0.5 rounded border"
+                                  style={{ background: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--accent)' }}
+                                >
+                                  #{constNum}
+                                </span>
+                              )}
+                              {existingScore ? (
+                                <span className="text-[10px] font-black text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-800">
+                                  {existingScore.total}/100
+                                </span>
+                              ) : (
+                                <span className="text-[9px] font-semibold text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
+                                  Score Now
+                                </span>
+                              )}
+                            </button>
                           </div>
-                          <div className="text-right flex-shrink-0 flex flex-col items-end justify-center gap-1">
-                            {constNum !== undefined && constNum !== null && (
-                              <span
-                                className="text-[10px] font-mono font-extrabold px-1.5 py-0.5 rounded border"
-                                style={{ background: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--accent)' }}
-                              >
-                                #{constNum}
-                              </span>
-                            )}
-                            {existingScore ? (
-                              <span className="text-[10px] font-black text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-800">
-                                {existingScore.total}/100
-                              </span>
-                            ) : (
-                              <span className="text-[9px] font-semibold text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
-                                Score Now
-                              </span>
-                            )}
-                          </div>
-                        </button>
+                        </div>
                       );
                     })
                   )}

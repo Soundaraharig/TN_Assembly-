@@ -2148,13 +2148,9 @@ class StorageService {
     if (allScores) {
       const localScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
       const scoreMap = new Map<string, ScoreRecord>();
-      const touchedEventIds = new Set(events.map(e => e.id));
       localScores.forEach(s => {
-        // Only retain local scores for events NOT in this unpacked batch
-        if (!s.event_id || !touchedEventIds.has(s.event_id)) {
-          const key = this.getScoreCompositeKey(s, targetEventId);
-          scoreMap.set(key, s);
-        }
+        const key = this.getScoreCompositeKey(s, targetEventId);
+        scoreMap.set(key, s);
       });
       allScores.forEach(remoteS => {
         const key = this.getScoreCompositeKey(remoteS, targetEventId);
@@ -3771,25 +3767,7 @@ class StorageService {
           const socialCoverage = (ev as any).social_coverage;
           if (socialCoverage && typeof socialCoverage === 'object' && Array.isArray(socialCoverage.scores)) {
             const allScores: ScoreRecord[] = socialCoverage.scores;
-            if (allScores.length === 0) {
-              // Authoritative remote state has NO scores for this event (e.g. post-reset)
-              const curScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
-              this.setItem(STORAGE_KEYS.SCORES, curScores.filter(s => s.event_id !== eventId));
-              const curEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
-              this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, curEvals.filter(e => e.event_id !== eventId));
-              if (typeof localStorage !== 'undefined') {
-                try {
-                  localStorage.removeItem(`tn_assembly_scores_${eventId}`);
-                  const draftPrefix = `tn_assembly_jury_draft_${eventId}_`;
-                  const keysToRemove: string[] = [];
-                  for (let i = 0; i < localStorage.length; i++) {
-                    const k = localStorage.key(i);
-                    if (k && k.startsWith(draftPrefix)) keysToRemove.push(k);
-                  }
-                  keysToRemove.forEach(k => localStorage.removeItem(k));
-                } catch {}
-              }
-            } else {
+            if (allScores.length > 0) {
               const juryScores = juryId ? allScores.filter((s: ScoreRecord) => s.jury_id === juryId || s.juror_name === juryId) : allScores;
               if (juryScores.length > 0) {
                 const existingScores = this.getScores(eventId);
@@ -5505,22 +5483,27 @@ class StorageService {
 
         // 6. Reconcile Authoritative Scores
         if (Array.isArray(sc.scores)) {
-          if (sc.scores.length === 0) {
-            const curScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
-            this.setItem(STORAGE_KEYS.SCORES, curScores.filter(s => s.event_id !== eventId));
-            const curEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
-            this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, curEvals.filter(e => e.event_id !== eventId));
-            if (typeof localStorage !== 'undefined') {
-              try {
-                localStorage.removeItem(`tn_assembly_scores_${eventId}`);
-              } catch {}
-            }
-          } else {
+          if (sc.scores.length > 0) {
+            const localScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []).filter(s => s.event_id === eventId);
+            const scoreMap = new Map<string, ScoreRecord>();
+            localScores.forEach(s => scoreMap.set(this.getScoreCompositeKey(s, eventId), s));
+            sc.scores.forEach((s: ScoreRecord) => {
+              const k = this.getScoreCompositeKey(s, eventId);
+              const existing = scoreMap.get(k);
+              if (!existing) {
+                scoreMap.set(k, s);
+              } else {
+                const localT = new Date(existing.updated_at || 0).getTime();
+                const remoteT = new Date(s.updated_at || 0).getTime();
+                if (remoteT >= localT) scoreMap.set(k, s);
+              }
+            });
+            const merged = Array.from(scoreMap.values());
             const otherScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []).filter(s => s.event_id !== eventId);
-            this.setItem(STORAGE_KEYS.SCORES, [...otherScores, ...sc.scores]);
+            this.setItem(STORAGE_KEYS.SCORES, [...otherScores, ...merged]);
             if (typeof localStorage !== 'undefined') {
               try {
-                localStorage.setItem(`tn_assembly_scores_${eventId}`, JSON.stringify(sc.scores));
+                localStorage.setItem(`tn_assembly_scores_${eventId}`, JSON.stringify(merged));
               } catch {}
             }
           }
@@ -15912,24 +15895,6 @@ class StorageService {
   public getScores(eventId?: string, sessionId?: string, juryId?: string): ScoreRecord[] {
     let all = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, INITIAL_SCORES);
 
-    // If event is specified and its authoritative social_coverage has explicitly 0 scores, prevent stale resurrection
-    if (eventId) {
-      const curEvs = this.getEvents();
-      const targetEv = curEvs.find(e => e.id === eventId);
-      if (targetEv && targetEv.social_coverage && typeof targetEv.social_coverage === 'object') {
-        const sc = targetEv.social_coverage as Record<string, any>;
-        if (Array.isArray(sc.scores) && sc.scores.length === 0) {
-          if (typeof localStorage !== 'undefined') {
-            try {
-              localStorage.removeItem(`tn_assembly_scores_${eventId}`);
-            } catch {}
-          }
-          all = all.filter(s => s.event_id !== eventId);
-          return [];
-        }
-      }
-    }
-
     // Read dedicated backup for event if available
     if (eventId && typeof localStorage !== 'undefined') {
       try {
@@ -16058,6 +16023,25 @@ class StorageService {
       } catch {}
     }
 
+    // Keep in-memory event social_coverage.scores updated so reads never see stale empty state
+    if (normalizedScore.event_id) {
+      const allEvs = this.getEvents();
+      const targetEv = allEvs.find(e => e.id === normalizedScore.event_id);
+      if (targetEv) {
+        const sc = (targetEv.social_coverage || {}) as Record<string, any>;
+        const curScScores = Array.isArray(sc.scores) ? (sc.scores as ScoreRecord[]) : [];
+        const scKey = this.getScoreCompositeKey(normalizedScore, normalizedScore.event_id);
+        const scIdx = curScScores.findIndex(s => this.getScoreCompositeKey(s, normalizedScore.event_id) === scKey);
+        if (scIdx >= 0) {
+          curScScores[scIdx] = { ...curScScores[scIdx], ...normalizedScore };
+        } else {
+          curScScores.push(normalizedScore);
+        }
+        targetEv.social_coverage = { ...sc, scores: curScScores };
+        this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === targetEv.id ? targetEv : e));
+      }
+    }
+
     this.notify();
 
     if (normalizedScore.event_id) {
@@ -16084,7 +16068,7 @@ class StorageService {
 
         const remoteSC = (evData?.social_coverage || {}) as Record<string, any>;
         const remoteScores = Array.isArray(remoteSC.scores) ? (remoteSC.scores as ScoreRecord[]) : [];
-        const localScores = this.getScores(eventId);
+        const localScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []).filter(s => s.event_id === eventId);
 
         // Merge by 4-part composite key: (event_id, session, jury, learner)
         const scoreMap = new Map<string, ScoreRecord>();
@@ -16122,10 +16106,14 @@ class StorageService {
           scores: mergedScores
         });
         this.invalidateCache(eventId);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('tn_assembly_scores_updated', { detail: { eventId } }));
+          window.dispatchEvent(new Event('storage'));
+        }
       } catch (err) {
         console.warn('[StorageService] Error syncing scores to Supabase:', err);
       }
-    }, 400);
+    }, 50);
 
     this.scoreSyncTimers.set(eventId, timer);
   }
@@ -16311,26 +16299,27 @@ class StorageService {
     const time = params.time_management;
     const total = r + rel + comm + cond + orig + time;
 
+    const env = this.getScoringEnvironment(params.eventId);
+    const isTest = env.mode === 'test' || Boolean(params.isTest);
+    const testRunId = isTest ? (params.testRunId || env.testRunId || uid('test_run')) : undefined;
+
     const allEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
     const existing = allEvals.find(e =>
       e.event_id === params.eventId &&
       e.session_id === canonicalSessionId &&
       e.jury_id === params.juryId &&
-      e.learner_id === params.learnerId
+      e.learner_id === params.learnerId &&
+      (isTest ? Boolean(e.is_test) : !e.is_test)
     );
 
     if (existing) {
       return existing;
     }
 
-    const existingBridged = this.getJuryEvaluations(params.eventId, canonicalSessionId, params.juryId, params.learnerId)[0];
+    const existingBridged = this.getJuryEvaluations(params.eventId, canonicalSessionId, params.juryId, params.learnerId, isTest)[0];
     if (existingBridged) {
       return existingBridged;
     }
-
-    const env = this.getScoringEnvironment(params.eventId);
-    const isTest = env.mode === 'test';
-    const testRunId = isTest ? (env.testRunId || params.testRunId || uid('test_run')) : undefined;
 
     const now = new Date().toISOString();
     const evalId = uid('eval');
@@ -16778,9 +16767,9 @@ class StorageService {
 
   public async toggleJurySpeechRecognition(params: {
     eventId: string;
-    sessionId: string;
+    sessionId?: string;
     sessionName?: string;
-    speakingTurnId: string;
+    speakingTurnId?: string;
     juryId: string;
     learnerId: string;
     note?: string;
@@ -16789,7 +16778,8 @@ class StorageService {
     isTest?: boolean;
     testRunId?: string;
   }): Promise<{ recognition: JurySpeechRecognition; action: 'RECOGNIZED' | 'REVOKED' }> {
-    const { eventId, speakingTurnId, juryId, learnerId, userRole, callerJuryId } = params;
+    const { eventId, juryId, learnerId, userRole, callerJuryId } = params;
+    let speakingTurnId = params.speakingTurnId;
     if (userRole === 'student') {
       throw new Error('Students are not permitted to create or modify jury recognitions.');
     }
@@ -16797,47 +16787,58 @@ class StorageService {
       throw new Error("Unauthorized: Juror cannot modify another juror's recognition.");
     }
     if (!eventId) throw new Error('Event ID is required for jury recognition');
-    if (!speakingTurnId) throw new Error('Speaking turn ID is required for jury recognition');
     if (!juryId) throw new Error('Jury ID is required for jury recognition');
     if (!learnerId) throw new Error('Learner ID is required for jury recognition');
 
-    // Cross-event boundary check & speaking turn verification
-    const allTurns = this.getSpeakingTurns(eventId);
-    let targetTurn = allTurns.find(t => t.id === speakingTurnId);
-    if (!targetTurn) {
-      const rawTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
-      let foreignTurn = rawTurns.find(t => t.id === speakingTurnId);
-      if (!foreignTurn && supabase && isSupabaseEnabled) {
-        try {
-          const { data: dbTurn } = await supabase
-            .from('speaking_turns')
-            .select('id, event_id, learner_id, learner_name, status, called_by, session_id, session_name')
-            .eq('id', speakingTurnId)
-            .maybeSingle();
-          if (dbTurn) {
-            foreignTurn = dbTurn as unknown as SpeakingTurn;
-            rawTurns.push(foreignTurn);
-            this.setItem(STORAGE_KEYS.SPEAKING_TURNS, rawTurns);
-          }
-        } catch {}
+    // Cross-event boundary check & speaking turn resolution (optional for student-level recognition)
+    let targetTurn: SpeakingTurn | undefined;
+    if (speakingTurnId) {
+      const allTurns = this.getSpeakingTurns(eventId);
+      targetTurn = allTurns.find(t => t.id === speakingTurnId);
+      if (!targetTurn) {
+        const rawTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+        let foreignTurn = rawTurns.find(t => t.id === speakingTurnId);
+        if (!foreignTurn && supabase && isSupabaseEnabled) {
+          try {
+            const { data: dbTurn } = await supabase
+              .from('speaking_turns')
+              .select('id, event_id, learner_id, learner_name, status, called_by, session_id, session_name')
+              .eq('id', speakingTurnId)
+              .maybeSingle();
+            if (dbTurn) {
+              foreignTurn = dbTurn as unknown as SpeakingTurn;
+              rawTurns.push(foreignTurn);
+              this.setItem(STORAGE_KEYS.SPEAKING_TURNS, rawTurns);
+            }
+          } catch {}
+        }
+        if (foreignTurn) {
+          targetTurn = foreignTurn;
+        }
       }
-      if (foreignTurn) {
-        targetTurn = foreignTurn;
-      }
-    }
-    if (targetTurn) {
-      if (targetTurn.event_id !== eventId) {
-        throw new Error('Cross-event recognition rejected: turn belongs to different event.');
-      }
-      if (targetTurn.learner_id !== learnerId) {
-        throw new Error('Invalid recognition: turn does not belong to specified learner.');
+      if (targetTurn) {
+        if (targetTurn.event_id !== eventId) {
+          throw new Error('Cross-event recognition rejected: turn belongs to different event.');
+        }
+        if (targetTurn.learner_id !== learnerId) {
+          throw new Error('Invalid recognition: turn does not belong to specified learner.');
+        }
       }
     } else {
-      throw new Error('Invalid speaking turn: recognition requires an authoritative recorded speaking turn.');
+      // If no speakingTurnId passed, find existing turn for this learner in this event if one exists
+      const allTurns = this.getSpeakingTurns(eventId);
+      const learnerTurn = allTurns.find(t => t.learner_id === learnerId && t.status !== 'CANCELLED');
+      if (learnerTurn) {
+        speakingTurnId = learnerTurn.id;
+        targetTurn = learnerTurn;
+      } else {
+        // Event-safe synthetic speaking turn ID so schema/types remain satisfied
+        speakingTurnId = `recog_turn_${eventId}_${learnerId}`;
+      }
     }
 
-    // In-flight locking key to prevent race conditions & double-click duplicate creation
-    const lockKey = `${eventId}:::${speakingTurnId}:::${juryId}`;
+    // In-flight locking key to prevent race conditions & double-click duplicate creation per juror + learner
+    const lockKey = `${eventId}:::${learnerId}:::${juryId}`;
     if (this.recognitionInFlightMap.has(lockKey)) {
       return this.recognitionInFlightMap.get(lockKey)!;
     }
@@ -16847,18 +16848,22 @@ class StorageService {
       const resolvedSession = resolveCanonicalSession(params.sessionId, params.sessionName, agendaItems);
       const canonicalSessionId = resolvedSession.canonicalId;
 
+      const env = this.getScoringEnvironment(eventId);
+      const isTest = env.mode === 'test' || Boolean(params.isTest);
+      const testRunId = isTest ? (env.testRunId || params.testRunId || uid('test_run')) : undefined;
+
       const all = this.getItem<JurySpeechRecognition[]>(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, []);
+      // Canonical recognition match: per eventId + juryId + learnerId + test environment
       const existingIdx = all.findIndex(
-        r => r.event_id === eventId && r.speaking_turn_id === speakingTurnId && r.jury_id === juryId
+        r => r.event_id === eventId &&
+             r.learner_id === learnerId &&
+             r.jury_id === juryId &&
+             (isTest ? Boolean(r.is_test) : !r.is_test)
       );
 
       const now = new Date().toISOString();
       let record: JurySpeechRecognition;
       let action: 'RECOGNIZED' | 'REVOKED';
-
-      const env = this.getScoringEnvironment(eventId);
-      const isTest = env.mode === 'test';
-      const testRunId = isTest ? (env.testRunId || params.testRunId || uid('test_run')) : undefined;
 
       if (existingIdx >= 0) {
         const existing = all[existingIdx];
@@ -16876,6 +16881,8 @@ class StorageService {
           record = {
             ...existing,
             active: true,
+            speaking_turn_id: speakingTurnId || existing.speaking_turn_id,
+            session_id: canonicalSessionId || existing.session_id,
             note: params.note !== undefined ? params.note : existing.note,
             revoked_at: null,
             is_test: isTest,
@@ -16891,7 +16898,7 @@ class StorageService {
           id: uid('recog'),
           event_id: eventId,
           session_id: canonicalSessionId,
-          speaking_turn_id: speakingTurnId,
+          speaking_turn_id: speakingTurnId!,
           jury_id: juryId,
           learner_id: learnerId,
           active: true,
@@ -16907,15 +16914,41 @@ class StorageService {
 
       // 1. Authoritative local storage persist
       this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, all);
+
+      // Also update in-memory event cache so getEvents().social_coverage has the new recognition immediately
+      const currentEvents = this.getEvents();
+      const evIdx = currentEvents.findIndex(e => e.id === eventId);
+      if (evIdx !== -1) {
+        const ev = currentEvents[evIdx];
+        const sc = (ev.social_coverage || {}) as Record<string, any>;
+        const curScRecogs = Array.isArray(sc.jury_speech_recognitions) ? [...sc.jury_speech_recognitions] : [];
+        const existingScIdx = curScRecogs.findIndex(
+          (r: any) => r.event_id === record.event_id &&
+                      r.learner_id === record.learner_id &&
+                      r.jury_id === record.jury_id &&
+                      (record.is_test ? Boolean(r.is_test) : !r.is_test)
+        );
+        if (existingScIdx >= 0) {
+          curScRecogs[existingScIdx] = record;
+        } else {
+          curScRecogs.push(record);
+        }
+        ev.social_coverage = {
+          ...sc,
+          jury_speech_recognitions: curScRecogs
+        };
+        this.setItem(STORAGE_KEYS.EVENTS, currentEvents);
+      }
+
       this.notify();
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('tn_assembly_jury_recognition_update', {
-          detail: { eventId, speakingTurnId, juryId, learnerId, active: record.active, isTest: record.is_test, testRunId: record.test_run_id }
+          detail: { eventId, speakingTurnId: record.speaking_turn_id, juryId, learnerId, active: record.active, isTest: record.is_test, testRunId: record.test_run_id }
         }));
         window.dispatchEvent(new Event('storage'));
       }
 
-      // 2. Persist to Supabase if configured (dedicated table with social_coverage fallback)
+      // 2. Persist to Supabase via social_coverage (do NOT use table jury_speech_recognitions)
       if (supabase && isSupabaseEnabled) {
         try {
           const { data: evData } = await supabase
@@ -16925,7 +16958,15 @@ class StorageService {
             .maybeSingle();
           const sc = (evData?.social_coverage || {}) as Record<string, any>;
           const curRecogs = Array.isArray(sc.jury_speech_recognitions) ? sc.jury_speech_recognitions : [];
-          const updatedRecogs = [...curRecogs.filter((r: any) => !(r.event_id === record.event_id && r.speaking_turn_id === record.speaking_turn_id && r.jury_id === record.jury_id)), record];
+          const updatedRecogs = [
+            ...curRecogs.filter((r: any) => !(
+              r.event_id === record.event_id &&
+              r.learner_id === record.learner_id &&
+              r.jury_id === record.jury_id &&
+              (record.is_test ? Boolean(r.is_test) : !r.is_test)
+            )),
+            record
+          ];
           const { error: updErr } = await supabase
             .from('college_events')
             .update({
@@ -16938,8 +16979,6 @@ class StorageService {
             .eq('id', eventId);
           if (updErr) {
             console.error('[toggleJurySpeechRecognition] Error persisting to social_coverage:', updErr);
-          } else {
-            console.log('[toggleJurySpeechRecognition] Successfully persisted recognition to social_coverage. Recog ID:', record.id, 'Turn ID:', record.speaking_turn_id);
           }
         } catch (scErr) {
           console.warn('[toggleJurySpeechRecognition] Exception persisting to social_coverage:', scErr);
@@ -17349,6 +17388,7 @@ class StorageService {
           feedback: s.feedback || '',
           status: 'ACTIVE',
           is_test: !!s.is_test,
+          test_run_id: s.test_run_id,
           created_at: s.created_at || new Date().toISOString(),
           updated_at: s.updated_at || new Date().toISOString(),
           turns: [],
@@ -17860,14 +17900,19 @@ class StorageService {
       const allFloorTurns = snapshotFloorTurns;
       const isTargetTestTurn = (t: SpeakingTurn): boolean => {
         if (t.event_id !== eventId) return false;
-        if (options?.testRunId) {
-          return t.test_run_id === options.testRunId;
-        }
-        return (
+        const isTestTurn = Boolean(
           t.is_test === true ||
           t.test_run_id != null ||
-          Boolean(t.called_by && t.called_by.includes('[TEST'))
+          (t.called_by && t.called_by.includes('[TEST'))
         );
+        if (!isTestTurn) return false;
+        if (options?.testRunId) {
+          return Boolean(
+            t.test_run_id === options.testRunId ||
+            (t.called_by && (t.called_by.includes(`[TEST:${options.testRunId}]`) || t.called_by.includes(options.testRunId)))
+          );
+        }
+        return true;
       };
       const testFloorTurns = allFloorTurns.filter(isTargetTestTurn);
       const remainingFloorTurns = allFloorTurns.filter(t => !isTargetTestTurn(t));
@@ -17886,10 +17931,18 @@ class StorageService {
       this.setItem(STORAGE_KEYS.SPEAKING_REQUESTS, remainingFloorReqs);
 
       if (supabase && isSupabaseEnabled) {
-        if (testFloorTurns.length > 0) {
-          try {
-            const testTurnIds = testFloorTurns.map(t => t.id);
-            await supabase.from('speaking_turns').delete().in('id', testTurnIds).eq('event_id', eventId);
+        try {
+          let turnQuery = supabase.from('speaking_turns').select('id, event_id, called_by, status').eq('event_id', eventId);
+          if (options?.testRunId) {
+            turnQuery = turnQuery.like('called_by', `%${options.testRunId}%`);
+          } else {
+            turnQuery = turnQuery.like('called_by', '%[TEST%');
+          }
+          const { data: supaTestTurns } = await turnQuery;
+          const supaTurnIds = (supaTestTurns || []).map((t: any) => t.id);
+          const allTargetTurnIds = Array.from(new Set([...testFloorTurns.map(t => t.id), ...supaTurnIds]));
+          if (allTargetTurnIds.length > 0) {
+            await supabase.from('speaking_turns').delete().in('id', allTargetTurnIds).eq('event_id', eventId);
             // In case Supabase RLS policy prevents anon DELETE on speaking_turns, also update status and mark as PURGED
             await supabase
               .from('speaking_turns')
@@ -17897,12 +17950,13 @@ class StorageService {
                 status: 'CANCELLED',
                 called_by: `[TEST:PURGED_${options?.testRunId || 'ALL'}]`
               })
-              .in('id', testTurnIds)
+              .in('id', allTargetTurnIds)
               .eq('event_id', eventId);
-          } catch (turnErr) {
-            console.warn('[resetTestScores] Error deleting test speaking turns:', turnErr);
           }
+        } catch (turnErr) {
+          console.warn('[resetTestScores] Error deleting test speaking turns:', turnErr);
         }
+
         if (testFloorReqs.length > 0) {
           try {
             const testReqIds = testFloorReqs.map(r => r.id);
@@ -18100,6 +18154,8 @@ class StorageService {
         window.dispatchEvent(new CustomEvent('tn_assembly_jury_scoring_reset', { detail: { eventId } }));
         window.dispatchEvent(new CustomEvent('tn_assembly_jury_recognition_update', { detail: { eventId } }));
         window.dispatchEvent(new CustomEvent('tn_assembly_speaking_turn_update', { detail: { eventId } }));
+        window.dispatchEvent(new CustomEvent('tn_assembly_speaking_update', { detail: { eventId } }));
+        window.dispatchEvent(new CustomEvent('tn_assembly_storage_update', { detail: { eventId } }));
         window.dispatchEvent(new Event('storage'));
       }
 
