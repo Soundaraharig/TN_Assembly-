@@ -282,6 +282,7 @@ export const SUPABASE_COLUMNS: Record<string, string> = {
   COLLEGE_EVENTS_LIST: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,elections_count,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at',
   COLLEGE_EVENTS: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at,social_coverage',
   COLLEGE_EVENTS_JURY: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at,social_coverage->scores,social_coverage->jury_speech_recognitions,social_coverage->test_speaking_turn_ids',
+  COLLEGE_EVENTS_STUDENT: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at,social_coverage->elections,social_coverage->flash_votes,social_coverage->nominations,social_coverage->open_nominations,social_coverage->cabinet_ministries,social_coverage->proceedings_questions,social_coverage->active_question_id,social_coverage->completed_question_ids,social_coverage->question_calling_order,social_coverage->question_order_version,social_coverage->question_order_updated_at,social_coverage->deleted_question_ids,social_coverage->event_deadline,social_coverage->is_question_window_open,social_coverage->agenda_progress,social_coverage->timer',
   COORDINATORS_PUBLIC: 'id,event_id,name,email,created_at,updated_at',
   COORDINATORS: 'id,event_id,name,email,password_hash,raw_temp_password,created_at,updated_at',
   LEARNERS: 'id,event_id,access_code,full_name,email,phone,department,academic_year,constituency_number,constituency_name,party_id,party_name,party_group_link,bench,role,committee_id,committee_name,committee_group_link,school_name,day1_checked_in,day2_checked_in,district,created_at,updated_at',
@@ -3106,7 +3107,7 @@ class StorageService {
       const matched = findEventBySlug(allEvs, cleanKey) || allEvs.find(e => e.id === cleanKey);
       const targetEventId = matched?.id || (isUuid ? cleanKey : undefined);
 
-      let query = sb.from('college_events').select('id, slug, college_name, social_coverage');
+      let query = sb.from('college_events').select('id, slug, college_name, social_coverage->cabinet_ministries');
       if (targetEventId) {
         query = query.eq('id', targetEventId);
       } else if (isUuid) {
@@ -3127,10 +3128,10 @@ class StorageService {
       }
 
       if (data && data.length > 0) {
-        const ev = data[0];
-        const sc = (ev.social_coverage || {}) as Record<string, any>;
-        const ministries: string[] = Array.isArray(sc.cabinet_ministries) && sc.cabinet_ministries.length > 0
-          ? sc.cabinet_ministries
+        const ev = data[0] as any;
+        const rawMin = ev.cabinet_ministries ?? ev.social_coverage?.cabinet_ministries;
+        const ministries: string[] = Array.isArray(rawMin) && rawMin.length > 0
+          ? rawMin
           : CANONICAL_QUESTION_TARGETS.slice(1);
 
         if (typeof localStorage !== 'undefined' && ev.id) {
@@ -3684,13 +3685,36 @@ class StorageService {
         { data: studentData },
         { data: confData }
       ] = await Promise.all([
-        sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS).eq('id', eventId).limit(1),
+        sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS_STUDENT).eq('id', eventId).limit(1),
         studentId ? sb.from('learners').select('id, event_id, full_name, roll_no:constituency_number, department, year:academic_year, academic_year, party:party_name, party_name, party_id, access_code, bench, role, constituency_number, constituency_name, committee_name, committee_id').eq('id', studentId).limit(1) : Promise.resolve({ data: null }),
         studentId ? sb.from('learner_allocation_confirmations').select(SUPABASE_COLUMNS.LEARNER_ALLOCATION_CONFIRMATIONS).eq('event_id', eventId).eq('learner_id', studentId).limit(1) : Promise.resolve({ data: null })
       ]);
 
       if (evData && evData.length > 0) {
-        const ev = this.normalizeEvent(evData[0] as unknown as CollegeEvent);
+        const rawEv = evData[0] as any;
+        const normalizedEv: CollegeEvent = {
+          ...rawEv,
+          social_coverage: {
+            ...(rawEv.social_coverage || {}),
+            elections: rawEv.elections ?? rawEv.social_coverage?.elections ?? [],
+            flash_votes: rawEv.flash_votes ?? rawEv.social_coverage?.flash_votes ?? [],
+            nominations: rawEv.nominations ?? rawEv.social_coverage?.nominations ?? [],
+            open_nominations: rawEv.open_nominations ?? rawEv.social_coverage?.open_nominations ?? {},
+            cabinet_ministries: rawEv.cabinet_ministries ?? rawEv.social_coverage?.cabinet_ministries ?? [],
+            proceedings_questions: rawEv.proceedings_questions ?? rawEv.social_coverage?.proceedings_questions ?? [],
+            active_question_id: rawEv.active_question_id ?? rawEv.social_coverage?.active_question_id ?? null,
+            completed_question_ids: rawEv.completed_question_ids ?? rawEv.social_coverage?.completed_question_ids ?? [],
+            question_calling_order: rawEv.question_calling_order ?? rawEv.social_coverage?.question_calling_order ?? [],
+            question_order_version: rawEv.question_order_version ?? rawEv.social_coverage?.question_order_version,
+            question_order_updated_at: rawEv.question_order_updated_at ?? rawEv.social_coverage?.question_order_updated_at,
+            deleted_question_ids: rawEv.deleted_question_ids ?? rawEv.social_coverage?.deleted_question_ids ?? [],
+            event_deadline: rawEv.event_deadline ?? rawEv.social_coverage?.event_deadline,
+            is_question_window_open: rawEv.is_question_window_open ?? rawEv.social_coverage?.is_question_window_open,
+            agenda_progress: rawEv.agenda_progress ?? rawEv.social_coverage?.agenda_progress,
+            timer: rawEv.timer ?? rawEv.social_coverage?.timer,
+          }
+        };
+        const ev = this.normalizeEvent(normalizedEv);
         const curEvs = this.getEvents();
         const existing = curEvs.find(e => e.id === ev.id);
         const merged = existing ? { ...existing, ...ev } : ev;
@@ -5431,8 +5455,13 @@ class StorageService {
 
         const rawSess = typeof localStorage !== 'undefined' ? localStorage.getItem('tn_assembly_auth_session') : null;
         let isJury = false;
+        let isStudent = false;
         if (rawSess) {
-          try { isJury = JSON.parse(rawSess).role === 'jury'; } catch {}
+          try {
+            const parsed = JSON.parse(rawSess);
+            isJury = parsed.role === 'jury';
+            isStudent = parsed.role === 'student' || parsed.role === 'learner';
+          } catch {}
         }
 
         if (isJury) {
@@ -5463,6 +5492,114 @@ class StorageService {
             const nextScores = [...otherScores, ...merged];
             if (!areJsonbObjectsEqual(currentScores, nextScores)) {
               this.setItem(STORAGE_KEYS.SCORES, nextScores);
+              this.notify();
+            }
+          }
+          return;
+        }
+
+        if (isStudent) {
+          const [evRes, agendaRes] = await Promise.all([
+            client.from('college_events').select(
+              'id, ' +
+              'social_coverage->agenda_progress, ' +
+              'social_coverage->deleted_question_ids, ' +
+              'social_coverage->proceedings_questions, ' +
+              'social_coverage->timer, ' +
+              'social_coverage->timer_config, ' +
+              'social_coverage->elections, ' +
+              'social_coverage->flash_votes'
+            ).eq('id', eventId).maybeSingle(),
+            client.from('session_agenda').select(SUPABASE_COLUMNS.SESSION_AGENDA).eq('event_id', eventId).order('time', { ascending: true })
+          ]);
+
+          if (evRes.data) {
+            const rawData = evRes.data as any;
+            const sc = {
+              ...(rawData.social_coverage || {}),
+              agenda_progress: rawData.agenda_progress ?? rawData.social_coverage?.agenda_progress,
+              deleted_question_ids: rawData.deleted_question_ids ?? rawData.social_coverage?.deleted_question_ids,
+              proceedings_questions: rawData.proceedings_questions ?? rawData.social_coverage?.proceedings_questions,
+              timer: rawData.timer ?? rawData.social_coverage?.timer,
+              timer_config: rawData.timer_config ?? rawData.social_coverage?.timer_config,
+              elections: rawData.elections ?? rawData.social_coverage?.elections,
+              flash_votes: rawData.flash_votes ?? rawData.social_coverage?.flash_votes,
+            };
+
+            // 1. Reconcile Current Agenda
+            if (agendaRes.data && Array.isArray(agendaRes.data)) {
+              const remoteAgenda = agendaRes.data as unknown as AgendaItem[];
+              const currentAgenda = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, []);
+              const otherAgenda = currentAgenda.filter(a => a.event_id !== eventId);
+              const nextAgenda = [...otherAgenda, ...remoteAgenda];
+              if (!areJsonbObjectsEqual(currentAgenda, nextAgenda)) {
+                this.setItem(STORAGE_KEYS.AGENDA, nextAgenda);
+                stateChanged = true;
+              }
+
+              const remoteCurrent = remoteAgenda.find(a => a.is_current);
+              if (remoteCurrent) {
+                this.setItem(`tn_assembly_current_agenda_${eventId}`, remoteCurrent.id);
+                if (sc.agenda_progress) {
+                  sc.agenda_progress.active_agenda_id = remoteCurrent.id;
+                }
+              }
+            }
+            if (sc.agenda_progress) {
+              this.setItem(`tn_assembly_agenda_progress_${eventId}`, sc.agenda_progress);
+              if (sc.agenda_progress.started_days) {
+                this.setItem(`tn_assembly_started_days_${eventId}`, sc.agenda_progress.started_days);
+              }
+            }
+
+            // 2. Reconcile Current Question
+            const deletedIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_QUESTION_IDS, []));
+            (sc.deleted_question_ids || []).forEach((id: string) => deletedIds.add(id));
+            this.setItem(STORAGE_KEYS.DELETED_QUESTION_IDS, Array.from(deletedIds));
+
+            const remotePQs: ProceedingsQuestion[] = (sc.proceedings_questions || []).filter((q: ProceedingsQuestion) => !deletedIds.has(q.id));
+            const currentPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+            const otherPQs = currentPQs.filter(q => q.event_id !== eventId);
+            const nextPQs = [...otherPQs, ...remotePQs];
+            if (!areJsonbObjectsEqual(currentPQs, nextPQs)) {
+              this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, nextPQs);
+              stateChanged = true;
+            }
+
+            // 3. Reconcile Timer State
+            if (sc.timer && typeof sc.timer === 'object') {
+              const incomingUpdated = Number(sc.timer.updatedAt) || 0;
+              const localTimer = this.getItem<LiveTimerState | null>(`tn_assembly_live_timer_${eventId}`, null);
+              const localUpdated = Number(localTimer?.updatedAt) || 0;
+              if (!localTimer || incomingUpdated >= localUpdated) {
+                this.setItem(`tn_assembly_live_timer_${eventId}`, sc.timer);
+              }
+            }
+            if (sc.timer_config?.durationSec) {
+              this.setItem(`tn_assembly_timer_config_${eventId}`, sc.timer_config.durationSec);
+            }
+
+            // 4. Reconcile Elections & Flash Votes
+            if (Array.isArray(sc.elections) && sc.elections.length > 0) {
+              const currentElecs = this.getItem<Election[]>(STORAGE_KEYS.ELECTIONS, []);
+              const otherElecs = currentElecs.filter(e => e.event_id !== eventId);
+              const nextElecs = [...otherElecs, ...sc.elections];
+              if (!areJsonbObjectsEqual(currentElecs, nextElecs)) {
+                this.setItem(STORAGE_KEYS.ELECTIONS, nextElecs);
+                stateChanged = true;
+              }
+            }
+            if (Array.isArray(sc.flash_votes) && sc.flash_votes.length > 0) {
+              const currentFV = this.getItem<LiveFlashVote[]>(STORAGE_KEYS.FLASH_VOTES, []);
+              const otherFV = currentFV.filter(f => f.event_id !== eventId);
+              const nextFV = [...otherFV, ...sc.flash_votes];
+              if (!areJsonbObjectsEqual(currentFV, nextFV)) {
+                this.setItem(STORAGE_KEYS.FLASH_VOTES, nextFV);
+                stateChanged = true;
+              }
+            }
+
+            if (stateChanged) {
               this.notify();
             }
           }
@@ -20783,28 +20920,57 @@ class StorageService {
       return this.getProceedingsQuestions(eventKey);
     }
 
-    try {
-      const allEvs = this.getEvents();
-      const cleanKey = (eventKey || '').trim();
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanKey);
-      const matched = cleanKey ? (findEventBySlug(allEvs, cleanKey) || allEvs.find(e => e.id === cleanKey)) : undefined;
-      const targetEventId = matched?.id || (isUuid ? cleanKey : undefined);
+    const cleanKey = (eventKey || '').trim();
+    const flightKey = `flight_fetch_proceedings_q_${cleanKey.toLowerCase()}`;
+    return this.dedupeInFlight<ProceedingsQuestion[]>(flightKey, async () => {
+      try {
+        const allEvs = this.getEvents();
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanKey);
+        const matched = cleanKey ? (findEventBySlug(allEvs, cleanKey) || allEvs.find(e => e.id === cleanKey)) : undefined;
+        const targetEventId = matched?.id || (isUuid ? cleanKey : undefined);
 
-      let query = sb.from('college_events').select('id, college_name, slug, social_coverage');
-      if (targetEventId) {
-        query = query.eq('id', targetEventId);
-      } else if (isUuid) {
-        query = query.eq('id', cleanKey);
-      } else if (cleanKey) {
-        query = query.eq('slug', cleanKey);
-      }
+        let query = sb.from('college_events').select(
+          'id, college_name, slug, ' +
+          'social_coverage->cabinet_ministries, ' +
+          'social_coverage->question_calling_order, ' +
+          'social_coverage->active_question_id, ' +
+          'social_coverage->completed_question_ids, ' +
+          'social_coverage->question_order_version, ' +
+          'social_coverage->question_order_updated_at, ' +
+          'social_coverage->deleted_question_ids, ' +
+          'social_coverage->event_deadline, ' +
+          'social_coverage->is_question_window_open, ' +
+          'social_coverage->proceedings_questions, ' +
+          'social_coverage->questions'
+        );
+        if (targetEventId) {
+          query = query.eq('id', targetEventId);
+        } else if (isUuid) {
+          query = query.eq('id', cleanKey);
+        } else if (cleanKey) {
+          query = query.eq('slug', cleanKey);
+        }
 
-      const { data, error } = await query.limit(1);
-      if (error) {
-        console.warn('[StorageService] fetchProceedingsQuestionsOnDemand error:', error);
-      } else if (data && data.length > 0) {
-        const ev = data[0];
-        const sc = (ev.social_coverage || {}) as Record<string, any>;
+        const { data, error } = await (query as any).limit(1);
+        if (error) {
+          console.warn('[StorageService] fetchProceedingsQuestionsOnDemand error:', error);
+        } else if (data && (data as any[]).length > 0) {
+          const rawEv = (data as any[])[0] as any;
+          const ev = rawEv;
+          const sc: Record<string, any> = {
+            ...(ev.social_coverage || {}),
+            cabinet_ministries: rawEv.cabinet_ministries ?? rawEv.social_coverage?.cabinet_ministries,
+            question_calling_order: rawEv.question_calling_order ?? rawEv.social_coverage?.question_calling_order,
+            active_question_id: rawEv.active_question_id ?? rawEv.social_coverage?.active_question_id,
+            completed_question_ids: rawEv.completed_question_ids ?? rawEv.social_coverage?.completed_question_ids,
+            question_order_version: rawEv.question_order_version ?? rawEv.social_coverage?.question_order_version,
+            question_order_updated_at: rawEv.question_order_updated_at ?? rawEv.social_coverage?.question_order_updated_at,
+            deleted_question_ids: rawEv.deleted_question_ids ?? rawEv.social_coverage?.deleted_question_ids,
+            event_deadline: rawEv.event_deadline ?? rawEv.social_coverage?.event_deadline,
+            is_question_window_open: rawEv.is_question_window_open ?? rawEv.social_coverage?.is_question_window_open,
+            proceedings_questions: rawEv.proceedings_questions ?? rawEv.social_coverage?.proceedings_questions,
+            questions: rawEv.questions ?? rawEv.social_coverage?.questions,
+          };
 
         // Synchronize remote cabinet_ministries immediately so target ministry is available on initial load
         const remoteMinistries: string[] = Array.isArray(sc.cabinet_ministries)
@@ -21098,6 +21264,7 @@ class StorageService {
     }
 
     return this.getProceedingsQuestions(eventKey);
+    });
   }
 
   public async submitProceedingsQuestion(question: Partial<ProceedingsQuestion>): Promise<{ success: boolean; question?: ProceedingsQuestion; error?: string }> {
