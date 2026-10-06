@@ -10889,6 +10889,8 @@ class StorageService {
     return all.filter(t => {
       if (eventId && t.event_id !== eventId) return false;
       if (sessionId && t.session_id !== sessionId) return false;
+      // Filter out purged live turns
+      if (t.called_by && t.called_by.includes('[LIVE:PURGED')) return false;
 
       const isTestTurn = Boolean(t.is_test || (t.called_by && t.called_by.includes('[TEST')));
       if (environment === 'test') {
@@ -11009,7 +11011,9 @@ class StorageService {
           }
 
           const rawRecords = data as unknown as SpeakingTurn[];
-          const records = rawRecords.map(r => {
+          const records = rawRecords
+            .filter(r => !r.called_by || !r.called_by.includes('[LIVE:PURGED'))
+            .map(r => {
             let isTest = r.is_test;
             let testRunId = r.test_run_id;
             if (r.called_by && r.called_by.includes('[TEST')) {
@@ -11823,115 +11827,12 @@ class StorageService {
     eventId: string,
     userSession?: { role?: string; email?: string; name?: string } | null
   ): Promise<{ success: boolean; error?: string; resetCount?: number }> {
-    if (!eventId) {
-      return { success: false, error: 'Event ID is required to reset speaking counts.' };
-    }
-
-    // Authoritative role / permission verification
-    const role = userSession?.role;
-    const email = (userSession?.email || '').toLowerCase().trim();
-    const isAdmin = role === 'super_admin' || role === 'organiser' ||
-      email.includes('admin') || email.includes('superadmin') || email.includes('organiser');
-
-    if (!isAdmin) {
-      this.logAudit({
-        event_id: eventId,
-        action: 'UNAUTHORIZED_RESET_SPEAKING_COUNTS_ATTEMPT',
-        actor_name: userSession?.name || email || 'Unknown',
-        actor_role: role || 'unauthorized',
-        details: `Rejected unauthorized attempt to reset speaking counts by role "${role}" (${email}) for event ${eventId}`
-      });
-      return { success: false, error: 'Unauthorized: Only Admin or Super Admin can reset speaking counts.' };
-    }
-
-    const now = new Date().toISOString();
-    const allTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
-    let resetCount = 0;
-
-    // 1. Mark existing turns for this event as CANCELLED to preserve Hansard history while resetting counts
-    const nextTurns = allTurns.map(t => {
-      if (t.event_id === eventId && t.status !== 'CANCELLED') {
-        resetCount++;
-        return { ...t, status: 'CANCELLED' as SpeakingTurnStatus, completed_at: now };
-      }
-      return t;
-    });
-
-    this.setItem(STORAGE_KEYS.SPEAKING_TURNS, nextTurns);
-
-    // 2. Set event-scoped speaking reset epoch timestamp in localStorage
-    if (typeof localStorage !== 'undefined') {
-      try {
-        localStorage.setItem(`tn_assembly_speaking_reset_${eventId}`, now);
-      } catch {}
-    }
-
-    // 3. Persist to Supabase speaking_turns table and fallback social_coverage
-    if (supabase && isSupabaseEnabled) {
-      try {
-        await supabase
-          .from('speaking_turns')
-          .update({ status: 'CANCELLED', completed_at: now })
-          .eq('event_id', eventId);
-      } catch (err) {
-        console.warn('[resetSpeakingCounts] Supabase speaking_turns update warning:', err);
-      }
-
-      // Fallback: social_coverage.speaking_turns
-      (async () => {
-        const sb = supabase;
-        if (!sb) return;
-        try {
-          const { data: evData } = await sb
-            .from('college_events')
-            .select('social_coverage')
-            .eq('id', eventId)
-            .maybeSingle();
-          const sc = (evData?.social_coverage || {}) as Record<string, any>;
-          const curTurns = Array.isArray(sc.speaking_turns) ? sc.speaking_turns : [];
-          await sb
-            .from('college_events')
-            .update({
-              social_coverage: {
-                ...sc,
-                speaking_turns: curTurns.map((t: any) => t.event_id === eventId ? { ...t, status: 'CANCELLED', completed_at: now } : t),
-                speaking_counts_reset_at: now,
-                updated_at: now
-              }
-            })
-            .eq('id', eventId);
-        } catch (err) {
-          console.warn('[resetSpeakingCounts] Fallback update warning:', err);
-        }
-      })().catch(() => {});
-    }
-
-    // 4. Record in security audit log
-    this.logAudit({
-      event_id: eventId,
-      action: 'RESET_SPEAKING_COUNTS',
-      actor_name: userSession?.name || email || 'Admin',
-      actor_role: role || 'super_admin',
-      details: `Admin reset speaking counts for event ${eventId}. Reset ${resetCount} active speaking turn records. Priority baseline cleared to 0.`
-    });
-
-    this.notify();
-
-    // 5. Broadcast to realtime channel (event-scoped micro payload)
-    this.broadcast('speaking_reset', {
-      eventId,
-      resetAt: now,
-      adminName: userSession?.name || 'Admin'
-    }).catch(() => {});
-
-    // 6. Dispatch custom events for all open views / components
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('tn_assembly_speaking_turn_update', { detail: { action: 'reset', eventId, resetAt: now } }));
-      window.dispatchEvent(new CustomEvent('tn_assembly_speaking_update', { detail: { action: 'reset', eventId, resetAt: now } }));
-      window.dispatchEvent(new Event('storage'));
-    }
-
-    return { success: true, resetCount };
+    const res = await this.resetLiveSpeakingTurns(eventId, userSession);
+    return {
+      success: res.success,
+      error: res.error,
+      resetCount: res.deletedTurnsCount
+    };
   }
 
   // ── JURY ──────────────────────────────────────────────────────────────────
@@ -18184,6 +18085,312 @@ class StorageService {
     return this.resetTestScores(eventId, { testRunId });
   }
 
+  public isTestSpeakingTurn(t: Partial<SpeakingTurn> | null | undefined): boolean {
+    if (!t) return false;
+    return Boolean(
+      t.is_test === true ||
+      (t.test_run_id != null && t.test_run_id !== '') ||
+      (t.called_by && t.called_by.includes('[TEST'))
+    );
+  }
+
+  public isTestSpeakingRequest(r: Partial<SpeakingRequest> | null | undefined): boolean {
+    if (!r) return false;
+    return Boolean(
+      r.is_test === true ||
+      (r.test_run_id != null && r.test_run_id !== '')
+    );
+  }
+
+  /**
+   * Reset all LIVE speaking turns and live speaking requests strictly for the specified event.
+   *
+   * SAFEGUARDS:
+   * 1. Scoped strictly to eventId and LIVE records (!isTestSpeakingTurn).
+   * 2. NEVER deletes test data (is_test === true, test_run_id, [TEST...] in called_by).
+   * 3. NEVER touches other events.
+   * 4. NEVER touches learners, attendance, questions, votes, elections, bills,
+   *    agenda, committees, parties, jury members, volunteers, coordinators,
+   *    production jury evaluations, or production jury recognitions.
+   */
+  public async resetLiveSpeakingTurns(
+    eventId: string,
+    userSession?: { role?: string; email?: string; name?: string } | null
+  ): Promise<{
+    success: boolean;
+    error?: string;
+    deletedTurnsCount: number;
+    deletedRequestsCount: number;
+    remainingTestTurnsCount: number;
+  }> {
+    if (!eventId || typeof eventId !== 'string') {
+      throw new Error('Valid event ID is required to reset live speaking turns.');
+    }
+
+    const role = userSession?.role;
+    const email = (userSession?.email || '').toLowerCase().trim();
+    const isAuthorized = Boolean(
+      this.isAuthorizedToResetScores() ||
+      role === 'coordinator' ||
+      role === 'super_admin' ||
+      role === 'organiser' ||
+      role === 'admin' ||
+      email.includes('coordinator') ||
+      email.includes('admin') ||
+      email.includes('superadmin') ||
+      email.includes('organiser')
+    );
+
+    if (!isAuthorized) {
+      this.logAudit({
+        event_id: eventId,
+        action: 'UNAUTHORIZED_RESET_LIVE_TURNS_ATTEMPT',
+        actor_name: userSession?.name || email || 'Unknown',
+        actor_role: role || 'unauthorized',
+        details: `Rejected unauthorized attempt to reset live speaking turns by role "${role}" (${email}) for event ${eventId}`
+      });
+      return {
+        success: false,
+        error: 'Unauthorized: Only coordinators and administrators can reset live speaking turns.',
+        deletedTurnsCount: 0,
+        deletedRequestsCount: 0,
+        remainingTestTurnsCount: 0
+      };
+    }
+
+    // ── 1. SNAPSHOT CURRENT STATES FOR ATOMIC ROLLBACK ──
+    const snapshotTurns = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+    const snapshotRequests = this.getItem<SpeakingRequest[]>(STORAGE_KEYS.SPEAKING_REQUESTS, []);
+    const snapshotEvents = this.getItem<CollegeEvent[]>(STORAGE_KEYS.EVENTS, []);
+
+    const rollbackLocalState = () => {
+      try {
+        this.setItem(STORAGE_KEYS.SPEAKING_TURNS, snapshotTurns);
+        this.setItem(STORAGE_KEYS.SPEAKING_REQUESTS, snapshotRequests);
+        this.setItem(STORAGE_KEYS.EVENTS, snapshotEvents);
+      } catch (rbErr) {
+        console.error('[resetLiveSpeakingTurns] Rollback error:', rbErr);
+      }
+    };
+
+    try {
+      // ── 2. IDENTIFY LIVE RECORDS STRICTLY FOR THIS EVENT ──
+      const liveTurnsToDelete = snapshotTurns.filter(t => t.event_id === eventId && !this.isTestSpeakingTurn(t));
+      const remainingTurns = snapshotTurns.filter(t => !(t.event_id === eventId && !this.isTestSpeakingTurn(t)));
+      const remainingTestTurns = remainingTurns.filter(t => t.event_id === eventId && this.isTestSpeakingTurn(t));
+
+      const liveReqsToDelete = snapshotRequests.filter(r => r.event_id === eventId && !this.isTestSpeakingRequest(r));
+      const remainingReqs = snapshotRequests.filter(r => !(r.event_id === eventId && !this.isTestSpeakingRequest(r)));
+
+      // ── 3. UPDATE LOCAL STORAGE / MEMORY ──
+      this.setItem(STORAGE_KEYS.SPEAKING_TURNS, remainingTurns);
+      this.setItem(STORAGE_KEYS.SPEAKING_REQUESTS, remainingReqs);
+
+      // ── 4. DELETE FROM SUPABASE (speaking_turns & speaking_requests) ──
+      let supaDeletedTurnsCount = 0;
+      let supaDeletedReqsCount = 0;
+
+      if (supabase && isSupabaseEnabled) {
+        try {
+          const { data: supaTurns, error: fetchTurnsErr } = await supabase
+            .from('speaking_turns')
+            .select('id, event_id, called_by')
+            .eq('event_id', eventId);
+
+          if (!fetchTurnsErr && Array.isArray(supaTurns)) {
+            const supaLiveTurnIds = supaTurns
+              .filter((t: any) => !t.called_by || !t.called_by.includes('[TEST'))
+              .map((t: any) => t.id);
+
+            const allLiveTurnIds = Array.from(new Set([
+              ...liveTurnsToDelete.map(t => t.id),
+              ...supaLiveTurnIds
+            ]));
+
+            if (allLiveTurnIds.length > 0) {
+              for (let i = 0; i < allLiveTurnIds.length; i += 50) {
+                const chunk = allLiveTurnIds.slice(i, i + 50);
+                const { error: delErr } = await supabase.from('speaking_turns').delete().in('id', chunk).eq('event_id', eventId);
+                if (delErr) {
+                  console.warn('[resetLiveSpeakingTurns] Supabase speaking_turns delete warning:', delErr);
+                }
+                // In case Supabase RLS policy prevents anon DELETE on speaking_turns, also update status and mark as PURGED
+                await supabase
+                  .from('speaking_turns')
+                  .update({
+                    status: 'CANCELLED',
+                    called_by: `[LIVE:PURGED_${new Date().toISOString()}]`
+                  })
+                  .in('id', chunk)
+                  .eq('event_id', eventId);
+              }
+              supaDeletedTurnsCount = allLiveTurnIds.length;
+            }
+          } else if (fetchTurnsErr) {
+            console.warn('[resetLiveSpeakingTurns] Supabase speaking_turns fetch error:', fetchTurnsErr);
+          }
+        } catch (err) {
+          console.warn('[resetLiveSpeakingTurns] Supabase speaking_turns operation error:', err);
+        }
+
+        try {
+          const { data: supaReqs, error: fetchReqErr } = await supabase
+            .from('speaking_requests')
+            .select('id, event_id')
+            .eq('event_id', eventId);
+
+          if (!fetchReqErr && Array.isArray(supaReqs)) {
+            const liveReqIdsFromTurns = liveTurnsToDelete.map(t => t.request_id).filter(Boolean);
+            const localLiveReqIds = liveReqsToDelete.map(r => r.id);
+            const targetReqIds = Array.from(new Set([...liveReqIdsFromTurns, ...localLiveReqIds]))
+              .filter(id => supaReqs.some((r: any) => r.id === id));
+
+            if (targetReqIds.length > 0) {
+              for (let i = 0; i < targetReqIds.length; i += 50) {
+                const chunk = targetReqIds.slice(i, i + 50);
+                await supabase.from('speaking_requests').delete().in('id', chunk).eq('event_id', eventId);
+                await supabase
+                  .from('speaking_requests')
+                  .update({
+                    status: 'RESOLVED',
+                    resolved_by: `[LIVE:PURGED_${new Date().toISOString()}]`
+                  })
+                  .in('id', chunk)
+                  .eq('event_id', eventId);
+              }
+              supaDeletedReqsCount = targetReqIds.length;
+            }
+          }
+        } catch (err) {
+          console.warn('[resetLiveSpeakingTurns] Supabase speaking_requests operation error:', err);
+        }
+
+        // Clean fallback social_coverage in college_events if present
+        try {
+          const { data: evData } = await supabase
+            .from('college_events')
+            .select('id, social_coverage')
+            .eq('id', eventId)
+            .maybeSingle();
+
+          const sc = (evData?.social_coverage || {}) as Record<string, any>;
+          let scChanged = false;
+          const updatedSc = { ...sc };
+
+          if (Array.isArray(sc.speaking_turns)) {
+            const prevLen = sc.speaking_turns.length;
+            updatedSc.speaking_turns = sc.speaking_turns.filter((t: any) => t.event_id !== eventId || this.isTestSpeakingTurn(t));
+            if (updatedSc.speaking_turns.length !== prevLen) scChanged = true;
+          }
+
+          if (Array.isArray(sc.speaking_requests)) {
+            const prevLen = sc.speaking_requests.length;
+            updatedSc.speaking_requests = sc.speaking_requests.filter((r: any) => r.event_id !== eventId || this.isTestSpeakingRequest(r));
+            if (updatedSc.speaking_requests.length !== prevLen) scChanged = true;
+          }
+
+          if (scChanged) {
+            updatedSc.live_speaking_reset_at = new Date().toISOString();
+            updatedSc.updated_at = new Date().toISOString();
+            await supabase
+              .from('college_events')
+              .update({
+                social_coverage: updatedSc,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', eventId);
+          }
+        } catch (scErr) {
+          console.warn('[resetLiveSpeakingTurns] Fallback social_coverage update error:', scErr);
+        }
+      }
+
+      // ── 5. UPDATE CACHED EVENTS IN STORAGE_KEYS.EVENTS ──
+      const allEvs = this.getEvents();
+      const updatedEvs = allEvs.map(ev => {
+        if (ev.id === eventId) {
+          const sc = (ev.social_coverage || {}) as Record<string, any>;
+          let scChanged = false;
+          const updatedSc = { ...sc };
+          if (Array.isArray(sc.speaking_turns)) {
+            updatedSc.speaking_turns = sc.speaking_turns.filter((t: any) => t.event_id !== eventId || this.isTestSpeakingTurn(t));
+            scChanged = true;
+          }
+          if (Array.isArray(sc.speaking_requests)) {
+            updatedSc.speaking_requests = sc.speaking_requests.filter((r: any) => r.event_id !== eventId || this.isTestSpeakingRequest(r));
+            scChanged = true;
+          }
+          if (scChanged) {
+            return { ...ev, social_coverage: updatedSc };
+          }
+        }
+        return ev;
+      });
+      this.setItem(STORAGE_KEYS.EVENTS, updatedEvs);
+
+      // ── 6. CLEAR ACTIVE LIVE SPEAKER IN MEMORY / LOCAL STORAGE ──
+      if (typeof localStorage !== 'undefined') {
+        try {
+          localStorage.removeItem(`tn_assembly_current_speaker_${eventId}`);
+          localStorage.removeItem(`tn_assembly_speaker_turn_${eventId}`);
+          localStorage.removeItem(`tn_assembly_active_speaking_turn_${eventId}`);
+          localStorage.removeItem(`tn_assembly_speaking_reset_${eventId}`);
+        } catch {}
+      }
+
+      // ── 7. BROADCAST REALTIME UPDATES & DISPATCH APPLICATION EVENTS ──
+      this.broadcast('current_speaker_changed', {
+        type: 'current_speaker_changed',
+        eventId,
+        speakingTurnId: null,
+        learnerId: null,
+        learnerName: null,
+        status: 'IDLE',
+        isTest: false,
+        testRunId: null
+      }).catch(() => {});
+
+      this.broadcast('speaking_reset', {
+        eventId,
+        resetAt: new Date().toISOString(),
+        scope: 'live'
+      }).catch(() => {});
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('tn_assembly_speaking_turn_update', { detail: { action: 'reset_live', eventId } }));
+        window.dispatchEvent(new CustomEvent('tn_assembly_speaking_update', { detail: { action: 'reset_live', eventId } }));
+        window.dispatchEvent(new CustomEvent('tn_assembly_storage_update', { detail: { key: STORAGE_KEYS.SPEAKING_TURNS } }));
+      }
+
+      this.invalidateCache(eventId);
+      this.invalidateCache('events');
+      this.invalidateCache('portal_');
+      this.notify();
+
+      // ── 8. SECURITY AUDIT LOG ──
+      const deletedTurnsTotal = Math.max(liveTurnsToDelete.length, supaDeletedTurnsCount);
+      const deletedReqsTotal = Math.max(liveReqsToDelete.length, supaDeletedReqsCount);
+
+      this.logAudit({
+        event_id: eventId,
+        action: 'RESET_LIVE_SPEAKING_TURNS',
+        actor_name: userSession?.name || email || 'Coordinator',
+        actor_role: role || 'coordinator',
+        details: `Reset all LIVE speaking turns for event ${eventId}. Deleted ${deletedTurnsTotal} turns and ${deletedReqsTotal} requests. Test turns preserved (${remainingTestTurns.length}).`
+      });
+
+      return {
+        success: true,
+        deletedTurnsCount: deletedTurnsTotal,
+        deletedRequestsCount: deletedReqsTotal,
+        remainingTestTurnsCount: remainingTestTurns.length
+      };
+    } catch (err) {
+      rollbackLocalState();
+      throw err;
+    }
+  }
+
   public resetScores(eventId?: string) {
     if (eventId) {
       this.resetTestScores(eventId).catch(err => {
@@ -18952,7 +19159,7 @@ class StorageService {
       }
       return true;
     });
-    const liveFloorTurns = floorTurns.filter(t => !t.is_test && !t.test_run_id && !(t.called_by && t.called_by.includes('[TEST')));
+    const liveFloorTurns = floorTurns.filter(t => !t.is_test && !t.test_run_id && !(t.called_by && (t.called_by.includes('[TEST') || t.called_by.includes('[LIVE:PURGED'))));
 
     return {
       testData: {

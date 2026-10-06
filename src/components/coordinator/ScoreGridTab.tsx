@@ -31,7 +31,8 @@ import {
   Star,
   Shield,
   CheckSquare,
-  RefreshCw
+  RefreshCw,
+  RotateCcw
 } from 'lucide-react';
 
 interface ScoreGridTabProps {
@@ -150,6 +151,11 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   const [isResetJuryModalOpen, setIsResetJuryModalOpen] = useState(false);
   const [typedJuryConfirm, setTypedJuryConfirm] = useState('');
   const [isResettingJuryScoring, setIsResettingJuryScoring] = useState(false);
+
+  // Dedicated Event Live Speaking Turns Reset State (Admin/Coordinator Only)
+  const [isResetLiveSpeakingModalOpen, setIsResetLiveSpeakingModalOpen] = useState(false);
+  const [typedLiveSpeakingConfirm, setTypedLiveSpeakingConfirm] = useState('');
+  const [isResettingLiveSpeakingTurns, setIsResettingLiveSpeakingTurns] = useState(false);
 
   // Test Mode & Classification State
   const [testMode, setTestMode] = useState(() => storageService.getScoringTestMode(eventId));
@@ -1255,6 +1261,44 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
     }
   };
 
+  const handleConfirmResetLiveSpeakingTurns = async () => {
+    if (!eventId) {
+      onShowToast('Unable to reset live speaking turns', 'Missing event identifier.', 'error');
+      return;
+    }
+    if (typedLiveSpeakingConfirm !== 'RESET LIVE TURNS') {
+      onShowToast('Confirmation Required', 'You must type "RESET LIVE TURNS" exactly to proceed.', 'error');
+      return;
+    }
+    setIsResettingLiveSpeakingTurns(true);
+    try {
+      const res = await storageService.resetLiveSpeakingTurns(eventId, {
+        role: userRole,
+        name: isSuperAdmin ? 'Super Admin' : 'Coordinator'
+      });
+      if (res.success) {
+        setIsResetLiveSpeakingModalOpen(false);
+        setTypedLiveSpeakingConfirm('');
+        setAuditTick(t => t + 1);
+        onShowToast(
+          'Live Speaking Turns Reset',
+          `Successfully reset all LIVE speaking turns for this event (${res.deletedTurnsCount} turn(s) deleted). Test data preserved (${res.remainingTestTurnsCount} test turn(s)).`,
+          'success'
+        );
+      } else {
+        onShowToast('Reset Failed', res.error || 'Failed to reset live speaking turns', 'error');
+      }
+    } catch (err: any) {
+      onShowToast(
+        'Reset failed',
+        err?.message || 'Database error occurred while resetting live speaking turns.',
+        'error'
+      );
+    } finally {
+      setIsResettingLiveSpeakingTurns(false);
+    }
+  };
+
   const handleConfirmResetJuryScoring = async () => {
     if (!eventId) {
       onShowToast('Unable to reset jury scoring', 'Missing event identifier.', 'error');
@@ -1436,6 +1480,23 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
             <Trash2 className="w-3.5 h-3.5 text-slate-400" />
             <span>Reset Test Run</span>
           </button>
+
+          {/* Reset Live Speaking Turns button (Clearly separated: only deletes LIVE speaking turns for current event) */}
+          {isAuthorized && (
+            <button
+              type="button"
+              onClick={() => {
+                setTypedLiveSpeakingConfirm('');
+                setIsResetLiveSpeakingModalOpen(true);
+              }}
+              disabled={isResettingLiveSpeakingTurns || (auditData.realData.liveFloorTurns === 0)}
+              className="px-3 py-1.5 rounded-xl font-bold text-xs border flex items-center gap-1.5 transition cursor-pointer hover:bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-300 dark:border-rose-900/50 shadow-xs disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Reset all LIVE speaking turns for this event (destructive, requires typed confirmation)"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-rose-500" />
+              <span>Reset Live Speaking Turns</span>
+            </button>
+          )}
 
           {/* Dedicated Event Jury Scoring Reset Button (Administrator Only) */}
           {isAuthorized && (
@@ -3114,6 +3175,111 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>{isDeletingTestScores ? 'Resetting...' : 'Confirm Reset Test Run'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset LIVE Speaking Turns Confirmation Modal */}
+      {isResetLiveSpeakingModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+          <div
+            className="rounded-2xl max-w-md w-full p-6 border shadow-2xl space-y-4 animate-scale-in"
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-500">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <h4 className="text-base font-black tracking-tight text-rose-600 dark:text-rose-400">
+                  RESET ALL LIVE SPEAKING TURNS?
+                </h4>
+                <p className="text-xs text-rose-500/90 font-medium">
+                  Reset all LIVE speaking turns for this event?
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl border bg-slate-50 dark:bg-slate-900/60 space-y-2.5" style={{ borderColor: 'var(--border)' }}>
+              <div>
+                <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400">Event:</span>
+                <p className="text-sm font-black truncate mt-0.5" style={{ color: 'var(--text-primary)' }}>
+                  {eventName || 'Current Event'}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-200 dark:border-slate-800 text-xs">
+                <div>
+                  <span className="text-slate-400 block text-[10px]">Current Live Turns:</span>
+                  <span className="font-mono font-black text-rose-500 text-sm">
+                    {auditData.realData.liveFloorTurns}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[10px]">Current Test Turns:</span>
+                  <span className="font-mono font-black text-emerald-500 text-sm">
+                    {auditData.testData.testFloorTurns}
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl border bg-rose-500/5 border-rose-500/20 text-xs text-rose-700 dark:text-rose-300">
+                ⚠️ <strong>WARNING:</strong> This will remove all {auditData.realData.liveFloorTurns} LIVE speaking turns and reset the active speaker. This action cannot be undone.
+              </div>
+
+              <div className="p-3 rounded-xl border bg-emerald-500/5 border-emerald-500/20 text-xs space-y-1">
+                <p className="font-bold text-emerald-600 dark:text-emerald-400">Will NOT modify:</p>
+                <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-slate-600 dark:text-slate-400 text-[11px]">
+                  <span>✓ Learners / MLA Roster</span>
+                  <span>✓ Attendance</span>
+                  <span>✓ Questions</span>
+                  <span>✓ Flash Votes & Bills</span>
+                  <span>✓ Agenda Items</span>
+                  <span>✓ Committees & Parties</span>
+                  <span>✓ Jury Members & Volunteers</span>
+                  <span>✓ Production Jury Evaluations</span>
+                  <span>✓ Production Recognitions</span>
+                  <span>✓ Test Speaking Turns ({auditData.testData.testFloorTurns})</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-1.5 pt-1">
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                To confirm, type <span className="font-mono text-rose-600 dark:text-rose-400 select-all font-black">RESET LIVE TURNS</span> below:
+              </label>
+              <input
+                type="text"
+                value={typedLiveSpeakingConfirm}
+                onChange={e => setTypedLiveSpeakingConfirm(e.target.value)}
+                placeholder="Type RESET LIVE TURNS"
+                className="w-full px-3 py-2 rounded-xl border font-mono text-xs focus:outline-none bg-white dark:bg-slate-900 text-slate-900 dark:text-white border-rose-300 dark:border-rose-900 focus:border-rose-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsResetLiveSpeakingModalOpen(false);
+                  setTypedLiveSpeakingConfirm('');
+                }}
+                className="px-4 py-2.5 rounded-xl border font-semibold text-xs cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
+                disabled={isResettingLiveSpeakingTurns}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmResetLiveSpeakingTurns}
+                disabled={isResettingLiveSpeakingTurns || typedLiveSpeakingConfirm !== 'RESET LIVE TURNS'}
+                className="px-4 py-2.5 rounded-xl font-bold text-xs text-white bg-rose-600 hover:bg-rose-700 shadow-md cursor-pointer flex items-center gap-1.5 transition disabled:opacity-50"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>{isResettingLiveSpeakingTurns ? 'Resetting...' : 'Confirm Reset Live Speaking Turns'}</span>
               </button>
             </div>
           </div>
