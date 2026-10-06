@@ -1282,7 +1282,7 @@ export function App() {
         // NEVER fetches: jury, agenda, scores, nominations, questions, proceedings, chat, feedback, team
         const targetEventIdForVol = currentVolunteer?.event_id || activeEv.id;
         const eventLearners = storageService.getLearners(targetEventIdForVol);
-        setLearners(eventLearners);
+        setLearners(prev => (areJsonbObjectsEqual(prev, eventLearners) ? prev : eventLearners));
         setParties(storageService.getParties(targetEventIdForVol));
         setCommittees(storageService.getCommittees(targetEventIdForVol));
         setElections(storageService.getElections(targetEventIdForVol));
@@ -1293,13 +1293,14 @@ export function App() {
         // STRICTLY SCOPED: Jury portal only gets learners, agenda, and scores
         // NEVER fetches: volunteers, dayAttendance, eventDays, elections, flashVotes, nominations
         const eventLearners = storageService.getLearners(activeEv.id);
-        setLearners(eventLearners);
+        setLearners(prev => (areJsonbObjectsEqual(prev, eventLearners) ? prev : eventLearners));
         const freshJuryAgenda = storageService.getAgenda(activeEv.id);
         setAgenda(prev => (areJsonbObjectsEqual(prev, freshJuryAgenda) ? prev : freshJuryAgenda));
-        setScores(storageService.getScores(activeEv.id));
+        const freshScores = storageService.getScores(activeEv.id);
+        setScores(prev => (areJsonbObjectsEqual(prev, freshScores) ? prev : freshScores));
       } else {
         const eventLearners = storageService.getLearners(activeEv.id);
-        setLearners(eventLearners);
+        setLearners(prev => (areJsonbObjectsEqual(prev, eventLearners) ? prev : eventLearners));
         setParties(storageService.getParties(activeEv.id));
         setCommittees(storageService.getCommittees(activeEv.id));
         const freshAgenda = storageService.getAgenda(activeEv.id);
@@ -1374,11 +1375,13 @@ export function App() {
   };
 
   const hasMountedEventsRef = useRef(false);
+  const loadStateRef = useRef(loadState);
+  loadStateRef.current = loadState;
 
   useEffect(() => {
-    loadState();
+    loadStateRef.current();
     const unsubscribe = storageService.subscribe(() => {
-      loadState();
+      loadStateRef.current();
     });
 
     const pathname = typeof window !== 'undefined' ? window.location.pathname : '';

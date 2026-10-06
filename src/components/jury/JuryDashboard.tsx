@@ -243,28 +243,29 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     return evals[0] || null;
   }, [event?.id, selectedSession, jury?.id, jury?.name, selectedLearner?.id, scores, recogTick, testMode.isTestMode]);
 
-  // Mount effect: connect realtime, fetch cloud speaking turns, fetch recognitions & reconcile existing evaluation turns
+  const hasMountedEventIdRef = useRef<string | null>(null);
+
+  // Mount effect: connect realtime, fetch cloud speaking turns, fetch recognitions & reconcile existing evaluation turns (once per event)
   useEffect(() => {
-    if (event?.id) {
-      storageService.setupRealtimeSync(event.id);
-      storageService.fetchSpeakingTurns(event.id).then(() => {
-        storageService.reconcileEvaluationSpeakingTurns(event.id);
+    if (!event?.id) return;
+    if (hasMountedEventIdRef.current === event.id) return;
+    hasMountedEventIdRef.current = event.id;
+
+    storageService.setupRealtimeSync(event.id);
+    storageService.fetchSpeakingTurns(event.id).then(() => {
+      storageService.reconcileEvaluationSpeakingTurns(event.id);
+      setRecogTick(t => t + 1);
+    }).catch(() => {});
+    storageService.fetchJurySpeechRecognitions(event.id).then(() => {
+      setRecogTick(t => t + 1);
+    }).catch(() => {});
+    const cached = storageService.getLearners(event.id).filter(l => l && l.event_id === event.id);
+    if (cached.length === 0) {
+      storageService.fetchEventLearners(event.id).then(() => {
         setRecogTick(t => t + 1);
       }).catch(() => {});
-      storageService.fetchJurySpeechRecognitions(event.id).then(() => {
-        setRecogTick(t => t + 1);
-      }).catch(() => {});
-      const scopedProps = (propLearners || []).filter(l => l && l.event_id === event.id);
-      if (scopedProps.length === 0) {
-        const cached = storageService.getLearners(event.id).filter(l => l && l.event_id === event.id);
-        if (cached.length === 0) {
-          storageService.fetchEventLearners(event.id).then(() => {
-            setRecogTick(t => t + 1);
-          }).catch(() => {});
-        }
-      }
     }
-  }, [event?.id, propLearners]);
+  }, [event?.id]);
 
   // Speaking turns for this delegate in the current canonical session
   const delegateSpeakingTurns = useMemo(() => {

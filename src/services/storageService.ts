@@ -5405,125 +5405,154 @@ class StorageService {
 
   public async reconcileAuthoritativeBackendState(eventId: string): Promise<void> {
     if (!supabase || !eventId || !isValidUuid(eventId)) return;
+    const client = supabase;
+    const flightKey = `in_flight_reconcile_backend_${eventId}`;
+    return this.dedupeInFlight<void>(flightKey, async () => {
+      try {
+        let stateChanged = false;
+        // 1. Fetch authoritative event social_coverage & session_agenda from Supabase
+        const [evRes, agendaRes] = await Promise.all([
+          client.from('college_events').select('id, social_coverage').eq('id', eventId).maybeSingle(),
+          client.from('session_agenda').select(SUPABASE_COLUMNS.SESSION_AGENDA).eq('event_id', eventId).order('time', { ascending: true })
+        ]);
 
-    try {
-      // 1. Fetch authoritative event social_coverage & session_agenda from Supabase
-      const [evRes, agendaRes] = await Promise.all([
-        supabase.from('college_events').select('id, social_coverage').eq('id', eventId).maybeSingle(),
-        supabase.from('session_agenda').select(SUPABASE_COLUMNS.SESSION_AGENDA).eq('event_id', eventId).order('time', { ascending: true })
-      ]);
-
-      if (evRes.data) {
-        const sc = (evRes.data.social_coverage || {}) as Record<string, any>;
-        const allEvs = this.getEvents();
-        const evIdx = allEvs.findIndex(e => e.id === eventId);
-        if (evIdx >= 0) {
-          allEvs[evIdx] = { ...allEvs[evIdx], social_coverage: sc };
-          this.setItem(STORAGE_KEYS.EVENTS, allEvs);
-        }
-
-        // Unpack authoritative proceedings into local storage
-        if (Array.isArray(sc.proceedings) && sc.proceedings.length > 0) {
-          const deletedIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
-          const currentProcs = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, []);
-          const otherProcs = currentProcs.filter(b => b.event_id && b.event_id !== eventId);
-          const validRemote = (sc.proceedings as BillProceeding[]).filter(b => !deletedIds.has(b.id));
-          this.setItem(STORAGE_KEYS.PROCEEDINGS, [...otherProcs, ...validRemote]);
-        }
-
-        // 2. Reconcile Current Agenda
-        if (agendaRes.data && Array.isArray(agendaRes.data)) {
-          const remoteAgenda = agendaRes.data as unknown as AgendaItem[];
-          const otherAgenda = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, []).filter(a => a.event_id !== eventId);
-          this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...remoteAgenda]);
-
-          // Authoritative row in session_agenda with is_current = true defines the current active item
-          const remoteCurrent = remoteAgenda.find(a => a.is_current);
-          if (remoteCurrent) {
-            this.setItem(`tn_assembly_current_agenda_${eventId}`, remoteCurrent.id);
-            if (sc.agenda_progress) {
-              sc.agenda_progress.active_agenda_id = remoteCurrent.id;
+        if (evRes.data) {
+          const sc = (evRes.data.social_coverage || {}) as Record<string, any>;
+          const allEvs = this.getEvents();
+          const evIdx = allEvs.findIndex(e => e.id === eventId);
+          if (evIdx >= 0) {
+            const existingEv = allEvs[evIdx];
+            if (!areJsonbObjectsEqual(existingEv.social_coverage, sc)) {
+              allEvs[evIdx] = { ...existingEv, social_coverage: sc };
+              this.setItem(STORAGE_KEYS.EVENTS, allEvs);
+              stateChanged = true;
             }
           }
-        }
-        if (sc.agenda_progress) {
-          this.setItem(`tn_assembly_agenda_progress_${eventId}`, sc.agenda_progress);
-          if (sc.agenda_progress.started_days) {
-            this.setItem(`tn_assembly_started_days_${eventId}`, sc.agenda_progress.started_days);
+
+          // Unpack authoritative proceedings into local storage
+          if (Array.isArray(sc.proceedings) && sc.proceedings.length > 0) {
+            const deletedIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_IDS, []));
+            const currentProcs = this.getItem<BillProceeding[]>(STORAGE_KEYS.PROCEEDINGS, []);
+            const otherProcs = currentProcs.filter(b => b.event_id && b.event_id !== eventId);
+            const validRemote = (sc.proceedings as BillProceeding[]).filter(b => !deletedIds.has(b.id));
+            const nextProcs = [...otherProcs, ...validRemote];
+            if (!areJsonbObjectsEqual(currentProcs, nextProcs)) {
+              this.setItem(STORAGE_KEYS.PROCEEDINGS, nextProcs);
+              stateChanged = true;
+            }
           }
-        }
 
-        // 3. Reconcile Current Question (Backend state wins over stale local cache)
-        const deletedIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_QUESTION_IDS, []));
-        (sc.deleted_question_ids || []).forEach((id: string) => deletedIds.add(id));
-        this.setItem(STORAGE_KEYS.DELETED_QUESTION_IDS, Array.from(deletedIds));
+          // 2. Reconcile Current Agenda
+          if (agendaRes.data && Array.isArray(agendaRes.data)) {
+            const remoteAgenda = agendaRes.data as unknown as AgendaItem[];
+            const currentAgenda = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, []);
+            const otherAgenda = currentAgenda.filter(a => a.event_id !== eventId);
+            const nextAgenda = [...otherAgenda, ...remoteAgenda];
+            if (!areJsonbObjectsEqual(currentAgenda, nextAgenda)) {
+              this.setItem(STORAGE_KEYS.AGENDA, nextAgenda);
+              stateChanged = true;
+            }
 
-        const remotePQs: ProceedingsQuestion[] = (sc.proceedings_questions || []).filter((q: ProceedingsQuestion) => !deletedIds.has(q.id));
-        const allPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []).filter(q => q.event_id !== eventId);
-        this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, [...allPQs, ...remotePQs]);
-
-        // 4. Reconcile Timer State (Monotonic timestamp check)
-        if (sc.timer && typeof sc.timer === 'object') {
-          const incomingUpdated = Number(sc.timer.updatedAt) || 0;
-          const localTimer = this.getItem<LiveTimerState | null>(`tn_assembly_live_timer_${eventId}`, null);
-          const localUpdated = Number(localTimer?.updatedAt) || 0;
-          if (!localTimer || incomingUpdated >= localUpdated) {
-            this.setItem(`tn_assembly_live_timer_${eventId}`, sc.timer);
-          }
-        }
-        if (sc.timer_config?.durationSec) {
-          this.setItem(`tn_assembly_timer_config_${eventId}`, sc.timer_config.durationSec);
-        }
-
-        // 5. Reconcile Projector / Display State
-        if (sc.projector_settings) {
-          this.setItem(`tn_assembly_projector_studio_${eventId}`, sc.projector_settings);
-          this.setItem('tn_assembly_projector_studio_v1', sc.projector_settings);
-        }
-
-        // 6. Reconcile Authoritative Scores
-        if (Array.isArray(sc.scores)) {
-          if (sc.scores.length > 0) {
-            const localScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []).filter(s => s.event_id === eventId);
-            const scoreMap = new Map<string, ScoreRecord>();
-            localScores.forEach(s => scoreMap.set(this.getScoreCompositeKey(s, eventId), s));
-            sc.scores.forEach((s: ScoreRecord) => {
-              const k = this.getScoreCompositeKey(s, eventId);
-              const existing = scoreMap.get(k);
-              if (!existing) {
-                scoreMap.set(k, s);
-              } else {
-                const localT = new Date(existing.updated_at || 0).getTime();
-                const remoteT = new Date(s.updated_at || 0).getTime();
-                if (remoteT >= localT) scoreMap.set(k, s);
+            // Authoritative row in session_agenda with is_current = true defines the current active item
+            const remoteCurrent = remoteAgenda.find(a => a.is_current);
+            if (remoteCurrent) {
+              this.setItem(`tn_assembly_current_agenda_${eventId}`, remoteCurrent.id);
+              if (sc.agenda_progress) {
+                sc.agenda_progress.active_agenda_id = remoteCurrent.id;
               }
-            });
-            const merged = Array.from(scoreMap.values());
-            const otherScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []).filter(s => s.event_id !== eventId);
-            this.setItem(STORAGE_KEYS.SCORES, [...otherScores, ...merged]);
-            if (typeof localStorage !== 'undefined') {
-              try {
-                localStorage.setItem(`tn_assembly_scores_${eventId}`, JSON.stringify(merged));
-              } catch {}
             }
           }
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('tn_assembly_scores_updated', { detail: { eventId } }));
+          if (sc.agenda_progress) {
+            this.setItem(`tn_assembly_agenda_progress_${eventId}`, sc.agenda_progress);
+            if (sc.agenda_progress.started_days) {
+              this.setItem(`tn_assembly_started_days_${eventId}`, sc.agenda_progress.started_days);
+            }
+          }
+
+          // 3. Reconcile Current Question (Backend state wins over stale local cache)
+          const deletedIds = new Set(this.getItem<string[]>(STORAGE_KEYS.DELETED_QUESTION_IDS, []));
+          (sc.deleted_question_ids || []).forEach((id: string) => deletedIds.add(id));
+          this.setItem(STORAGE_KEYS.DELETED_QUESTION_IDS, Array.from(deletedIds));
+
+          const remotePQs: ProceedingsQuestion[] = (sc.proceedings_questions || []).filter((q: ProceedingsQuestion) => !deletedIds.has(q.id));
+          const currentPQs = this.getItem<ProceedingsQuestion[]>(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, []);
+          const otherPQs = currentPQs.filter(q => q.event_id !== eventId);
+          const nextPQs = [...otherPQs, ...remotePQs];
+          if (!areJsonbObjectsEqual(currentPQs, nextPQs)) {
+            this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, nextPQs);
+            stateChanged = true;
+          }
+
+          // 4. Reconcile Timer State (Monotonic timestamp check)
+          if (sc.timer && typeof sc.timer === 'object') {
+            const incomingUpdated = Number(sc.timer.updatedAt) || 0;
+            const localTimer = this.getItem<LiveTimerState | null>(`tn_assembly_live_timer_${eventId}`, null);
+            const localUpdated = Number(localTimer?.updatedAt) || 0;
+            if (!localTimer || incomingUpdated >= localUpdated) {
+              this.setItem(`tn_assembly_live_timer_${eventId}`, sc.timer);
+            }
+          }
+          if (sc.timer_config?.durationSec) {
+            this.setItem(`tn_assembly_timer_config_${eventId}`, sc.timer_config.durationSec);
+          }
+
+          // 5. Reconcile Projector / Display State
+          if (sc.projector_settings) {
+            this.setItem(`tn_assembly_projector_studio_${eventId}`, sc.projector_settings);
+            this.setItem('tn_assembly_projector_studio_v1', sc.projector_settings);
+          }
+
+          // 6. Reconcile Authoritative Scores
+          if (Array.isArray(sc.scores)) {
+            if (sc.scores.length > 0) {
+              const currentScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
+              const localScores = currentScores.filter(s => s.event_id === eventId);
+              const scoreMap = new Map<string, ScoreRecord>();
+              localScores.forEach(s => scoreMap.set(this.getScoreCompositeKey(s, eventId), s));
+              sc.scores.forEach((s: ScoreRecord) => {
+                const k = this.getScoreCompositeKey(s, eventId);
+                const existing = scoreMap.get(k);
+                if (!existing) {
+                  scoreMap.set(k, s);
+                } else {
+                  const localT = new Date(existing.updated_at || 0).getTime();
+                  const remoteT = new Date(s.updated_at || 0).getTime();
+                  if (remoteT >= localT) scoreMap.set(k, s);
+                }
+              });
+              const merged = Array.from(scoreMap.values());
+              const otherScores = currentScores.filter(s => s.event_id !== eventId);
+              const nextScores = [...otherScores, ...merged];
+              if (!areJsonbObjectsEqual(currentScores, nextScores)) {
+                this.setItem(STORAGE_KEYS.SCORES, nextScores);
+                stateChanged = true;
+                if (typeof localStorage !== 'undefined') {
+                  try {
+                    localStorage.setItem(`tn_assembly_scores_${eventId}`, JSON.stringify(merged));
+                  } catch {}
+                }
+              }
+            }
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_scores_updated', { detail: { eventId } }));
+            }
+          }
+
+          if (stateChanged) {
+            this.notify();
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_agenda_update', { detail: { eventId } }));
+              window.dispatchEvent(new CustomEvent('tn_assembly_proceedings_question_update', { detail: { eventId } }));
+              window.dispatchEvent(new CustomEvent('tn_assembly_timer_update', { detail: { eventId } }));
+              window.dispatchEvent(new CustomEvent('tn_assembly_projector_update', { detail: { eventId, settings: sc.projector_settings } }));
+              window.dispatchEvent(new Event('storage'));
+            }
           }
         }
-
-        this.notify();
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('tn_assembly_agenda_update', { detail: { eventId } }));
-          window.dispatchEvent(new CustomEvent('tn_assembly_proceedings_question_update', { detail: { eventId } }));
-          window.dispatchEvent(new CustomEvent('tn_assembly_timer_update', { detail: { eventId } }));
-          window.dispatchEvent(new CustomEvent('tn_assembly_projector_update', { detail: { eventId, settings: sc.projector_settings } }));
-          window.dispatchEvent(new Event('storage'));
-        }
+      } catch (err) {
+        console.warn('[reconcileAuthoritativeBackendState] Reconcile warning:', err);
       }
-    } catch (err) {
-      console.warn('[reconcileAuthoritativeBackendState] Reconcile warning:', err);
-    }
+    });
   }
 
   public async cleanupRealtimeSync(): Promise<void> {
@@ -10980,86 +11009,100 @@ class StorageService {
 
   public async fetchSpeakingTurns(eventId: string, sessionId?: string): Promise<SpeakingTurn[]> {
     if (!eventId) return [];
-    if (supabase && isSupabaseEnabled) {
-      try {
-        let query = supabase
-          .from('speaking_turns')
-          .select(SUPABASE_COLUMNS.SPEAKING_TURNS)
-          .eq('event_id', eventId);
-        if (sessionId) {
-          query = query.eq('session_id', sessionId);
-        }
-        const { data, error } = await query.order('called_at', { ascending: true });
-        if (!error && data) {
-          let testTurnIdsSet = new Set<string>();
-          const cachedEv = this.getEvents().find(e => e.id === eventId);
-          const cachedSc = (cachedEv?.social_coverage || {}) as Record<string, any>;
-          if (Array.isArray(cachedSc.test_speaking_turn_ids)) {
-            cachedSc.test_speaking_turn_ids.forEach((id: string) => testTurnIdsSet.add(id));
-          } else {
-            try {
-              const { data: evData } = await supabase
-                .from('college_events')
-                .select('social_coverage')
-                .eq('id', eventId)
-                .maybeSingle();
-              const sc = (evData?.social_coverage || {}) as Record<string, any>;
-              if (Array.isArray(sc.test_speaking_turn_ids)) {
-                sc.test_speaking_turn_ids.forEach((id: string) => testTurnIdsSet.add(id));
-              }
-            } catch {}
+    const flightKey = `in_flight_speaking_turns_${eventId}_${sessionId || 'all'}`;
+    return this.dedupeInFlight<SpeakingTurn[]>(flightKey, async () => {
+      if (supabase && isSupabaseEnabled) {
+        try {
+          let query = supabase
+            .from('speaking_turns')
+            .select(SUPABASE_COLUMNS.SPEAKING_TURNS)
+            .eq('event_id', eventId);
+          if (sessionId) {
+            query = query.eq('session_id', sessionId);
           }
-
-          const rawRecords = data as unknown as SpeakingTurn[];
-          const records = rawRecords
-            .filter(r => !r.called_by || !r.called_by.includes('[LIVE:PURGED'))
-            .map(r => {
-            let isTest = r.is_test;
-            let testRunId = r.test_run_id;
-            if (r.called_by && r.called_by.includes('[TEST')) {
-              isTest = true;
-              const match = r.called_by.match(/\[TEST:?([^\]]*)\]/);
-              if (match && match[1] && match[1] !== 'RUN') {
-                testRunId = match[1];
+          const { data, error } = await query.order('called_at', { ascending: true });
+          if (!error && data) {
+            let testTurnIdsSet = new Set<string>();
+            const cachedEv = this.getEvents().find(e => e.id === eventId);
+            const cachedSc = (cachedEv?.social_coverage || {}) as Record<string, any>;
+            if (Array.isArray(cachedSc.test_speaking_turn_ids)) {
+              cachedSc.test_speaking_turn_ids.forEach((id: string) => testTurnIdsSet.add(id));
+            } else {
+              try {
+                const { data: evData } = await supabase
+                  .from('college_events')
+                  .select('social_coverage')
+                  .eq('id', eventId)
+                  .maybeSingle();
+                const sc = (evData?.social_coverage || {}) as Record<string, any>;
+                const ids = Array.isArray(sc.test_speaking_turn_ids) ? sc.test_speaking_turn_ids : [];
+                ids.forEach((id: string) => testTurnIdsSet.add(id));
+                if (cachedEv) {
+                  cachedEv.social_coverage = { ...cachedSc, test_speaking_turn_ids: ids };
+                }
+              } catch {
+                if (cachedEv) {
+                  cachedEv.social_coverage = { ...cachedSc, test_speaking_turn_ids: [] };
+                }
               }
             }
-            if (testTurnIdsSet.has(r.id)) {
-              isTest = true;
-            }
-            return {
-              ...r,
-              is_test: Boolean(isTest),
-              test_run_id: testRunId || undefined
-            };
-          });
-          const all = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
-          const other = all.filter(t => t.event_id !== eventId || (sessionId && t.session_id !== sessionId));
-          const merged = [...other, ...records];
-          this.setItem(STORAGE_KEYS.SPEAKING_TURNS, merged);
-          return records;
-        }
-      } catch (err) {
-        console.warn('[fetchSpeakingTurns] Supabase table error, falling back to social_coverage:', err);
-      }
 
-      // Fallback: social_coverage.speaking_turns
-      try {
-        const { data: evData } = await supabase
-          .from('college_events')
-          .select('social_coverage')
-          .eq('id', eventId)
-          .maybeSingle();
-        const sc = (evData?.social_coverage || {}) as Record<string, any>;
-        const turns = Array.isArray(sc.speaking_turns) ? (sc.speaking_turns as SpeakingTurn[]) : [];
-        const all = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
-        const other = all.filter(t => t.event_id !== eventId);
-        this.setItem(STORAGE_KEYS.SPEAKING_TURNS, [...other, ...turns]);
-        return sessionId ? turns.filter(t => t.session_id === sessionId) : turns;
-      } catch (e) {
-        console.warn('[fetchSpeakingTurns] Fallback error:', e);
+            const rawRecords = data as unknown as SpeakingTurn[];
+            const records = rawRecords
+              .filter(r => !r.called_by || !r.called_by.includes('[LIVE:PURGED'))
+              .map(r => {
+              let isTest = r.is_test;
+              let testRunId = r.test_run_id;
+              if (r.called_by && r.called_by.includes('[TEST')) {
+                isTest = true;
+                const match = r.called_by.match(/\[TEST:?([^\]]*)\]/);
+                if (match && match[1] && match[1] !== 'RUN') {
+                  testRunId = match[1];
+                }
+              }
+              if (testTurnIdsSet.has(r.id)) {
+                isTest = true;
+              }
+              return {
+                ...r,
+                is_test: Boolean(isTest),
+                test_run_id: testRunId || undefined
+              };
+            });
+            const all = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+            const other = all.filter(t => t.event_id !== eventId || (sessionId && t.session_id !== sessionId));
+            const merged = [...other, ...records];
+            if (!areJsonbObjectsEqual(all, merged)) {
+              this.setItem(STORAGE_KEYS.SPEAKING_TURNS, merged);
+            }
+            return records;
+          }
+        } catch (err) {
+          console.warn('[fetchSpeakingTurns] Supabase table error, falling back to social_coverage:', err);
+        }
+
+        // Fallback: social_coverage.speaking_turns
+        try {
+          const { data: evData } = await supabase
+            .from('college_events')
+            .select('social_coverage')
+            .eq('id', eventId)
+            .maybeSingle();
+          const sc = (evData?.social_coverage || {}) as Record<string, any>;
+          const turns = Array.isArray(sc.speaking_turns) ? (sc.speaking_turns as SpeakingTurn[]) : [];
+          const all = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+          const other = all.filter(t => t.event_id !== eventId);
+          const merged = [...other, ...turns];
+          if (!areJsonbObjectsEqual(all, merged)) {
+            this.setItem(STORAGE_KEYS.SPEAKING_TURNS, merged);
+          }
+          return sessionId ? turns.filter(t => t.session_id === sessionId) : turns;
+        } catch (e) {
+          console.warn('[fetchSpeakingTurns] Fallback error:', e);
+        }
       }
-    }
-    return this.getSpeakingTurns(eventId, sessionId);
+      return this.getSpeakingTurns(eventId, sessionId);
+    });
   }
 
   public async submitSpeakingRequest(params: {
@@ -16629,41 +16672,53 @@ class StorageService {
     sessionId?: string
   ): Promise<JurySpeechRecognition[]> {
     if (!eventId) return [];
-    // Authoritative recognition state is persisted via college_events.social_coverage.jury_speech_recognitions and local storage
-    if (supabase && isSupabaseEnabled) {
-      try {
-        const cachedEv = this.getEvents().find(e => e.id === eventId);
-        const cachedSc = (cachedEv?.social_coverage || {}) as Record<string, any>;
-        const cachedRecogs = Array.isArray(cachedSc.jury_speech_recognitions) ? (cachedSc.jury_speech_recognitions as JurySpeechRecognition[]) : [];
+    const flightKey = `in_flight_jury_recog_${eventId}_${sessionId || 'all'}`;
+    return this.dedupeInFlight<JurySpeechRecognition[]>(flightKey, async () => {
+      // Authoritative recognition state is persisted via college_events.social_coverage.jury_speech_recognitions and local storage
+      if (supabase && isSupabaseEnabled) {
+        try {
+          const cachedEv = this.getEvents().find(e => e.id === eventId);
+          const cachedSc = (cachedEv?.social_coverage || {}) as Record<string, any>;
 
-        if (cachedRecogs.length > 0) {
-          const all = this.getItem<JurySpeechRecognition[]>(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, []);
-          const other = all.filter(r => r.event_id !== eventId);
-          const merged = [...other, ...cachedRecogs];
-          this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, merged);
-          return sessionId ? cachedRecogs.filter(r => r.session_id === sessionId) : cachedRecogs;
+          if (Array.isArray(cachedSc.jury_speech_recognitions)) {
+            const cachedRecogs = cachedSc.jury_speech_recognitions as JurySpeechRecognition[];
+            if (cachedRecogs.length > 0) {
+              const all = this.getItem<JurySpeechRecognition[]>(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, []);
+              const other = all.filter(r => r.event_id !== eventId);
+              const merged = [...other, ...cachedRecogs];
+              if (!areJsonbObjectsEqual(all, merged)) {
+                this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, merged);
+              }
+              return sessionId ? cachedRecogs.filter(r => r.session_id === sessionId) : cachedRecogs;
+            }
+          } else {
+            // If not in local events cache, fetch social_coverage directly from college_events
+            const { data: evData } = await supabase
+              .from('college_events')
+              .select('social_coverage')
+              .eq('id', eventId)
+              .maybeSingle();
+            const sc = (evData?.social_coverage || {}) as Record<string, any>;
+            const recogs = Array.isArray(sc.jury_speech_recognitions) ? (sc.jury_speech_recognitions as JurySpeechRecognition[]) : [];
+            if (cachedEv) {
+              cachedEv.social_coverage = { ...cachedSc, jury_speech_recognitions: recogs };
+            }
+            if (recogs.length > 0) {
+              const all = this.getItem<JurySpeechRecognition[]>(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, []);
+              const other = all.filter(r => r.event_id !== eventId);
+              const merged = [...other, ...recogs];
+              if (!areJsonbObjectsEqual(all, merged)) {
+                this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, merged);
+              }
+              return sessionId ? recogs.filter(r => r.session_id === sessionId) : recogs;
+            }
+          }
+        } catch (e) {
+          console.warn('[fetchJurySpeechRecognitions] Fetch error:', e);
         }
-
-        // If not in local events cache, fetch social_coverage directly from college_events
-        const { data: evData } = await supabase
-          .from('college_events')
-          .select('social_coverage')
-          .eq('id', eventId)
-          .maybeSingle();
-        const sc = (evData?.social_coverage || {}) as Record<string, any>;
-        const recogs = Array.isArray(sc.jury_speech_recognitions) ? (sc.jury_speech_recognitions as JurySpeechRecognition[]) : [];
-        if (recogs.length > 0) {
-          const all = this.getItem<JurySpeechRecognition[]>(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, []);
-          const other = all.filter(r => r.event_id !== eventId);
-          const merged = [...other, ...recogs];
-          this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, merged);
-          return sessionId ? recogs.filter(r => r.session_id === sessionId) : recogs;
-        }
-      } catch (e) {
-        console.warn('[fetchJurySpeechRecognitions] Fetch error:', e);
       }
-    }
-    return this.getJurySpeechRecognitions(eventId, sessionId, undefined, undefined, undefined, false);
+      return this.getJurySpeechRecognitions(eventId, sessionId, undefined, undefined, undefined, false);
+    });
   }
 
   public async toggleJurySpeechRecognition(params: {
