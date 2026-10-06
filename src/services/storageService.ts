@@ -281,6 +281,7 @@ const STORAGE_KEYS = {
 export const SUPABASE_COLUMNS: Record<string, string> = {
   COLLEGE_EVENTS_LIST: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,elections_count,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at',
   COLLEGE_EVENTS: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at,social_coverage',
+  COLLEGE_EVENTS_JURY: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at,social_coverage->scores,social_coverage->jury_speech_recognitions,social_coverage->test_speaking_turn_ids',
   COORDINATORS_PUBLIC: 'id,event_id,name,email,created_at,updated_at',
   COORDINATORS: 'id,event_id,name,email,password_hash,raw_temp_password,created_at,updated_at',
   LEARNERS: 'id,event_id,access_code,full_name,email,phone,department,academic_year,constituency_number,constituency_name,party_id,party_name,party_group_link,bench,role,committee_id,committee_name,committee_group_link,school_name,day1_checked_in,day2_checked_in,district,created_at,updated_at',
@@ -3744,23 +3745,40 @@ class StorageService {
       // NEVER queries: volunteers, coordinators, event_day_attendance, event_days, jury_members, political_parties, elections, or session_agenda on initial load.
       const [
         { data: evData },
-        { data: learnersData }
+        learnersData
       ] = await Promise.all([
         this.dedupeInFlight<{ data: any }>(`query_event_${eventId}`, async () =>
-          await sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS).eq('id', eventId).limit(1)
+          await sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS_JURY).eq('id', eventId).limit(1)
         ),
-        this.dedupeInFlight<{ data: any }>(`query_learners_${eventId}`, async () =>
-          await sb.from('learners').select(SUPABASE_COLUMNS.LEARNERS).eq('event_id', eventId)
-        )
+        this.fetchEventLearners(eventId)
       ]);
 
       if (evData && evData.length > 0) {
-        const ev = this.normalizeEvent(evData[0] as unknown as CollegeEvent);
+        const rawEv = evData[0] as any;
+        const normalizedEv: CollegeEvent = {
+          ...rawEv,
+          social_coverage: {
+            ...(rawEv.social_coverage || {}),
+            scores: Array.isArray(rawEv.scores) ? rawEv.scores : (rawEv.social_coverage?.scores || []),
+            jury_speech_recognitions: Array.isArray(rawEv.jury_speech_recognitions) ? rawEv.jury_speech_recognitions : (rawEv.social_coverage?.jury_speech_recognitions || []),
+            test_speaking_turn_ids: Array.isArray(rawEv.test_speaking_turn_ids) ? rawEv.test_speaking_turn_ids : (rawEv.social_coverage?.test_speaking_turn_ids || [])
+          }
+        };
+        const ev = this.normalizeEvent(normalizedEv);
         const curEvs = this.getEvents();
         const existing = curEvs.find(e => e.id === ev.id);
         const merged = existing ? { ...existing, ...ev } : ev;
         this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), merged]);
         this.unpackAndApplyEventState([merged], eventId);
+
+        if (Array.isArray(normalizedEv.social_coverage?.jury_speech_recognitions) && normalizedEv.social_coverage.jury_speech_recognitions.length > 0) {
+          const allRecogs = this.getItem<JurySpeechRecognition[]>(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, []);
+          const other = allRecogs.filter(r => r.event_id !== eventId);
+          const mergedRecogs = [...other, ...normalizedEv.social_coverage.jury_speech_recognitions];
+          if (!areJsonbObjectsEqual(allRecogs, mergedRecogs)) {
+            this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, mergedRecogs);
+          }
+        }
 
         // Extract jury-scoped scores from social_coverage.scores (no standalone scores table exists)
         try {
@@ -5410,6 +5428,47 @@ class StorageService {
     return this.dedupeInFlight<void>(flightKey, async () => {
       try {
         let stateChanged = false;
+
+        const rawSess = typeof localStorage !== 'undefined' ? localStorage.getItem('tn_assembly_auth_session') : null;
+        let isJury = false;
+        if (rawSess) {
+          try { isJury = JSON.parse(rawSess).role === 'jury'; } catch {}
+        }
+
+        if (isJury) {
+          const { data: scoreData } = await client
+            .from('college_events')
+            .select('id, social_coverage->scores')
+            .eq('id', eventId)
+            .maybeSingle();
+          const remoteScores = (scoreData as any)?.scores;
+          if (Array.isArray(remoteScores) && remoteScores.length > 0) {
+            const currentScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
+            const localScores = currentScores.filter(s => s.event_id === eventId);
+            const scoreMap = new Map<string, ScoreRecord>();
+            localScores.forEach(s => scoreMap.set(this.getScoreCompositeKey(s, eventId), s));
+            remoteScores.forEach((s: ScoreRecord) => {
+              const k = this.getScoreCompositeKey(s, eventId);
+              const existing = scoreMap.get(k);
+              if (!existing) {
+                scoreMap.set(k, s);
+              } else {
+                const localT = new Date(existing.updated_at || 0).getTime();
+                const remoteT = new Date(s.updated_at || 0).getTime();
+                if (remoteT >= localT) scoreMap.set(k, s);
+              }
+            });
+            const merged = Array.from(scoreMap.values());
+            const otherScores = currentScores.filter(s => s.event_id !== eventId);
+            const nextScores = [...otherScores, ...merged];
+            if (!areJsonbObjectsEqual(currentScores, nextScores)) {
+              this.setItem(STORAGE_KEYS.SCORES, nextScores);
+              this.notify();
+            }
+          }
+          return;
+        }
+
         // 1. Fetch authoritative event social_coverage & session_agenda from Supabase
         const [evRes, agendaRes] = await Promise.all([
           client.from('college_events').select('id, social_coverage').eq('id', eventId).maybeSingle(),
@@ -11031,11 +11090,10 @@ class StorageService {
               try {
                 const { data: evData } = await supabase
                   .from('college_events')
-                  .select('social_coverage')
+                  .select('social_coverage->test_speaking_turn_ids')
                   .eq('id', eventId)
                   .maybeSingle();
-                const sc = (evData?.social_coverage || {}) as Record<string, any>;
-                const ids = Array.isArray(sc.test_speaking_turn_ids) ? sc.test_speaking_turn_ids : [];
+                const ids = Array.isArray((evData as any)?.test_speaking_turn_ids) ? (evData as any).test_speaking_turn_ids : [];
                 ids.forEach((id: string) => testTurnIdsSet.add(id));
                 if (cachedEv) {
                   cachedEv.social_coverage = { ...cachedSc, test_speaking_turn_ids: ids };
@@ -11085,11 +11143,10 @@ class StorageService {
         try {
           const { data: evData } = await supabase
             .from('college_events')
-            .select('social_coverage')
+            .select('social_coverage->speaking_turns')
             .eq('id', eventId)
             .maybeSingle();
-          const sc = (evData?.social_coverage || {}) as Record<string, any>;
-          const turns = Array.isArray(sc.speaking_turns) ? (sc.speaking_turns as SpeakingTurn[]) : [];
+          const turns = Array.isArray((evData as any)?.speaking_turns) ? ((evData as any).speaking_turns as SpeakingTurn[]) : [];
           const all = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
           const other = all.filter(t => t.event_id !== eventId);
           const merged = [...other, ...turns];
@@ -16695,11 +16752,10 @@ class StorageService {
             // If not in local events cache, fetch social_coverage directly from college_events
             const { data: evData } = await supabase
               .from('college_events')
-              .select('social_coverage')
+              .select('social_coverage->jury_speech_recognitions')
               .eq('id', eventId)
               .maybeSingle();
-            const sc = (evData?.social_coverage || {}) as Record<string, any>;
-            const recogs = Array.isArray(sc.jury_speech_recognitions) ? (sc.jury_speech_recognitions as JurySpeechRecognition[]) : [];
+            const recogs = Array.isArray((evData as any)?.jury_speech_recognitions) ? ((evData as any).jury_speech_recognitions as JurySpeechRecognition[]) : [];
             if (cachedEv) {
               cachedEv.social_coverage = { ...cachedSc, jury_speech_recognitions: recogs };
             }
