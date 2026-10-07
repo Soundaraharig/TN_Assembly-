@@ -64,7 +64,8 @@ import type {
   SpeechImpactSummary,
   RecognitionFilterOptions,
   ScoringMode,
-  ScoringEnvironment
+  ScoringEnvironment,
+  JuryScoreResetPayload
 } from '../types';
 import {
   formatQuestionNumber,
@@ -3804,37 +3805,15 @@ class StorageService {
           }
         }
 
-        // Extract jury-scoped scores from social_coverage.scores (no standalone scores table exists)
+        // Authoritatively reconcile jury scores from remote social_coverage.scores (remote empty state > old local cache)
         try {
           const socialCoverage = (ev as any).social_coverage;
-          if (socialCoverage && typeof socialCoverage === 'object' && Array.isArray(socialCoverage.scores)) {
-            const allScores: ScoreRecord[] = socialCoverage.scores;
-            if (allScores.length > 0) {
-              const juryScores = juryId ? allScores.filter((s: ScoreRecord) => s.jury_id === juryId || s.juror_name === juryId) : allScores;
-              if (juryScores.length > 0) {
-                const existingScores = this.getScores(eventId);
-                const mergedMap = new Map<string, ScoreRecord>();
-                existingScores.forEach(s => mergedMap.set(this.getScoreCompositeKey(s, eventId), s));
-                juryScores.forEach(s => {
-                  const k = this.getScoreCompositeKey(s, eventId);
-                  const cur = mergedMap.get(k);
-                  if (!cur) {
-                    mergedMap.set(k, s);
-                  } else {
-                    const curT = new Date(cur.updated_at || 0).getTime();
-                    const newT = new Date(s.updated_at || 0).getTime();
-                    if (newT >= curT) mergedMap.set(k, s);
-                  }
-                });
-                this.setItem(STORAGE_KEYS.SCORES, Array.from(mergedMap.values()));
-                if (typeof localStorage !== 'undefined') {
-                  try {
-                    localStorage.setItem(`tn_assembly_scores_${eventId}`, JSON.stringify(Array.from(mergedMap.values())));
-                  } catch {}
-                }
-              }
-            }
-          }
+          const rawScores: ScoreRecord[] = Array.isArray(rawEv.scores)
+            ? rawEv.scores
+            : (socialCoverage && typeof socialCoverage === 'object' && Array.isArray(socialCoverage.scores)
+              ? socialCoverage.scores
+              : []);
+          this.reconcileEventScoresWithRemote(eventId, rawScores);
         } catch (scoreErr) {
           console.warn('[StorageService] Jury score extraction from social_coverage warning:', scoreErr);
         }
@@ -5369,11 +5348,30 @@ class StorageService {
             }
           }
         })
+        .on('broadcast', { event: 'jury_scores_reset' }, (msg: any) => {
+          this.handleScoringResetBroadcast(msg?.payload);
+        })
         .on('broadcast', { event: 'scores_reset' }, (msg: any) => {
-          this.handleScoringResetBroadcast(msg?.payload?.eventId);
+          const p = msg?.payload || {};
+          this.handleScoringResetBroadcast({
+            eventId: p.eventId,
+            scope: p.scope || 'TEST',
+            mode: p.mode || 'TEST',
+            testRunId: p.testRunId,
+            resetAll: p.resetAll,
+            timestamp: p.timestamp || new Date().toISOString()
+          });
         })
         .on('broadcast', { event: 'jury_scoring_reset' }, (msg: any) => {
-          this.handleScoringResetBroadcast(msg?.payload?.eventId);
+          const p = msg?.payload || {};
+          this.handleScoringResetBroadcast({
+            eventId: p.eventId,
+            scope: p.scope || 'LIVE',
+            mode: p.mode || 'LIVE',
+            testRunId: null,
+            resetAll: false,
+            timestamp: p.timestamp || new Date().toISOString()
+          });
         });
 
       channel.subscribe((status: string) => {
@@ -5392,29 +5390,127 @@ class StorageService {
     }
   }
 
-  private handleScoringResetBroadcast(evId?: string) {
+  public isRecordInResetScope(
+    record: any,
+    scope: 'LIVE' | 'TEST',
+    testRunId?: string | null,
+    resetAll?: boolean
+  ): boolean {
+    if (!record) return false;
+    const isTest = Boolean(
+      record.is_test === true ||
+      (record.test_run_id != null && record.test_run_id !== '') ||
+      this.isTestScore(record)
+    );
+
+    if (scope === 'TEST') {
+      if (!isTest) return false;
+      if (resetAll) return true;
+      if (testRunId) return record.test_run_id === testRunId;
+      return true;
+    } else {
+      if (isTest) return false;
+      return true;
+    }
+  }
+
+  public async broadcastJuryScoreReset(payload: JuryScoreResetPayload): Promise<void> {
+    if (!supabase) return;
+    if (!this.realtimeChannel || this.currentRealtimeEventId !== payload.eventId) {
+      this.setupRealtimeSync(payload.eventId);
+    }
+    if (this.realtimeChannel) {
+      try {
+        await this.realtimeChannel.send({
+          type: 'broadcast',
+          event: 'jury_scores_reset',
+          payload
+        });
+        if (payload.scope === 'TEST') {
+          await this.realtimeChannel.send({
+            type: 'broadcast',
+            event: 'scores_reset',
+            payload
+          });
+        } else {
+          await this.realtimeChannel.send({
+            type: 'broadcast',
+            event: 'jury_scoring_reset',
+            payload
+          });
+        }
+      } catch (err) {
+        console.warn('[StorageService] broadcastJuryScoreReset failed:', err);
+      }
+    }
+  }
+
+  private handleScoringResetBroadcast(payloadOrEvId: any) {
+    const payload: JuryScoreResetPayload = typeof payloadOrEvId === 'string'
+      ? { eventId: payloadOrEvId, scope: 'LIVE', mode: 'LIVE', testRunId: null, resetAll: false, timestamp: new Date().toISOString() }
+      : payloadOrEvId;
+
+    const evId = payload?.eventId;
     if (!evId) return;
+
+    const scope: 'LIVE' | 'TEST' = payload.scope || (payload.mode === 'TEST' ? 'TEST' : 'LIVE');
+    const testRunId = payload.testRunId || null;
+    const resetAll = Boolean(payload.resetAll);
+
     const timer = this.scoreSyncTimers.get(evId);
     if (timer) {
       clearTimeout(timer);
       this.scoreSyncTimers.delete(evId);
     }
+
+    // 1. Purge matching scores from STORAGE_KEYS.SCORES
     const curScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
-    this.setItem(STORAGE_KEYS.SCORES, curScores.filter(s => s.event_id !== evId));
+    const remainingScores = curScores.filter(s => {
+      if (s.event_id !== evId) return true;
+      return !this.isRecordInResetScope(s, scope, testRunId, resetAll);
+    });
+    this.setItem(STORAGE_KEYS.SCORES, remainingScores);
 
-    const curEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
-    const targetEvalIds = new Set(curEvals.filter(e => e.event_id === evId).map(e => e.id));
-    this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, curEvals.filter(e => e.event_id !== evId));
-
-    const curTurns = this.getItem<JuryEvaluationTurn[]>(STORAGE_KEYS.JURY_EVALUATION_TURNS, []);
-    this.setItem(STORAGE_KEYS.JURY_EVALUATION_TURNS, curTurns.filter(t => !targetEvalIds.has(t.evaluation_id)));
-
-    const curAdjs = this.getItem<JuryEvaluationAdjustment[]>(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, []);
-    this.setItem(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, curAdjs.filter(a => !targetEvalIds.has(a.evaluation_id)));
-
+    // 2. Update dedicated local backup
     if (typeof localStorage !== 'undefined') {
       try {
-        localStorage.removeItem(`tn_assembly_scores_${evId}`);
+        const remainingEvScores = remainingScores.filter(s => s.event_id === evId);
+        if (remainingEvScores.length > 0) {
+          localStorage.setItem(`tn_assembly_scores_${evId}`, JSON.stringify(remainingEvScores));
+        } else {
+          localStorage.removeItem(`tn_assembly_scores_${evId}`);
+        }
+      } catch {}
+    }
+
+    // 3. Purge matching evaluations from STORAGE_KEYS.JURY_EVALUATIONS
+    const curEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
+    const purgedEvalIds = new Set<string>();
+    const remainingEvals = curEvals.filter(e => {
+      if (e.event_id !== evId) return true;
+      const matches = this.isRecordInResetScope(e as any, scope, testRunId, resetAll);
+      if (matches) purgedEvalIds.add(e.id);
+      return !matches;
+    });
+    this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, remainingEvals);
+
+    // 4. Purge turns and adjustments linked to purged evaluations
+    const curTurns = this.getItem<JuryEvaluationTurn[]>(STORAGE_KEYS.JURY_EVALUATION_TURNS, []);
+    this.setItem(STORAGE_KEYS.JURY_EVALUATION_TURNS, curTurns.filter(t => !purgedEvalIds.has(t.evaluation_id)));
+
+    const curAdjs = this.getItem<JuryEvaluationAdjustment[]>(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, []);
+    this.setItem(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, curAdjs.filter(a => !purgedEvalIds.has(a.evaluation_id)));
+
+    // 5. Purge matching speech recognitions
+    const curRecogs = this.getItem<JurySpeechRecognition[]>(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, []);
+    this.setItem(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, curRecogs.filter(r => {
+      if (r.event_id !== evId) return true;
+      return !this.isRecordInResetScope(r as any, scope, testRunId, resetAll);
+    }));
+
+    // 6. Clear matching local drafts for this event
+    if (typeof localStorage !== 'undefined') {
+      try {
         const draftPrefix = `tn_assembly_jury_draft_${evId}_`;
         const keysToRemove: string[] = [];
         for (let i = 0; i < localStorage.length; i++) {
@@ -5424,24 +5520,161 @@ class StorageService {
         keysToRemove.forEach(k => localStorage.removeItem(k));
       } catch {}
     }
+
+    // 7. Update in-memory cached event
     const allEvs = this.getEvents();
     this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => {
       if (e.id === evId) {
         const sc = (e.social_coverage || {}) as Record<string, any>;
-        return { ...e, social_coverage: { ...sc, scores: [] } };
+        const curScScores = Array.isArray(sc.scores) ? (sc.scores as ScoreRecord[]) : [];
+        const remScScores = curScScores.filter(s => !this.isRecordInResetScope(s, scope, testRunId, resetAll));
+        const curScRecogs = Array.isArray(sc.jury_speech_recognitions) ? (sc.jury_speech_recognitions as JurySpeechRecognition[]) : [];
+        const remScRecogs = curScRecogs.filter(r => !this.isRecordInResetScope(r, scope, testRunId, resetAll));
+        return {
+          ...e,
+          social_coverage: {
+            ...sc,
+            scores: remScScores,
+            jury_speech_recognitions: remScRecogs
+          }
+        };
       }
       return e;
     }));
+
+    // 8. Invalidate memory caches
     this.invalidateCache(evId);
     this.invalidateCache('events');
     this.invalidateCache('portal_');
     this.invalidateCache('evaluations');
     this.invalidateCache('leaderboard');
+    this.invalidateCache(`portal_jury_${evId}`);
+
     this.notify();
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new Event('storage'));
-      window.dispatchEvent(new CustomEvent('tn_assembly_scores_updated', { detail: { eventId: evId } }));
-      window.dispatchEvent(new CustomEvent('tn_assembly_jury_scoring_reset', { detail: { eventId: evId } }));
+      window.dispatchEvent(new CustomEvent('tn_assembly_scores_updated', { detail: payload }));
+      window.dispatchEvent(new CustomEvent('tn_assembly_jury_scoring_reset', { detail: payload }));
+    }
+
+    // 9. Re-read backend authoritative score projection ONCE (deduped in-flight)
+    this.fetchTargetedScores(evId, { scope, testRunId }).catch(err => {
+      console.warn('[StorageService] Post-reset targeted score refresh failed:', err);
+    });
+  }
+
+  public async fetchTargetedScores(
+    eventId: string,
+    options?: { scope?: 'LIVE' | 'TEST'; testRunId?: string | null }
+  ): Promise<ScoreRecord[]> {
+    const client = supabase;
+    if (!client || !eventId) return this.getScores(eventId);
+
+    const flightKey = `fetch_scores_${eventId}`;
+    return this.dedupeInFlight<ScoreRecord[]>(flightKey, async () => {
+      try {
+        const { data, error } = await client
+          .from('college_events')
+          .select('id, social_coverage->scores')
+          .eq('id', eventId)
+          .maybeSingle();
+
+        if (error) {
+          console.warn('[StorageService] fetchTargetedScores query error:', error);
+          return this.getScores(eventId);
+        }
+
+        const remoteScores: ScoreRecord[] = Array.isArray((data as any)?.scores)
+          ? ((data as any).scores as ScoreRecord[])
+          : [];
+
+        this.reconcileEventScoresWithRemote(eventId, remoteScores, options);
+        return remoteScores;
+      } catch (err) {
+        console.warn('[StorageService] fetchTargetedScores exception:', err);
+        return this.getScores(eventId);
+      }
+    });
+  }
+
+  public reconcileEventScoresWithRemote(
+    eventId: string,
+    remoteScores: ScoreRecord[],
+    options?: { scope?: 'LIVE' | 'TEST'; testRunId?: string | null }
+  ): void {
+    if (!eventId) return;
+
+    const allScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
+    const otherEventScores = allScores.filter(s => s.event_id && s.event_id !== eventId);
+
+    const normalizedRemote = remoteScores.map(s => ({
+      ...s,
+      event_id: s.event_id || eventId
+    }));
+
+    let finalEventScores: ScoreRecord[];
+
+    if (options?.scope === 'TEST') {
+      const localRealScores = allScores.filter(s => s.event_id === eventId && !this.isRecordInResetScope(s, 'TEST', options.testRunId));
+      const remoteTestScores = normalizedRemote.filter(s => this.isRecordInResetScope(s, 'TEST', options.testRunId));
+      finalEventScores = [...localRealScores, ...remoteTestScores];
+    } else if (options?.scope === 'LIVE') {
+      const localTestScores = allScores.filter(s => s.event_id === eventId && this.isRecordInResetScope(s, 'TEST'));
+      const remoteLiveScores = normalizedRemote.filter(s => !this.isRecordInResetScope(s, 'TEST'));
+      finalEventScores = [...localTestScores, ...remoteLiveScores];
+    } else {
+      finalEventScores = normalizedRemote;
+    }
+
+    this.setItem(STORAGE_KEYS.SCORES, [...otherEventScores, ...finalEventScores]);
+
+    if (typeof localStorage !== 'undefined') {
+      try {
+        if (finalEventScores.length > 0) {
+          localStorage.setItem(`tn_assembly_scores_${eventId}`, JSON.stringify(finalEventScores));
+        } else {
+          localStorage.removeItem(`tn_assembly_scores_${eventId}`);
+        }
+      } catch {}
+    }
+
+    const curEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
+    const validKeys = new Set(finalEventScores.map(s => this.getScoreCompositeKey(s, eventId)));
+    const validIds = new Set(finalEventScores.map(s => s.id));
+
+    const remainingEvals = curEvals.filter(e => {
+      if (e.event_id !== eventId) return true;
+      if (options?.scope === 'TEST') {
+        if (this.isRecordInResetScope(e as any, 'TEST', options.testRunId)) {
+          return validIds.has(e.id) || validKeys.has(this.getScoreCompositeKey(e as any, eventId));
+        }
+        return true;
+      } else if (options?.scope === 'LIVE') {
+        if (!this.isRecordInResetScope(e as any, 'TEST')) {
+          return validIds.has(e.id) || validKeys.has(this.getScoreCompositeKey(e as any, eventId));
+        }
+        return true;
+      }
+      return validIds.has(e.id) || validKeys.has(this.getScoreCompositeKey(e as any, eventId));
+    });
+    this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, remainingEvals);
+
+    const remainingEvalIds = new Set(remainingEvals.map(e => e.id));
+    const curTurns = this.getItem<JuryEvaluationTurn[]>(STORAGE_KEYS.JURY_EVALUATION_TURNS, []);
+    this.setItem(STORAGE_KEYS.JURY_EVALUATION_TURNS, curTurns.filter(t => remainingEvalIds.has(t.evaluation_id)));
+
+    const curAdjs = this.getItem<JuryEvaluationAdjustment[]>(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, []);
+    this.setItem(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, curAdjs.filter(a => remainingEvalIds.has(a.evaluation_id)));
+
+    this.invalidateCache(eventId);
+    this.invalidateCache('evaluations');
+    this.invalidateCache('leaderboard');
+    this.invalidateCache(`portal_jury_${eventId}`);
+    this.notify();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('storage'));
+      window.dispatchEvent(new CustomEvent('tn_assembly_scores_updated', { detail: { eventId } }));
+      window.dispatchEvent(new CustomEvent('tn_assembly_jury_scoring_reset', { detail: { eventId } }));
     }
   }
 
@@ -18422,15 +18655,16 @@ class StorageService {
       this.invalidateCache('evaluations');
       this.invalidateCache('leaderboard');
 
-      if (this.realtimeChannel) {
-        try {
-          await this.realtimeChannel.send({
-            type: 'broadcast',
-            event: 'scores_reset',
-            payload: { eventId, deletedCount, remainingRealCount }
-          });
-        } catch {}
-      }
+      await this.broadcastJuryScoreReset({
+        eventId,
+        scope: 'TEST',
+        mode: 'TEST',
+        testRunId: options?.testRunId || null,
+        resetAll: Boolean(options?.resetAll),
+        deletedCount,
+        remainingRealCount,
+        timestamp: new Date().toISOString()
+      });
 
       this.notify();
       if (typeof window !== 'undefined') {
@@ -18834,7 +19068,7 @@ class StorageService {
    */
   public async resetEventJuryScoring(
     eventId: string,
-    options?: { confirmationPhrase?: string }
+    options?: { confirmationPhrase?: string; scope?: 'LIVE' | 'ALL' }
   ): Promise<{
     success: boolean;
     eventId: string;
@@ -18895,10 +19129,16 @@ class StorageService {
     };
 
     try {
-      // ── 2. IDENTIFY TARGET EVENT RECORDS ──
+      // ── 2. IDENTIFY TARGET EVENT RECORDS (Preserve test data if scope !== 'ALL') ──
       const allEvals = snapshotEvals;
-      const targetEvals = allEvals.filter(e => e.event_id === eventId);
-      const remainingEvals = allEvals.filter(e => e.event_id !== eventId);
+      const isTargetEval = (e: JuryEvaluation) => {
+        if (e.event_id !== eventId) return false;
+        if (options?.scope === 'ALL') return true;
+        return !e.is_test && !this.isTestScore(e as any);
+      };
+
+      const targetEvals = allEvals.filter(isTargetEval);
+      const remainingEvals = allEvals.filter(e => !isTargetEval(e));
       const targetEvalIds = new Set(targetEvals.map(e => e.id));
 
       const allTurns = snapshotTurns;
@@ -18910,8 +19150,13 @@ class StorageService {
       const remainingAdjs = allAdjs.filter(a => !targetEvalIds.has(a.evaluation_id));
 
       const allRecogs = snapshotRecogs;
-      const targetRecogs = allRecogs.filter(r => r.event_id === eventId);
-      const remainingRecogs = allRecogs.filter(r => r.event_id !== eventId);
+      const isTargetRecog = (r: JurySpeechRecognition) => {
+        if (r.event_id !== eventId) return false;
+        if (options?.scope === 'ALL') return true;
+        return !r.is_test && !this.isTestScore(r as any);
+      };
+      const targetRecogs = allRecogs.filter(isTargetRecog);
+      const remainingRecogs = allRecogs.filter(r => !isTargetRecog(r));
 
       // ── 3. UPDATE LOCAL STORAGE DEDICATED TABLES ──
       this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, remainingEvals);
@@ -18931,7 +19176,6 @@ class StorageService {
             }
           }
           keysToRemove.forEach(k => localStorage.removeItem(k));
-          localStorage.removeItem(`tn_assembly_scores_${eventId}`);
         } catch {}
       }
 
@@ -18971,7 +19215,16 @@ class StorageService {
 
         const remoteSC = (evData?.social_coverage || {}) as Record<string, any>;
         const remoteScores = Array.isArray(remoteSC.scores) ? (remoteSC.scores as ScoreRecord[]) : [];
-        deletedLegacyScoresCount = remoteScores.length;
+        const remoteRecogs = Array.isArray(remoteSC.jury_speech_recognitions) ? (remoteSC.jury_speech_recognitions as JurySpeechRecognition[]) : [];
+
+        const preservedScores = options?.scope === 'ALL'
+          ? []
+          : remoteScores.filter(s => s.is_test || this.isTestScore(s));
+        deletedLegacyScoresCount = remoteScores.length - preservedScores.length;
+
+        const preservedRecogs = options?.scope === 'ALL'
+          ? []
+          : remoteRecogs.filter(r => r.is_test || this.isTestScore(r));
 
         // Count speaking turns (these are PRESERVED)
         const { count: turnCount } = await supabase
@@ -18980,11 +19233,11 @@ class StorageService {
           .eq('event_id', eventId);
         preservedSpeakingTurnsCount = turnCount || 0;
 
-        // Update social_coverage with empty scores & recognitions array, strictly preserving all other event data
+        // Update social_coverage strictly preserving other event data
         const updatedSC = {
           ...remoteSC,
-          scores: [],
-          jury_speech_recognitions: [],
+          scores: preservedScores,
+          jury_speech_recognitions: preservedRecogs,
           updated_at: new Date().toISOString()
         };
 
@@ -19015,33 +19268,46 @@ class StorageService {
 
         const verifiedSC = (verifyData.social_coverage || {}) as Record<string, any>;
         const verifiedScores = Array.isArray(verifiedSC.scores) ? verifiedSC.scores : [];
-        if (verifiedScores.length > 0) {
+        const verifiedLiveScores = verifiedScores.filter(s => options?.scope === 'ALL' ? true : (!s.is_test && !this.isTestScore(s)));
+        if (verifiedLiveScores.length > 0) {
           rollbackLocalState();
-          throw new Error(`Reset verification failed: ${verifiedScores.length} scores still exist in Supabase.`);
-        }
-        const verifiedRecogs = Array.isArray(verifiedSC.jury_speech_recognitions) ? verifiedSC.jury_speech_recognitions : [];
-        if (verifiedRecogs.length > 0) {
-          rollbackLocalState();
-          throw new Error(`Reset verification failed: ${verifiedRecogs.length} speech recognitions still exist in Supabase.`);
+          throw new Error(`Reset verification failed: ${verifiedLiveScores.length} live scores still exist in Supabase.`);
         }
       }
 
       // ── 6. CLEAN LOCAL STORAGE SCORES KEY ──
       const allScores = snapshotScores;
-      const remainingScores = allScores.filter(s => s.event_id && s.event_id !== eventId);
+      const remainingScores = allScores.filter(s => {
+        if (s.event_id !== eventId) return true;
+        if (options?.scope === 'ALL') return false;
+        return s.is_test || this.isTestScore(s);
+      });
       this.setItem(STORAGE_KEYS.SCORES, remainingScores);
+
+      if (typeof localStorage !== 'undefined') {
+        try {
+          const evPreserved = remainingScores.filter(s => s.event_id === eventId);
+          if (evPreserved.length > 0) {
+            localStorage.setItem(`tn_assembly_scores_${eventId}`, JSON.stringify(evPreserved));
+          } else {
+            localStorage.removeItem(`tn_assembly_scores_${eventId}`);
+          }
+        } catch {}
+      }
 
       // ── 7. UPDATE CACHED EVENT IN STORAGE_KEYS.EVENTS ──
       const allEvs = this.getEvents();
       const updatedEvs = allEvs.map(ev => {
         if (ev.id === eventId) {
           const sc = (ev.social_coverage || {}) as Record<string, any>;
+          const curScScores = Array.isArray(sc.scores) ? (sc.scores as ScoreRecord[]) : [];
+          const curScRecogs = Array.isArray(sc.jury_speech_recognitions) ? (sc.jury_speech_recognitions as JurySpeechRecognition[]) : [];
           return {
             ...ev,
             social_coverage: {
               ...sc,
-              scores: [],
-              jury_speech_recognitions: []
+              scores: options?.scope === 'ALL' ? [] : curScScores.filter(s => s.is_test || this.isTestScore(s)),
+              jury_speech_recognitions: options?.scope === 'ALL' ? [] : curScRecogs.filter(r => r.is_test || this.isTestScore(r))
             }
           };
         }
@@ -19050,7 +19316,7 @@ class StorageService {
       this.setItem(STORAGE_KEYS.EVENTS, updatedEvs);
 
       // ── 8. DEFENSIVE VERIFICATION OF READ PATH ──
-      const postEvaluations = this.getJuryEvaluations(eventId);
+      const postEvaluations = this.getJuryEvaluations(eventId, undefined, undefined, undefined, false);
       if (postEvaluations.length > 0) {
         rollbackLocalState();
         throw new Error(`Reset verification failed: ${postEvaluations.length} evaluations still returned by getJuryEvaluations.`);
@@ -19062,21 +19328,22 @@ class StorageService {
       this.invalidateCache('portal_');
       this.invalidateCache('evaluations');
       this.invalidateCache('leaderboard');
+      this.invalidateCache(`portal_jury_${eventId}`);
 
-      if (this.realtimeChannel) {
-        try {
-          await this.realtimeChannel.send({
-            type: 'broadcast',
-            event: 'jury_scoring_reset',
-            payload: { eventId, timestamp: new Date().toISOString() }
-          });
-        } catch {}
-      }
+      await this.broadcastJuryScoreReset({
+        eventId,
+        scope: 'LIVE',
+        mode: 'LIVE',
+        testRunId: null,
+        resetAll: false,
+        timestamp: new Date().toISOString()
+      });
 
       this.notify();
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('storage'));
-        window.dispatchEvent(new CustomEvent('tn_assembly_scores_updated', { detail: { eventId } }));
+        window.dispatchEvent(new CustomEvent('tn_assembly_scores_updated', { detail: { eventId, scope: 'LIVE', mode: 'LIVE' } }));
+        window.dispatchEvent(new CustomEvent('tn_assembly_jury_scoring_reset', { detail: { eventId, scope: 'LIVE', mode: 'LIVE' } }));
       }
 
       return {

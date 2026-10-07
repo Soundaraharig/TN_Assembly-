@@ -243,8 +243,32 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       testMode.isTestMode,
       selectedSpeakingTurnId || undefined
     );
+    if (testMode.isTestMode && testMode.testRunId) {
+      const match = evals.find(e => e.test_run_id === testMode.testRunId);
+      return match || null;
+    }
     return evals[0] || null;
-  }, [event?.id, selectedSession, jury?.id, jury?.name, selectedLearner?.id, selectedSpeakingTurnId, testMode.isTestMode, testMode.testRunId, recogTick]);
+  }, [event?.id, selectedSession, jury?.id, jury?.name, selectedLearner, selectedSpeakingTurnId, testMode.isTestMode, testMode.testRunId, scores, recogTick]);
+
+  // Scoped evaluations history list for current juror strictly isolated by active mode and testRunId
+  const jurorHistoryEvaluations = useMemo<JuryEvaluation[]>(() => {
+    if (!event?.id) return [];
+    const isTest = testMode.isTestMode;
+    const testRunId = testMode.testRunId;
+    return storageService.getJuryEvaluations(
+      event.id,
+      undefined,
+      jury?.id || jury?.name,
+      undefined,
+      isTest
+    ).filter(e => {
+      if (isTest) {
+        if (testRunId && e.test_run_id !== testRunId) return false;
+        return true;
+      }
+      return !e.is_test;
+    });
+  }, [event?.id, jury?.id, jury?.name, testMode.isTestMode, testMode.testRunId, scores, recogTick]);
 
   const hasMountedEventIdRef = useRef<string | null>(null);
 
@@ -360,6 +384,15 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       setRecogTick(t => t + 1);
     };
 
+    const handleJuryScoringReset = (evt: Event) => {
+      const customEvt = evt as CustomEvent;
+      const detail = customEvt?.detail;
+      if (!detail || !event?.id || detail.eventId === event.id) {
+        setLoadedKey('');
+        setRecogTick(t => t + 1);
+      }
+    };
+
     if (typeof window !== 'undefined') {
       window.addEventListener('tn_assembly_current_speaker_changed', handleSpeakerChanged);
       window.addEventListener('tn_assembly_speaking_update', handleSpeakerChanged);
@@ -368,7 +401,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       window.addEventListener('tn_assembly_test_mode_update', handleRecogUpdate);
       window.addEventListener('tn_assembly_scoring_environment_update', handleRecogUpdate);
       window.addEventListener('tn_assembly_scores_updated', handleRecogUpdate);
-      window.addEventListener('tn_assembly_jury_scoring_reset', handleRecogUpdate);
+      window.addEventListener('tn_assembly_jury_scoring_reset', handleJuryScoringReset);
       window.addEventListener('storage', handleRecogUpdate);
     }
     return () => {
@@ -381,7 +414,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
         window.removeEventListener('tn_assembly_test_mode_update', handleRecogUpdate);
         window.removeEventListener('tn_assembly_scoring_environment_update', handleRecogUpdate);
         window.removeEventListener('tn_assembly_scores_updated', handleRecogUpdate);
-        window.removeEventListener('tn_assembly_jury_scoring_reset', handleRecogUpdate);
+        window.removeEventListener('tn_assembly_jury_scoring_reset', handleJuryScoringReset);
         window.removeEventListener('storage', handleRecogUpdate);
       }
     };
@@ -460,14 +493,22 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
   const allJurorEvaluations = useMemo(() => {
     if (!event?.id || !selectedSession) return [];
     const juryId = jury?.id || jury?.name || 'jury';
+    const isTest = testMode.isTestMode;
+    const testRunId = testMode.testRunId;
     return storageService.getJuryEvaluations(
       event.id,
       selectedSession.id,
       juryId,
       undefined,
-      testMode.isTestMode
-    );
-  }, [event?.id, selectedSession, jury, testMode.isTestMode, recogTick]);
+      isTest
+    ).filter(e => {
+      if (isTest) {
+        if (testRunId && e.test_run_id !== testRunId) return false;
+        return true;
+      }
+      return !e.is_test;
+    });
+  }, [event?.id, selectedSession, jury, testMode.isTestMode, testMode.testRunId, scores, recogTick]);
 
   // Map of evaluations by speaking_turn_id (and learner_id fallback)
   const evaluationsByTurnIdMap = useMemo(() => {
@@ -1161,7 +1202,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                 color: activeTab === 'history' ? '#fff' : 'var(--text-primary)'
               }}
             >
-              <History className="w-3.5 h-3.5" /> Score History ({scores.filter(s => (!event || !s.event_id || s.event_id === event.id) && ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))).length})
+              <History className="w-3.5 h-3.5" /> Score History ({jurorHistoryEvaluations.length})
             </button>
             <button
               onClick={() => setActiveTab('agenda')}
@@ -1284,11 +1325,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                 Session Progress
               </span>
               <span className="text-xs font-mono font-black text-emerald-600 dark:text-emerald-400">
-                {scores.filter(s =>
-                  (!event || !s.event_id || s.event_id === event.id) &&
-                  (s.session_id === selectedSession.id || s.session_name === selectedSession.name) &&
-                  ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))
-                ).length} / {learners.length} Evaluated
+                {currentSessionScoreMap.size} / {learners.length} Evaluated
               </span>
             </div>
           </div>
@@ -2731,11 +2768,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
 
         {/* History Tab */}
         {activeTab === 'history' && (() => {
-          const myEvaluations = storageService.getJuryEvaluations(
-            event?.id,
-            undefined,
-            jury?.id || jury?.name
-          );
+          const myEvaluations = jurorHistoryEvaluations;
 
           return (
             <div className="rounded-2xl p-6 border shadow-sm space-y-4" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>

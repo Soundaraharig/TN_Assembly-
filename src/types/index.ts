@@ -472,6 +472,17 @@ export interface ScoreRecord {
 
 export type EvaluationActionType = 'INITIAL_EVALUATION' | 'CONTRIBUTION_ONLY' | 'ADJUSTMENT';
 
+export interface JuryScoreResetPayload {
+  eventId: string;
+  scope: 'LIVE' | 'TEST';
+  mode: 'LIVE' | 'TEST';
+  testRunId?: string | null;
+  resetAll?: boolean;
+  deletedCount?: number;
+  remainingRealCount?: number;
+  timestamp: string;
+}
+
 export interface JuryEvaluationTurn {
   id: string;
   evaluation_id: string;

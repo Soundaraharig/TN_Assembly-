@@ -219,6 +219,9 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
 
   // Sync test mode and audit when storage updates
   useEffect(() => {
+    if (eventId) {
+      storageService.setupRealtimeSync(eventId);
+    }
     const handleSync = () => {
       setTestMode(storageService.getScoringTestMode(eventId));
       setAuditTick(t => t + 1);
