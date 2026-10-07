@@ -465,6 +465,7 @@ export interface ScoreRecord {
   is_locked?: boolean;
   is_test?: boolean;
   test_run_id?: string;
+  speaking_turn_id?: string;
   created_at?: string;
   updated_at: string;
 }

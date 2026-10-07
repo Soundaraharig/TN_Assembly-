@@ -15975,8 +15975,10 @@ class StorageService {
     if (!juryKey) juryKey = 'default_jury';
 
     const learnerKey = score.learner_id || '';
-    return `${evId}:::${sessKey}:::${juryKey}:::${learnerKey}`;
+    const turnKey = score.speaking_turn_id ? `:::${score.speaking_turn_id}` : '';
+    return `${evId}:::${sessKey}:::${juryKey}:::${learnerKey}${turnKey}`;
   }
+
 
   /**
    * Returns all available scoring sessions for an event.
@@ -16343,26 +16345,41 @@ class StorageService {
   }
 
   // ── JURY EVALUATION DRAFT ENGINE (Strict UI isolation, 0 DB writes) ──
-  public getJuryDraft(eventId: string, sessionId: string, juryId: string, learnerId: string): JuryEvaluationDraft | null {
+  public getJuryDraft(eventId: string, sessionId: string, juryId: string, learnerId: string, speakingTurnId?: string): JuryEvaluationDraft | null {
     if (!eventId || !sessionId || !juryId || !learnerId) return null;
     const agendaItems = this.getAgenda(eventId);
     const resolved = resolveCanonicalSession(sessionId, undefined, agendaItems);
+    if (speakingTurnId) {
+      const turnKey = `tn_assembly_jury_draft_${eventId}_${resolved.canonicalId}_${juryId}_${learnerId}_${speakingTurnId}`;
+      const turnDraft = this.getItem<JuryEvaluationDraft | null>(turnKey, null);
+      if (turnDraft) return turnDraft;
+    }
     const key = `tn_assembly_jury_draft_${eventId}_${resolved.canonicalId}_${juryId}_${learnerId}`;
     return this.getItem<JuryEvaluationDraft | null>(key, null);
   }
 
-  public saveJuryDraft(eventId: string, sessionId: string, juryId: string, learnerId: string, draft: JuryEvaluationDraft): void {
+  public saveJuryDraft(eventId: string, sessionId: string, juryId: string, learnerId: string, draft: JuryEvaluationDraft, speakingTurnId?: string): void {
     if (!eventId || !sessionId || !juryId || !learnerId) return;
     const agendaItems = this.getAgenda(eventId);
     const resolved = resolveCanonicalSession(sessionId, undefined, agendaItems);
+    if (speakingTurnId) {
+      const turnKey = `tn_assembly_jury_draft_${eventId}_${resolved.canonicalId}_${juryId}_${learnerId}_${speakingTurnId}`;
+      this.setItem(turnKey, draft);
+    }
     const key = `tn_assembly_jury_draft_${eventId}_${resolved.canonicalId}_${juryId}_${learnerId}`;
     this.setItem(key, draft);
   }
 
-  public clearJuryDraft(eventId: string, sessionId: string, juryId: string, learnerId: string): void {
+  public clearJuryDraft(eventId: string, sessionId: string, juryId: string, learnerId: string, speakingTurnId?: string): void {
     if (!eventId || !sessionId || !juryId || !learnerId) return;
     const agendaItems = this.getAgenda(eventId);
     const resolved = resolveCanonicalSession(sessionId, undefined, agendaItems);
+    if (speakingTurnId) {
+      const turnKey = `tn_assembly_jury_draft_${eventId}_${resolved.canonicalId}_${juryId}_${learnerId}_${speakingTurnId}`;
+      if (typeof localStorage !== 'undefined') {
+        try { localStorage.removeItem(turnKey); } catch {}
+      }
+    }
     const key = `tn_assembly_jury_draft_${eventId}_${resolved.canonicalId}_${juryId}_${learnerId}`;
     if (typeof localStorage !== 'undefined') {
       try { localStorage.removeItem(key); } catch {}
@@ -16447,14 +16464,17 @@ class StorageService {
       e.session_id === canonicalSessionId &&
       e.jury_id === params.juryId &&
       e.learner_id === params.learnerId &&
-      (isTest ? Boolean(e.is_test) : !e.is_test)
+      (isTest ? Boolean(e.is_test) : !e.is_test) &&
+      (params.speakingTurnId
+        ? (e.initial_speaking_turn_id === params.speakingTurnId || (e.turns && e.turns.some(t => t.speaking_turn_id === params.speakingTurnId)))
+        : true)
     );
 
     if (existing) {
       return existing;
     }
 
-    const existingBridged = this.getJuryEvaluations(params.eventId, canonicalSessionId, params.juryId, params.learnerId, isTest)[0];
+    const existingBridged = this.getJuryEvaluations(params.eventId, canonicalSessionId, params.juryId, params.learnerId, isTest, params.speakingTurnId)[0];
     if (existingBridged) {
       return existingBridged;
     }
@@ -16537,6 +16557,7 @@ class StorageService {
       feedback: newEval.feedback,
       is_test: newEval.is_test,
       test_run_id: newEval.test_run_id,
+      speaking_turn_id: params.speakingTurnId,
       created_at: now,
       updated_at: now
     });
@@ -17473,7 +17494,8 @@ class StorageService {
     sessionId?: string,
     juryId?: string,
     learnerId?: string,
-    includeTest: boolean = false
+    includeTest: boolean = false,
+    speakingTurnId?: string
   ): JuryEvaluation[] {
     const allEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
     const allTurns = this.getItem<JuryEvaluationTurn[]>(STORAGE_KEYS.JURY_EVALUATION_TURNS, []);
@@ -17492,9 +17514,10 @@ class StorageService {
         return;
       }
       const resolved = resolveCanonicalSession(e.session_id, e.session_name, agendaItems);
-      const k = `${e.event_id}:::${resolved.canonicalId}:::${e.jury_id}:::${e.learner_id}`;
       e.turns = allTurns.filter(t => t.evaluation_id === e.id);
       e.adjustments = allAdjs.filter(a => a.evaluation_id === e.id);
+      const turnSuffix = e.initial_speaking_turn_id || (e.turns && e.turns[0]?.speaking_turn_id) || e.id;
+      const k = `${e.event_id}:::${resolved.canonicalId}:::${e.jury_id}:::${e.learner_id}:::${turnSuffix}`;
       evalMap.set(k, e);
     });
 
@@ -17512,7 +17535,8 @@ class StorageService {
       }
       if (!jId) jId = 'default_jury';
 
-      const k = `${s.event_id}:::${resolved.canonicalId}:::${jId}:::${s.learner_id}`;
+      const turnSuffix = s.speaking_turn_id || s.id;
+      const k = `${s.event_id}:::${resolved.canonicalId}:::${jId}:::${s.learner_id}:::${turnSuffix}`;
       if (!evalMap.has(k)) {
         const syntheticEval: JuryEvaluation = {
           id: s.id,
@@ -17535,6 +17559,7 @@ class StorageService {
           time_management: Number(s.time_management || 0),
           total: Number(s.total || 0),
           feedback: s.feedback || '',
+          initial_speaking_turn_id: s.speaking_turn_id,
           status: 'ACTIVE',
           is_test: !!s.is_test,
           test_run_id: s.test_run_id,
@@ -17570,8 +17595,116 @@ class StorageService {
     if (learnerId) {
       result = result.filter(e => e.learner_id === learnerId);
     }
+    if (speakingTurnId) {
+      result = result.filter(e =>
+        e.initial_speaking_turn_id === speakingTurnId ||
+        (Array.isArray(e.turns) && e.turns.some(t => t.speaking_turn_id === speakingTurnId))
+      );
+    }
 
     return result;
+  }
+
+  /**
+   * Authoritative backend persistence and confirmation for jury evaluation scores.
+   * Complies with P0 Jury Persistence Mandate:
+   * 1. Write backend (patchSocialCoverageSafe)
+   * 2. Confirm backend success
+   * 3. Read back exact record from remote
+   * 4. Only then return success: true
+   */
+  public async persistScoreRecordToBackend(score: ScoreRecord): Promise<{ success: boolean; score?: ScoreRecord; error?: string }> {
+    if (!score.event_id || !score.learner_id) {
+      return { success: false, error: 'Missing event_id or learner_id for score persistence.' };
+    }
+    const eventId = score.event_id;
+
+    // 1. Ensure local persistence
+    this.saveScoreRecord(score);
+
+    if (!supabase || !isSupabaseEnabled) {
+      return { success: true, score };
+    }
+
+    try {
+      // 2. Fetch remote social_coverage to merge safely
+      const { data: evData, error: fetchErr } = await supabase
+        .from('college_events')
+        .select('social_coverage')
+        .eq('id', eventId)
+        .maybeSingle();
+
+      if (fetchErr) {
+        console.warn('[persistScoreRecordToBackend] Supabase fetch error:', fetchErr);
+        return { success: false, error: fetchErr.message || 'Failed to read event state from database.' };
+      }
+
+      const remoteSC = (evData?.social_coverage || {}) as Record<string, any>;
+      const remoteScores = Array.isArray(remoteSC.scores) ? (remoteSC.scores as ScoreRecord[]) : [];
+      const localScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []).filter(s => s.event_id === eventId);
+
+      const scoreMap = new Map<string, ScoreRecord>();
+      remoteScores.forEach(s => {
+        scoreMap.set(this.getScoreCompositeKey(s, eventId), s);
+      });
+      localScores.forEach(s => {
+        const k = this.getScoreCompositeKey(s, eventId);
+        const existing = scoreMap.get(k);
+        if (!existing) {
+          scoreMap.set(k, s);
+        } else {
+          const localTime = new Date(s.updated_at || 0).getTime();
+          const remoteTime = new Date(existing.updated_at || 0).getTime();
+          if (localTime >= remoteTime) {
+            scoreMap.set(k, s);
+          }
+        }
+      });
+      scoreMap.set(this.getScoreCompositeKey(score, eventId), score);
+
+      const mergedScores = Array.from(scoreMap.values());
+
+      // 3. Patch to Supabase
+      const patchRes = await this.patchSocialCoverageSafe(eventId, {
+        scores: mergedScores
+      });
+
+      if (!patchRes) {
+        return { success: false, error: 'Database rejected score persistence.' };
+      }
+
+      // 4. Confirm write by reading back
+      const { data: verifyData, error: verifyErr } = await supabase
+        .from('college_events')
+        .select('social_coverage->scores')
+        .eq('id', eventId)
+        .maybeSingle();
+
+      if (verifyErr) {
+        console.warn('[persistScoreRecordToBackend] Verification read error:', verifyErr);
+        return { success: false, error: verifyErr.message || 'Verification read failed.' };
+      }
+
+      const verifiedScores = Array.isArray((verifyData as any)?.scores) ? ((verifyData as any).scores as ScoreRecord[]) : [];
+      const targetKey = this.getScoreCompositeKey(score, eventId);
+      const confirmedRecord = verifiedScores.find(s =>
+        (score.id && s.id === score.id) ||
+        this.getScoreCompositeKey(s, eventId) === targetKey
+      );
+
+      if (!confirmedRecord) {
+        return { success: false, error: 'Score not confirmed in remote database after write.' };
+      }
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('tn_assembly_scores_updated', { detail: { eventId } }));
+      }
+
+      return { success: true, score: confirmedRecord };
+    } catch (err: any) {
+      console.warn('[persistScoreRecordToBackend] Exception:', err);
+      return { success: false, error: err?.message || 'Unexpected error during backend score persistence.' };
+    }
   }
 
   public getSessionLeaderboard(
