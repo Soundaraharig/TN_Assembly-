@@ -16693,22 +16693,49 @@ class StorageService {
     const testRunId = isTest ? (params.testRunId || env.testRunId || undefined) : undefined;
 
     const allEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
-    const existing = allEvals.find(e =>
-      e.event_id === params.eventId &&
-      e.session_id === canonicalSessionId &&
-      e.jury_id === params.juryId &&
-      e.learner_id === params.learnerId &&
-      (isTest ? Boolean(e.is_test) : !e.is_test) &&
-      (params.speakingTurnId
-        ? (e.initial_speaking_turn_id === params.speakingTurnId || (e.turns && e.turns.some(t => t.speaking_turn_id === params.speakingTurnId)))
-        : true)
-    );
+    const existing = allEvals.find(e => {
+      if (e.event_id !== params.eventId) return false;
+      if (e.learner_id !== params.learnerId) return false;
+      if (e.jury_id !== params.juryId && e.jury_name !== params.juryName) return false;
+      const eResolved = resolveCanonicalSession(e.session_id, e.session_name, agendaItems);
+      if (eResolved.canonicalId !== canonicalSessionId) return false;
+      if (isTest) {
+        if (!e.is_test) return false;
+        if (testRunId && e.test_run_id !== testRunId) return false;
+      } else {
+        if (e.is_test) return false;
+      }
+      return true;
+    });
 
     if (existing) {
+      // P0 Business Rule: One full evaluation per MLA per session.
+      // If a subsequent speaking turn occurs, link it as a contribution without creating a new evaluation or score.
+      if (params.speakingTurnId && (!existing.turns || !existing.turns.some(t => t.speaking_turn_id === params.speakingTurnId))) {
+        const allTurns = this.getItem<JuryEvaluationTurn[]>(STORAGE_KEYS.JURY_EVALUATION_TURNS, []);
+        const evalTurns = allTurns.filter(t => t.evaluation_id === existing.id);
+        const turnRecord: JuryEvaluationTurn = {
+          id: uid('eval_turn'),
+          evaluation_id: existing.id,
+          speaking_turn_id: params.speakingTurnId,
+          turn_number: evalTurns.length + 1,
+          action_type: 'CONTRIBUTION_ONLY',
+          recorded_by: params.juryId,
+          recorded_by_name: params.juryName,
+          notes: 'Subsequent speaking turn logged under existing session evaluation.',
+          is_test: isTest,
+          test_run_id: testRunId,
+          created_at: new Date().toISOString()
+        };
+        this.setItem(STORAGE_KEYS.JURY_EVALUATION_TURNS, [...allTurns, turnRecord]);
+        existing.turns = [...evalTurns, turnRecord];
+        this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, allEvals);
+        this.notify();
+      }
       return existing;
     }
 
-    const existingBridged = this.getJuryEvaluations(params.eventId, canonicalSessionId, params.juryId, params.learnerId, isTest, params.speakingTurnId)[0];
+    const existingBridged = this.getJuryEvaluations(params.eventId, canonicalSessionId, params.juryId, params.learnerId, isTest)[0];
     if (existingBridged) {
       return existingBridged;
     }
