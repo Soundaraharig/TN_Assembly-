@@ -112,8 +112,9 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     const map = new Map<string, ScoreRecord>();
     const isTest = testMode.isTestMode;
     const testRunId = testMode.testRunId;
+    const freshScores = event?.id ? storageService.getScores(event.id) : scores;
 
-    for (const s of scores) {
+    for (const s of freshScores) {
       if (
         (!event || !s.event_id || s.event_id === event.id) &&
         (s.session_id === selectedSession.id || s.session_name === selectedSession.name) &&
@@ -233,22 +234,15 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
   // Authoritative current evaluation for this juror, participant, and canonical session (Session-level lookup)
   const currentEvaluation = useMemo<JuryEvaluation | null>(() => {
     if (!selectedLearner || !event?.id) return null;
-    const agendaItems = storageService.getAgenda(event.id);
-    const resolved = resolveCanonicalSession(selectedSession.id, selectedSession.name, agendaItems);
-    const evals = storageService.getJuryEvaluations(
+    return storageService.resolveAuthoritativeSessionEvaluation(
       event.id,
-      resolved.canonicalId,
-      jury?.id || jury?.name,
+      selectedSession.id,
+      jury?.id || jury?.name || 'jury',
       selectedLearner.id,
-      testMode.isTestMode
-      // P0 Business Rule: Do NOT pass speakingTurnId. Evaluation uniqueness is session-level!
+      testMode.isTestMode,
+      testMode.testRunId
     );
-    if (testMode.isTestMode && testMode.testRunId) {
-      const match = evals.find(e => e.test_run_id === testMode.testRunId);
-      return match || null;
-    }
-    return evals[0] || null;
-  }, [event?.id, selectedSession, jury?.id, jury?.name, selectedLearner, testMode.isTestMode, testMode.testRunId, recogTick]);
+  }, [event?.id, selectedSession.id, jury?.id, jury?.name, selectedLearner, testMode.isTestMode, testMode.testRunId, recogTick]);
 
   // Scoped evaluations history list for current juror strictly isolated by active mode and testRunId
   const jurorHistoryEvaluations = useMemo<JuryEvaluation[]>(() => {
@@ -450,6 +444,15 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       const detail = customEvt?.detail;
       if (!detail || !event?.id || detail.eventId === event.id) {
         setLoadedKey('');
+        setResearchScore(null);
+        setRelevanceScore(null);
+        setCommScore(null);
+        setConductScore(null);
+        setOriginalityScore(null);
+        setTimeScore(null);
+        setFeedback('');
+        setIsLocked(false);
+        setDraftSavedAt(null);
         setRecogTick(t => t + 1);
       }
     };
@@ -960,6 +963,9 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     const prevTotal = currentEvaluation.total;
     const updated = storageService.recordScoreAdjustment({
       evaluationId: currentEvaluation.id,
+      eventId: event.id,
+      sessionId: selectedSession.id,
+      learnerId: selectedLearner.id,
       speakingTurnId: turnId,
       jurorId: jury?.id || jury?.name || 'jury',
       jurorName: jury?.name || 'Evaluator',
@@ -969,7 +975,9 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       parliamentary_conduct: adjConduct,
       originality_preparation: adjOriginality,
       time_management: adjTime,
-      adjustmentReason: reason
+      adjustmentReason: reason,
+      isTest: testMode.isTestMode,
+      testRunId: testMode.testRunId || undefined
     });
 
     setIsAdjustmentModalOpen(false);
@@ -991,10 +999,15 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
 
       storageService.recordContributionOnly({
         evaluationId: currentEvaluation.id,
+        eventId: event.id,
+        sessionId: selectedSession.id,
+        learnerId: selectedLearner.id,
         speakingTurnId: turnId,
         jurorId: jury?.id || jury?.name || 'jury',
         jurorName: jury?.name || 'Evaluator',
-        notes: `Turn #${targetTurn?.sequence_number || displayedTurnNumber} contribution noted.`
+        notes: `Turn #${targetTurn?.sequence_number || displayedTurnNumber} contribution noted.`,
+        isTest: testMode.isTestMode,
+        testRunId: testMode.testRunId || undefined
       });
 
       onShowToast(

@@ -103,6 +103,7 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
   const [benchFilter, setBenchFilter] = useState<'ALL' | 'Ruling' | 'Opposition' | 'Independent'>('ALL');
   const [isStartingTurn, setIsStartingTurn] = useState(false);
   const [isFinishingTurn, setIsFinishingTurn] = useState(false);
+  const [confirmingLearner, setConfirmingLearner] = useState<Learner | null>(null);
 
   // Live Speaking Timer (client memory derived, zero database writes)
   const [elapsedSec, setElapsedSec] = useState(0);
@@ -262,11 +263,19 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
     );
   }
 
-  // Handle speaker selection (1-click fast operation)
-  const handleSelectSpeaker = async (learner: Learner) => {
+  // Handle speaker selection request (triggers mandatory confirmation modal - Bug 5 P0 requirement)
+  const handleSelectSpeaker = (learner: Learner) => {
     if (!isAuthorized) return;
     if (isStartingTurn) return;
+    setConfirmingLearner(learner);
+  };
+
+  // Confirmed start speech execution (strictly created ONLY after user confirmation)
+  const handleConfirmStartSpeech = async () => {
+    if (!isAuthorized || !confirmingLearner) return;
+    if (isStartingTurn) return; // Double-click safety: lock while request in flight
     setIsStartingTurn(true);
+    const learner = confirmingLearner;
     try {
       const targetEventId = eventId || volunteer?.event_id || learner.event_id || '';
       const tm = storageService.getScoringTestMode(targetEventId);
@@ -284,6 +293,7 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
       if (res.success && res.turn) {
         setActiveSpeakerTurn(res.turn);
         setSearchQuery('');
+        setConfirmingLearner(null);
         onShowToast?.(
           'Speaker Active',
           `${learner.full_name} is now speaking on the floor (Turn ${res.turn.sequence_number})`,
@@ -758,6 +768,86 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
           </div>
         </section>
       </main>
+
+      {/* MANDATORY START SPEECH CONFIRMATION DIALOG (Bug 5 P0 Requirement) */}
+      {confirmingLearner && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
+          data-testid="start-speech-confirmation-dialog"
+        >
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 max-w-md w-full shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b pb-3 border-slate-100 dark:border-slate-800">
+              <h3 className="text-base font-black uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-2">
+                <Mic className="w-5 h-5 text-rose-500" />
+                START SPEECH?
+              </h3>
+              <button
+                type="button"
+                disabled={isStartingTurn}
+                onClick={() => setConfirmingLearner(null)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 cursor-pointer disabled:opacity-50"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 text-xs">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Speaker:</span>
+                <span className="text-base font-black text-slate-900 dark:text-white">
+                  {confirmingLearner.full_name}
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Constituency:</span>
+                <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                  {confirmingLearner.constituency_number ? `#${confirmingLearner.constituency_number} ` : ''}
+                  {confirmingLearner.constituency_name || 'Assembly Delegate'}
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Party:</span>
+                <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                  {confirmingLearner.party_name || 'Independent'}
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Bench:</span>
+                <span
+                  className="inline-block mt-0.5 px-2.5 py-0.5 rounded text-[10px] font-bold border"
+                  style={{
+                    background: confirmingLearner.bench === 'Ruling' ? 'rgba(5,150,105,0.1)' : 'rgba(220,38,38,0.1)',
+                    color: confirmingLearner.bench === 'Ruling' ? '#059669' : '#dc2626',
+                    borderColor: confirmingLearner.bench === 'Ruling' ? '#059669' : '#dc2626'
+                  }}
+                >
+                  {confirmingLearner.bench || 'Ruling'}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                type="button"
+                disabled={isStartingTurn}
+                onClick={() => setConfirmingLearner(null)}
+                className="flex-1 py-3 px-4 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs transition cursor-pointer disabled:opacity-50"
+              >
+                CANCEL
+              </button>
+              <button
+                type="button"
+                disabled={isStartingTurn}
+                onClick={handleConfirmStartSpeech}
+                className="flex-1 py-3 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-black text-xs transition cursor-pointer shadow-md flex items-center justify-center gap-1.5"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>{isStartingTurn ? 'STARTING...' : 'START SPEAKING'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

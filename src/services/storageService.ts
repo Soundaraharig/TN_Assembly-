@@ -229,7 +229,7 @@ export interface CacheEntry<T = any> {
 // ---------------------------------------------------------------------------
 // Local-storage keys (cache layer)
 // ---------------------------------------------------------------------------
-const STORAGE_KEYS = {
+export const STORAGE_KEYS = {
   EVENTS: 'tn_assembly_events_v6',
   COORDINATORS: 'tn_assembly_coordinators_v6',
   LEARNERS: 'tn_assembly_learners_v6',
@@ -5704,27 +5704,44 @@ class StorageService {
             .eq('id', eventId)
             .maybeSingle();
           const remoteScores = (scoreData as any)?.scores;
-          if (Array.isArray(remoteScores) && remoteScores.length > 0) {
+          if (Array.isArray(remoteScores)) {
             const currentScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
-            const localScores = currentScores.filter(s => s.event_id === eventId);
-            const scoreMap = new Map<string, ScoreRecord>();
-            localScores.forEach(s => scoreMap.set(this.getScoreCompositeKey(s, eventId), s));
-            remoteScores.forEach((s: ScoreRecord) => {
-              const k = this.getScoreCompositeKey(s, eventId);
-              const existing = scoreMap.get(k);
-              if (!existing) {
-                scoreMap.set(k, s);
-              } else {
-                const localT = new Date(existing.updated_at || 0).getTime();
-                const remoteT = new Date(s.updated_at || 0).getTime();
-                if (remoteT >= localT) scoreMap.set(k, s);
-              }
-            });
-            const merged = Array.from(scoreMap.values());
             const otherScores = currentScores.filter(s => s.event_id !== eventId);
-            const nextScores = [...otherScores, ...merged];
+            const scopedRemoteScores = remoteScores.filter((s: ScoreRecord) => !s.event_id || s.event_id === eventId);
+            const nextScores = [...otherScores, ...scopedRemoteScores];
+
             if (!areJsonbObjectsEqual(currentScores, nextScores)) {
               this.setItem(STORAGE_KEYS.SCORES, nextScores);
+              stateChanged = true;
+            }
+
+            // Dedicated local backup update
+            if (typeof localStorage !== 'undefined') {
+              try {
+                if (scopedRemoteScores.length > 0) {
+                  localStorage.setItem(`tn_assembly_scores_${eventId}`, JSON.stringify(scopedRemoteScores));
+                } else {
+                  localStorage.removeItem(`tn_assembly_scores_${eventId}`);
+                }
+              } catch {}
+            }
+
+            // Synchronize STORAGE_KEYS.JURY_EVALUATIONS:
+            // Purge evaluations for this event if reset remotely (authoritative remote reset state wins)
+            const curEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
+            const validEvals = curEvals.filter(e => {
+              if (e.event_id !== eventId) return true;
+              return scopedRemoteScores.some((s: ScoreRecord) =>
+                s.id === e.id ||
+                (s.learner_id === e.learner_id && (s.jury_id === e.jury_id || s.juror_name === e.jury_name))
+              );
+            });
+            if (validEvals.length !== curEvals.length) {
+              this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, validEvals);
+              stateChanged = true;
+            }
+
+            if (stateChanged) {
               this.notify();
             }
           }
@@ -16827,42 +16844,228 @@ class StorageService {
     return newEval;
   }
 
+  /**
+   * CANONICAL EVALUATION RESOLUTION (P0 Business Rule)
+   * Resolves the authoritative session evaluation for (eventId, sessionId, juryId, learnerId, scope, testRunId).
+   * First checks STORAGE_KEYS.JURY_EVALUATIONS. If missing, checks and materializes legacy score records.
+   * Guarantees that all consumers (currentEvaluation, Record Contribution, Adjust Evaluation, score history, counters)
+   * use the EXACT SAME authoritative evaluation record.
+   */
+  public resolveAuthoritativeSessionEvaluation(
+    eventId: string,
+    sessionId: string,
+    juryId: string,
+    learnerId: string,
+    scope?: 'live' | 'test' | 'LIVE' | 'TEST' | boolean,
+    testRunId?: string | null
+  ): JuryEvaluation | null {
+    if (!eventId || !sessionId || !juryId || !learnerId) return null;
+    const agendaItems = this.getAgenda(eventId);
+    const resolvedSession = resolveCanonicalSession(sessionId, undefined, agendaItems);
+    const canonicalSessionId = resolvedSession.canonicalId;
+
+    const env = this.getScoringEnvironment(eventId);
+    const isTest = scope !== undefined
+      ? (typeof scope === 'boolean' ? scope : (scope === 'test' || scope === 'TEST'))
+      : env.mode === 'test';
+    const effectiveTestRunId = testRunId !== undefined ? testRunId : (isTest ? env.testRunId : null);
+
+    const allEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
+    const allTurns = this.getItem<JuryEvaluationTurn[]>(STORAGE_KEYS.JURY_EVALUATION_TURNS, []);
+    const allAdjs = this.getItem<JuryEvaluationAdjustment[]>(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, []);
+
+    // 1. Direct match in STORAGE_KEYS.JURY_EVALUATIONS
+    const foundEval = allEvals.find(e => {
+      if (e.event_id !== eventId) return false;
+      if (e.learner_id !== learnerId) return false;
+      if (e.jury_id !== juryId && e.jury_name !== juryId) return false;
+      const eResolved = resolveCanonicalSession(e.session_id, e.session_name, agendaItems);
+      if (eResolved.canonicalId !== canonicalSessionId) return false;
+      if (isTest) {
+        if (!e.is_test && !this.isTestScore(e as any)) return false;
+        if (effectiveTestRunId && e.test_run_id && e.test_run_id !== effectiveTestRunId) return false;
+      } else {
+        if (e.is_test || this.isTestScore(e as any)) return false;
+      }
+      return true;
+    });
+
+    if (foundEval) {
+      foundEval.turns = allTurns.filter(t => t.evaluation_id === foundEval.id);
+      foundEval.adjustments = allAdjs.filter(a => a.evaluation_id === foundEval.id);
+      return foundEval;
+    }
+
+    // 2. Fallback: check legacy scores and materialize into JURY_EVALUATIONS
+    const legacyScores = this.getScores(eventId, canonicalSessionId);
+    const matchingLegacy = legacyScores.find(s => {
+      if (s.learner_id !== learnerId) return false;
+      if (s.event_id && s.event_id !== eventId) return false;
+      let jId = s.jury_id;
+      if (!jId && s.juror_name) {
+        jId = s.juror_name.trim().toLowerCase().replace(/\s+/g, '_');
+      }
+      if (jId !== juryId && s.juror_name !== juryId && s.jury_id !== juryId) return false;
+      const sResolved = resolveCanonicalSession(s.session_id, s.session_name, agendaItems);
+      if (sResolved.canonicalId !== canonicalSessionId) return false;
+      if (isTest) {
+        if (!s.is_test && !this.isTestScore(s)) return false;
+        if (effectiveTestRunId && s.test_run_id && s.test_run_id !== effectiveTestRunId) return false;
+      } else {
+        if (s.is_test || this.isTestScore(s)) return false;
+      }
+      return true;
+    });
+
+    if (matchingLegacy) {
+      const evalId = matchingLegacy.id || uid('eval');
+      const now = matchingLegacy.created_at || new Date().toISOString();
+      const materialized: JuryEvaluation = {
+        id: evalId,
+        event_id: eventId,
+        session_id: canonicalSessionId,
+        session_name: resolvedSession.displayName,
+        learner_id: learnerId,
+        learner_name: matchingLegacy.learner_name || 'Delegate',
+        constituency_number: matchingLegacy.constituency_number,
+        constituency_name: matchingLegacy.constituency_name,
+        party_name: matchingLegacy.party_name || 'Independent',
+        bench: (matchingLegacy.bench as any) || 'Ruling',
+        jury_id: juryId,
+        jury_name: matchingLegacy.juror_name || 'Juror',
+        research_constituency: Number(matchingLegacy.research_constituency || 0),
+        relevance_agenda: Number(matchingLegacy.relevance_agenda || 0),
+        communication_delivery: Number(matchingLegacy.communication_delivery || 0),
+        parliamentary_conduct: Number(matchingLegacy.parliamentary_conduct || 0),
+        originality_preparation: Number(matchingLegacy.originality_preparation || 0),
+        time_management: Number(matchingLegacy.time_management || 0),
+        total: Number(matchingLegacy.total || 0),
+        feedback: matchingLegacy.feedback || '',
+        initial_speaking_turn_id: matchingLegacy.speaking_turn_id,
+        status: 'ACTIVE',
+        is_test: isTest,
+        test_run_id: isTest ? (effectiveTestRunId || matchingLegacy.test_run_id) : undefined,
+        created_at: now,
+        updated_at: matchingLegacy.updated_at || now,
+        turns: [],
+        adjustments: []
+      };
+
+      if (matchingLegacy.speaking_turn_id) {
+        const turnRecord: JuryEvaluationTurn = {
+          id: uid('eval_turn'),
+          evaluation_id: evalId,
+          speaking_turn_id: matchingLegacy.speaking_turn_id,
+          turn_number: 1,
+          action_type: 'INITIAL_EVALUATION',
+          recorded_by: juryId,
+          recorded_by_name: matchingLegacy.juror_name || 'Juror',
+          is_test: isTest,
+          test_run_id: isTest ? (effectiveTestRunId || matchingLegacy.test_run_id) : undefined,
+          created_at: now
+        };
+        materialized.turns = [turnRecord];
+        this.setItem(STORAGE_KEYS.JURY_EVALUATION_TURNS, [...allTurns, turnRecord]);
+      }
+
+      allEvals.push(materialized);
+      this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, allEvals);
+      return materialized;
+    }
+
+    return null;
+  }
+
   public recordContributionOnly(params: {
-    evaluationId: string;
+    evaluationId?: string;
+    eventId?: string;
+    sessionId?: string;
+    learnerId?: string;
     speakingTurnId: string;
     jurorId: string;
     jurorName: string;
     notes?: string;
+    isTest?: boolean;
+    testRunId?: string;
   }): JuryEvaluation {
     const allEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
-    const evaluation = allEvals.find(e => e.id === params.evaluationId);
+    let evaluation: JuryEvaluation | undefined;
+
+    // 1. Direct ID lookup in JURY_EVALUATIONS
+    if (params.evaluationId) {
+      evaluation = allEvals.find(e => e.id === params.evaluationId);
+    }
+
+    // 2. Canonical resolution if not found or if canonical coordinates provided
+    if (!evaluation && params.eventId && params.sessionId && params.learnerId) {
+      const canonical = this.resolveAuthoritativeSessionEvaluation(
+        params.eventId,
+        params.sessionId,
+        params.jurorId,
+        params.learnerId,
+        params.isTest,
+        params.testRunId
+      );
+      if (canonical) {
+        evaluation = allEvals.find(e => e.id === canonical.id) || canonical;
+      }
+    }
+
+    // 3. Fallback: search legacy score by evaluationId if synthetic
+    if (!evaluation && params.evaluationId) {
+      const legacyScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
+      const matchedLegacy = legacyScores.find(s => s.id === params.evaluationId);
+      if (matchedLegacy && matchedLegacy.event_id && matchedLegacy.session_id && matchedLegacy.learner_id) {
+        const canonical = this.resolveAuthoritativeSessionEvaluation(
+          matchedLegacy.event_id,
+          matchedLegacy.session_id,
+          matchedLegacy.jury_id || params.jurorId,
+          matchedLegacy.learner_id,
+          Boolean(matchedLegacy.is_test),
+          matchedLegacy.test_run_id
+        );
+        if (canonical) {
+          evaluation = allEvals.find(e => e.id === canonical.id) || canonical;
+        }
+      }
+    }
+
     if (!evaluation) {
-      throw new Error(`Evaluation ${params.evaluationId} not found`);
+      throw new Error(`Evaluation ${params.evaluationId || 'session'} not found`);
     }
 
     const allTurns = this.getItem<JuryEvaluationTurn[]>(STORAGE_KEYS.JURY_EVALUATION_TURNS, []);
-    const evalTurns = allTurns.filter(t => t.evaluation_id === params.evaluationId);
-    const turnNumber = evalTurns.length + 1;
+    const evalTurns = allTurns.filter(t => t.evaluation_id === evaluation!.id);
+    const alreadyLogged = evalTurns.some(t => t.speaking_turn_id === params.speakingTurnId);
+
     const now = new Date().toISOString();
+    if (!alreadyLogged) {
+      const turnNumber = evalTurns.length + 1;
+      const newTurn: JuryEvaluationTurn = {
+        id: uid('eval_turn'),
+        evaluation_id: evaluation.id,
+        speaking_turn_id: params.speakingTurnId,
+        turn_number: turnNumber,
+        action_type: 'CONTRIBUTION_ONLY',
+        recorded_by: params.jurorId,
+        recorded_by_name: params.jurorName,
+        notes: (params.notes || '').trim(),
+        is_test: evaluation.is_test,
+        test_run_id: evaluation.test_run_id,
+        created_at: now
+      };
 
-    const newTurn: JuryEvaluationTurn = {
-      id: uid('eval_turn'),
-      evaluation_id: params.evaluationId,
-      speaking_turn_id: params.speakingTurnId,
-      turn_number: turnNumber,
-      action_type: 'CONTRIBUTION_ONLY',
-      recorded_by: params.jurorId,
-      recorded_by_name: params.jurorName,
-      notes: (params.notes || '').trim(),
-      is_test: evaluation.is_test,
-      test_run_id: evaluation.test_run_id,
-      created_at: now
-    };
-
-    this.setItem(STORAGE_KEYS.JURY_EVALUATION_TURNS, [...allTurns, newTurn]);
+      this.setItem(STORAGE_KEYS.JURY_EVALUATION_TURNS, [...allTurns, newTurn]);
+      evaluation.turns = [...evalTurns, newTurn];
+    }
 
     evaluation.updated_at = now;
-    evaluation.turns = [...evalTurns, newTurn];
+    const evalIndex = allEvals.findIndex(e => e.id === evaluation!.id);
+    if (evalIndex >= 0) {
+      allEvals[evalIndex] = evaluation;
+    } else {
+      allEvals.push(evaluation);
+    }
     this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, allEvals);
 
     this.notify();
@@ -16870,7 +17073,10 @@ class StorageService {
   }
 
   public recordScoreAdjustment(params: {
-    evaluationId: string;
+    evaluationId?: string;
+    eventId?: string;
+    sessionId?: string;
+    learnerId?: string;
     speakingTurnId?: string;
     jurorId: string;
     jurorName: string;
@@ -16881,6 +17087,8 @@ class StorageService {
     originality_preparation: number;
     time_management: number;
     adjustmentReason: string;
+    isTest?: boolean;
+    testRunId?: string;
   }): JuryEvaluation {
     const reason = (params.adjustmentReason || '').trim();
     if (!reason) {
@@ -16888,9 +17096,49 @@ class StorageService {
     }
 
     const allEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
-    const evaluation = allEvals.find(e => e.id === params.evaluationId);
+    let evaluation: JuryEvaluation | undefined;
+
+    // 1. Direct ID lookup in JURY_EVALUATIONS
+    if (params.evaluationId) {
+      evaluation = allEvals.find(e => e.id === params.evaluationId);
+    }
+
+    // 2. Canonical resolution if not found or if canonical coordinates provided
+    if (!evaluation && params.eventId && params.sessionId && params.learnerId) {
+      const canonical = this.resolveAuthoritativeSessionEvaluation(
+        params.eventId,
+        params.sessionId,
+        params.jurorId,
+        params.learnerId,
+        params.isTest,
+        params.testRunId
+      );
+      if (canonical) {
+        evaluation = allEvals.find(e => e.id === canonical.id) || canonical;
+      }
+    }
+
+    // 3. Fallback: search legacy score by evaluationId if synthetic
+    if (!evaluation && params.evaluationId) {
+      const legacyScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
+      const matchedLegacy = legacyScores.find(s => s.id === params.evaluationId);
+      if (matchedLegacy && matchedLegacy.event_id && matchedLegacy.session_id && matchedLegacy.learner_id) {
+        const canonical = this.resolveAuthoritativeSessionEvaluation(
+          matchedLegacy.event_id,
+          matchedLegacy.session_id,
+          matchedLegacy.jury_id || params.jurorId,
+          matchedLegacy.learner_id,
+          Boolean(matchedLegacy.is_test),
+          matchedLegacy.test_run_id
+        );
+        if (canonical) {
+          evaluation = allEvals.find(e => e.id === canonical.id) || canonical;
+        }
+      }
+    }
+
     if (!evaluation) {
-      throw new Error(`Evaluation ${params.evaluationId} not found`);
+      throw new Error(`Evaluation ${params.evaluationId || 'session'} not found`);
     }
 
     const prevR = evaluation.research_constituency;
@@ -16915,7 +17163,7 @@ class StorageService {
     // 1. Create Adjustment History record
     const adjustmentRecord: JuryEvaluationAdjustment = {
       id: uid('eval_adj'),
-      evaluation_id: params.evaluationId,
+      evaluation_id: evaluation.id,
       speaking_turn_id: params.speakingTurnId,
       juror_id: params.jurorId,
       juror_name: params.jurorName,
@@ -16943,14 +17191,15 @@ class StorageService {
     const allAdjustments = this.getItem<JuryEvaluationAdjustment[]>(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, []);
     this.setItem(STORAGE_KEYS.JURY_EVALUATION_ADJUSTMENTS, [...allAdjustments, adjustmentRecord]);
 
+    // 2. Create Turn entry if speakingTurnId provided and not yet tracked
     // 2. Create Turn entry if speakingTurnId provided
     const allTurns = this.getItem<JuryEvaluationTurn[]>(STORAGE_KEYS.JURY_EVALUATION_TURNS, []);
-    const evalTurns = allTurns.filter(t => t.evaluation_id === params.evaluationId);
+    const evalTurns = allTurns.filter(t => t.evaluation_id === evaluation!.id);
     let turnRecord: JuryEvaluationTurn | undefined;
     if (params.speakingTurnId) {
       turnRecord = {
         id: uid('eval_turn'),
-        evaluation_id: params.evaluationId,
+        evaluation_id: evaluation.id,
         speaking_turn_id: params.speakingTurnId,
         turn_number: evalTurns.length + 1,
         action_type: 'ADJUSTMENT',
@@ -16977,6 +17226,12 @@ class StorageService {
     if (params.speakingTurnId && turnRecord) {
       evaluation.turns = [...evalTurns, turnRecord];
     }
+    const evalIdx = allEvals.findIndex(e => e.id === evaluation!.id);
+    if (evalIdx >= 0) {
+      allEvals[evalIdx] = evaluation;
+    } else {
+      allEvals.push(evaluation);
+    }
     this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, allEvals);
 
     // 4. Update legacy ScoreRecord mirror
@@ -17002,6 +17257,8 @@ class StorageService {
       total: newTotal,
       feedback: evaluation.feedback,
       is_test: evaluation.is_test,
+      test_run_id: evaluation.test_run_id,
+      speaking_turn_id: params.speakingTurnId || evaluation.initial_speaking_turn_id,
       created_at: evaluation.created_at,
       updated_at: now
     });
@@ -17767,6 +18024,8 @@ class StorageService {
     const agendaItems = eventId ? this.getAgenda(eventId) : [];
 
     const evalMap = new Map<string, JuryEvaluation>();
+    const existingKeys = new Set<string>();
+    const seenEvalIds = new Set<string>();
 
     // Index existing new-model evaluations
     allEvals.forEach(e => {
@@ -17777,9 +18036,14 @@ class StorageService {
       const resolved = resolveCanonicalSession(e.session_id, e.session_name, agendaItems);
       e.turns = allTurns.filter(t => t.evaluation_id === e.id);
       e.adjustments = allAdjs.filter(a => a.evaluation_id === e.id);
-      const turnSuffix = e.initial_speaking_turn_id || (e.turns && e.turns[0]?.speaking_turn_id) || e.id;
-      const k = `${e.event_id}:::${resolved.canonicalId}:::${e.jury_id}:::${e.learner_id}:::${turnSuffix}`;
+      const modeKey = e.is_test ? 'test' : 'live';
+      const k = `${e.event_id}:::${resolved.canonicalId}:::${e.jury_id}:::${e.learner_id}:::${modeKey}`;
       evalMap.set(k, e);
+      existingKeys.add(k);
+      if (e.jury_name) {
+        existingKeys.add(`${e.event_id}:::${resolved.canonicalId}:::${e.jury_name}:::${e.learner_id}:::${modeKey}`);
+      }
+      if (e.id) seenEvalIds.add(e.id);
     });
 
     // Bridge legacy scores if not in evalMap
@@ -17789,6 +18053,9 @@ class StorageService {
       if (!includeTest && (s.is_test || this.isTestScore(s))) {
         return;
       }
+      if (s.id && seenEvalIds.has(s.id)) {
+        return;
+      }
       const resolved = resolveCanonicalSession(s.session_id, s.session_name, agendaItems);
       let jId = s.jury_id;
       if (!jId && s.juror_name) {
@@ -17796,9 +18063,11 @@ class StorageService {
       }
       if (!jId) jId = 'default_jury';
 
-      const turnSuffix = s.speaking_turn_id || s.id;
-      const k = `${s.event_id}:::${resolved.canonicalId}:::${jId}:::${s.learner_id}:::${turnSuffix}`;
-      if (!evalMap.has(k)) {
+      const isTestScoreRecord = !!(s.is_test || this.isTestScore(s));
+      const modeKey = isTestScoreRecord ? 'test' : 'live';
+      const k = `${s.event_id}:::${resolved.canonicalId}:::${jId}:::${s.learner_id}:::${modeKey}`;
+      const altK = s.juror_name ? `${s.event_id}:::${resolved.canonicalId}:::${s.juror_name}:::${s.learner_id}:::${modeKey}` : '';
+      if (!existingKeys.has(k) && (!altK || !existingKeys.has(altK))) {
         const syntheticEval: JuryEvaluation = {
           id: s.id,
           event_id: s.event_id || eventId || '',
