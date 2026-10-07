@@ -942,7 +942,56 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
         effectiveDelegateTurns[0];
       const turnId = activeTurn?.id || selectedSpeakingTurnId || '';
 
+      const now = new Date().toISOString();
+      const evalId = `eval_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const totalScore = (researchScore! + relevanceScore! + commScore! + conductScore! + originalityScore! + timeScore!);
+      const isTest = testMode.isTestMode;
+      const testRunId = isTest ? (testMode.testRunId || undefined) : undefined;
+
+      const scoreRecordToPersist: ScoreRecord = {
+        id: evalId,
+        event_id: event.id,
+        session_id: selectedSession.id,
+        session_name: selectedSession.name,
+        learner_id: selectedLearner.id,
+        learner_name: selectedLearner.full_name,
+        constituency_number: selectedLearner.constituency_number,
+        constituency_name: selectedLearner.constituency_name,
+        party_name: selectedLearner.party_name || 'Independent',
+        bench: (selectedLearner.bench as any) || 'Ruling',
+        jury_id: jury?.id || jury?.name || 'jury',
+        juror_name: jury?.name || 'Evaluator',
+        research_constituency: researchScore!,
+        relevance_agenda: relevanceScore!,
+        communication_delivery: commScore!,
+        parliamentary_conduct: conductScore!,
+        originality_preparation: originalityScore!,
+        time_management: timeScore!,
+        oratory: commScore!,
+        policy_knowledge: researchScore!,
+        rebuttal_debate: relevanceScore!,
+        total: totalScore,
+        feedback: (feedback || '').trim(),
+        is_test: isTest,
+        test_run_id: testRunId,
+        speaking_turn_id: turnId || undefined,
+        is_locked: false,
+        created_at: now,
+        updated_at: now
+      };
+
+      // Part 11: Authoritative backend persistence check before marking officially evaluated
+      const persistRes = await storageService.persistScoreRecordToBackend(scoreRecordToPersist);
+      if (!persistRes.success) {
+        onShowToast('Save Failed — Retry', persistRes.error || 'Unable to confirm score persistence in database. Please retry.', 'error');
+        setIsSubmittingEvaluation(false);
+        return;
+      }
+
+      // Backend write + read-back succeeded! Authoritative persistence verified.
+      // Now register official evaluation locally
       const savedEval = storageService.recordInitialEvaluation({
+        id: evalId,
         eventId: event.id,
         sessionId: selectedSession.id,
         sessionName: selectedSession.name,
@@ -965,46 +1014,6 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
         speakingTurnId: turnId,
         feedback: feedback
       });
-
-      const scoreRecordToPersist: ScoreRecord = {
-        id: savedEval.id,
-        event_id: savedEval.event_id,
-        session_id: savedEval.session_id,
-        session_name: savedEval.session_name,
-        learner_id: savedEval.learner_id,
-        learner_name: savedEval.learner_name,
-        constituency_number: savedEval.constituency_number,
-        constituency_name: savedEval.constituency_name,
-        party_name: savedEval.party_name,
-        bench: savedEval.bench,
-        jury_id: savedEval.jury_id,
-        juror_name: savedEval.jury_name,
-        research_constituency: savedEval.research_constituency,
-        relevance_agenda: savedEval.relevance_agenda,
-        communication_delivery: savedEval.communication_delivery,
-        parliamentary_conduct: savedEval.parliamentary_conduct,
-        originality_preparation: savedEval.originality_preparation,
-        time_management: savedEval.time_management,
-        oratory: savedEval.communication_delivery,
-        policy_knowledge: savedEval.research_constituency,
-        rebuttal_debate: savedEval.relevance_agenda,
-        total: savedEval.total,
-        feedback: savedEval.feedback || '',
-        is_test: savedEval.is_test,
-        test_run_id: savedEval.test_run_id,
-        speaking_turn_id: turnId || undefined,
-        is_locked: false,
-        created_at: savedEval.created_at,
-        updated_at: savedEval.updated_at
-      };
-
-      // Part 11: Authoritative backend persistence check before marking officially evaluated
-      const persistRes = await storageService.persistScoreRecordToBackend(scoreRecordToPersist);
-      if (!persistRes.success) {
-        onShowToast('Save Failed — Retry', persistRes.error || 'Unable to confirm score persistence in database. Please retry.', 'error');
-        setIsSubmittingEvaluation(false);
-        return;
-      }
 
       // Clear local draft now that official evaluation is submitted & persisted
       storageService.clearJuryDraft(

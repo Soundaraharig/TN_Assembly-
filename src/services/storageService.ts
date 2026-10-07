@@ -16409,6 +16409,7 @@ class StorageService {
     speakingTurnId?: string;
     feedback?: string;
     isTest?: boolean;
+    id?: string;
     testRunId?: string;
   }): JuryEvaluation {
     if (!params.eventId) throw new Error('Event ID is required for initial evaluation');
@@ -16456,7 +16457,7 @@ class StorageService {
 
     const env = this.getScoringEnvironment(params.eventId);
     const isTest = env.mode === 'test' || Boolean(params.isTest);
-    const testRunId = isTest ? (params.testRunId || env.testRunId || uid('test_run')) : undefined;
+    const testRunId = isTest ? (params.testRunId || env.testRunId || undefined) : undefined;
 
     const allEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
     const existing = allEvals.find(e =>
@@ -16480,7 +16481,7 @@ class StorageService {
     }
 
     const now = new Date().toISOString();
-    const evalId = uid('eval');
+    const evalId = params.id || uid('eval');
     const newEval: JuryEvaluation = {
       id: evalId,
       event_id: params.eventId,
@@ -17020,7 +17021,7 @@ class StorageService {
 
       const env = this.getScoringEnvironment(eventId);
       const isTest = env.mode === 'test' || Boolean(params.isTest);
-      const testRunId = isTest ? (env.testRunId || params.testRunId || uid('test_run')) : undefined;
+      const testRunId = isTest ? (env.testRunId || params.testRunId || undefined) : undefined;
 
       const all = this.getItem<JurySpeechRecognition[]>(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, []);
       // Canonical recognition match: per eventId + juryId + learnerId + test environment
