@@ -282,7 +282,7 @@ export const STORAGE_KEYS = {
 export const SUPABASE_COLUMNS: Record<string, string> = {
   COLLEGE_EVENTS_LIST: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,elections_count,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at',
   COLLEGE_EVENTS: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at,social_coverage',
-  COLLEGE_EVENTS_JURY: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at,social_coverage->scores,social_coverage->jury_speech_recognitions,social_coverage->test_speaking_turn_ids',
+  COLLEGE_EVENTS_JURY: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at,social_coverage->scores,social_coverage->jury_speech_recognitions,social_coverage->test_speaking_turn_ids,social_coverage->active_session_id,social_coverage->active_session_name,social_coverage->active_session_updated_at',
   COLLEGE_EVENTS_STUDENT: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at,social_coverage->elections,social_coverage->flash_votes,social_coverage->nominations,social_coverage->open_nominations,social_coverage->cabinet_ministries,social_coverage->proceedings_questions,social_coverage->active_question_id,social_coverage->completed_question_ids,social_coverage->question_calling_order,social_coverage->question_order_version,social_coverage->question_order_updated_at,social_coverage->deleted_question_ids,social_coverage->event_deadline,social_coverage->is_question_window_open,social_coverage->agenda_progress,social_coverage->timer',
   COORDINATORS_PUBLIC: 'id,event_id,name,email,created_at,updated_at',
   COORDINATORS: 'id,event_id,name,email,password_hash,raw_temp_password,created_at,updated_at',
@@ -1862,6 +1862,31 @@ class StorageService {
       }
       if (sc.last_bell_ring) {
         this.setItem(`tn_assembly_last_bell_${ev.id}`, sc.last_bell_ring);
+      }
+      if (sc.active_session_id) {
+        const canonicalId = sc.active_session_id;
+        const displayName = sc.active_session_name || 'Assembly Floor Session';
+        const activeKey = `tn_assembly_active_session_${ev.id}`;
+        let localDiffers = true;
+        if (typeof localStorage !== 'undefined') {
+          try {
+            const raw = localStorage.getItem(activeKey);
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (parsed?.id === canonicalId) {
+                localDiffers = false;
+              }
+            }
+            if (localDiffers) {
+              localStorage.setItem(activeKey, JSON.stringify({ id: canonicalId, name: displayName, updatedAt: Date.now() }));
+            }
+          } catch {}
+        }
+        if (localDiffers && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('tn_assembly_active_session_changed', {
+            detail: { eventId: ev.id, sessionId: canonicalId, sessionName: displayName, updatedAt: Date.now() }
+          }));
+        }
       }
       if (sc.event_deadline && typeof sc.event_deadline === 'object') {
         const dl: EventDeadline = {
@@ -3766,27 +3791,43 @@ class StorageService {
     const sb = supabase;
     if (!sb || !eventId) return;
     try {
-      // STRICTLY SCOPED: Jury portal fetches ONLY event (with social_coverage for scores) and learners.
-      // NEVER queries: volunteers, coordinators, event_day_attendance, event_days, jury_members, political_parties, elections, or session_agenda on initial load.
+      // STRICTLY SCOPED: Jury portal fetches ONLY event (with social_coverage for scores), active session agenda row, and learners.
+      // NEVER queries: volunteers, coordinators, event_day_attendance, event_days, jury_members, political_parties, or elections on initial load.
       const [
         { data: evData },
-        learnersData
+        learnersData,
+        { data: activeAgendaData }
       ] = await Promise.all([
         this.dedupeInFlight<{ data: any }>(`query_event_${eventId}`, async () =>
           await sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS_JURY).eq('id', eventId).limit(1)
         ),
-        this.fetchEventLearners(eventId)
+        this.fetchEventLearners(eventId),
+        this.dedupeInFlight<{ data: any }>(`query_active_agenda_${eventId}`, async () =>
+          await sb.from('session_agenda').select('id,title,is_current').eq('event_id', eventId).eq('is_current', true).limit(1)
+        )
       ]);
 
       if (evData && evData.length > 0) {
         const rawEv = evData[0] as any;
+        let authSessId = rawEv.active_session_id || rawEv.social_coverage?.active_session_id || '';
+        let authSessName = rawEv.active_session_name || rawEv.social_coverage?.active_session_name || '';
+
+        if (!authSessId && activeAgendaData && activeAgendaData.length > 0 && activeAgendaData[0]?.is_current) {
+          const currentAg = activeAgendaData[0];
+          const resolved = resolveCanonicalSession(currentAg.id, currentAg.title);
+          authSessId = resolved.canonicalId;
+          authSessName = currentAg.title || resolved.displayName;
+        }
+
         const normalizedEv: CollegeEvent = {
           ...rawEv,
           social_coverage: {
             ...(rawEv.social_coverage || {}),
             scores: Array.isArray(rawEv.scores) ? rawEv.scores : (rawEv.social_coverage?.scores || []),
             jury_speech_recognitions: Array.isArray(rawEv.jury_speech_recognitions) ? rawEv.jury_speech_recognitions : (rawEv.social_coverage?.jury_speech_recognitions || []),
-            test_speaking_turn_ids: Array.isArray(rawEv.test_speaking_turn_ids) ? rawEv.test_speaking_turn_ids : (rawEv.social_coverage?.test_speaking_turn_ids || [])
+            test_speaking_turn_ids: Array.isArray(rawEv.test_speaking_turn_ids) ? rawEv.test_speaking_turn_ids : (rawEv.social_coverage?.test_speaking_turn_ids || []),
+            active_session_id: authSessId || rawEv.active_session_id || rawEv.social_coverage?.active_session_id,
+            active_session_name: authSessName || rawEv.active_session_name || rawEv.social_coverage?.active_session_name
           }
         };
         const ev = this.normalizeEvent(normalizedEv);
@@ -3795,6 +3836,24 @@ class StorageService {
         const merged = existing ? { ...existing, ...ev } : ev;
         this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), merged]);
         this.unpackAndApplyEventState([merged], eventId);
+
+        if (authSessId) {
+          if (typeof localStorage !== 'undefined') {
+            try {
+              localStorage.setItem(
+                `tn_assembly_active_session_${eventId}`,
+                JSON.stringify({ id: authSessId, name: authSessName, updatedAt: Date.now() })
+              );
+            } catch {}
+          }
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('tn_assembly_active_session_changed', {
+                detail: { eventId, sessionId: authSessId, sessionName: authSessName, updatedAt: Date.now() }
+              })
+            );
+          }
+        }
 
         if (Array.isArray(normalizedEv.social_coverage?.jury_speech_recognitions) && normalizedEv.social_coverage.jury_speech_recognitions.length > 0) {
           const allRecogs = this.getItem<JurySpeechRecognition[]>(STORAGE_KEYS.JURY_SPEECH_RECOGNITIONS, []);
@@ -11376,7 +11435,50 @@ class StorageService {
   public getAuthoritativeActiveSession(eventId?: string): { id: string; name: string } {
     if (!eventId) return { id: 'zero_hour', name: 'Zero Hour' };
 
-    // 1. Explicit local storage with event scope
+    // 1. Authoritative Event social_coverage check (REMOTE STATE WINS OVER LOCAL CACHE)
+    const ev = this.getEvents().find(e => e.id === eventId);
+    const sc = (ev?.social_coverage || {}) as Record<string, any>;
+    if (sc.active_session_id) {
+      const canonicalId = sc.active_session_id;
+      const displayName = sc.active_session_name || 'Assembly Floor Session';
+      // Self-heal stale or conflicting localStorage
+      if (typeof localStorage !== 'undefined') {
+        try {
+          const stored = localStorage.getItem(`tn_assembly_active_session_${eventId}`);
+          if (!stored || JSON.parse(stored)?.id !== canonicalId) {
+            localStorage.setItem(
+              `tn_assembly_active_session_${eventId}`,
+              JSON.stringify({ id: canonicalId, name: displayName, updatedAt: Date.now() })
+            );
+          }
+        } catch {}
+      }
+      return { id: canonicalId, name: displayName };
+    }
+
+    // 2. Authoritative session_agenda is_current check (REMOTE STATE WINS)
+    const agenda = this.getAgenda(eventId);
+    const currentAgenda = agenda.find(a => a.is_current);
+    if (currentAgenda) {
+      const resolved = resolveCanonicalSession(currentAgenda.id, currentAgenda.title, agenda);
+      const canonicalId = resolved.canonicalId;
+      const displayName = currentAgenda.title || resolved.displayName;
+      // Self-heal stale or conflicting localStorage
+      if (typeof localStorage !== 'undefined') {
+        try {
+          const stored = localStorage.getItem(`tn_assembly_active_session_${eventId}`);
+          if (!stored || JSON.parse(stored)?.id !== canonicalId) {
+            localStorage.setItem(
+              `tn_assembly_active_session_${eventId}`,
+              JSON.stringify({ id: canonicalId, name: displayName, updatedAt: Date.now() })
+            );
+          }
+        } catch {}
+      }
+      return { id: canonicalId, name: displayName };
+    }
+
+    // 3. Explicit local storage with event scope (ONLY IF remote state has no active session configured)
     if (typeof localStorage !== 'undefined') {
       try {
         const stored = localStorage.getItem(`tn_assembly_active_session_${eventId}`);
@@ -11387,24 +11489,6 @@ class StorageService {
           }
         }
       } catch {}
-    }
-
-    // 2. Event social_coverage check
-    const ev = this.getEvents().find(e => e.id === eventId);
-    const sc = (ev?.social_coverage || {}) as Record<string, any>;
-    if (sc.active_session_id) {
-      return {
-        id: sc.active_session_id,
-        name: sc.active_session_name || 'Assembly Floor Session'
-      };
-    }
-
-    // 3. session_agenda is_current check
-    const agenda = this.getAgenda(eventId);
-    const currentAgenda = agenda.find(a => a.is_current);
-    if (currentAgenda) {
-      const resolved = resolveCanonicalSession(currentAgenda.id, currentAgenda.title, agenda);
-      return { id: resolved.canonicalId, name: currentAgenda.title || resolved.displayName };
     }
 
     // 4. Fallback to first available scoring session

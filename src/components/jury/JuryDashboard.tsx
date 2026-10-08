@@ -438,6 +438,18 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     onShowToastRef.current = onShowToast;
   }, [onShowToast]);
 
+  // Synchronize authoritative active session whenever event or its social coverage updates
+  useEffect(() => {
+    if (!event?.id) return;
+    const auth = storageService.getAuthoritativeActiveSession(event.id);
+    if (auth.id && auth.id !== selectedSessionId) {
+      if (!isMidEvaluationRef.current && !evaluationSessionId) {
+        setSelectedSessionId(auth.id);
+        setLoadedKey('');
+      }
+    }
+  }, [event?.id, event?.social_coverage, evaluationSessionId, selectedSessionId]);
+
   useEffect(() => {
     const unsub = storageService.subscribe(() => {
       setRecogTick(t => t + 1);
