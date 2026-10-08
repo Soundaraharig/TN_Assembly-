@@ -775,6 +775,38 @@ class StorageService {
     return this.hydratedEventIds.has(eventId);
   }
 
+  // ── In-Memory Agenda Cache & Diagnostic Tracing Engine ─────────────────
+  private eventAgendaCache = new Map<string, AgendaItem[]>();
+  private agendaTraceDedup = new Map<string, number>();
+
+  public invalidateAgendaCache(eventId?: string): void {
+    if (eventId) {
+      this.eventAgendaCache.delete(eventId);
+      this.sessionAgendaCache.delete(eventId);
+    } else {
+      this.eventAgendaCache.clear();
+      this.sessionAgendaCache.clear();
+    }
+  }
+
+  public traceAgenda(params: {
+    eventId?: string;
+    agendaId?: string;
+    source: 'hydration' | 'user_action' | 'realtime' | 'projector' | 'control_panel' | 'duplicate_ignored';
+    reason?: string;
+    dbWrite?: boolean;
+    broadcast?: boolean;
+  }): void {
+    const now = Date.now();
+    const sig = `${params.eventId}_${params.agendaId}_${params.source}_${params.reason}`;
+    const lastTime = this.agendaTraceDedup.get(sig) || 0;
+    if (now - lastTime < 1000 && params.source !== 'user_action') {
+      return;
+    }
+    this.agendaTraceDedup.set(sig, now);
+    console.log(`[AGENDA-TRACE] timestamp=${now} eventId=${params.eventId || 'none'} agendaId=${params.agendaId || 'none'} source=${params.source} reason=${params.reason || 'SYNC'} dbWrite=${Boolean(params.dbWrite)} broadcast=${Boolean(params.broadcast)}`);
+  }
+
   // ── SWR Cache & Schema Versioning ───────────────────────────────────────
   public wasCacheMigrated: boolean = false;
   private memoryCache = new Map<string, CacheEntry<any>>();
@@ -1200,6 +1232,9 @@ class StorageService {
   private setItem<T>(key: string, value: T): void {
     try {
       localStorage.setItem(key, JSON.stringify(value));
+      if (key === STORAGE_KEYS.AGENDA) {
+        this.invalidateAgendaCache();
+      }
       this.notify();
     } catch (e) {
       console.error('Storage error:', e);
@@ -1209,6 +1244,9 @@ class StorageService {
   private setItemSafe<T>(key: string, value: T): void {
     try {
       localStorage.setItem(key, JSON.stringify(value));
+      if (key === STORAGE_KEYS.AGENDA) {
+        this.invalidateAgendaCache();
+      }
       this.notify();
     } catch (e) {
       console.warn(`[StorageService] localStorage quota warning for "${key}". Data safely held in memory/IDB.`);
@@ -1838,7 +1876,14 @@ class StorageService {
         }
         const deletedAgendaIds = this.getDeletedAgendaIds();
         const allAgenda = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, []).filter(a => !deletedAgendaIds.has(a.id));
-        console.log(`[AGENDA-TRACE] timestamp=${Date.now()} eventId=${ev.id} agendaId=${allAgenda.find(a => a.event_id === ev.id && a.is_current)?.id || 'none'} source=unpackEventState reason=HYDRATION dbWrite=false broadcast=false`);
+        this.traceAgenda({
+          eventId: ev.id,
+          agendaId: allAgenda.find(a => a.event_id === ev.id && a.is_current)?.id || 'none',
+          source: 'hydration',
+          reason: 'HYDRATION',
+          dbWrite: false,
+          broadcast: false
+        });
         let hasAgendaChanges = false;
         const updatedAgenda = allAgenda.map(item => {
           if (item.event_id === ev.id) {
@@ -1857,6 +1902,7 @@ class StorageService {
           return item;
         });
         if (hasAgendaChanges) {
+          this.invalidateAgendaCache(ev.id);
           this.setItem(STORAGE_KEYS.AGENDA, updatedAgenda);
         }
       }
@@ -2174,14 +2220,15 @@ class StorageService {
       this.setItem(STORAGE_KEYS.PROCEEDINGS_QUESTIONS, Array.from(pqMap.values()));
     }
     if (allScores) {
+      const agendaItems = targetEventId ? this.getAgenda(targetEventId) : [];
       const localScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
       const scoreMap = new Map<string, ScoreRecord>();
       localScores.forEach(s => {
-        const key = this.getScoreCompositeKey(s, targetEventId);
+        const key = this.getScoreCompositeKey(s, targetEventId, agendaItems);
         scoreMap.set(key, s);
       });
       allScores.forEach(remoteS => {
-        const key = this.getScoreCompositeKey(remoteS, targetEventId);
+        const key = this.getScoreCompositeKey(remoteS, targetEventId, agendaItems);
         const local = scoreMap.get(key);
         if (!local) {
           scoreMap.set(key, remoteS);
@@ -2191,7 +2238,10 @@ class StorageService {
           scoreMap.set(key, localTime >= remoteTime ? local : { ...local, ...remoteS });
         }
       });
-      this.setItem(STORAGE_KEYS.SCORES, Array.from(scoreMap.values()));
+      const nextScores = Array.from(scoreMap.values());
+      if (!areJsonbObjectsEqual(localScores, nextScores, ['updated_at'])) {
+        this.setItem(STORAGE_KEYS.SCORES, nextScores);
+      }
     }
     if (allChecklist && allChecklist.length > 0) {
       this.setItem(STORAGE_KEYS.CHECKLIST, allChecklist);
@@ -4122,7 +4172,15 @@ class StorageService {
         this.setItem(STORAGE_KEYS.AGENDA, [...otherAgenda, ...resolvedAgenda]);
 
         const currentActiveItem = resolvedAgenda.find((a: any) => a.is_current);
-        console.log(`[AGENDA-TRACE] timestamp=${Date.now()} eventId=${activeEventId} agendaId=${currentActiveItem?.id || 'none'} source=executeDisplayPortalFetch reason=PROJECTOR_FETCH dbWrite=false broadcast=false`);
+        this.invalidateAgendaCache(activeEventId);
+        this.traceAgenda({
+          eventId: activeEventId,
+          agendaId: currentActiveItem?.id || 'none',
+          source: 'projector',
+          reason: 'PROJECTOR_FETCH',
+          dbWrite: false,
+          broadcast: false
+        });
 
         // Reconcile projector selectedAgendaId with authoritative is_current
         if (currentActiveItem) {
@@ -5070,7 +5128,14 @@ class StorageService {
             const localAgendaUpdated = this.getItem<number>(`tn_assembly_agenda_updated_at_${evId}`, 0) || 0;
 
             if (incomingUpdated > 0 && incomingUpdated < localAgendaUpdated) {
-              console.log(`[AGENDA-TRACE] Ignored stale agenda_update broadcast: incoming=${incomingUpdated} < local=${localAgendaUpdated}`);
+              this.traceAgenda({
+                eventId: evId,
+                agendaId: 'none',
+                source: 'duplicate_ignored',
+                reason: `STALE_INCOMING_${incomingUpdated}`,
+                dbWrite: false,
+                broadcast: false
+              });
               return;
             }
             if (incomingUpdated > 0) {
@@ -5092,7 +5157,15 @@ class StorageService {
               this.setItem(STORAGE_KEYS.AGENDA, updated);
               incomingAgenda = updated.filter(a => a.event_id === evId);
             }
-            console.log(`[AGENDA-TRACE] timestamp=${Date.now()} eventId=${evId} agendaId=${incomingAgenda?.find(a => a.is_current)?.id || 'none'} source=setupRealtimeSync reason=REALTIME dbWrite=false broadcast=false`);
+            this.invalidateAgendaCache(evId);
+            this.traceAgenda({
+              eventId: evId,
+              agendaId: incomingAgenda?.find(a => a.is_current)?.id || 'none',
+              source: 'realtime',
+              reason: 'REALTIME',
+              dbWrite: false,
+              broadcast: false
+            });
 
             // Reconcile projector selectedAgendaId with the authoritative is_current from the broadcast.
             if (incomingAgenda) {
@@ -5168,14 +5241,29 @@ class StorageService {
             const localProgUpdated = this.getItem<number>(`tn_assembly_agenda_progress_updated_at_${evId}`, 0) || 0;
 
             if (incomingUpdated > 0 && incomingUpdated < localProgUpdated) {
-              console.log(`[AGENDA-TRACE] Ignored stale agenda_progress_update broadcast: incoming=${incomingUpdated} < local=${localProgUpdated}`);
+              this.traceAgenda({
+                eventId: evId,
+                agendaId: 'none',
+                source: 'duplicate_ignored',
+                reason: `STALE_PROGRESS_${incomingUpdated}`,
+                dbWrite: false,
+                broadcast: false
+              });
               return;
             }
             if (incomingUpdated > 0) {
               this.setItem(`tn_assembly_agenda_progress_updated_at_${evId}`, incomingUpdated);
             }
 
-            console.log(`[AGENDA-TRACE] timestamp=${Date.now()} eventId=${evId} agendaId=${prog.active_agenda_id || 'none'} source=setupRealtimeSync reason=AGENDA_PROGRESS dbWrite=false broadcast=false`);
+            this.invalidateAgendaCache(evId);
+            this.traceAgenda({
+              eventId: evId,
+              agendaId: prog.active_agenda_id || 'none',
+              source: 'realtime',
+              reason: 'AGENDA_PROGRESS',
+              dbWrite: false,
+              broadcast: false
+            });
             this.setItem(`tn_assembly_agenda_progress_${evId}`, prog);
             if (prog.started_days) {
               const key = `tn_assembly_started_days_${evId}`;
@@ -10689,7 +10777,15 @@ class StorageService {
   public async saveAgendaProgress(eventId: string, patch: Partial<EventAgendaProgress>): Promise<void> {
     if (!eventId) return;
     const now = Date.now();
-    console.log(`[AGENDA-TRACE] timestamp=${now} eventId=${eventId} agendaId=${patch.active_agenda_id || 'none'} source=saveAgendaProgress reason=AGENDA_PROGRESS_SYNC dbWrite=true broadcast=true`);
+    this.invalidateAgendaCache(eventId);
+    this.traceAgenda({
+      eventId,
+      agendaId: patch.active_agenda_id || 'none',
+      source: 'user_action',
+      reason: 'AGENDA_PROGRESS_SYNC',
+      dbWrite: true,
+      broadcast: true
+    });
     const existing = this.getAgendaProgress(eventId);
     const merged: EventAgendaProgress = {
       ...existing,
@@ -10788,6 +10884,13 @@ class StorageService {
   }
 
   public getAgenda(eventId?: string): AgendaItem[] {
+    if (eventId) {
+      const cached = this.eventAgendaCache.get(eventId);
+      if (cached) {
+        return cached;
+      }
+    }
+
     const deletedAgendaIds = this.getDeletedAgendaIds();
     const all = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, INITIAL_AGENDA).filter(a => !deletedAgendaIds.has(a.id));
     const sortFn = (a: AgendaItem, b: AgendaItem) => {
@@ -10803,9 +10906,6 @@ class StorageService {
     if (eventId) {
       const prog = this.getAgendaProgress(eventId);
       const eventItems = all.filter(a => a.event_id === eventId);
-      const currentActiveItem = eventItems.find(a => a.is_current);
-      console.log(`[AGENDA-TRACE] timestamp=${Date.now()} eventId=${eventId} agendaId=${currentActiveItem?.id || 'none'} source=getAgenda reason=HYDRATION_OR_READ dbWrite=false broadcast=false`);
-
       const resolved = eventItems.map(item => {
         let status = item.status;
         const is_current = !!item.is_current;
@@ -10819,7 +10919,9 @@ class StorageService {
         }
         return { ...item, status, is_current };
       });
-      return [...resolved].sort(sortFn);
+      const sorted = [...resolved].sort(sortFn);
+      this.eventAgendaCache.set(eventId, sorted);
+      return sorted;
     }
     return [...all].sort(sortFn);
   }
@@ -10832,6 +10934,7 @@ class StorageService {
     if (eventItemIds.length > 0) {
       this.addDeletedAgendaIds(eventItemIds);
     }
+    this.invalidateAgendaCache(eventId);
     this.sessionAgendaCache.delete(eventId);
     // 1. Remove from local storage
     const remaining = all.filter(a => a.event_id !== eventId);
@@ -11221,7 +11324,15 @@ class StorageService {
   public async setCurrentAgendaItem(eventId: string, itemId: string): Promise<void> {
     if (!eventId || !itemId) return;
     const now = Date.now();
-    console.log(`[AGENDA-TRACE] timestamp=${now} eventId=${eventId} agendaId=${itemId} source=setCurrentAgendaItem reason=ADMIN_CLICK dbWrite=true broadcast=true`);
+    this.invalidateAgendaCache(eventId);
+    this.traceAgenda({
+      eventId,
+      agendaId: itemId,
+      source: 'user_action',
+      reason: 'ADMIN_CLICK',
+      dbWrite: true,
+      broadcast: true
+    });
 
     // Immediately persist explicit key in localStorage for synchronous survival across rapid reloads
     this.setItem(`tn_assembly_current_agenda_${eventId}`, itemId);
@@ -16480,9 +16591,9 @@ class StorageService {
    * 3. Uses stable learner_id
    * Guarantees sessions, juries, and delegates NEVER overwrite each other.
    */
-  public getScoreCompositeKey(score: Partial<ScoreRecord>, eventIdFallback = ''): string {
+  public getScoreCompositeKey(score: Partial<ScoreRecord>, eventIdFallback = '', agendaItemsCache?: AgendaItem[]): string {
     const evId = score.event_id || eventIdFallback || '';
-    const agendaItems = evId ? this.getAgenda(evId) : [];
+    const agendaItems = agendaItemsCache || (evId ? this.getAgenda(evId) : []);
     const resolvedSession = resolveCanonicalSession(score.session_id, score.session_name, agendaItems);
     const sessKey = resolvedSession.canonicalId;
 
@@ -16563,9 +16674,10 @@ class StorageService {
           const parsed = JSON.parse(stored);
           if (Array.isArray(parsed) && parsed.length > 0) {
             const map = new Map<string, ScoreRecord>();
-            all.forEach(s => map.set(this.getScoreCompositeKey(s, eventId), s));
+            const agendaItems = eventId ? this.getAgenda(eventId) : [];
+            all.forEach(s => map.set(this.getScoreCompositeKey(s, eventId, agendaItems), s));
             parsed.forEach((s: ScoreRecord) => {
-              const k = this.getScoreCompositeKey(s, eventId);
+              const k = this.getScoreCompositeKey(s, eventId, agendaItems);
               const cur = map.get(k);
               if (!cur) {
                 map.set(k, s);

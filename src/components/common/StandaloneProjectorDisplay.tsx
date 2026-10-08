@@ -141,6 +141,13 @@ export const StandaloneProjectorDisplay: React.FC<StandaloneProjectorDisplayProp
     const activeEv = extractEventFromUrl(evs) || initialEvent || (currentEvent?.id ? evs.find(e => e.id === currentEvent.id) : null) || evs[0];
     const target = activeEv?.id || extractEventSlugCandidateFromUrl();
     if (target) {
+      storageService.traceAgenda({
+        eventId: target,
+        source: 'projector',
+        reason: 'PROJECTOR_READ',
+        dbWrite: false,
+        broadcast: false
+      });
       storageService.fetchDisplayPortalData(target, true).catch(err =>
         console.warn('[StandaloneProjectorDisplay] display data fetch warning:', err)
       );

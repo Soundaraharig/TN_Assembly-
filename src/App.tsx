@@ -1852,7 +1852,10 @@ export function App() {
         setLearners(storageService.getLearners(ev.id));
         setParties(storageService.getParties(ev.id));
         setCommittees(storageService.getCommittees(ev.id));
-        setAgenda(storageService.getAgenda(ev.id));
+        setAgenda(prev => {
+          const fresh = storageService.getAgenda(ev.id);
+          return areJsonbObjectsEqual(prev, fresh) ? prev : fresh;
+        });
         setJury(storageService.getJury(ev.id));
         setVolunteers(storageService.getVolunteers(ev.id));
         setNominations(storageService.getNominations(ev.id));
@@ -1875,7 +1878,10 @@ export function App() {
     setLearners(storageService.getLearners(ev.id));
     setParties(storageService.getParties(ev.id));
     setCommittees(storageService.getCommittees(ev.id));
-    setAgenda(storageService.getAgenda(ev.id));
+    setAgenda(prev => {
+      const fresh = storageService.getAgenda(ev.id);
+      return areJsonbObjectsEqual(prev, fresh) ? prev : fresh;
+    });
     setJury(storageService.getJury(ev.id));
     setVolunteers(storageService.getVolunteers(ev.id));
     setNominations(storageService.getNominations(ev.id));
@@ -2116,7 +2122,10 @@ export function App() {
     await storageService.deleteAgendaItem(id);
     const activeEv = extractEventFromUrl(events) || currentEvent;
     if (activeEv) {
-      setAgenda(storageService.getAgenda(activeEv.id));
+      setAgenda(prev => {
+        const fresh = storageService.getAgenda(activeEv.id);
+        return areJsonbObjectsEqual(prev, fresh) ? prev : fresh;
+      });
     }
   };
 
@@ -2230,10 +2239,12 @@ export function App() {
     const activeEv = extractEventFromUrl(events) || currentEvent;
     const targetEventId = arg2 ? arg1 : (activeEv?.id || '');
     const itemId = arg2 || arg1;
-    console.log(`[AGENDA-TRACE] timestamp=${Date.now()} eventId=${targetEventId} agendaId=${itemId} source=handleSetCurrentAgendaItem reason=ADMIN_CLICK dbWrite=true broadcast=true`);
     if (targetEventId && itemId) {
       await storageService.setCurrentAgendaItem(targetEventId, itemId);
-      setAgenda(storageService.getAgenda(targetEventId));
+      setAgenda(prev => {
+        const fresh = storageService.getAgenda(targetEventId);
+        return areJsonbObjectsEqual(prev, fresh) ? prev : fresh;
+      });
     }
   };
 
@@ -2523,7 +2534,10 @@ export function App() {
       setLearners(storageService.getLearners(targetEv.id));
       setParties(storageService.getParties(targetEv.id));
       setCommittees(storageService.getCommittees(targetEv.id));
-      setAgenda(storageService.getAgenda(targetEv.id));
+      setAgenda(prev => {
+        const fresh = storageService.getAgenda(targetEv.id);
+        return areJsonbObjectsEqual(prev, fresh) ? prev : fresh;
+      });
       setOpenNominationPositions(storageService.getOpenNominationPositions(targetEv.id));
       setNominations(storageService.getNominations(targetEv.id));
       setElections(storageService.getElections(targetEv.id));

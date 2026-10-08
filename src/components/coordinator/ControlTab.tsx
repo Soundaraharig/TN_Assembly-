@@ -113,6 +113,17 @@ export const ControlTab: React.FC<ControlTabProps> = ({
     } else if (agenda && agenda.length > 0) {
       setLocalAgenda(prev => (areJsonbObjectsEqual(prev, agenda) ? prev : agenda));
     }
+    if (currentEvent?.id) {
+      const active = (fresh && fresh.length > 0 ? fresh : agenda)?.find(a => a.is_current);
+      storageService.traceAgenda({
+        eventId: currentEvent.id,
+        agendaId: active?.id,
+        source: 'control_panel',
+        reason: 'CONTROL_PANEL_READ',
+        dbWrite: false,
+        broadcast: false
+      });
+    }
   }, [currentEvent?.id, agenda]);
 
   // Subscribe to storageService updates and custom events for real-time agenda sync

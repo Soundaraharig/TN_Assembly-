@@ -15,7 +15,7 @@ import {
   ShieldAlert
 } from 'lucide-react';
 import type { Volunteer, Learner, CollegeEvent, ScoringSession, SpeakingTurn } from '../../types';
-import { storageService } from '../../services/storageService';
+import { storageService, areJsonbObjectsEqual } from '../../services/storageService';
 import { useTheme } from '../../lib/theme';
 import { canUseSpeakerAid } from '../../utils/permissions';
 
@@ -92,10 +92,7 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
     }
   };
 
-  const [envTick, setEnvTick] = useState(0);
-  const testMode = useMemo(() => {
-    return storageService.getScoringTestMode(eventId);
-  }, [eventId, envTick]);
+  const [testMode, setTestMode] = useState(() => storageService.getScoringTestMode(eventId));
   const isTestMode = testMode.isTestMode;
   const activeTestRunId = testMode.testRunId;
 
@@ -126,12 +123,13 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
   // Sync state with storageService
   const refreshFloorState = () => {
     const tm = storageService.getScoringTestMode(eventId);
+    setTestMode(prev => (areJsonbObjectsEqual(prev, tm) ? prev : tm));
     const mode = tm.isTestMode ? 'test' : 'live';
     const active = storageService.getAuthoritativeCurrentSpeaker(eventId, selectedSessionId, mode, tm.testRunId);
-    setActiveSpeakerTurn(active);
+    setActiveSpeakerTurn(prev => (areJsonbObjectsEqual(prev, active) ? prev : active));
     const all = storageService.getSpeakingTurns(eventId, undefined, mode, tm.testRunId);
-    setTurnsLog(all.slice(-15).reverse());
-    setEnvTick(t => t + 1);
+    const sliced = all.slice(-15).reverse();
+    setTurnsLog(prev => (areJsonbObjectsEqual(prev, sliced) ? prev : sliced));
   };
 
   // Authoritative operational role check: ONLY genuine Speaker Aid may access this dashboard
