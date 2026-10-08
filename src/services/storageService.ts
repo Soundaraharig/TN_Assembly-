@@ -5792,24 +5792,45 @@ class StorageService {
 
     const allScores = this.getItem<ScoreRecord[]>(STORAGE_KEYS.SCORES, []);
     const otherEventScores = allScores.filter(s => s.event_id && s.event_id !== eventId);
+    const localEventScores = allScores.filter(s => s.event_id === eventId);
+    const agendaItems = this.getAgenda(eventId);
 
     const normalizedRemote = remoteScores.map(s => ({
       ...s,
       event_id: s.event_id || eventId
     }));
 
-    let finalEventScores: ScoreRecord[];
+    // Merge remote and local scores using timestamp/key so newer local submissions are NEVER dropped
+    const scoreMap = new Map<string, ScoreRecord>();
+    normalizedRemote.forEach(s => {
+      scoreMap.set(this.getScoreCompositeKey(s, eventId, agendaItems), s);
+    });
+
+    localEventScores.forEach(s => {
+      const k = this.getScoreCompositeKey(s, eventId, agendaItems);
+      const existing = scoreMap.get(k);
+      if (!existing) {
+        // Keep local score if missing in remote (e.g., in-flight write or replica lag)
+        scoreMap.set(k, s);
+      } else {
+        const localTime = new Date(s.updated_at || s.created_at || 0).getTime();
+        const remoteTime = new Date(existing.updated_at || existing.created_at || 0).getTime();
+        if (localTime >= remoteTime) {
+          scoreMap.set(k, s);
+        }
+      }
+    });
+
+    let finalEventScores = Array.from(scoreMap.values());
 
     if (options?.scope === 'TEST') {
       const localRealScores = allScores.filter(s => s.event_id === eventId && !this.isRecordInResetScope(s, 'TEST', options.testRunId));
-      const remoteTestScores = normalizedRemote.filter(s => this.isRecordInResetScope(s, 'TEST', options.testRunId));
+      const remoteTestScores = finalEventScores.filter(s => this.isRecordInResetScope(s, 'TEST', options.testRunId));
       finalEventScores = [...localRealScores, ...remoteTestScores];
     } else if (options?.scope === 'LIVE') {
       const localTestScores = allScores.filter(s => s.event_id === eventId && this.isRecordInResetScope(s, 'TEST'));
-      const remoteLiveScores = normalizedRemote.filter(s => !this.isRecordInResetScope(s, 'TEST'));
+      const remoteLiveScores = finalEventScores.filter(s => !this.isRecordInResetScope(s, 'TEST'));
       finalEventScores = [...localTestScores, ...remoteLiveScores];
-    } else {
-      finalEventScores = normalizedRemote;
     }
 
     this.setItem(STORAGE_KEYS.SCORES, [...otherEventScores, ...finalEventScores]);
@@ -5825,23 +5846,23 @@ class StorageService {
     }
 
     const curEvals = this.getItem<JuryEvaluation[]>(STORAGE_KEYS.JURY_EVALUATIONS, []);
-    const validKeys = new Set(finalEventScores.map(s => this.getScoreCompositeKey(s, eventId)));
+    const validKeys = new Set(finalEventScores.map(s => this.getScoreCompositeKey(s, eventId, agendaItems)));
     const validIds = new Set(finalEventScores.map(s => s.id));
 
     const remainingEvals = curEvals.filter(e => {
       if (e.event_id !== eventId) return true;
+      if (validIds.has(e.id)) return true;
+      const k = this.getScoreCompositeKey(e as any, eventId, agendaItems);
+      if (validKeys.has(k)) return true;
+      // Retain evaluations created or updated recently (last 5 minutes) to avoid any transient race condition
+      const evalTime = new Date(e.updated_at || e.created_at || 0).getTime();
+      if (Date.now() - evalTime < 300000) return true;
       if (options?.scope === 'TEST') {
-        if (this.isRecordInResetScope(e as any, 'TEST', options.testRunId)) {
-          return validIds.has(e.id) || validKeys.has(this.getScoreCompositeKey(e as any, eventId));
-        }
-        return true;
+        return !this.isRecordInResetScope(e as any, 'TEST', options.testRunId);
       } else if (options?.scope === 'LIVE') {
-        if (!this.isRecordInResetScope(e as any, 'TEST')) {
-          return validIds.has(e.id) || validKeys.has(this.getScoreCompositeKey(e as any, eventId));
-        }
-        return true;
+        return this.isRecordInResetScope(e as any, 'TEST');
       }
-      return validIds.has(e.id) || validKeys.has(this.getScoreCompositeKey(e as any, eventId));
+      return false;
     });
     this.setItem(STORAGE_KEYS.JURY_EVALUATIONS, remainingEvals);
 
@@ -5860,7 +5881,6 @@ class StorageService {
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new Event('storage'));
       window.dispatchEvent(new CustomEvent('tn_assembly_scores_updated', { detail: { eventId } }));
-      window.dispatchEvent(new CustomEvent('tn_assembly_jury_scoring_reset', { detail: { eventId } }));
     }
   }
 
@@ -17260,7 +17280,11 @@ class StorageService {
     const foundEval = allEvals.find(e => {
       if (e.event_id !== eventId) return false;
       if (e.learner_id !== learnerId) return false;
-      if (e.jury_id !== juryId && e.jury_name !== juryId) return false;
+      const matchJury = e.jury_id === juryId ||
+        e.jury_name === juryId ||
+        (e.jury_name && juryId && e.jury_name.trim().toLowerCase() === juryId.trim().toLowerCase()) ||
+        (e.jury_id && juryId && e.jury_id.trim().toLowerCase() === juryId.trim().toLowerCase());
+      if (!matchJury) return false;
       const eResolved = resolveCanonicalSession(e.session_id, e.session_name, agendaItems);
       if (eResolved.canonicalId !== canonicalSessionId) return false;
       if (isTest) {
@@ -17287,7 +17311,12 @@ class StorageService {
       if (!jId && s.juror_name) {
         jId = s.juror_name.trim().toLowerCase().replace(/\s+/g, '_');
       }
-      if (jId !== juryId && s.juror_name !== juryId && s.jury_id !== juryId) return false;
+      const matchLegacyJury = jId === juryId ||
+        s.juror_name === juryId ||
+        s.jury_id === juryId ||
+        (s.juror_name && juryId && s.juror_name.trim().toLowerCase() === juryId.trim().toLowerCase()) ||
+        (s.jury_id && juryId && s.jury_id.trim().toLowerCase() === juryId.trim().toLowerCase());
+      if (!matchLegacyJury) return false;
       const sResolved = resolveCanonicalSession(s.session_id, s.session_name, agendaItems);
       if (sResolved.canonicalId !== canonicalSessionId) return false;
       if (isTest) {

@@ -202,6 +202,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
   const [isLocked, setIsLocked] = useState<boolean>(false);
   const [isSavedRecently, setIsSavedRecently] = useState(false);
   const [isSubmittingEvaluation, setIsSubmittingEvaluation] = useState(false);
+  const isSubmittingRef = useRef(false);
 
   // Multi-Turn Adjustment Modal State
   const [isAdjustmentModalOpen, setIsAdjustmentModalOpen] = useState<boolean>(false);
@@ -253,7 +254,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
   // Authoritative current evaluation for this juror, participant, and canonical session (Session-level lookup)
   const currentEvaluation = useMemo<JuryEvaluation | null>(() => {
     if (!selectedLearner || !event?.id) return null;
-    return storageService.resolveAuthoritativeSessionEvaluation(
+    const resolved = storageService.resolveAuthoritativeSessionEvaluation(
       event.id,
       selectedSession.id,
       jury?.id || jury?.name || 'jury',
@@ -261,7 +262,41 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       testMode.isTestMode,
       testMode.testRunId
     );
-  }, [event?.id, selectedSession.id, jury?.id, jury?.name, selectedLearner, testMode.isTestMode, testMode.testRunId, recogTick]);
+    if (resolved) return resolved;
+    const fromMap = currentSessionScoreMap.get(selectedLearner.id);
+    if (fromMap) {
+      return {
+        id: fromMap.id,
+        event_id: event.id,
+        session_id: fromMap.session_id || selectedSession.id,
+        session_name: fromMap.session_name || selectedSession.name,
+        learner_id: fromMap.learner_id,
+        learner_name: fromMap.learner_name || selectedLearner.full_name,
+        constituency_number: fromMap.constituency_number,
+        constituency_name: fromMap.constituency_name,
+        party_name: fromMap.party_name || selectedLearner.party_name || 'Independent',
+        bench: (fromMap.bench as any) || selectedLearner.bench || 'Ruling',
+        jury_id: fromMap.jury_id || jury?.id || 'jury',
+        jury_name: fromMap.juror_name || jury?.name || 'Evaluator',
+        research_constituency: fromMap.research_constituency ?? 0,
+        relevance_agenda: fromMap.relevance_agenda ?? 0,
+        communication_delivery: fromMap.communication_delivery ?? 0,
+        parliamentary_conduct: fromMap.parliamentary_conduct ?? 0,
+        originality_preparation: fromMap.originality_preparation ?? 0,
+        time_management: fromMap.time_management ?? 0,
+        total: fromMap.total ?? 0,
+        feedback: fromMap.feedback || '',
+        status: 'ACTIVE',
+        is_test: Boolean(fromMap.is_test),
+        test_run_id: fromMap.test_run_id,
+        created_at: fromMap.created_at || new Date().toISOString(),
+        updated_at: fromMap.updated_at || new Date().toISOString(),
+        turns: [],
+        adjustments: []
+      };
+    }
+    return null;
+  }, [event?.id, selectedSession.id, jury?.id, jury?.name, selectedLearner, testMode.isTestMode, testMode.testRunId, recogTick, currentSessionScoreMap]);
 
   // Scoped evaluations history list for current juror strictly isolated by active mode and testRunId
   const jurorHistoryEvaluations = useMemo<JuryEvaluation[]>(() => {
@@ -443,17 +478,8 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     onShowToastRef.current = onShowToast;
   }, [onShowToast]);
 
-  // Synchronize authoritative active session whenever event or its social coverage updates
-  useEffect(() => {
-    if (!event?.id) return;
-    const auth = storageService.getAuthoritativeActiveSession(event.id);
-    if (auth.id && auth.id !== selectedSessionId) {
-      if (!isMidEvaluationRef.current && !evaluationSessionId) {
-        setSelectedSessionId(auth.id);
-        setLoadedKey('');
-      }
-    }
-  }, [event?.id, event?.social_coverage, evaluationSessionId, selectedSessionId]);
+  // Note: Initial session is initialized in useState. Explicit session transitions are delivered via tn_assembly_active_session_changed.
+  // We do NOT clobber juror's active session on background social_coverage updates.
 
   useEffect(() => {
     const unsub = storageService.subscribe(() => {
@@ -1113,7 +1139,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
 
   const handleSaveEvaluation = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedLearner || !event?.id || isSubmittingEvaluation) return;
+    if (!selectedLearner || !event?.id || isSubmittingEvaluation || isSubmittingRef.current) return;
 
     if (!isEvaluationComplete) {
       onShowToast(
@@ -1134,26 +1160,30 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
   };
 
   const executeActualSubmission = async () => {
-    if (!selectedLearner || !event?.id || isSubmittingEvaluation) return;
+    if (!selectedLearner || !event?.id || isSubmittingEvaluation || isSubmittingRef.current) return;
+
+    // Anchor active session and learner for this entire transaction
+    const targetSession = selectedSession;
+    const targetLearner = selectedLearner;
 
     // P0 Business Rule: If an evaluation already exists for this learner in this session, reject creating a new full evaluation
     const existingCheck = storageService.getJuryEvaluations(
       event.id,
-      selectedSession.id,
+      targetSession.id,
       jury?.id || jury?.name,
-      selectedLearner.id,
+      targetLearner.id,
       testMode.isTestMode
     );
     if (existingCheck.length > 0) {
-      onShowToast('Session Evaluation Exists', `${selectedLearner.full_name} already has an official session evaluation (${existingCheck[0].total}/100). Please record a contribution instead.`, 'info');
-      setIsSubmittingEvaluation(false);
+      onShowToast('Session Evaluation Exists', `${targetLearner.full_name} already has an official session evaluation (${existingCheck[0].total}/100). Please record a contribution instead.`, 'info');
       return;
     }
 
+    isSubmittingRef.current = true;
     setIsSubmittingEvaluation(true);
     try {
       const activeTurn = (selectedSpeakingTurnId ? (delegateSpeakingTurns.find(t => t.id === selectedSpeakingTurnId) || allDelegateSpeakingTurns.find(t => t.id === selectedSpeakingTurnId)) : null) ||
-        (activeFloorSpeakingTurn?.learner_id === selectedLearner.id ? activeFloorSpeakingTurn : null) ||
+        (activeFloorSpeakingTurn?.learner_id === targetLearner.id ? activeFloorSpeakingTurn : null) ||
         effectiveDelegateTurns.find(t => t.status === 'SPEAKING' || t.status === 'SPOKEN') ||
         effectiveDelegateTurns[0];
       const turnId = activeTurn?.id || selectedSpeakingTurnId || '';
@@ -1167,14 +1197,14 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       const scoreRecordToPersist: ScoreRecord = {
         id: evalId,
         event_id: event.id,
-        session_id: selectedSession.id,
-        session_name: selectedSession.name,
-        learner_id: selectedLearner.id,
-        learner_name: selectedLearner.full_name,
-        constituency_number: selectedLearner.constituency_number,
-        constituency_name: selectedLearner.constituency_name,
-        party_name: selectedLearner.party_name || 'Independent',
-        bench: (selectedLearner.bench as any) || 'Ruling',
+        session_id: targetSession.id,
+        session_name: targetSession.name,
+        learner_id: targetLearner.id,
+        learner_name: targetLearner.full_name,
+        constituency_number: targetLearner.constituency_number,
+        constituency_name: targetLearner.constituency_name,
+        party_name: targetLearner.party_name || 'Independent',
+        bench: (targetLearner.bench as any) || 'Ruling',
         jury_id: jury?.id || jury?.name || 'jury',
         juror_name: jury?.name || 'Evaluator',
         research_constituency: researchScore!,
@@ -1200,7 +1230,6 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       const persistRes = await storageService.persistScoreRecordToBackend(scoreRecordToPersist);
       if (!persistRes.success) {
         onShowToast('Save Failed — Retry', persistRes.error || 'Unable to confirm score persistence in database. Please retry.', 'error');
-        setIsSubmittingEvaluation(false);
         return;
       }
 
@@ -1209,14 +1238,14 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       const savedEval = storageService.recordInitialEvaluation({
         id: evalId,
         eventId: event.id,
-        sessionId: selectedSession.id,
-        sessionName: selectedSession.name,
-        learnerId: selectedLearner.id,
-        learnerName: selectedLearner.full_name,
-        constituencyNumber: selectedLearner.constituency_number,
-        constituencyName: selectedLearner.constituency_name,
-        partyName: selectedLearner.party_name,
-        bench: selectedLearner.bench,
+        sessionId: targetSession.id,
+        sessionName: targetSession.name,
+        learnerId: targetLearner.id,
+        learnerName: targetLearner.full_name,
+        constituencyNumber: targetLearner.constituency_number,
+        constituencyName: targetLearner.constituency_name,
+        partyName: targetLearner.party_name,
+        bench: targetLearner.bench,
         juryId: jury?.id || jury?.name || 'jury',
         juryName: jury?.name || 'Evaluator',
         isTest: testMode.isTestMode,
@@ -1234,9 +1263,9 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       // Clear local draft now that official evaluation is submitted & persisted
       storageService.clearJuryDraft(
         event.id,
-        selectedSession.id,
+        targetSession.id,
         jury?.id || jury?.name || 'jury',
-        selectedLearner.id,
+        targetLearner.id,
         turnId || undefined
       );
 
@@ -1245,23 +1274,65 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
         onSaveScore(scoreRecordToPersist);
       }
 
-      setEvaluationSessionId(null);
-      if (event?.id) {
-        const latestAuth = storageService.getAuthoritativeActiveSession(event.id);
-        if (latestAuth.id && latestAuth.id !== selectedSessionId) {
-          setSelectedSessionId(latestAuth.id);
-          setLoadedKey('');
+      // Keep active session stably anchored to the session being evaluated
+      setEvaluationSessionId(targetSession.id);
+      setSelectedSessionId(targetSession.id);
+
+      // Advance to the next unscored delegate in this session
+      const currentIdx = learners.findIndex(l => l.id === targetLearner.id);
+      let nextLearner: Learner | null = null;
+      for (let i = currentIdx + 1; i < learners.length; i++) {
+        const l = learners[i];
+        const isScored = currentSessionScoreMap.has(l.id) || Boolean(
+          storageService.resolveAuthoritativeSessionEvaluation(
+            event.id,
+            targetSession.id,
+            jury?.id || jury?.name || 'jury',
+            l.id,
+            testMode.isTestMode,
+            testMode.testRunId
+          )
+        );
+        if (!isScored) {
+          nextLearner = l;
+          break;
         }
+      }
+      if (!nextLearner) {
+        for (let i = 0; i < currentIdx; i++) {
+          const l = learners[i];
+          const isScored = currentSessionScoreMap.has(l.id) || Boolean(
+            storageService.resolveAuthoritativeSessionEvaluation(
+              event.id,
+              targetSession.id,
+              jury?.id || jury?.name || 'jury',
+              l.id,
+              testMode.isTestMode,
+              testMode.testRunId
+            )
+          );
+          if (!isScored) {
+            nextLearner = l;
+            break;
+          }
+        }
+      }
+
+      if (nextLearner) {
+        setSelectedLearnerId(nextLearner.id);
+        setSelectedSpeakingTurnId(null);
+        setLoadedKey('');
       }
 
       setRecogTick(t => t + 1);
       setIsSavedRecently(true);
       setDraftSavedAt(null);
       setTimeout(() => setIsSavedRecently(false), 3000);
-      onShowToast('✓ Official Evaluation Saved', `Recorded official Turn 1 evaluation (${savedEval.total}/100) for ${selectedLearner.full_name}`, 'success');
+      onShowToast('✓ Official Evaluation Saved', `Recorded official Turn 1 evaluation (${savedEval.total}/100) for ${targetLearner.full_name}`, 'success');
     } catch (err: any) {
       onShowToast('Save failed — Retry', err.message || 'Error submitting official evaluation.', 'error');
     } finally {
+      isSubmittingRef.current = false;
       setIsSubmittingEvaluation(false);
     }
   };
