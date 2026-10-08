@@ -49,6 +49,7 @@ import type {
   DayAttendanceRecord,
   EventDayStatus,
   DayAttendanceStatus,
+  AttendanceLockState,
   LoginRecord,
   LearnerAllocationConfirmation,
   AllocationCheckStatus,
@@ -262,6 +263,8 @@ export const STORAGE_KEYS = {
   AUDIT_LOGS: 'tn_assembly_audit_logs_v1',
   EVENT_DAYS: 'tn_assembly_event_days_v1',
   DAY_ATTENDANCE: 'tn_assembly_day_attendance_v1',
+  ATTENDANCE_LOCK_FN: 'tn_assembly_attendance_lock_fn_v1',
+  ATTENDANCE_LOCK_AN: 'tn_assembly_attendance_lock_an_v1',
   VOTE_AUDIT_LOG: 'tn_assembly_vote_audit_log_v1',
   LOCK_UPDATED_AT: 'tn_assembly_lock_updated_at_v1',
   LOGIN_RECORDS: 'tn_assembly_login_records_v1',
@@ -1824,6 +1827,42 @@ class StorageService {
         const lastAction = lockTimestamps[`score_${ev.id}`] || 0;
         if (now - lastAction > 4000) {
           this.setItem(`${STORAGE_KEYS.SCORES_LOCKED}_${ev.id}`, sc.scores_locked);
+        }
+      }
+      if (typeof sc.fn_attendance_locked === 'boolean') {
+        const lastAction = lockTimestamps[`att_fn_${ev.id}`] || 0;
+        if (now - lastAction > 4000) {
+          this.setItem(`${STORAGE_KEYS.ATTENDANCE_LOCK_FN}_${ev.id}`, sc.fn_attendance_locked);
+        }
+      }
+      if (typeof sc.an_attendance_locked === 'boolean') {
+        const lastAction = lockTimestamps[`att_an_${ev.id}`] || 0;
+        if (now - lastAction > 4000) {
+          this.setItem(`${STORAGE_KEYS.ATTENDANCE_LOCK_AN}_${ev.id}`, sc.an_attendance_locked);
+        }
+      }
+      if (sc.attendance_locks && typeof sc.attendance_locks === 'object') {
+        if (typeof sc.attendance_locks.fn_locked === 'boolean') {
+          const lastAction = lockTimestamps[`att_fn_${ev.id}`] || 0;
+          if (now - lastAction > 4000) {
+            this.setItem(`${STORAGE_KEYS.ATTENDANCE_LOCK_FN}_${ev.id}`, sc.attendance_locks.fn_locked);
+          }
+        }
+        if (typeof sc.attendance_locks.an_locked === 'boolean') {
+          const lastAction = lockTimestamps[`att_an_${ev.id}`] || 0;
+          if (now - lastAction > 4000) {
+            this.setItem(`${STORAGE_KEYS.ATTENDANCE_LOCK_AN}_${ev.id}`, sc.attendance_locks.an_locked);
+          }
+        }
+        if (sc.attendance_locks.by_day && typeof sc.attendance_locks.by_day === 'object') {
+          Object.entries(sc.attendance_locks.by_day).forEach(([dId, dLocks]: [string, any]) => {
+            if (dLocks && typeof dLocks.fn_locked === 'boolean') {
+              this.setItem(`${STORAGE_KEYS.ATTENDANCE_LOCK_FN}_${ev.id}_${dId}`, dLocks.fn_locked);
+            }
+            if (dLocks && typeof dLocks.an_locked === 'boolean') {
+              this.setItem(`${STORAGE_KEYS.ATTENDANCE_LOCK_AN}_${ev.id}_${dId}`, dLocks.an_locked);
+            }
+          });
         }
       }
       if (sc.projector_settings) {
@@ -4760,6 +4799,12 @@ class StorageService {
             }
             this.notify();
             if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+          }
+        })
+        .on('broadcast', { event: 'attendance_lock_update' }, (msg: any) => {
+          const p = msg?.payload;
+          if (p && (!resolvedEventId || p.eventId === resolvedEventId || !p.eventId)) {
+            this.applyAttendanceLockUpdate(p);
           }
         })
         .on('broadcast', { event: 'timer_update' }, (msg: any) => {
@@ -8558,6 +8603,8 @@ class StorageService {
         localStorage.removeItem(`tn_assembly_last_bell_${eventId}`);
         localStorage.removeItem(`${STORAGE_KEYS.YUVA_ASSIGNMENTS}_${eventId}`);
         localStorage.removeItem(`tn_assembly_cabinet_${eventId}`);
+        localStorage.removeItem(`${STORAGE_KEYS.ATTENDANCE_LOCK_FN}_${eventId}`);
+        localStorage.removeItem(`${STORAGE_KEYS.ATTENDANCE_LOCK_AN}_${eventId}`);
       }
     } catch { }
 
@@ -9898,6 +9945,34 @@ class StorageService {
     markedByRole: string = 'volunteer',
     session?: 'FN' | 'AN'
   ): Promise<DayAttendanceRecord> {
+    // 1. FAST LOCAL CHECK: reject immediately if local state knows it is locked
+    const localLocks = this.getAttendanceLockState(eventId, dayId);
+    if (session === 'FN' && localLocks.fn_locked) {
+      throw new Error('FN attendance is locked by admin.');
+    }
+    if (session === 'AN' && localLocks.an_locked) {
+      throw new Error('AN attendance is locked by admin.');
+    }
+    if (!session) {
+      if (localLocks.fn_locked && localLocks.an_locked) {
+        throw new Error('FN and AN attendance are locked by admin.');
+      }
+      if (localLocks.fn_locked) {
+        throw new Error('FN attendance is locked by admin.');
+      }
+      if (localLocks.an_locked) {
+        throw new Error('AN attendance is locked by admin.');
+      }
+    }
+
+    // 2. AUTHORITATIVE REMOTE VERIFICATION (solves race condition where volunteer tab was already open before lock)
+    if (supabase && isSupabaseEnabled) {
+      const remoteCheck = await this.verifyRemoteAttendanceLock(eventId, dayId, session);
+      if (remoteCheck.isLocked) {
+        throw new Error(`${remoteCheck.session} attendance is locked by admin.`);
+      }
+    }
+
     const timestamp = new Date().toISOString();
     const all = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
     const existingIndex = all.findIndex(a => a.event_id === eventId && a.day_id === dayId && a.student_id === studentId);
@@ -10046,6 +10121,34 @@ class StorageService {
     if (!canManageSessionAttendance(markedByRole)) {
       throw new Error(`Unauthorized: Role '${markedByRole}' is not permitted to perform batch attendance updates.`);
     }
+
+    // Enforce session lock for batch updates
+    const localLocks = this.getAttendanceLockState(eventId, dayId);
+    if (session === 'FN' && localLocks.fn_locked) {
+      throw new Error('FN attendance is locked by admin.');
+    }
+    if (session === 'AN' && localLocks.an_locked) {
+      throw new Error('AN attendance is locked by admin.');
+    }
+    if (!session) {
+      if (localLocks.fn_locked && localLocks.an_locked) {
+        throw new Error('FN and AN attendance are locked by admin.');
+      }
+      if (localLocks.fn_locked) {
+        throw new Error('FN attendance is locked by admin.');
+      }
+      if (localLocks.an_locked) {
+        throw new Error('AN attendance is locked by admin.');
+      }
+    }
+
+    if (supabase && isSupabaseEnabled) {
+      const remoteCheck = await this.verifyRemoteAttendanceLock(eventId, dayId, session);
+      if (remoteCheck.isLocked) {
+        throw new Error(`${remoteCheck.session} attendance is locked by admin.`);
+      }
+    }
+
     const timestamp = new Date().toISOString();
     const all = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
     const existingMap = new Map<string, DayAttendanceRecord>();
@@ -21415,6 +21518,372 @@ class StorageService {
       }
     }
     return { success: true };
+  }
+
+  // ── Attendance Session Locks (FN / AN) ──────────────────────────────────
+  public getAttendanceLockState(eventId?: string, dayId?: string): AttendanceLockState {
+    const targetId = this.getActiveEventId(eventId);
+    if (!targetId) return { fn_locked: false, an_locked: false };
+
+    // 1. Check EventDay in memory if dayId provided
+    if (dayId) {
+      const days = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []);
+      const day = days.find(d => d.id === dayId);
+      if (day) {
+        if (typeof day.fn_attendance_locked === 'boolean' || typeof day.an_attendance_locked === 'boolean') {
+          return {
+            fn_locked: !!day.fn_attendance_locked,
+            an_locked: !!day.an_attendance_locked
+          };
+        }
+      }
+    }
+
+    // 2. Check event.social_coverage
+    const ev = this.getEvents().find(e => e.id === targetId);
+    const sc = (ev?.social_coverage || {}) as Record<string, any>;
+
+    if (dayId && sc.attendance_locks?.by_day?.[dayId]) {
+      const dayLock = sc.attendance_locks.by_day[dayId];
+      return {
+        fn_locked: !!dayLock.fn_locked,
+        an_locked: !!dayLock.an_locked
+      };
+    }
+
+    if (typeof sc.fn_attendance_locked === 'boolean' || typeof sc.an_attendance_locked === 'boolean') {
+      return {
+        fn_locked: !!sc.fn_attendance_locked,
+        an_locked: !!sc.an_attendance_locked
+      };
+    }
+
+    if (sc.attendance_locks && typeof sc.attendance_locks === 'object') {
+      if (typeof sc.attendance_locks.fn_locked === 'boolean' || typeof sc.attendance_locks.an_locked === 'boolean') {
+        return {
+          fn_locked: !!sc.attendance_locks.fn_locked,
+          an_locked: !!sc.attendance_locks.an_locked
+        };
+      }
+    }
+
+    // 3. Fallback to localStorage
+    const rawFn = localStorage.getItem(dayId ? `${STORAGE_KEYS.ATTENDANCE_LOCK_FN}_${targetId}_${dayId}` : `${STORAGE_KEYS.ATTENDANCE_LOCK_FN}_${targetId}`);
+    const rawAn = localStorage.getItem(dayId ? `${STORAGE_KEYS.ATTENDANCE_LOCK_AN}_${targetId}_${dayId}` : `${STORAGE_KEYS.ATTENDANCE_LOCK_AN}_${targetId}`);
+
+    const fnFallback = rawFn !== null ? rawFn === 'true' : (localStorage.getItem(`${STORAGE_KEYS.ATTENDANCE_LOCK_FN}_${targetId}`) === 'true');
+    const anFallback = rawAn !== null ? rawAn === 'true' : (localStorage.getItem(`${STORAGE_KEYS.ATTENDANCE_LOCK_AN}_${targetId}`) === 'true');
+
+    return {
+      fn_locked: fnFallback,
+      an_locked: anFallback
+    };
+  }
+
+  public isAttendanceLockedLocally(eventId: string, dayId: string | undefined, session?: 'FN' | 'AN' | 'BOTH'): boolean {
+    const locks = this.getAttendanceLockState(eventId, dayId);
+    if (session === 'FN') return locks.fn_locked;
+    if (session === 'AN') return locks.an_locked;
+    return locks.fn_locked || locks.an_locked;
+  }
+
+  public async verifyRemoteAttendanceLock(
+    eventId: string,
+    dayId?: string,
+    session?: 'FN' | 'AN' | 'BOTH'
+  ): Promise<{ isLocked: boolean; session?: string }> {
+    if (!supabase || !isSupabaseEnabled || !isValidUuid(eventId)) {
+      const local = this.getAttendanceLockState(eventId, dayId);
+      if (session === 'FN' && local.fn_locked) return { isLocked: true, session: 'FN' };
+      if (session === 'AN' && local.an_locked) return { isLocked: true, session: 'AN' };
+      if (!session || session === 'BOTH') {
+        if (local.fn_locked && local.an_locked) return { isLocked: true, session: 'FN and AN' };
+        if (local.fn_locked) return { isLocked: true, session: 'FN' };
+        if (local.an_locked) return { isLocked: true, session: 'AN' };
+      }
+      return { isLocked: false };
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('college_events')
+        .select('id, social_coverage')
+        .eq('id', eventId)
+        .maybeSingle();
+
+      if (error || !data) {
+        const local = this.getAttendanceLockState(eventId, dayId);
+        if (session === 'FN' && local.fn_locked) return { isLocked: true, session: 'FN' };
+        if (session === 'AN' && local.an_locked) return { isLocked: true, session: 'AN' };
+        if (!session || session === 'BOTH') {
+          if (local.fn_locked && local.an_locked) return { isLocked: true, session: 'FN and AN' };
+          if (local.fn_locked) return { isLocked: true, session: 'FN' };
+          if (local.an_locked) return { isLocked: true, session: 'AN' };
+        }
+        return { isLocked: false };
+      }
+
+      const sc = ((data.social_coverage || {}) as Record<string, any>);
+      let remoteFnLocked = false;
+      let remoteAnLocked = false;
+
+      if (dayId && sc.attendance_locks?.by_day?.[dayId]) {
+        remoteFnLocked = !!sc.attendance_locks.by_day[dayId].fn_locked;
+        remoteAnLocked = !!sc.attendance_locks.by_day[dayId].an_locked;
+      } else if (typeof sc.fn_attendance_locked === 'boolean' || typeof sc.an_attendance_locked === 'boolean') {
+        remoteFnLocked = !!sc.fn_attendance_locked;
+        remoteAnLocked = !!sc.an_attendance_locked;
+      } else if (sc.attendance_locks) {
+        remoteFnLocked = !!sc.attendance_locks.fn_locked;
+        remoteAnLocked = !!sc.attendance_locks.an_locked;
+      }
+
+      // Sync remote lock state to local client memory so UI reflects immediately
+      this.applyAttendanceLockUpdate({
+        eventId,
+        dayId,
+        fn_locked: remoteFnLocked,
+        an_locked: remoteAnLocked
+      });
+
+      if (session === 'FN' && remoteFnLocked) return { isLocked: true, session: 'FN' };
+      if (session === 'AN' && remoteAnLocked) return { isLocked: true, session: 'AN' };
+      if (!session || session === 'BOTH') {
+        if (remoteFnLocked && remoteAnLocked) return { isLocked: true, session: 'FN and AN' };
+        if (remoteFnLocked) return { isLocked: true, session: 'FN' };
+        if (remoteAnLocked) return { isLocked: true, session: 'AN' };
+      }
+
+      return { isLocked: false };
+    } catch (ex) {
+      console.warn('[verifyRemoteAttendanceLock] error verifying remote lock:', ex);
+      const local = this.getAttendanceLockState(eventId, dayId);
+      if (session === 'FN' && local.fn_locked) return { isLocked: true, session: 'FN' };
+      if (session === 'AN' && local.an_locked) return { isLocked: true, session: 'AN' };
+      if (!session || session === 'BOTH') {
+        if (local.fn_locked && local.an_locked) return { isLocked: true, session: 'FN and AN' };
+        if (local.fn_locked) return { isLocked: true, session: 'FN' };
+        if (local.an_locked) return { isLocked: true, session: 'AN' };
+      }
+      return { isLocked: false };
+    }
+  }
+
+  public async setAttendanceLock(
+    eventId: string,
+    session: 'FN' | 'AN',
+    locked: boolean,
+    dayId?: string,
+    actorRole: string = 'coordinator'
+  ): Promise<{ success: boolean; error?: any }> {
+    if (!canManageSessionAttendance(actorRole)) {
+      return {
+        success: false,
+        error: new Error(`Unauthorized: Role '${actorRole}' is not permitted to change attendance locks.`)
+      };
+    }
+
+    const targetId = this.getActiveEventId(eventId);
+    if (!targetId) return { success: false, error: new Error('No target event found') };
+
+    const lockKey = session === 'FN' ? STORAGE_KEYS.ATTENDANCE_LOCK_FN : STORAGE_KEYS.ATTENDANCE_LOCK_AN;
+    this.setItem(`${lockKey}_${targetId}`, locked);
+    if (dayId) {
+      this.setItem(`${lockKey}_${targetId}_${dayId}`, locked);
+    }
+
+    const lockTimestamps = this.getItem<Record<string, number>>(STORAGE_KEYS.LOCK_UPDATED_AT, {});
+    lockTimestamps[`att_${session.toLowerCase()}_${targetId}`] = Date.now();
+    this.setItem(STORAGE_KEYS.LOCK_UPDATED_AT, lockTimestamps);
+
+    // Update EventDay in local cache if dayId provided
+    if (dayId) {
+      const allDays = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []);
+      const updatedDays = allDays.map(d => {
+        if (d.id === dayId) {
+          return {
+            ...d,
+            fn_attendance_locked: session === 'FN' ? locked : d.fn_attendance_locked,
+            an_attendance_locked: session === 'AN' ? locked : d.an_attendance_locked,
+            updated_at: new Date().toISOString()
+          };
+        }
+        return d;
+      });
+      this.setItem(STORAGE_KEYS.EVENT_DAYS, updatedDays);
+    }
+
+    const currentLockState = this.getAttendanceLockState(targetId, dayId);
+    const nextFnLocked = session === 'FN' ? locked : currentLockState.fn_locked;
+    const nextAnLocked = session === 'AN' ? locked : currentLockState.an_locked;
+
+    const events = this.getEvents().map(e => {
+      if (e.id === targetId) {
+        const sc = (e.social_coverage || {}) as Record<string, any>;
+        const byDay = { ...(sc.attendance_locks?.by_day || {}) };
+        if (dayId) {
+          byDay[dayId] = {
+            fn_locked: nextFnLocked,
+            an_locked: nextAnLocked
+          };
+        }
+        return {
+          ...e,
+          social_coverage: {
+            ...sc,
+            fn_attendance_locked: nextFnLocked,
+            an_attendance_locked: nextAnLocked,
+            attendance_locks: {
+              fn_locked: nextFnLocked,
+              an_locked: nextAnLocked,
+              by_day: byDay
+            }
+          }
+        };
+      }
+      return e;
+    });
+    this.setItem(STORAGE_KEYS.EVENTS, events);
+
+    // Security audit log entry
+    try {
+      this.logAudit({
+        event_id: targetId,
+        action: 'ATTENDANCE_LOCK_UPDATED' as any,
+        actor_role: actorRole,
+        actor_name: 'Admin',
+        details: `${session} attendance lock turned ${locked ? 'ON (Locked)' : 'OFF (Unlocked)'}${dayId ? ` for day ${dayId}` : ''}`
+      });
+    } catch {}
+
+    // Broadcast realtime update
+    await this.broadcastAttendanceLock({
+      eventId: targetId,
+      dayId,
+      session,
+      locked,
+      fn_locked: nextFnLocked,
+      an_locked: nextAnLocked,
+      timestamp: new Date().toISOString()
+    });
+
+    this.notify();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('storage'));
+      window.dispatchEvent(new CustomEvent('tn_assembly_attendance_lock_update', {
+        detail: { eventId: targetId, dayId, session, locked, fn_locked: nextFnLocked, an_locked: nextAnLocked }
+      }));
+    }
+
+    // Persist to Supabase college_events via patchSocialCoverageSafe
+    if (supabase && isValidUuid(targetId)) {
+      try {
+        const ev = this.getEvents().find(e => e.id === targetId);
+        const sc = (ev?.social_coverage || {}) as Record<string, any>;
+        const byDay = { ...(sc.attendance_locks?.by_day || {}) };
+        if (dayId) {
+          byDay[dayId] = { fn_locked: nextFnLocked, an_locked: nextAnLocked };
+        }
+        const patchRes = await this.patchSocialCoverageSafe(targetId, {
+          fn_attendance_locked: nextFnLocked,
+          an_attendance_locked: nextAnLocked,
+          attendance_locks: {
+            fn_locked: nextFnLocked,
+            an_locked: nextAnLocked,
+            by_day: byDay
+          }
+        });
+        if (!patchRes.success) {
+          console.warn('[setAttendanceLock] Supabase patch warning:', patchRes.error);
+        }
+      } catch (err: any) {
+        console.warn('[setAttendanceLock] Supabase error:', err);
+      }
+    }
+
+    return { success: true };
+  }
+
+  public async broadcastAttendanceLock(payload: {
+    eventId: string;
+    dayId?: string;
+    session: 'FN' | 'AN';
+    locked: boolean;
+    fn_locked: boolean;
+    an_locked: boolean;
+    timestamp: string;
+  }): Promise<void> {
+    const channel = this.realtimeChannel;
+    if (!channel) return;
+    try {
+      await channel.send({
+        type: 'broadcast',
+        event: 'attendance_lock_update',
+        payload
+      });
+    } catch (err) {
+      console.warn('[broadcastAttendanceLock] Realtime broadcast error:', err);
+    }
+  }
+
+  public applyAttendanceLockUpdate(p: {
+    eventId: string;
+    dayId?: string;
+    session?: 'FN' | 'AN';
+    locked?: boolean;
+    fn_locked: boolean;
+    an_locked: boolean;
+    timestamp?: string;
+  }): void {
+    const { eventId, dayId, fn_locked, an_locked } = p;
+    if (!eventId) return;
+
+    this.setItem(`${STORAGE_KEYS.ATTENDANCE_LOCK_FN}_${eventId}`, fn_locked);
+    this.setItem(`${STORAGE_KEYS.ATTENDANCE_LOCK_AN}_${eventId}`, an_locked);
+    if (dayId) {
+      this.setItem(`${STORAGE_KEYS.ATTENDANCE_LOCK_FN}_${eventId}_${dayId}`, fn_locked);
+      this.setItem(`${STORAGE_KEYS.ATTENDANCE_LOCK_AN}_${eventId}_${dayId}`, an_locked);
+
+      const allDays = this.getItem<EventDay[]>(STORAGE_KEYS.EVENT_DAYS, []);
+      const updatedDays = allDays.map(d => {
+        if (d.id === dayId) {
+          return {
+            ...d,
+            fn_attendance_locked: fn_locked,
+            an_attendance_locked: an_locked
+          };
+        }
+        return d;
+      });
+      this.setItem(STORAGE_KEYS.EVENT_DAYS, updatedDays);
+    }
+
+    const allEvs = this.getEvents();
+    const targetEv = allEvs.find(e => e.id === eventId);
+    if (targetEv) {
+      const sc = (targetEv.social_coverage || {}) as Record<string, any>;
+      const byDay = { ...(sc.attendance_locks?.by_day || {}) };
+      if (dayId) {
+        byDay[dayId] = { fn_locked, an_locked };
+      }
+      targetEv.social_coverage = {
+        ...sc,
+        fn_attendance_locked: fn_locked,
+        an_attendance_locked: an_locked,
+        attendance_locks: {
+          fn_locked,
+          an_locked,
+          by_day: byDay
+        }
+      };
+      this.setItem(STORAGE_KEYS.EVENTS, allEvs.map(e => e.id === eventId ? targetEv : e));
+    }
+
+    this.notify();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('storage'));
+      window.dispatchEvent(new CustomEvent('tn_assembly_attendance_lock_update', { detail: p }));
+    }
   }
 
   // ── YUVA Desk Assignments ───────────────────────────────────────────────

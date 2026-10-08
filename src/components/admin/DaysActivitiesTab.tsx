@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import type { EventDay, Learner, DayAttendanceRecord, CollegeEvent, Party, Committee, DayAttendanceStatus, LoginRecord, UserRole } from '../../types';
+import type { EventDay, Learner, DayAttendanceRecord, CollegeEvent, Party, Committee, DayAttendanceStatus, LoginRecord, UserRole, AttendanceLockState } from '../../types';
 import { getRecordSessionStatuses, formatMarkedBy } from '../../types';
 import { storageService } from '../../services/storageService';
 import { canManageSessionAttendance } from '../../utils/permissions';
@@ -27,6 +27,8 @@ import {
   Laptop,
   Clock,
   ShieldCheck,
+  Lock,
+  Unlock,
   X,
   ChevronLeft,
   ChevronRight,
@@ -427,6 +429,21 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
       return;
     }
     if (!currentAttendanceDay) return;
+
+    if (session === 'FN' && attendanceLocks.fn_locked) {
+      onShowToast('FN Locked', 'FN attendance is currently locked. Unlock FN to run batch actions.', 'error');
+      return;
+    }
+    if (session === 'AN' && attendanceLocks.an_locked) {
+      onShowToast('AN Locked', 'AN attendance is currently locked. Unlock AN to run batch actions.', 'error');
+      return;
+    }
+    if (!session && (attendanceLocks.fn_locked || attendanceLocks.an_locked)) {
+      const lockedSession = attendanceLocks.fn_locked && attendanceLocks.an_locked ? 'FN and AN' : attendanceLocks.fn_locked ? 'FN' : 'AN';
+      onShowToast('Attendance Locked', `${lockedSession} attendance is currently locked. Unlock to run full day batch actions.`, 'error');
+      return;
+    }
+
     const studentIds = learners.map(l => l.id);
     const sessionLabel = session === 'FN' ? 'Forenoon (FN)' : session === 'AN' ? 'Afternoon (AN)' : 'Full Day';
     const dayId = currentAttendanceDay.id;
@@ -470,6 +487,14 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
 
   const handleToggleStudentSession = async (studentId: string, session: 'FN' | 'AN', status: DayAttendanceStatus) => {
     if (!currentAttendanceDay) return;
+    if (session === 'FN' && attendanceLocks.fn_locked) {
+      onShowToast('FN Locked', 'FN attendance is locked by Admin. Unlock FN to modify attendance.', 'error');
+      return;
+    }
+    if (session === 'AN' && attendanceLocks.an_locked) {
+      onShowToast('AN Locked', 'AN attendance is locked by Admin. Unlock AN to modify attendance.', 'error');
+      return;
+    }
     const dayId = currentAttendanceDay.id;
 
     // Instant optimistic update
@@ -506,6 +531,73 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
       }
     } catch (err: any) {
       onShowToast('Save Failed', err?.message || 'Could not record attendance in database', 'error');
+    }
+  };
+
+  // Attendance Session Locks (independent Forenoon FN and Afternoon AN locks)
+  const [attendanceLocks, setAttendanceLocks] = useState<AttendanceLockState>(() =>
+    storageService.getAttendanceLockState(event?.id, currentAttendanceDay?.id)
+  );
+  const [isLockUpdating, setIsLockUpdating] = useState<'FN' | 'AN' | null>(null);
+
+  useEffect(() => {
+    setAttendanceLocks(storageService.getAttendanceLockState(event?.id, currentAttendanceDay?.id));
+  }, [event?.id, currentAttendanceDay?.id, eventDays]);
+
+  useEffect(() => {
+    const unsub = storageService.subscribe(() => {
+      if (event?.id) {
+        setAttendanceLocks(storageService.getAttendanceLockState(event.id, currentAttendanceDay?.id));
+      }
+    });
+    return unsub;
+  }, [event?.id, currentAttendanceDay?.id]);
+
+  useEffect(() => {
+    const handleLockEvent = (e: any) => {
+      if (e?.detail && (!e.detail.eventId || e.detail.eventId === event?.id)) {
+        setAttendanceLocks(storageService.getAttendanceLockState(event?.id, currentAttendanceDay?.id));
+      }
+    };
+    window.addEventListener('tn_assembly_attendance_lock_update', handleLockEvent);
+    return () => window.removeEventListener('tn_assembly_attendance_lock_update', handleLockEvent);
+  }, [event?.id, currentAttendanceDay?.id]);
+
+  const handleToggleAttendanceLock = async (session: 'FN' | 'AN') => {
+    if (!canManageSessionAttendance(userRole)) {
+      onShowToast('Unauthorized', 'Only authorized Admins and Coordinators can change attendance locks.', 'error');
+      return;
+    }
+    const currentLocked = session === 'FN' ? attendanceLocks.fn_locked : attendanceLocks.an_locked;
+    const targetLocked = !currentLocked;
+    setIsLockUpdating(session);
+    try {
+      const res = await storageService.setAttendanceLock(
+        event.id,
+        session,
+        targetLocked,
+        currentAttendanceDay?.id,
+        userRole || 'coordinator'
+      );
+      if (res.success) {
+        setAttendanceLocks(prev => ({
+          ...prev,
+          [session === 'FN' ? 'fn_locked' : 'an_locked']: targetLocked
+        }));
+        onShowToast(
+          targetLocked ? `${session} Attendance Locked` : `${session} Attendance Unlocked`,
+          targetLocked
+            ? `${session} attendance is now locked. Volunteers cannot record or modify ${session} attendance.`
+            : `${session} attendance is now unlocked. Volunteers can record and modify ${session} attendance.`,
+          targetLocked ? 'info' : 'success'
+        );
+      } else {
+        onShowToast('Lock Update Failed', res.error?.message || 'Could not update attendance lock.', 'error');
+      }
+    } catch (err: any) {
+      onShowToast('Error', err?.message || 'Failed to update attendance lock', 'error');
+    } finally {
+      setIsLockUpdating(null);
     }
   };
 
@@ -1162,6 +1254,161 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
             </div>
           </div>
 
+          {/* Admin Attendance Control — Separate FN & AN Independent Session Locks */}
+          {canManageSessionAttendance(userRole) && (
+            <div
+              className="p-5 rounded-2xl border shadow-sm transition-all"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b" style={{ borderColor: 'var(--border)' }}>
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-400">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black uppercase tracking-wider" style={{ color: 'var(--text-primary)' }}>
+                      Attendance Control
+                    </h3>
+                    <p className="text-[11px] text-slate-400">
+                      Independently lock or unlock Forenoon (FN) and Afternoon (AN) attendance for <strong>{currentAttendanceDay.name}</strong>. When a session is locked, volunteers cannot record or change attendance.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-slate-500/15 text-slate-300 border border-slate-500/30">
+                    Coordinator &amp; Admin Control
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                {/* FN Attendance Lock Control */}
+                <div
+                  className={`p-4 rounded-xl border transition-all ${
+                    attendanceLocks.fn_locked
+                      ? 'bg-amber-500/10 border-amber-500/40'
+                      : 'bg-slate-800/20 border-slate-700/60'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Sun className="w-4 h-4 text-amber-400" />
+                      <span className="text-xs font-black uppercase tracking-wider text-slate-200">
+                        FN Attendance
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleAttendanceLock('FN')}
+                      disabled={isLockUpdating === 'FN'}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm ${
+                        attendanceLocks.fn_locked
+                          ? 'bg-rose-600 hover:bg-rose-700 text-white border border-rose-500'
+                          : 'bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-500'
+                      }`}
+                      title={attendanceLocks.fn_locked ? 'Click to unlock FN attendance' : 'Click to lock FN attendance'}
+                    >
+                      {isLockUpdating === 'FN' ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : attendanceLocks.fn_locked ? (
+                        <Lock className="w-3.5 h-3.5" />
+                      ) : (
+                        <Unlock className="w-3.5 h-3.5" />
+                      )}
+                      <span>{attendanceLocks.fn_locked ? '🔒 Locked' : '🔓 Unlocked'}</span>
+                    </button>
+                  </div>
+
+                  <div className="mt-3 pt-2.5 border-t border-slate-700/40 text-xs">
+                    {attendanceLocks.fn_locked ? (
+                      <div>
+                        <p className="font-extrabold text-rose-400 flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                          FN Attendance: LOCKED
+                        </p>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          Volunteers cannot modify FN attendance.
+                        </p>
+                      </div>
+                    ) : (
+                      <div>
+                        <p className="font-bold text-emerald-400 flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                          FN Attendance: UNLOCKED
+                        </p>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          Volunteers can record and edit Forenoon attendance.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* AN Attendance Lock Control */}
+                <div
+                  className={`p-4 rounded-xl border transition-all ${
+                    attendanceLocks.an_locked
+                      ? 'bg-indigo-500/10 border-indigo-500/40'
+                      : 'bg-slate-800/20 border-slate-700/60'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Sunset className="w-4 h-4 text-sky-400" />
+                      <span className="text-xs font-black uppercase tracking-wider text-slate-200">
+                        AN Attendance
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleAttendanceLock('AN')}
+                      disabled={isLockUpdating === 'AN'}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm ${
+                        attendanceLocks.an_locked
+                          ? 'bg-rose-600 hover:bg-rose-700 text-white border border-rose-500'
+                          : 'bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-500'
+                      }`}
+                      title={attendanceLocks.an_locked ? 'Click to unlock AN attendance' : 'Click to lock AN attendance'}
+                    >
+                      {isLockUpdating === 'AN' ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : attendanceLocks.an_locked ? (
+                        <Lock className="w-3.5 h-3.5" />
+                      ) : (
+                        <Unlock className="w-3.5 h-3.5" />
+                      )}
+                      <span>{attendanceLocks.an_locked ? '🔒 Locked' : '🔓 Unlocked'}</span>
+                    </button>
+                  </div>
+
+                  <div className="mt-3 pt-2.5 border-t border-slate-700/40 text-xs">
+                    {attendanceLocks.an_locked ? (
+                      <div>
+                        <p className="font-extrabold text-rose-400 flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                          AN Attendance: LOCKED
+                        </p>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          Volunteers cannot modify AN attendance.
+                        </p>
+                      </div>
+                    ) : (
+                      <div>
+                        <p className="font-bold text-emerald-400 flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                          AN Attendance: UNLOCKED
+                        </p>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          Volunteers can record and edit Afternoon attendance.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Metric Cards Row: Total, FN, AN, Overall */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="p-4 rounded-2xl border" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
@@ -1174,9 +1421,16 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
 
             <div className="p-4 rounded-2xl border" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
               <div className="flex items-center justify-between">
-                <p className="text-xs font-bold uppercase tracking-wider text-amber-500 flex items-center gap-1">
-                  <Sun className="w-3.5 h-3.5 text-amber-500" /> Forenoon (FN)
-                </p>
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs font-bold uppercase tracking-wider text-amber-500 flex items-center gap-1">
+                    <Sun className="w-3.5 h-3.5 text-amber-500" /> Forenoon (FN)
+                  </p>
+                  {attendanceLocks.fn_locked && (
+                    <span className="px-1.5 py-0.2 rounded text-[9px] font-black bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center gap-0.5">
+                      <Lock className="w-2.5 h-2.5" /> LOCKED
+                    </span>
+                  )}
+                </div>
                 <span className="text-[11px] font-extrabold text-amber-500">{currentDayStats.fnPercentage}%</span>
               </div>
               <p className="text-2xl font-black mt-1 text-amber-400">
@@ -1189,9 +1443,16 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
 
             <div className="p-4 rounded-2xl border" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
               <div className="flex items-center justify-between">
-                <p className="text-xs font-bold uppercase tracking-wider text-sky-400 flex items-center gap-1">
-                  <Sunset className="w-3.5 h-3.5 text-sky-400" /> Afternoon (AN)
-                </p>
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs font-bold uppercase tracking-wider text-sky-400 flex items-center gap-1">
+                    <Sunset className="w-3.5 h-3.5 text-sky-400" /> Afternoon (AN)
+                  </p>
+                  {attendanceLocks.an_locked && (
+                    <span className="px-1.5 py-0.2 rounded text-[9px] font-black bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center gap-0.5">
+                      <Lock className="w-2.5 h-2.5" /> LOCKED
+                    </span>
+                  )}
+                </div>
                 <span className="text-[11px] font-extrabold text-sky-400">{currentDayStats.anPercentage}%</span>
               </div>
               <p className="text-2xl font-black mt-1 text-sky-400">

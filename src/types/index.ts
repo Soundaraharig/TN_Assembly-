@@ -889,12 +889,19 @@ export interface EventDay {
   is_archived?: boolean;
   order_index?: number;
   main_day?: 1 | 2 | null; // Mapped to Main Day 1, Main Day 2, or null (regular activity session)
+  fn_attendance_locked?: boolean; // Admin Forenoon attendance freeze lock
+  an_attendance_locked?: boolean; // Admin Afternoon attendance freeze lock
   created_at?: string;
   updated_at?: string;
 }
 
 export type DayAttendanceStatus = 'Present' | 'Absent';
 export type SessionType = 'FN' | 'AN';
+
+export interface AttendanceLockState {
+  fn_locked: boolean;
+  an_locked: boolean;
+}
 
 export interface DayAttendanceRecord {
   id: string;

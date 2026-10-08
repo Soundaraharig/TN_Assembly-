@@ -409,6 +409,11 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     return map;
   }, [activeDayAttendance]);
 
+  // Active Day Attendance Session Locks (controlled by Admin)
+  const { fn_locked: isFnLocked, an_locked: isAnLocked } = useMemo(() => {
+    return storageService.getAttendanceLockState(eventId, activeDay?.id);
+  }, [eventId, activeDay?.id, attendanceRefreshKey]);
+
   const { fnPresentCount, anPresentCount, bothPresentCount } = useMemo(() => {
     let fn = 0;
     let an = 0;
@@ -487,6 +492,33 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
       );
       return;
     }
+
+    if (session === 'FN' && isFnLocked) {
+      onShowToast?.(
+        'FN Attendance Locked',
+        'FN Attendance is locked by Admin. You cannot make changes to FN attendance.',
+        'error'
+      );
+      return;
+    }
+    if (session === 'AN' && isAnLocked) {
+      onShowToast?.(
+        'AN Attendance Locked',
+        'AN Attendance is locked by Admin. You cannot make changes to AN attendance.',
+        'error'
+      );
+      return;
+    }
+    if (!session && (isFnLocked || isAnLocked)) {
+      const lockedSession = isFnLocked && isAnLocked ? 'FN and AN' : isFnLocked ? 'FN' : 'AN';
+      onShowToast?.(
+        'Attendance Locked',
+        `${lockedSession} Attendance is locked by Admin. You cannot make changes to locked sessions.`,
+        'error'
+      );
+      return;
+    }
+
     const lockKey = `${studentId}_${session || 'ALL'}`;
     if (processingAttendanceIds.has(lockKey)) return;
 
@@ -594,6 +626,13 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
       }
     });
 
+    const handleAttendanceLock = () => {
+      if (isMounted) {
+        setAttendanceRefreshKey(k => k + 1);
+      }
+    };
+    window.addEventListener('tn_assembly_attendance_lock_update', handleAttendanceLock);
+
     // Fallback timer: ensure loading state turns off within 3s even if network is slow or empty
     const safetyTimeout = setTimeout(() => {
       if (isMounted) {
@@ -604,6 +643,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     return () => {
       isMounted = false;
       unsubscribe();
+      window.removeEventListener('tn_assembly_attendance_lock_update', handleAttendanceLock);
       clearTimeout(safetyTimeout);
     };
   }, [eventId, volunteer?.id, hasQuestionReviewAccess]);
@@ -1949,7 +1989,21 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
 
                 <div className="text-right shrink-0">
                   <span className="text-xs text-slate-400 block font-medium">Session Status</span>
-                  <span className="text-xs font-bold text-emerald-400">Attendance Window Open</span>
+                  {isFnLocked && isAnLocked ? (
+                    <span className="text-xs font-bold text-rose-400 flex items-center justify-end gap-1">
+                      <Lock className="w-3.5 h-3.5" /> Full Day Locked
+                    </span>
+                  ) : isFnLocked ? (
+                    <span className="text-xs font-bold text-amber-400 flex items-center justify-end gap-1">
+                      <Lock className="w-3.5 h-3.5" /> FN Locked • AN Open
+                    </span>
+                  ) : isAnLocked ? (
+                    <span className="text-xs font-bold text-sky-400 flex items-center justify-end gap-1">
+                      <Lock className="w-3.5 h-3.5" /> FN Open • AN Locked
+                    </span>
+                  ) : (
+                    <span className="text-xs font-bold text-emerald-400">Attendance Window Open</span>
+                  )}
                 </div>
               </div>
 
@@ -1969,14 +2023,28 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                 </div>
 
                 <div className="p-3.5 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-amber-400">🌅 Forenoon (FN)</p>
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-amber-400">🌅 Forenoon (FN)</p>
+                    {isFnLocked && (
+                      <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center gap-0.5">
+                        <Lock className="w-2.5 h-2.5" /> Locked
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xl font-black mt-1 text-amber-400">
                     {fnPresentCount} <span className="text-xs font-semibold text-slate-400">({fnPercentage}%)</span>
                   </p>
                 </div>
 
                 <div className="p-3.5 rounded-xl border" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-indigo-400">🌇 Afternoon (AN)</p>
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-indigo-400">🌇 Afternoon (AN)</p>
+                    {isAnLocked && (
+                      <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center gap-0.5">
+                        <Lock className="w-2.5 h-2.5" /> Locked
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xl font-black mt-1 text-indigo-400">
                     {anPresentCount} <span className="text-xs font-semibold text-slate-400">({anPercentage}%)</span>
                   </p>
@@ -1990,6 +2058,30 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                 </div>
               </div>
             </div>
+
+            {/* Session Lock Notification Banners */}
+            {(isFnLocked || isAnLocked) && (
+              <div className="space-y-2">
+                {isFnLocked && (
+                  <div className="p-3.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-medium flex items-center gap-2.5 shadow-sm">
+                    <Lock className="w-4 h-4 text-amber-400 shrink-0" />
+                    <div>
+                      <strong className="font-extrabold text-amber-200">FN Attendance is locked by Admin.</strong>
+                      <span className="ml-1">You cannot make changes to FN attendance.</span>
+                    </div>
+                  </div>
+                )}
+                {isAnLocked && (
+                  <div className="p-3.5 rounded-xl bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 text-xs font-medium flex items-center gap-2.5 shadow-sm">
+                    <Lock className="w-4 h-4 text-indigo-400 shrink-0" />
+                    <div>
+                      <strong className="font-extrabold text-indigo-200">AN Attendance is locked by Admin.</strong>
+                      <span className="ml-1">You cannot make changes to AN attendance.</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Search, Filters & Quick Actions */}
             <div
@@ -2062,8 +2154,26 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                         <th className="py-3 px-4">Access Code</th>
                         <th className="py-3 px-4">Party & Bench</th>
                         <th className="py-3 px-4">Constituency</th>
-                        <th className="py-3 px-4 text-center">🌅 Forenoon (FN)</th>
-                        <th className="py-3 px-4 text-center">🌇 Afternoon (AN)</th>
+                        <th className="py-3 px-4 text-center">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <span>🌅 Forenoon (FN)</span>
+                            {isFnLocked && (
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-black bg-rose-500/20 text-rose-400 border border-rose-500/40">
+                                <Lock className="w-2.5 h-2.5" /> LOCKED
+                              </span>
+                            )}
+                          </div>
+                        </th>
+                        <th className="py-3 px-4 text-center">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <span>🌇 Afternoon (AN)</span>
+                            {isAnLocked && (
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-black bg-rose-500/20 text-rose-400 border border-rose-500/40">
+                                <Lock className="w-2.5 h-2.5" /> LOCKED
+                              </span>
+                            )}
+                          </div>
+                        </th>
                         <th className="py-3 px-4 text-center">Day Status</th>
                         <th className="py-3 px-4">Audit Record</th>
                       </tr>
@@ -2140,12 +2250,18 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                                 <button
                                   type="button"
                                   onClick={() => handleMarkStudentAttendance(learner.id, isFnPresent ? 'Absent' : 'Present', 'FN')}
-                                  disabled={isFnLoading || isAllLoading}
-                                  title={isFnPresent ? 'Click to mark FN Absent' : 'Click to mark FN Present'}
-                                  className={`relative inline-flex items-center h-6 w-12 rounded-full transition-all duration-300 cursor-pointer focus:outline-none disabled:opacity-50 ${
-                                    isFnPresent
-                                      ? 'bg-sky-500'
-                                      : 'bg-rose-600'
+                                  disabled={isFnLocked || isFnLoading || isAllLoading}
+                                  title={
+                                    isFnLocked
+                                      ? 'FN attendance is locked by admin. Changes disabled.'
+                                      : isFnPresent
+                                      ? 'Click to mark FN Absent'
+                                      : 'Click to mark FN Present'
+                                  }
+                                  className={`relative inline-flex items-center h-6 w-12 rounded-full transition-all duration-300 focus:outline-none ${
+                                    isFnLocked
+                                      ? 'opacity-40 cursor-not-allowed bg-slate-600 ring-1 ring-slate-500/50'
+                                      : `cursor-pointer disabled:opacity-50 ${isFnPresent ? 'bg-sky-500' : 'bg-rose-600'}`
                                   }`}
                                 >
                                   {/* Track label left */}
@@ -2156,12 +2272,15 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                                   <span className={`absolute top-0.5 bottom-0.5 w-5 rounded-full bg-white shadow-md transition-all duration-300 flex items-center justify-center ${
                                     isFnPresent ? 'left-6' : 'left-0.5'
                                   }`}>
-                                    {isFnLoading
-                                      ? <Loader2 className="w-3 h-3 animate-spin text-slate-400" />
-                                      : isFnPresent
-                                        ? <span className="text-[8px] font-black text-sky-600">P</span>
-                                        : <span className="text-[8px] font-black text-rose-600">A</span>
-                                    }
+                                    {isFnLoading ? (
+                                      <Loader2 className="w-3 h-3 animate-spin text-slate-400" />
+                                    ) : isFnLocked ? (
+                                      <Lock className="w-2.5 h-2.5 text-slate-600" />
+                                    ) : isFnPresent ? (
+                                      <span className="text-[8px] font-black text-sky-600">P</span>
+                                    ) : (
+                                      <span className="text-[8px] font-black text-rose-600">A</span>
+                                    )}
                                   </span>
                                   {/* Track label right */}
                                   <span className={`absolute right-1 text-[9px] font-black text-white transition-opacity duration-200 ${
@@ -2185,12 +2304,18 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                                 <button
                                   type="button"
                                   onClick={() => handleMarkStudentAttendance(learner.id, isAnPresent ? 'Absent' : 'Present', 'AN')}
-                                  disabled={isAnLoading || isAllLoading}
-                                  title={isAnPresent ? 'Click to mark AN Absent' : 'Click to mark AN Present'}
-                                  className={`relative inline-flex items-center h-6 w-12 rounded-full transition-all duration-300 cursor-pointer focus:outline-none disabled:opacity-50 ${
-                                    isAnPresent
-                                      ? 'bg-emerald-500'
-                                      : 'bg-rose-600'
+                                  disabled={isAnLocked || isAnLoading || isAllLoading}
+                                  title={
+                                    isAnLocked
+                                      ? 'AN attendance is locked by admin. Changes disabled.'
+                                      : isAnPresent
+                                      ? 'Click to mark AN Absent'
+                                      : 'Click to mark AN Present'
+                                  }
+                                  className={`relative inline-flex items-center h-6 w-12 rounded-full transition-all duration-300 focus:outline-none ${
+                                    isAnLocked
+                                      ? 'opacity-40 cursor-not-allowed bg-slate-600 ring-1 ring-slate-500/50'
+                                      : `cursor-pointer disabled:opacity-50 ${isAnPresent ? 'bg-emerald-500' : 'bg-rose-600'}`
                                   }`}
                                 >
                                   <span className={`absolute left-1 text-[9px] font-black text-white transition-opacity duration-200 ${
@@ -2199,12 +2324,15 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                                   <span className={`absolute top-0.5 bottom-0.5 w-5 rounded-full bg-white shadow-md transition-all duration-300 flex items-center justify-center ${
                                     isAnPresent ? 'left-6' : 'left-0.5'
                                   }`}>
-                                    {isAnLoading
-                                      ? <Loader2 className="w-3 h-3 animate-spin text-slate-400" />
-                                      : isAnPresent
-                                        ? <span className="text-[8px] font-black text-emerald-600">P</span>
-                                        : <span className="text-[8px] font-black text-rose-600">A</span>
-                                    }
+                                    {isAnLoading ? (
+                                      <Loader2 className="w-3 h-3 animate-spin text-slate-400" />
+                                    ) : isAnLocked ? (
+                                      <Lock className="w-2.5 h-2.5 text-slate-600" />
+                                    ) : isAnPresent ? (
+                                      <span className="text-[8px] font-black text-emerald-600">P</span>
+                                    ) : (
+                                      <span className="text-[8px] font-black text-rose-600">A</span>
+                                    )}
                                   </span>
                                   <span className={`absolute right-1 text-[9px] font-black text-white transition-opacity duration-200 ${
                                     !isAnPresent ? 'opacity-100' : 'opacity-0'
@@ -2233,19 +2361,38 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
                                     ? '🌇 AN Only'
                                     : '❌ Absent'}
                                 </span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleMarkStudentAttendance(learner.id, isBothPresent ? 'Absent' : 'Present')}
-                                  disabled={isAllLoading}
-                                  className={`px-2 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer ${
-                                    isBothPresent
-                                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-500/10 dark:border-emerald-500/30 dark:text-emerald-300 dark:hover:bg-emerald-500/20'
-                                      : 'bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700'
-                                  }`}
-                                  title={isBothPresent ? "Click to clear full day" : "Click to mark both sessions present"}
-                                >
-                                  {isBothPresent ? '✓ Both' : '+ Both'}
-                                </button>
+                                {(() => {
+                                  const isBothDisabled = (isFnLocked || isAnLocked) || isAllLoading;
+                                  const bothLockTooltip = isFnLocked && isAnLocked
+                                    ? 'Both FN and AN attendance are locked by admin'
+                                    : isFnLocked
+                                    ? 'FN attendance is locked by admin. Cannot toggle full day.'
+                                    : isAnLocked
+                                    ? 'AN attendance is locked by admin. Cannot toggle full day.'
+                                    : isBothPresent
+                                    ? 'Click to clear full day'
+                                    : 'Click to mark both sessions present';
+
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleMarkStudentAttendance(learner.id, isBothPresent ? 'Absent' : 'Present')}
+                                      disabled={isBothDisabled}
+                                      className={`px-2 py-0.5 rounded text-[10px] font-bold border transition ${
+                                        isBothDisabled
+                                          ? 'opacity-40 cursor-not-allowed bg-slate-200 dark:bg-slate-800 text-slate-400 border-slate-300 dark:border-slate-700'
+                                          : `cursor-pointer ${
+                                              isBothPresent
+                                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-500/10 dark:border-emerald-500/30 dark:text-emerald-300 dark:hover:bg-emerald-500/20'
+                                                : 'bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700'
+                                            }`
+                                      }`}
+                                      title={bothLockTooltip}
+                                    >
+                                      {isBothPresent ? '✓ Both' : '+ Both'}
+                                    </button>
+                                  );
+                                })()}
                               </div>
                             </td>
 
