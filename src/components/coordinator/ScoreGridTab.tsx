@@ -190,8 +190,10 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
   // Active Session for Leaderboard (defaults to selected filter, or the first available session)
   const activeSessionId = useMemo(() => {
     if (selectedSessionFilter !== 'ALL') return selectedSessionFilter;
+    const authSess = storageService.getAuthoritativeActiveSession(eventId);
+    if (authSess.id) return authSess.id;
     return availableSessions[0]?.id || 'zero_hour';
-  }, [selectedSessionFilter, availableSessions]);
+  }, [selectedSessionFilter, availableSessions, eventId, auditTick]);
 
   // Learner lookup map
   const learnerMap = useMemo(() => {
@@ -232,6 +234,7 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
     window.addEventListener('tn_assembly_speaking_update', handleSync);
     window.addEventListener('tn_assembly_jury_scoring_reset', handleSync);
     window.addEventListener('tn_assembly_scores_updated', handleSync);
+    window.addEventListener('tn_assembly_active_session_changed', handleSync);
     return () => {
       window.removeEventListener('storage', handleSync);
       window.removeEventListener('tn_assembly_storage_update', handleSync);
@@ -239,6 +242,7 @@ export const ScoreGridTab: React.FC<ScoreGridTabProps> = ({
       window.removeEventListener('tn_assembly_speaking_update', handleSync);
       window.removeEventListener('tn_assembly_jury_scoring_reset', handleSync);
       window.removeEventListener('tn_assembly_scores_updated', handleSync);
+      window.removeEventListener('tn_assembly_active_session_changed', handleSync);
     };
   }, [eventId]);
 

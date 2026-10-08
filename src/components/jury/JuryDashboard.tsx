@@ -93,14 +93,21 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
   }, [event?.id, agenda]);
 
   const [selectedSessionId, setSelectedSessionId] = useState<string>(() => {
+    if (event?.id) {
+      const auth = storageService.getAuthoritativeActiveSession(event.id);
+      if (auth.id) return auth.id;
+    }
     const defaultSessions = storageService.getScoringSessions(event?.id || '');
     return defaultSessions[0]?.id || 'zero_hour';
   });
 
+  const [evaluationSessionId, setEvaluationSessionId] = useState<string | null>(null);
+
   const selectedSession = useMemo<ScoringSession>(() => {
-    const found = availableSessions.find(s => s.id === selectedSessionId);
+    const targetId = evaluationSessionId || selectedSessionId;
+    const found = availableSessions.find(s => s.id === targetId);
     return found || availableSessions[0] || { id: 'zero_hour', name: 'Zero Hour', is_canonical: true };
-  }, [availableSessions, selectedSessionId]);
+  }, [availableSessions, selectedSessionId, evaluationSessionId]);
 
   const testMode = useMemo(() => {
     return storageService.getScoringTestMode(event?.id);
@@ -166,10 +173,17 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     return map;
   }, [scores, event?.id, selectedSession.id, selectedSession.name, jury?.id, jury?.name, testMode.isTestMode, testMode.testRunId, recogTick]);
 
-  const handleSessionChange = (newSessionId: string) => {
-    setSelectedSessionId(newSessionId);
-    setLoadedKey(''); // Force reload for current delegate under new session
-  };
+  // Capture authoritative session at evaluation start to prevent mid-scoring drift
+  useEffect(() => {
+    if (selectedLearnerId) {
+      if (!evaluationSessionId) {
+        const currentActive = selectedSessionId || (event?.id ? storageService.getAuthoritativeActiveSession(event.id).id : 'zero_hour');
+        setEvaluationSessionId(currentActive);
+      }
+    } else {
+      setEvaluationSessionId(null);
+    }
+  }, [selectedLearnerId, selectedSessionId, event?.id, evaluationSessionId]);
 
   // 6 Rubric Scores State (Strict Turn-1 Draft Model: null = unanswered, 0..N = answered)
   const [researchScore, setResearchScore] = useState<number | null>(null);
@@ -289,6 +303,9 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
         setRecogTick(t => t + 1);
       }).catch(() => {});
     }
+    storageService.fetchTargetedScores(event.id).then(() => {
+      setRecogTick(t => t + 1);
+    }).catch(() => {});
   }, [event?.id]);
 
   // Speaking turns for this delegate in the current canonical session
@@ -406,6 +423,21 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     }
   }, [event?.id, currentEnvironment, testMode.testRunId, selectedLearnerId]);
 
+  const isMidEvaluationRef = useRef(false);
+  const selectedLearnerNameRef = useRef('');
+  useEffect(() => {
+    isMidEvaluationRef.current = Boolean(
+      selectedLearnerId &&
+      (researchScore !== null || relevanceScore !== null || commScore !== null || conductScore !== null || originalityScore !== null || timeScore !== null || (feedback && feedback.trim()))
+    );
+    selectedLearnerNameRef.current = selectedLearner?.full_name || 'selected delegate';
+  }, [selectedLearnerId, researchScore, relevanceScore, commScore, conductScore, originalityScore, timeScore, feedback, selectedLearner?.full_name]);
+
+  const onShowToastRef = useRef(onShowToast);
+  useEffect(() => {
+    onShowToastRef.current = onShowToast;
+  }, [onShowToast]);
+
   useEffect(() => {
     const unsub = storageService.subscribe(() => {
       setRecogTick(t => t + 1);
@@ -457,6 +489,27 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       }
     };
 
+
+
+  const handleActiveSessionChanged = (evt: Event) => {
+    const customEvt = evt as CustomEvent;
+    const detail = customEvt?.detail;
+    if (detail?.eventId && detail.eventId === event?.id && detail.sessionId) {
+      const isMidEvaluation = isMidEvaluationRef.current;
+      if (isMidEvaluation) {
+        onShowToastRef.current(
+          'Session Changed by Speaker Aid',
+          `Floor session updated to "${detail.sessionName || detail.sessionId}". Your active evaluation for ${selectedLearnerNameRef.current} remains tied to its original session until submitted.`,
+          'info'
+        );
+      } else {
+        setSelectedSessionId(detail.sessionId);
+        setLoadedKey('');
+      }
+      setRecogTick(t => t + 1);
+    }
+  };
+
     if (typeof window !== 'undefined') {
       window.addEventListener('tn_assembly_current_speaker_changed', handleSpeakerChanged);
       window.addEventListener('tn_assembly_speaking_update', handleSpeakerChanged);
@@ -465,6 +518,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       window.addEventListener('tn_assembly_test_mode_update', handleRecogUpdate);
       window.addEventListener('tn_assembly_scoring_environment_update', handleRecogUpdate);
       window.addEventListener('tn_assembly_scores_updated', handleRecogUpdate);
+      window.addEventListener('tn_assembly_active_session_changed', handleActiveSessionChanged);
       window.addEventListener('tn_assembly_jury_scoring_reset', handleJuryScoringReset);
       window.addEventListener('storage', handleRecogUpdate);
     }
@@ -478,6 +532,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
         window.removeEventListener('tn_assembly_test_mode_update', handleRecogUpdate);
         window.removeEventListener('tn_assembly_scoring_environment_update', handleRecogUpdate);
         window.removeEventListener('tn_assembly_scores_updated', handleRecogUpdate);
+        window.removeEventListener('tn_assembly_active_session_changed', handleActiveSessionChanged);
         window.removeEventListener('tn_assembly_jury_scoring_reset', handleJuryScoringReset);
         window.removeEventListener('storage', handleRecogUpdate);
       }
@@ -1157,6 +1212,15 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
         onSaveScore(scoreRecordToPersist);
       }
 
+      setEvaluationSessionId(null);
+      if (event?.id) {
+        const latestAuth = storageService.getAuthoritativeActiveSession(event.id);
+        if (latestAuth.id && latestAuth.id !== selectedSessionId) {
+          setSelectedSessionId(latestAuth.id);
+          setLoadedKey('');
+        }
+      }
+
       setRecogTick(t => t + 1);
       setIsSavedRecently(true);
       setDraftSavedAt(null);
@@ -1390,21 +1454,16 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2">
-              <label className="text-xs font-extrabold uppercase tracking-wider text-slate-500 shrink-0">
-                Session:
-              </label>
-              <select
-                value={selectedSession.id}
-                onChange={e => handleSessionChange(e.target.value)}
-                className="font-extrabold text-sm py-2 px-3.5 rounded-xl border border-amber-500/40 bg-white dark:bg-slate-900 text-slate-900 dark:text-white cursor-pointer shadow-sm focus:ring-2 focus:ring-amber-500/50"
-              >
-                {availableSessions.map(sess => (
-                  <option key={sess.id} value={sess.id}>
-                    {sess.name} {sess.day ? `(${sess.day})` : ''}
-                  </option>
-                ))}
-              </select>
+            <div className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl border border-amber-500/30 bg-amber-500/5 text-left shadow-xs">
+              <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-amber-600 dark:text-amber-400 block leading-tight">
+                  CURRENT SESSION • Speaker Aid Controlled
+                </span>
+                <span className="font-extrabold text-sm text-slate-900 dark:text-white block leading-snug">
+                  {selectedSession.name} {selectedSession.day ? `(${selectedSession.day})` : ''}
+                </span>
+              </div>
             </div>
 
             <div className="text-right hidden sm:block pl-2 border-l border-slate-200 dark:border-slate-800">

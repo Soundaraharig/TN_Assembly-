@@ -68,6 +68,10 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
   }, [eventId]);
 
   const [selectedSessionId, setSelectedSessionId] = useState<string>(() => {
+    if (eventId) {
+      const auth = storageService.getAuthoritativeActiveSession(eventId);
+      if (auth.id) return auth.id;
+    }
     if (sessions.length > 0) return sessions[0].id;
     return 'session_general';
   });
@@ -78,6 +82,15 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
       name: 'Assembly Floor Session'
     };
   }, [sessions, selectedSessionId]);
+
+  const handleSpeakerAidSessionChange = async (newSessId: string) => {
+    setSelectedSessionId(newSessId);
+    const targetSess = sessions.find(s => s.id === newSessId);
+    if (eventId) {
+      await storageService.setAuthoritativeActiveSession(eventId, newSessId, targetSess?.name);
+      onShowToast?.('Active Session Set', `Floor session set to: ${targetSess?.name || newSessId}`, 'success');
+    }
+  };
 
   const [envTick, setEnvTick] = useState(0);
   const testMode = useMemo(() => {
@@ -153,12 +166,21 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
       refreshFloorState();
     };
 
+    const handleActiveSessionChanged = (e: any) => {
+      const p = e?.detail;
+      if (p?.eventId === eventId && p?.sessionId) {
+        setSelectedSessionId(p.sessionId);
+        refreshFloorState();
+      }
+    };
+
     window.addEventListener('tn_assembly_current_speaker_changed', handleSpeakerChanged);
     window.addEventListener('tn_assembly_speaking_turn_update', handleSpeakerChanged);
     window.addEventListener('tn_assembly_speaking_update', handleSpeakerChanged);
     window.addEventListener('tn_assembly_scoring_environment_update', handleSpeakerChanged);
     window.addEventListener('tn_assembly_test_mode_update', handleSpeakerChanged);
     window.addEventListener('tn_assembly_jury_scoring_reset', handleSpeakerChanged);
+    window.addEventListener('tn_assembly_active_session_changed', handleActiveSessionChanged);
     window.addEventListener('storage', handleSpeakerChanged);
 
     return () => {
@@ -169,6 +191,7 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
       window.removeEventListener('tn_assembly_scoring_environment_update', handleSpeakerChanged);
       window.removeEventListener('tn_assembly_test_mode_update', handleSpeakerChanged);
       window.removeEventListener('tn_assembly_jury_scoring_reset', handleSpeakerChanged);
+      window.removeEventListener('tn_assembly_active_session_changed', handleActiveSessionChanged);
       window.removeEventListener('storage', handleSpeakerChanged);
     };
   }, [isAuthorized, eventId, selectedSessionId]);
@@ -373,7 +396,7 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
               <span className="text-slate-400 text-[11px] font-semibold hidden md:inline">Session:</span>
               <select
                 value={selectedSessionId}
-                onChange={e => setSelectedSessionId(e.target.value)}
+                onChange={e => handleSpeakerAidSessionChange(e.target.value)}
                 className="px-2.5 py-1.5 rounded-xl border text-xs font-bold bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 cursor-pointer focus:outline-none"
               >
                 {sessions.map(s => (

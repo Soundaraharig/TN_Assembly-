@@ -5062,6 +5062,45 @@ class StorageService {
             }
           }
         })
+        .on('broadcast', { event: 'active_session_changed' }, (msg: any) => {
+          const p = msg?.payload;
+          if (p?.eventId === resolvedEventId && p?.sessionId) {
+            const now = Number(p.updatedAt) || Date.now();
+            if (typeof localStorage !== 'undefined') {
+              try {
+                localStorage.setItem(`tn_assembly_active_session_${resolvedEventId}`, JSON.stringify({
+                  id: p.sessionId,
+                  name: p.sessionName || 'Assembly Floor Session',
+                  updatedAt: now
+                }));
+              } catch {}
+            }
+            const curEvs = this.getEvents();
+            const ev = curEvs.find(e => e.id === resolvedEventId);
+            if (ev) {
+              const sc = (ev.social_coverage || {}) as Record<string, any>;
+              ev.social_coverage = {
+                ...sc,
+                active_session_id: p.sessionId,
+                active_session_name: p.sessionName || sc.active_session_name,
+                active_session_updated_at: now
+              };
+              this.setItem(STORAGE_KEYS.EVENTS, curEvs);
+            }
+            this.notify();
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_active_session_changed', { detail: p }));
+              window.dispatchEvent(new Event('storage'));
+            }
+          }
+        })
+        .on('broadcast', { event: 'scores_updated' }, (msg: any) => {
+          const p = msg?.payload;
+          const targetId = p?.eventId || resolvedEventId;
+          if (targetId) {
+            this.fetchTargetedScores(targetId).catch(() => {});
+          }
+        })
         .on('broadcast', { event: 'agenda_progress_update' }, (msg: any) => {
           if (msg?.payload?.eventId && msg?.payload?.progress) {
             const evId = msg.payload.eventId;
@@ -11330,20 +11369,166 @@ class StorageService {
   }
 
   public getActiveSession(eventId?: string): { id: string; title: string } {
-    if (eventId) {
-      const agenda = this.getAgenda(eventId);
-      const current = agenda.find(a => a.is_current);
-      if (current) return { id: current.id, title: current.title };
+    const authSess = this.getAuthoritativeActiveSession(eventId);
+    return { id: authSess.id, title: authSess.name };
+  }
+
+  public getAuthoritativeActiveSession(eventId?: string): { id: string; name: string } {
+    if (!eventId) return { id: 'zero_hour', name: 'Zero Hour' };
+
+    // 1. Explicit local storage with event scope
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const stored = localStorage.getItem(`tn_assembly_active_session_${eventId}`);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed && parsed.id) {
+            return { id: parsed.id, name: parsed.name || parsed.title || 'Assembly Floor Session' };
+          }
+        }
+      } catch {}
     }
-    return { id: '', title: '' };
+
+    // 2. Event social_coverage check
+    const ev = this.getEvents().find(e => e.id === eventId);
+    const sc = (ev?.social_coverage || {}) as Record<string, any>;
+    if (sc.active_session_id) {
+      return {
+        id: sc.active_session_id,
+        name: sc.active_session_name || 'Assembly Floor Session'
+      };
+    }
+
+    // 3. session_agenda is_current check
+    const agenda = this.getAgenda(eventId);
+    const currentAgenda = agenda.find(a => a.is_current);
+    if (currentAgenda) {
+      const resolved = resolveCanonicalSession(currentAgenda.id, currentAgenda.title, agenda);
+      return { id: resolved.canonicalId, name: currentAgenda.title || resolved.displayName };
+    }
+
+    // 4. Fallback to first available scoring session
+    const sessions = this.getScoringSessions(eventId);
+    if (sessions.length > 0) {
+      return { id: sessions[0].id, name: sessions[0].name };
+    }
+
+    return { id: 'zero_hour', name: 'Zero Hour' };
+  }
+
+  public async setAuthoritativeActiveSession(
+    eventId: string,
+    sessionId: string,
+    sessionName?: string
+  ): Promise<{ success: boolean; error?: string }> {
+    if (!eventId || !sessionId) return { success: false, error: 'Missing eventId or sessionId' };
+
+    const agenda = this.getAgenda(eventId);
+    const resolved = resolveCanonicalSession(sessionId, sessionName, agenda);
+    const canonicalId = resolved.canonicalId;
+    const displayName = sessionName || resolved.displayName;
+    const now = Date.now();
+
+    // 1. Synchronous localStorage persistence
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem(
+          `tn_assembly_active_session_${eventId}`,
+          JSON.stringify({ id: canonicalId, name: displayName, updatedAt: now })
+        );
+      } catch {}
+    }
+
+    // 2. Update local event social_coverage
+    const curEvs = this.getEvents();
+    const ev = curEvs.find(e => e.id === eventId);
+    if (ev) {
+      const sc = (ev.social_coverage || {}) as Record<string, any>;
+      ev.social_coverage = {
+        ...sc,
+        active_session_id: canonicalId,
+        active_session_name: displayName,
+        active_session_updated_at: now
+      };
+      this.setItem(STORAGE_KEYS.EVENTS, curEvs);
+    }
+
+    // 3. If an agenda item matches this canonical session, sync session_agenda is_current locally
+    const matchedAgenda = agenda.find(a => {
+      if (a.id === sessionId) return true;
+      const res = resolveCanonicalSession(a.id, a.title, agenda);
+      return res.canonicalId === canonicalId;
+    });
+
+    if (matchedAgenda) {
+      const allAgenda = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, []);
+      const updatedAgenda = allAgenda.map(a => {
+        if (a.event_id === eventId) {
+          return { ...a, is_current: a.id === matchedAgenda.id };
+        }
+        return a;
+      });
+      this.setItem(STORAGE_KEYS.AGENDA, updatedAgenda);
+    }
+
+    // 4. Dispatch local events
+    this.notify();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('tn_assembly_active_session_changed', {
+          detail: { eventId, sessionId: canonicalId, sessionName: displayName, updatedAt: now }
+        })
+      );
+      window.dispatchEvent(new Event('storage'));
+    }
+
+    // 5. Persist to Supabase if connected
+    if (supabase && isSupabaseEnabled && isValidUuid(eventId)) {
+      try {
+        await this.patchSocialCoverageSafe(eventId, {
+          active_session_id: canonicalId,
+          active_session_name: displayName,
+          active_session_updated_at: now
+        });
+
+        if (matchedAgenda) {
+          await supabase.from('session_agenda').update({ is_current: false }).eq('event_id', eventId).neq('id', matchedAgenda.id);
+          await supabase.from('session_agenda').update({ is_current: true }).eq('id', matchedAgenda.id);
+        }
+      } catch (sbErr) {
+        console.warn('[setAuthoritativeActiveSession] Supabase persistence error:', sbErr);
+      }
+    }
+
+    // 6. Broadcast on existing multiplexed channel tn_assembly_live_${eventId}
+    if (supabase) {
+      try {
+        if (!this.realtimeChannel || this.currentRealtimeEventId !== eventId) {
+          this.setupRealtimeSync(eventId);
+        }
+        if (this.realtimeChannel) {
+          await this.realtimeChannel.send({
+            type: 'broadcast',
+            event: 'active_session_changed',
+            payload: {
+              eventId,
+              sessionId: canonicalId,
+              sessionName: displayName,
+              updatedAt: now
+            }
+          });
+        }
+      } catch (bcastErr) {
+        console.warn('[setAuthoritativeActiveSession] Realtime broadcast error:', bcastErr);
+      }
+    }
+
+    return { success: true };
   }
 
   public async setActiveSession(eventId: string, session: { id: string; title: string }): Promise<void> {
     if (!eventId || !session?.id) return;
-    const current = this.getActiveSession(eventId);
-    if (current.id !== session.id) {
-      this.setCurrentAgendaItem(eventId, session.id);
-    }
+    await this.setAuthoritativeActiveSession(eventId, session.id, session.title);
   }
 
   public getSpeakingRequests(eventId?: string, sessionId?: string): SpeakingRequest[] {
@@ -16225,8 +16410,9 @@ class StorageService {
     if (!juryKey) juryKey = 'default_jury';
 
     const learnerKey = score.learner_id || '';
-    const turnKey = score.speaking_turn_id ? `:::${score.speaking_turn_id}` : '';
-    return `${evId}:::${sessKey}:::${juryKey}:::${learnerKey}${turnKey}`;
+    const isTest = Boolean(score.is_test || (score.test_run_id != null && score.test_run_id !== ''));
+    const scopeKey = isTest ? `test:::${score.test_run_id || 'default'}` : 'live';
+    return `${evId}:::${sessKey}:::${juryKey}:::${learnerKey}:::${scopeKey}`;
   }
 
 
@@ -18228,6 +18414,27 @@ class StorageService {
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('tn_assembly_scores_updated', { detail: { eventId } }));
+      }
+
+      if (supabase && this.realtimeChannel) {
+        try {
+          await this.realtimeChannel.send({
+            type: 'broadcast',
+            event: 'scores_updated',
+            payload: {
+              eventId,
+              scoreId: confirmedRecord.id,
+              learnerId: score.learner_id,
+              sessionId: score.session_id,
+              juryId: score.jury_id,
+              isTest: score.is_test,
+              testRunId: score.test_run_id,
+              updatedAt: new Date().toISOString()
+            }
+          });
+        } catch (bcastErr) {
+          console.warn('[persistScoreRecordToBackend] Realtime broadcast warning:', bcastErr);
+        }
       }
 
       return { success: true, score: confirmedRecord };
