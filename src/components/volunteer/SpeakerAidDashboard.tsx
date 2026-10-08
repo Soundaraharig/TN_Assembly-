@@ -244,6 +244,22 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
     return learners.find(l => l.id === activeSpeakerTurn.learner_id);
   }, [activeSpeakerTurn, learners]);
 
+  // Active turn jury scoring completion stats (Step 14)
+  const juryStats = useMemo(() => {
+    if (!eventId || !activeSpeakerTurn) return { submitted: 0, pending: 0, total: 0 };
+    const juries = storageService.getJury(eventId);
+    const total = juries.length;
+    const scores = storageService.getScores(eventId);
+    const submittedScores = scores.filter(s =>
+      s.speaking_turn_id === activeSpeakerTurn.id ||
+      (s.session_id === activeSpeakerTurn.session_id && s.learner_id === activeSpeakerTurn.learner_id)
+    );
+    const uniqueJuries = new Set(submittedScores.map(s => s.jury_id || s.juror_name));
+    const submitted = uniqueJuries.size;
+    const pending = Math.max(0, total - submitted);
+    return { submitted, pending, total };
+  }, [eventId, activeSpeakerTurn, turnsLog]);
+
 
   if (!isAuthorized) {
     return (
@@ -481,7 +497,10 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
                         🔴 NOW SPEAKING
                       </span>
                       <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-black bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30">
-                        Speaking Turn {activeSpeakerTurn.sequence_number}
+                        Turn {activeSpeakerTurn.sequence_number} ({activeSpeakerTurn.id.slice(0, 8)})
+                      </span>
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/15 text-purple-700 dark:text-purple-300 border border-purple-500/30">
+                        Session: {activeSpeakerTurn.session_name || selectedSession.name}
                       </span>
                       {activeLearner?.bench && (
                         <span
@@ -495,6 +514,9 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
                           {activeLearner.bench} Bench
                         </span>
                       )}
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-500/30">
+                        Jury: {juryStats.submitted} / {juryStats.total || juryStats.submitted} Submitted ({juryStats.pending} Pending)
+                      </span>
                     </div>
 
                     <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 dark:text-white">

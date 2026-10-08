@@ -236,11 +236,11 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     if (!learner || isStartingTurn) return;
     setIsStartingTurn(true);
     try {
-      const activeSession = storageService.getActiveSession(eventId);
+      const authSession = storageService.getAuthoritativeActiveSession(eventId);
       const res = await storageService.setAuthoritativeCurrentSpeaker({
         eventId,
-        sessionId: activeSession.id || 'session_general',
-        sessionName: activeSession.title || 'Assembly Floor Session',
+        sessionId: authSession.id || 'session_general',
+        sessionName: authSession.name || 'Assembly Floor Session',
         learnerId: learner.id,
         learnerName: learner.full_name,
         calledBy: volunteer?.name ? `Speaker Aid (${volunteer.name})` : 'Speaker Aid',

@@ -92,6 +92,23 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     return storageService.getScoringSessions(event?.id || '');
   }, [event?.id, agenda]);
 
+  const testMode = useMemo(() => {
+    return storageService.getScoringTestMode(event?.id);
+  }, [event?.id, recogTick]);
+  const currentEnvironment = testMode.isTestMode ? 'test' : 'live';
+
+  const [submittedTurnKeys, setSubmittedTurnKeys] = useState<Set<string>>(() => {
+    const set = new Set<string>();
+    const juryId = jury?.id || jury?.name || 'jury';
+    const allScores = event?.id ? storageService.getScores(event.id) : [];
+    allScores.forEach(s => {
+      if (s.speaking_turn_id && (s.jury_id === juryId || s.juror_name === juryId)) {
+        set.add(`${s.speaking_turn_id}_${juryId}`);
+      }
+    });
+    return set;
+  });
+
   const [selectedSessionId, setSelectedSessionId] = useState<string>(() => {
     if (event?.id) {
       const auth = storageService.getAuthoritativeActiveSession(event.id);
@@ -103,16 +120,43 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
 
   const [evaluationSessionId, setEvaluationSessionId] = useState<string | null>(null);
 
+  // Authoritative session: speaking turn takes highest priority, followed by floor speaker, followed by event active session
   const selectedSession = useMemo<ScoringSession>(() => {
-    const targetId = evaluationSessionId || selectedSessionId;
+    // 1. Authoritative resolution: if selectedSpeakingTurnId exists, the turn dictates the session
+    if (selectedSpeakingTurnId) {
+      const turn = storageService.getSpeakingTurnById(selectedSpeakingTurnId, event?.id);
+      if (turn && turn.session_id) {
+        const found = availableSessions.find(s => s.id === turn.session_id);
+        return found || {
+          id: turn.session_id,
+          name: turn.session_name || 'Assembly Floor Session',
+          is_canonical: true
+        };
+      }
+    }
+    // 2. Authoritative resolution: if active floor speaker exists, their turn dictates the session
+    if (event?.id) {
+      const curSpeaker = storageService.getAuthoritativeCurrentSpeaker(
+        event.id,
+        undefined,
+        currentEnvironment,
+        testMode.testRunId
+      );
+      if (curSpeaker && curSpeaker.session_id) {
+        const found = availableSessions.find(s => s.id === curSpeaker.session_id);
+        return found || {
+          id: curSpeaker.session_id,
+          name: curSpeaker.session_name || 'Assembly Floor Session',
+          is_canonical: true
+        };
+      }
+    }
+    // 3. Fallback: Authoritative floor session from storageService
+    const authSess = event?.id ? storageService.getAuthoritativeActiveSession(event.id) : null;
+    const targetId = evaluationSessionId || (authSess?.id) || selectedSessionId;
     const found = availableSessions.find(s => s.id === targetId);
     return found || availableSessions[0] || { id: 'zero_hour', name: 'Zero Hour', is_canonical: true };
-  }, [availableSessions, selectedSessionId, evaluationSessionId]);
-
-  const testMode = useMemo(() => {
-    return storageService.getScoringTestMode(event?.id);
-  }, [event?.id, recogTick]);
-  const currentEnvironment = testMode.isTestMode ? 'test' : 'live';
+  }, [availableSessions, selectedSessionId, evaluationSessionId, selectedSpeakingTurnId, event?.id, currentEnvironment, testMode.testRunId, recogTick]);
 
   // Memoized O(1) Score Map for the active session (P1 Mobile CPU optimization)
   const currentSessionScoreMap = useMemo(() => {
@@ -504,6 +548,9 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
           }
           lastSpeakerVersionRef.current = detail.version;
         }
+        if (detail.sessionId && !isMidEvaluationRef.current) {
+          setSelectedSessionId(detail.sessionId);
+        }
         // Part 4 & Part 13: DO NOT automatically change the Jury's selected evaluation!
         // Speaker Aid controls floor speaker; Jury selected participant remains stable.
       }
@@ -512,6 +559,22 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
 
     const handleRecogUpdate = () => {
       setRecogTick(t => t + 1);
+      const juryId = jury?.id || jury?.name || 'jury';
+      const allScores = event?.id ? storageService.getScores(event.id) : [];
+      setSubmittedTurnKeys(prev => {
+        let changed = false;
+        const next = new Set(prev);
+        allScores.forEach(s => {
+          if (s.speaking_turn_id && (s.jury_id === juryId || s.juror_name === juryId)) {
+            const k = `${s.speaking_turn_id}_${juryId}`;
+            if (!next.has(k)) {
+              next.add(k);
+              changed = true;
+            }
+          }
+        });
+        return changed ? next : prev;
+      });
     };
 
     const handleJuryScoringReset = (evt: Event) => {
@@ -580,7 +643,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
         window.removeEventListener('storage', handleRecogUpdate);
       }
     };
-  }, [event?.id]);
+  }, [event?.id, jury?.id, jury?.name]);
 
   // Pre-calculate recognitions count per participant across that MLA's speaking turns for CURRENT JUROR
   const learnerRecognitionsCountMap = useMemo(() => {
@@ -1187,6 +1250,35 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
         effectiveDelegateTurns.find(t => t.status === 'SPEAKING' || t.status === 'SPOKEN') ||
         effectiveDelegateTurns[0];
       const turnId = activeTurn?.id || selectedSpeakingTurnId || '';
+      const juryId = jury?.id || jury?.name || 'jury';
+
+      // Step 10: Double-click & duplicate submit protection
+      if (turnId && submittedTurnKeys.has(`${turnId}_${juryId}`)) {
+        onShowToast('Already Submitted', 'You have already submitted an official score for this speaking turn.', 'info');
+        return;
+      }
+
+      // Step 5: Authoritative session resolved strictly from turn first, fallback to selectedSession
+      const targetSessionId = activeTurn?.session_id || selectedSession.id;
+      const targetSessionName = activeTurn?.session_name || selectedSession.name;
+      const targetSession: ScoringSession = {
+        id: targetSessionId,
+        name: targetSessionName,
+        is_canonical: true
+      };
+
+      // P0 Business Rule: If an evaluation already exists for this learner in this session, reject creating a new full evaluation
+      const existingCheck = storageService.getJuryEvaluations(
+        event.id,
+        targetSession.id,
+        juryId,
+        targetLearner.id,
+        testMode.isTestMode
+      );
+      if (existingCheck.length > 0) {
+        onShowToast('Session Evaluation Exists', `${targetLearner.full_name} already has an official session evaluation (${existingCheck[0].total}/100). Please record a contribution instead.`, 'info');
+        return;
+      }
 
       const now = new Date().toISOString();
       const evalId = `eval_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
@@ -1196,16 +1288,16 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
 
       const scoreRecordToPersist: ScoreRecord = {
         id: evalId,
-        event_id: event.id,
+        event_id: activeTurn?.event_id || event.id,
         session_id: targetSession.id,
         session_name: targetSession.name,
-        learner_id: targetLearner.id,
-        learner_name: targetLearner.full_name,
+        learner_id: activeTurn?.learner_id || targetLearner.id,
+        learner_name: activeTurn?.learner_name || targetLearner.full_name,
         constituency_number: targetLearner.constituency_number,
         constituency_name: targetLearner.constituency_name,
         party_name: targetLearner.party_name || 'Independent',
         bench: (targetLearner.bench as any) || 'Ruling',
-        jury_id: jury?.id || jury?.name || 'jury',
+        jury_id: juryId,
         juror_name: jury?.name || 'Evaluator',
         research_constituency: researchScore!,
         relevance_agenda: relevanceScore!,
@@ -1246,7 +1338,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
         constituencyName: targetLearner.constituency_name,
         partyName: targetLearner.party_name,
         bench: targetLearner.bench,
-        juryId: jury?.id || jury?.name || 'jury',
+        juryId: juryId,
         juryName: jury?.name || 'Evaluator',
         isTest: testMode.isTestMode,
         testRunId: testMode.testRunId || undefined,
@@ -1264,10 +1356,19 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       storageService.clearJuryDraft(
         event.id,
         targetSession.id,
-        jury?.id || jury?.name || 'jury',
+        juryId,
         targetLearner.id,
         turnId || undefined
       );
+
+      // Register turn as submitted for this jury (Step 9 rebound protection)
+      if (turnId) {
+        setSubmittedTurnKeys(prev => {
+          const next = new Set(prev);
+          next.add(`${turnId}_${juryId}`);
+          return next;
+        });
+      }
 
       // Notify parent if onSaveScore is passed to refresh scores state
       if (onSaveScore) {
@@ -1278,51 +1379,10 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       setEvaluationSessionId(targetSession.id);
       setSelectedSessionId(targetSession.id);
 
-      // Advance to the next unscored delegate in this session
-      const currentIdx = learners.findIndex(l => l.id === targetLearner.id);
-      let nextLearner: Learner | null = null;
-      for (let i = currentIdx + 1; i < learners.length; i++) {
-        const l = learners[i];
-        const isScored = currentSessionScoreMap.has(l.id) || Boolean(
-          storageService.resolveAuthoritativeSessionEvaluation(
-            event.id,
-            targetSession.id,
-            jury?.id || jury?.name || 'jury',
-            l.id,
-            testMode.isTestMode,
-            testMode.testRunId
-          )
-        );
-        if (!isScored) {
-          nextLearner = l;
-          break;
-        }
-      }
-      if (!nextLearner) {
-        for (let i = 0; i < currentIdx; i++) {
-          const l = learners[i];
-          const isScored = currentSessionScoreMap.has(l.id) || Boolean(
-            storageService.resolveAuthoritativeSessionEvaluation(
-              event.id,
-              targetSession.id,
-              jury?.id || jury?.name || 'jury',
-              l.id,
-              testMode.isTestMode,
-              testMode.testRunId
-            )
-          );
-          if (!isScored) {
-            nextLearner = l;
-            break;
-          }
-        }
-      }
-
-      if (nextLearner) {
-        setSelectedLearnerId(nextLearner.id);
-        setSelectedSpeakingTurnId(null);
-        setLoadedKey('');
-      }
+      // Step 9: Close form and deselect to prevent scoring rebound
+      setSelectedSpeakingTurnId(null);
+      setSelectedLearnerId('');
+      setLoadedKey('');
 
       setRecogTick(t => t + 1);
       setIsSavedRecently(true);
@@ -1900,6 +1960,10 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                         <span className="text-xs font-mono font-bold text-amber-700 dark:text-amber-300">
                           Speaking Turn {activeFloorSpeakingTurn.sequence_number || 1}
                         </span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/30 flex items-center gap-1 shrink-0">
+                          <Lock className="w-2.5 h-2.5" />
+                          {activeFloorSpeakingTurn.session_name || selectedSession.name}
+                        </span>
                       </div>
                       <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white mt-0.5 tracking-tight truncate">
                         {activeFloorSpeakingTurn.learner_name}
@@ -1938,17 +2002,24 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       <span>{isFloorTurnRecognized ? '⭐ LIKED ✓' : '⭐ LIKE THIS SPEECH'}</span>
                     </button>
 
-                    {/* Switch to evaluate this live speaker if different from current selection */}
-                    {activeFloorSpeakingTurn && (activeFloorSpeakingTurn.learner_id !== selectedLearnerId || (selectedSpeakingTurnId && selectedSpeakingTurnId !== activeFloorSpeakingTurn.id)) && (
-                      <button
-                        type="button"
-                        onClick={() => selectDelegate(activeFloorSpeakingTurn.learner_id, activeFloorSpeakingTurn.id)}
-                        className="w-full sm:w-auto px-4 py-3 min-h-[44px] rounded-xl text-xs font-black transition flex items-center justify-center gap-2 cursor-pointer bg-blue-600 hover:bg-blue-700 text-white shadow-md active:scale-95 shrink-0"
-                        title="Switch scoring form to evaluate this live speaker"
-                      >
-                        <UserCheck className="w-4 h-4" />
-                        <span>EVALUATE THIS SPEAKER</span>
-                      </button>
+                    {/* Step 9 & 14: Rebound protection and evaluate button */}
+                    {activeFloorSpeakingTurn && (
+                      submittedTurnKeys.has(`${activeFloorSpeakingTurn.id}_${jury?.id || jury?.name || 'jury'}`) ? (
+                        <div className="w-full sm:w-auto px-4 py-3 min-h-[44px] rounded-xl text-xs font-black flex items-center justify-center gap-2 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 shrink-0">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                          <span>SCORE SUBMITTED ✓</span>
+                        </div>
+                      ) : (activeFloorSpeakingTurn.learner_id !== selectedLearnerId || (selectedSpeakingTurnId && selectedSpeakingTurnId !== activeFloorSpeakingTurn.id)) ? (
+                        <button
+                          type="button"
+                          onClick={() => selectDelegate(activeFloorSpeakingTurn.learner_id, activeFloorSpeakingTurn.id)}
+                          className="w-full sm:w-auto px-4 py-3 min-h-[44px] rounded-xl text-xs font-black transition flex items-center justify-center gap-2 cursor-pointer bg-blue-600 hover:bg-blue-700 text-white shadow-md active:scale-95 shrink-0"
+                          title="Switch scoring form to evaluate this live speaker"
+                        >
+                          <UserCheck className="w-4 h-4" />
+                          <span>EVALUATE THIS SPEAKER</span>
+                        </button>
+                      ) : null
                     )}
                   </div>
                 </div>

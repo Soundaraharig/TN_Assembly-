@@ -11669,6 +11669,12 @@ class StorageService {
   public getAuthoritativeActiveSession(eventId?: string): { id: string; name: string } {
     if (!eventId) return { id: 'zero_hour', name: 'Zero Hour' };
 
+    // 0. Active floor speaking turn check (CURRENT AUTHORITATIVE SPEECH ON FLOOR WINS)
+    const activeFloor = this.getAuthoritativeCurrentSpeaker(eventId);
+    if (activeFloor && activeFloor.session_id && activeFloor.status === 'SPEAKING') {
+      return { id: activeFloor.session_id, name: activeFloor.session_name || 'Assembly Floor Session' };
+    }
+
     // 1. Authoritative Event social_coverage check (REMOTE STATE WINS OVER LOCAL CACHE)
     const ev = this.getEvents().find(e => e.id === eventId);
     const sc = (ev?.social_coverage || {}) as Record<string, any>;
@@ -11852,6 +11858,20 @@ class StorageService {
   public getSpeakingRequests(eventId?: string, sessionId?: string): SpeakingRequest[] {
     const all = this.getItem<SpeakingRequest[]>(STORAGE_KEYS.SPEAKING_REQUESTS, []);
     return all.filter(r => (!eventId || r.event_id === eventId) && (!sessionId || r.session_id === sessionId));
+  }
+
+  public getSpeakingTurnById(turnId: string, eventId?: string): SpeakingTurn | null {
+    if (!turnId) return null;
+    let all = this.getItem<SpeakingTurn[]>(STORAGE_KEYS.SPEAKING_TURNS, []);
+    if (!all || all.length === 0) {
+      all = this.getItem<SpeakingTurn[]>('tn_assembly_speaking_turns_v6' as any, []);
+    }
+    const match = all.find(t => t.id === turnId && (!eventId || t.event_id === eventId));
+    if (match) return match;
+    if (eventId) {
+      return all.find(t => t.id === turnId) || null;
+    }
+    return null;
   }
 
   public getSpeakingTurns(
@@ -12440,6 +12460,9 @@ class StorageService {
         requestId,
         turn: newTurn
       }).catch(() => {});
+
+      // Synchronize floor active session with Speaker Aide's chosen turn session
+      this.setAuthoritativeActiveSession(eventId, sessionId, newTurn.session_name).catch(() => {});
 
       // 6. Window CustomEvents
       if (typeof window !== 'undefined') {
@@ -16858,11 +16881,19 @@ class StorageService {
 
     const now = new Date().toISOString();
 
+    // Step 5: Authoritative speaking turn resolution (turn binds session, learner, event)
+    let authTurn: SpeakingTurn | null = null;
+    if (score.speaking_turn_id) {
+      authTurn = this.getSpeakingTurnById(score.speaking_turn_id, score.event_id);
+    }
+    const targetSessionId = authTurn?.session_id || score.session_id;
+    const targetSessionName = authTurn?.session_name || score.session_name;
+
     // Canonical session resolution
     const agendaItems = score.event_id ? this.getAgenda(score.event_id) : [];
-    const resolvedSession = resolveCanonicalSession(score.session_id, score.session_name, agendaItems);
+    const resolvedSession = resolveCanonicalSession(targetSessionId, targetSessionName, agendaItems);
     const sessId = resolvedSession.canonicalId;
-    const sessName = score.session_name || resolvedSession.displayName;
+    const sessName = targetSessionName || resolvedSession.displayName;
 
     let juryId = score.jury_id;
     let jurorName = score.juror_name || 'Juror';
@@ -16878,10 +16909,10 @@ class StorageService {
     const normalizedScore: ScoreRecord = {
       ...score,
       id: score.id || uid('score'),
-      event_id: score.event_id || '',
+      event_id: (authTurn?.event_id) || score.event_id || '',
       session_id: sessId,
       session_name: sessName,
-      learner_id: score.learner_id,
+      learner_id: (authTurn?.learner_id) || score.learner_id,
       jury_id: juryId,
       juror_name: jurorName,
       research_constituency: research,
@@ -17197,10 +17228,18 @@ class StorageService {
       throw new Error('INVALID_SCORE_RANGE: Rubric category score out of bounds.');
     }
 
+    // Step 5: Authoritative speaking turn resolution (turn binds session, learner, event)
+    let authTurn: SpeakingTurn | null = null;
+    if (params.speakingTurnId) {
+      authTurn = this.getSpeakingTurnById(params.speakingTurnId, params.eventId);
+    }
+    const targetSessionId = authTurn?.session_id || params.sessionId;
+    const targetSessionName = authTurn?.session_name || params.sessionName;
+
     const agendaItems = this.getAgenda(params.eventId);
-    const resolvedSession = resolveCanonicalSession(params.sessionId, params.sessionName, agendaItems);
+    const resolvedSession = resolveCanonicalSession(targetSessionId, targetSessionName, agendaItems);
     const canonicalSessionId = resolvedSession.canonicalId;
-    const canonicalSessionName = params.sessionName || resolvedSession.displayName;
+    const canonicalSessionName = targetSessionName || resolvedSession.displayName;
 
     const r = params.research_constituency;
     const rel = params.relevance_agenda;
@@ -17266,10 +17305,10 @@ class StorageService {
     const evalId = params.id || uid('eval');
     const newEval: JuryEvaluation = {
       id: evalId,
-      event_id: params.eventId,
+      event_id: (authTurn?.event_id) || params.eventId,
       session_id: canonicalSessionId,
       session_name: canonicalSessionName,
-      learner_id: params.learnerId,
+      learner_id: (authTurn?.learner_id) || params.learnerId,
       learner_name: params.learnerName || 'Delegate',
       constituency_number: params.constituencyNumber,
       constituency_name: params.constituencyName,
@@ -18658,6 +18697,19 @@ class StorageService {
    * 4. Only then return success: true
    */
   public async persistScoreRecordToBackend(score: ScoreRecord): Promise<{ success: boolean; score?: ScoreRecord; error?: string }> {
+    // Step 5: Authoritative speaking turn resolution before writing to database
+    if (score.speaking_turn_id) {
+      const authTurn = this.getSpeakingTurnById(score.speaking_turn_id, score.event_id);
+      if (authTurn) {
+        score.session_id = authTurn.session_id;
+        score.session_name = authTurn.session_name || score.session_name;
+        score.learner_id = authTurn.learner_id;
+        if (authTurn.event_id) {
+          score.event_id = authTurn.event_id;
+        }
+      }
+    }
+
     if (!score.event_id || !score.learner_id) {
       return { success: false, error: 'Missing event_id or learner_id for score persistence.' };
     }
