@@ -120,20 +120,25 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     const isTest = testMode.isTestMode;
     const testRunId = testMode.testRunId;
     const freshScores = event?.id ? storageService.getScores(event.id) : scores;
+    const agendaItems = event?.id ? storageService.getAgenda(event.id) : [];
+    const resolvedCurrent = selectedSession ? resolveCanonicalSession(selectedSession.id, selectedSession.name, agendaItems) : null;
+    const canonicalSessionId = resolvedCurrent ? resolvedCurrent.canonicalId : selectedSession.id;
 
     for (const s of freshScores) {
-      if (
-        (!event || !s.event_id || s.event_id === event.id) &&
-        (s.session_id === selectedSession.id || s.session_name === selectedSession.name) &&
-        ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))
-      ) {
-        if (isTest) {
-          if (s.is_test && (!testRunId || s.test_run_id === testRunId)) {
-            map.set(s.learner_id, s);
-          }
-        } else {
-          if (!s.is_test) {
-            map.set(s.learner_id, s);
+      if (!event || !s.event_id || s.event_id === event.id) {
+        const sCanonical = resolveCanonicalSession(s.session_id, s.session_name, agendaItems).canonicalId;
+        const matchesSession = resolvedCurrent
+          ? (sCanonical === canonicalSessionId || s.session_id === selectedSession.id || s.session_name === selectedSession.name)
+          : true;
+        if (matchesSession && ((jury?.id && s.jury_id === jury.id) || (jury?.name && s.juror_name === jury.name))) {
+          if (isTest) {
+            if (s.is_test && (!testRunId || s.test_run_id === testRunId)) {
+              map.set(s.learner_id, s);
+            }
+          } else {
+            if (!s.is_test) {
+              map.set(s.learner_id, s);
+            }
           }
         }
       }
@@ -142,7 +147,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     if (event?.id) {
       const evals = storageService.getJuryEvaluations(
         event.id,
-        selectedSession.id,
+        canonicalSessionId,
         jury?.id || jury?.name,
         undefined,
         isTest
@@ -615,9 +620,11 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     const juryId = jury?.id || jury?.name || 'jury';
     const isTest = testMode.isTestMode;
     const testRunId = testMode.testRunId;
+    const agendaItems = storageService.getAgenda(event.id);
+    const resolvedCurrent = resolveCanonicalSession(selectedSession.id, selectedSession.name, agendaItems);
     return storageService.getJuryEvaluations(
       event.id,
-      selectedSession.id,
+      resolvedCurrent.canonicalId,
       juryId,
       undefined,
       isTest
@@ -651,13 +658,27 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
   }, [allEventSpeakingTurns, selectedSession, event?.id]);
 
   // Pending evaluation speaking turns: completed speeches that lack an official session evaluation by this juror
+  // ONE pending evaluation entry per learner (no duplicate rows, per Part 4 & Part 12)
   const pendingEvaluationTurns = useMemo(() => {
-    return spokenHistoryTurns.filter(turn => {
-      if (turn.status !== 'SPOKEN') return false;
-      const hasSessionEval = allJurorEvaluations.some(e => e.learner_id === turn.learner_id);
-      return !hasSessionEval;
-    });
-  }, [spokenHistoryTurns, allJurorEvaluations]);
+    const seenLearnerIds = new Set<string>();
+    const pendingList: SpeakingTurn[] = [];
+
+    for (const turn of spokenHistoryTurns) {
+      if (turn.status !== 'SPOKEN' || !turn.learner_id) continue;
+
+      const isAlreadyEvaluated = currentSessionScoreMap.has(turn.learner_id) ||
+        allJurorEvaluations.some(e => e.learner_id === turn.learner_id);
+
+      if (isAlreadyEvaluated) continue;
+
+      if (!seenLearnerIds.has(turn.learner_id)) {
+        seenLearnerIds.add(turn.learner_id);
+        pendingList.push(turn);
+      }
+    }
+
+    return pendingList;
+  }, [spokenHistoryTurns, allJurorEvaluations, currentSessionScoreMap]);
 
   // Filtered spoken history turns based on search input
   const filteredSpokenHistoryTurns = useMemo(() => {
@@ -1878,7 +1899,7 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       <div>
                         <div className="flex items-center gap-2">
                           <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
-                            Existing Session Evaluation
+                            Existing Session Evaluation • {currentEvaluation.session_name || selectedSession.name}
                           </span>
                           <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/30">
                             Speaking Turn {displayedTurnNumber}
@@ -2847,9 +2868,9 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
                       filteredSpokenHistoryTurns.map((turn, idx) => {
                         const learner = learnersByIdMap.get(turn.learner_id);
                         const isSelected = turn.learner_id === selectedLearnerId && (!selectedSpeakingTurnId || selectedSpeakingTurnId === turn.id);
-                        const sessionEval = allJurorEvaluations.find(e => e.learner_id === turn.learner_id);
+                        const sessionEval = allJurorEvaluations.find(e => e.learner_id === turn.learner_id) || (currentSessionScoreMap.get(turn.learner_id) as any);
                         const isInitialTurn = sessionEval && (sessionEval.initial_speaking_turn_id === turn.id || (!sessionEval.initial_speaking_turn_id && idx === 0));
-                        const isContribRecorded = sessionEval && sessionEval.turns?.some(c => c.speaking_turn_id === turn.id);
+                        const isContribRecorded = sessionEval && sessionEval.turns?.some((c: any) => c.speaking_turn_id === turn.id);
                         const isNowSpeaking = activeFloorSpeakingTurn?.id === turn.id || turn.status === 'SPEAKING';
                         const isTurnRecognized = Boolean(turn.id && storageService.getJurySpeechRecognitions(
                           event?.id || '',
