@@ -1447,6 +1447,9 @@ export function App() {
           if (targetEv) {
             setCurrentEvent(targetEv);
             currentEventRef.current = targetEv;
+            if (isSupabaseEnabled) {
+              storageService.setupRealtimeSync(targetEv.id);
+            }
           }
         }
 
@@ -1712,6 +1715,10 @@ export function App() {
 
     const eventId = currentEvent?.id || currentEventRef.current?.id;
     if (!eventId) return;
+
+    if (isSupabaseEnabled) {
+      storageService.setupRealtimeSync(eventId);
+    }
 
     const performRoleFetch = (force = false) => {
       if (role === 'coordinator' || role === 'organiser' || role === 'super_admin') {

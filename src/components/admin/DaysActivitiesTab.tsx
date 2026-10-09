@@ -32,7 +32,8 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
-  Loader2
+  Loader2,
+  RefreshCw
 } from 'lucide-react';
 
 interface DaysActivitiesTabProps {
@@ -130,10 +131,24 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
 
   // Synchronized attendance state (updated via props, storageService.subscribe, and Realtime sync)
   const [syncedAttendance, setSyncedAttendance] = useState<DayAttendanceRecord[]>(() => dayAttendance);
+  const [isSyncingAttendance, setIsSyncingAttendance] = useState(false);
 
   useEffect(() => {
     setSyncedAttendance(dayAttendance);
   }, [dayAttendance]);
+
+  // Fetch authoritative attendance from Supabase on mount/event switch
+  useEffect(() => {
+    if (event?.id) {
+      storageService.fetchDayAttendance(event.id, true).then(recs => {
+        if (recs && recs.length > 0) {
+          setSyncedAttendance(recs);
+        }
+      }).catch(err => {
+        console.warn('[DaysActivitiesTab] Initial attendance fetch error:', err);
+      });
+    }
+  }, [event?.id]);
 
   // Subscribe to storageService updates so any local or optimistic update reflects immediately
   useEffect(() => {
@@ -142,8 +157,33 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
         setSyncedAttendance(storageService.getDayAttendance(event.id));
       }
     });
-    return unsub;
+
+    const handleAttUpdate = () => {
+      if (event?.id) {
+        setSyncedAttendance(storageService.getDayAttendance(event.id));
+      }
+    };
+    window.addEventListener('tn_assembly_attendance_update', handleAttUpdate);
+
+    return () => {
+      unsub();
+      window.removeEventListener('tn_assembly_attendance_update', handleAttUpdate);
+    };
   }, [event?.id]);
+
+  const handleManualSyncAttendance = async () => {
+    if (!event?.id || isSyncingAttendance) return;
+    setIsSyncingAttendance(true);
+    try {
+      const records = await storageService.fetchDayAttendance(event.id, true);
+      setSyncedAttendance(records);
+      onShowToast('Attendance Refreshed', `Synchronized ${records.length} attendance records with live database`, 'success');
+    } catch (err: any) {
+      onShowToast('Sync Failed', err?.message || 'Could not refresh attendance from database', 'error');
+    } finally {
+      setIsSyncingAttendance(false);
+    }
+  };
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -1182,6 +1222,17 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
               </div>
 
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleManualSyncAttendance}
+                  disabled={isSyncingAttendance}
+                  className="px-3.5 py-2 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition cursor-pointer hover:bg-slate-500/10"
+                  style={{ borderColor: 'var(--border)', color: 'var(--accent)' }}
+                  title="Pull latest live attendance records from database"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncingAttendance ? 'animate-spin' : ''}`} />
+                  <span>{isSyncingAttendance ? 'Syncing...' : 'Sync Attendance'}</span>
+                </button>
                 <button
                   onClick={handleExportAttendanceCsv}
                   className="px-3.5 py-2 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition cursor-pointer hover:bg-slate-500/10"

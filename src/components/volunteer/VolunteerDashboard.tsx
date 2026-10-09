@@ -363,6 +363,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   // Ensure portal data for the volunteer's assigned event is fetched on mount
   useEffect(() => {
     if (eventId && volunteer?.id) {
+      storageService.setupRealtimeSync(eventId);
       storageService.fetchVolunteerPortalData(eventId, volunteer.id, true).then(() => {
         setAttendanceRefreshKey(k => k + 1);
       }).catch(() => {});
@@ -529,10 +530,12 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
     const sessionLabel = session === 'FN' ? 'Forenoon (FN)' : session === 'AN' ? 'Afternoon (AN)' : 'Full Day';
 
     try {
+      let savedRec: DayAttendanceRecord | undefined = undefined;
       if (onSetStudentDayAttendance) {
-        await onSetStudentDayAttendance(activeDay.id, studentId, status, volunteerName, session);
+        const res = await onSetStudentDayAttendance(activeDay.id, studentId, status, volunteerName, session);
+        if (res) savedRec = res;
       } else {
-        await storageService.setStudentDayAttendance(eventId, activeDay.id, studentId, status, volunteerName, 'volunteer', session);
+        savedRec = await storageService.setStudentDayAttendance(eventId, activeDay.id, studentId, status, volunteerName, 'volunteer', session);
       }
       storageService.broadcastAttendanceMarked({
         eventId: activeDay.event_id || eventId,
@@ -540,6 +543,7 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
         studentId,
         session: session || 'BOTH',
         status,
+        record: savedRec,
         timestamp: new Date().toISOString()
       }).catch(() => {});
       setAttendanceRefreshKey(k => k + 1);

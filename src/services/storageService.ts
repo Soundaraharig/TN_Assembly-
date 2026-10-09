@@ -4796,9 +4796,41 @@ class StorageService {
               const next = curAtt.filter(a => !keys.has(`${a.event_id}:::${a.day_id}:::${a.student_id}`));
               next.push(...recs);
               this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, next);
+            } else if (p.studentId && p.dayId) {
+              const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+              const existingIdx = curAtt.findIndex(
+                a => (a.event_id === p.eventId || !p.eventId) && a.day_id === p.dayId && (a.student_id === p.studentId || a.learner_id === p.studentId)
+              );
+              const existing = existingIdx >= 0 ? curAtt[existingIdx] : null;
+              const { fn: priorFn, an: priorAn } = getRecordSessionStatuses(existing || undefined);
+              const nextFn = p.session === 'FN' ? p.status : (p.session === 'BOTH' ? p.status : priorFn);
+              const nextAn = p.session === 'AN' ? p.status : (p.session === 'BOTH' ? p.status : priorAn);
+              const effectiveStatus: DayAttendanceStatus = (nextFn === 'Present' || nextAn === 'Present') ? 'Present' : 'Absent';
+              const rec: DayAttendanceRecord = {
+                ...(existing || {}),
+                id: existing?.id || genUuid(),
+                event_id: p.eventId || resolvedEventId || '',
+                day_id: p.dayId,
+                student_id: p.studentId,
+                learner_id: p.studentId,
+                status: effectiveStatus,
+                fn_status: nextFn,
+                an_status: nextAn,
+                marked_at: p.timestamp || new Date().toISOString(),
+                updated_at: p.timestamp || new Date().toISOString()
+              };
+              if (existingIdx >= 0) {
+                curAtt[existingIdx] = rec;
+              } else {
+                curAtt.push(rec);
+              }
+              this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, curAtt);
             }
             this.notify();
-            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tn_assembly_attendance_update', { detail: p }));
+              window.dispatchEvent(new Event('storage'));
+            }
           }
         })
         .on('broadcast', { event: 'attendance_lock_update' }, (msg: any) => {
@@ -6296,6 +6328,12 @@ class StorageService {
     }
     if (this.realtimeChannel) {
       try {
+        const ch = this.realtimeChannel as any;
+        if (ch?.state && ch.state !== 'joined') {
+          for (let i = 0; i < 15 && ch.state !== 'joined'; i++) {
+            await new Promise(r => setTimeout(r, 100));
+          }
+        }
         await this.realtimeChannel.send({
           type: 'broadcast',
           event,
@@ -9933,6 +9971,43 @@ class StorageService {
         return localRecords.find(a => a.student_id === studentId || a.learner_id === studentId) || null;
       },
       { force, ttl: 60 * 1000 }
+    );
+  }
+
+  public async fetchDayAttendance(eventId: string, force = false): Promise<DayAttendanceRecord[]> {
+    const sb = supabase;
+    if (!eventId || !sb || !isSupabaseEnabled) {
+      return this.getDayAttendance(eventId);
+    }
+    const cacheKey = `day_att_all_${eventId}`;
+    return this.fetchCached<DayAttendanceRecord[]>(
+      cacheKey,
+      async () => {
+        try {
+          const { data, error } = await sb
+            .from('event_day_attendance')
+            .select(SUPABASE_COLUMNS.EVENT_DAY_ATTENDANCE)
+            .eq('event_id', eventId);
+
+          if (!error && Array.isArray(data)) {
+            const mappedAtt = (data as unknown as DayAttendanceRecord[]).map(r => {
+              const { fn, an, overall } = getRecordSessionStatuses(r);
+              return { ...r, fn_status: r.fn_status || fn, an_status: r.an_status || an, status: overall };
+            });
+            const curAtt = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+            const otherAtt = curAtt.filter(a => a.event_id && a.event_id !== eventId);
+            this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, [...otherAtt, ...mappedAtt]);
+            this.resyncMainDaysAttendance(eventId).catch(() => {});
+            this.notify();
+            if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
+            return mappedAtt;
+          }
+        } catch (err) {
+          console.warn('[fetchDayAttendance] error:', err);
+        }
+        return this.getDayAttendance(eventId);
+      },
+      { force, ttl: 15 * 1000 }
     );
   }
 
