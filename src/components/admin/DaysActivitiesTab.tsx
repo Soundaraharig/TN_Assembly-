@@ -230,7 +230,34 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
       let bothPresentCount = 0;
 
       learners.forEach(l => {
-        const att = dayAttMap.get(l.id);
+        let att = dayAttMap.get(l.id);
+        if (!att && ((day.main_day === 2 || day.name.toLowerCase().includes('day 2')) && (l.day2_checked_in || (l as any).day_2_checked_in))) {
+          att = {
+            id: `l-d2-${l.id}`,
+            event_id: day.event_id,
+            day_id: day.id,
+            student_id: l.id,
+            status: 'Present',
+            fn_status: 'Present',
+            an_status: 'Absent',
+            marked_by: 'Volunteer Sync',
+            marked_by_role: 'volunteer',
+            marked_at: new Date().toISOString()
+          } as DayAttendanceRecord;
+        } else if (!att && ((day.main_day === 1 || day.name.toLowerCase().includes('day 1')) && (l.day1_checked_in || (l as any).day_1_checked_in))) {
+          att = {
+            id: `l-d1-${l.id}`,
+            event_id: day.event_id,
+            day_id: day.id,
+            student_id: l.id,
+            status: 'Present',
+            fn_status: 'Present',
+            an_status: 'Absent',
+            marked_by: 'Volunteer Sync',
+            marked_by_role: 'volunteer',
+            marked_at: new Date().toISOString()
+          } as DayAttendanceRecord;
+        }
         const { fn, an, overall } = getRecordSessionStatuses(att);
         if (overall === 'Present') presentCount++;
         if (fn === 'Present') fnPresentCount++;
@@ -286,7 +313,34 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
     let overallPresentCount = 0;
 
     learners.forEach(l => {
-      const att = dayAttMap.get(l.id);
+      let att = dayAttMap.get(l.id);
+      if (!att && ((currentAttendanceDay.main_day === 2 || currentAttendanceDay.name.toLowerCase().includes('day 2')) && (l.day2_checked_in || (l as any).day_2_checked_in))) {
+        att = {
+          id: `l-d2-${l.id}`,
+          event_id: currentAttendanceDay.event_id,
+          day_id: currentAttendanceDay.id,
+          student_id: l.id,
+          status: 'Present',
+          fn_status: 'Present',
+          an_status: 'Absent',
+          marked_by: 'Volunteer Sync',
+          marked_by_role: 'volunteer',
+          marked_at: new Date().toISOString()
+        } as DayAttendanceRecord;
+      } else if (!att && ((currentAttendanceDay.main_day === 1 || currentAttendanceDay.name.toLowerCase().includes('day 1')) && (l.day1_checked_in || (l as any).day_1_checked_in))) {
+        att = {
+          id: `l-d1-${l.id}`,
+          event_id: currentAttendanceDay.event_id,
+          day_id: currentAttendanceDay.id,
+          student_id: l.id,
+          status: 'Present',
+          fn_status: 'Present',
+          an_status: 'Absent',
+          marked_by: 'Volunteer Sync',
+          marked_by_role: 'volunteer',
+          marked_at: new Date().toISOString()
+        } as DayAttendanceRecord;
+      }
       const { fn, an, overall } = getRecordSessionStatuses(att);
       if (fn === 'Present') fnPresentCount++;
       if (an === 'Present') anPresentCount++;
@@ -335,7 +389,34 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
         constName.toLowerCase().includes(query) ||
         (l.department && l.department.toLowerCase().includes(query));
 
-      const attRecord = dayAttMap.get(l.id);
+      let attRecord = dayAttMap.get(l.id);
+      if (!attRecord && ((currentAttendanceDay.main_day === 2 || currentAttendanceDay.name.toLowerCase().includes('day 2')) && (l.day2_checked_in || (l as any).day_2_checked_in))) {
+        attRecord = {
+          id: `l-d2-${l.id}`,
+          event_id: currentAttendanceDay.event_id,
+          day_id: currentAttendanceDay.id,
+          student_id: l.id,
+          status: 'Present',
+          fn_status: 'Present',
+          an_status: 'Absent',
+          marked_by: 'Volunteer Sync',
+          marked_by_role: 'volunteer',
+          marked_at: new Date().toISOString()
+        } as DayAttendanceRecord;
+      } else if (!attRecord && ((currentAttendanceDay.main_day === 1 || currentAttendanceDay.name.toLowerCase().includes('day 1')) && (l.day1_checked_in || (l as any).day_1_checked_in))) {
+        attRecord = {
+          id: `l-d1-${l.id}`,
+          event_id: currentAttendanceDay.event_id,
+          day_id: currentAttendanceDay.id,
+          student_id: l.id,
+          status: 'Present',
+          fn_status: 'Present',
+          an_status: 'Absent',
+          marked_by: 'Volunteer Sync',
+          marked_by_role: 'volunteer',
+          marked_at: new Date().toISOString()
+        } as DayAttendanceRecord;
+      }
       const { fn, an, overall } = getRecordSessionStatuses(attRecord);
 
       let matchesStatus = true;

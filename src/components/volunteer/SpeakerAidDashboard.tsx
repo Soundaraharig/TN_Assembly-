@@ -69,6 +69,15 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
 
   const [selectedSessionId, setSelectedSessionId] = useState<string>(() => {
     if (eventId) {
+      if (typeof localStorage !== 'undefined') {
+        try {
+          const stored = localStorage.getItem(`tn_assembly_active_session_${eventId}`);
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            if (parsed && parsed.id) return parsed.id;
+          }
+        } catch {}
+      }
       const auth = storageService.getAuthoritativeActiveSession(eventId);
       if (auth.id) return auth.id;
     }

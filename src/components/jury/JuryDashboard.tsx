@@ -1132,10 +1132,13 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
       return;
     }
 
-    const activeTurn = (activeFloorSpeakingTurn?.learner_id === selectedLearner.id ? activeFloorSpeakingTurn : null) ||
-      effectiveDelegateTurns.find(t => t.status === 'SPEAKING' || t.status === 'SPOKEN') ||
-      effectiveDelegateTurns[effectiveDelegateTurns.length - 1];
-    const turnId = activeTurn?.id || '';
+    const agendaItems = storageService.getAgenda(event.id);
+    const currentCanonical = resolveCanonicalSession(selectedSession.id, selectedSession.name, agendaItems).canonicalId;
+    const candidateTurn = (activeFloorSpeakingTurn?.learner_id === selectedLearner.id ? activeFloorSpeakingTurn : null) ||
+      delegateSpeakingTurns.find(t => t.status === 'SPEAKING' || t.status === 'SPOKEN') ||
+      delegateSpeakingTurns[delegateSpeakingTurns.length - 1];
+    const turnCanonical = candidateTurn ? resolveCanonicalSession(candidateTurn.session_id, candidateTurn.session_name, agendaItems).canonicalId : '';
+    const turnId = (candidateTurn && turnCanonical === currentCanonical) ? candidateTurn.id : '';
 
     const prevTotal = currentEvaluation.total;
     const updated = storageService.recordScoreAdjustment({
@@ -1228,12 +1231,13 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     // Anchor active session and learner for this entire transaction
     const targetSession = selectedSession;
     const targetLearner = selectedLearner;
+    const juryId = jury?.id || jury?.name || 'jury';
 
     // P0 Business Rule: If an evaluation already exists for this learner in this session, reject creating a new full evaluation
     const existingCheck = storageService.getJuryEvaluations(
       event.id,
       targetSession.id,
-      jury?.id || jury?.name,
+      juryId,
       targetLearner.id,
       testMode.isTestMode
     );
@@ -1245,38 +1249,25 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
     isSubmittingRef.current = true;
     setIsSubmittingEvaluation(true);
     try {
-      const activeTurn = (selectedSpeakingTurnId ? (delegateSpeakingTurns.find(t => t.id === selectedSpeakingTurnId) || allDelegateSpeakingTurns.find(t => t.id === selectedSpeakingTurnId)) : null) ||
-        (activeFloorSpeakingTurn?.learner_id === targetLearner.id ? activeFloorSpeakingTurn : null) ||
-        effectiveDelegateTurns.find(t => t.status === 'SPEAKING' || t.status === 'SPOKEN') ||
-        effectiveDelegateTurns[0];
-      const turnId = activeTurn?.id || selectedSpeakingTurnId || '';
-      const juryId = jury?.id || jury?.name || 'jury';
+      const agendaItems = storageService.getAgenda(event.id);
+      const currentCanonical = resolveCanonicalSession(targetSession.id, targetSession.name, agendaItems).canonicalId;
 
-      // Step 10: Double-click & duplicate submit protection
+      // Only match turn if it belongs to THIS session
+      const matchingCandidateTurn = (selectedSpeakingTurnId ? (delegateSpeakingTurns.find(t => t.id === selectedSpeakingTurnId) || allDelegateSpeakingTurns.find(t => t.id === selectedSpeakingTurnId)) : null) ||
+        (activeFloorSpeakingTurn?.learner_id === targetLearner.id ? activeFloorSpeakingTurn : null) ||
+        delegateSpeakingTurns.find(t => t.status === 'SPEAKING' || t.status === 'SPOKEN') ||
+        delegateSpeakingTurns[0];
+
+      const turnCanonical = matchingCandidateTurn
+        ? resolveCanonicalSession(matchingCandidateTurn.session_id, matchingCandidateTurn.session_name, agendaItems).canonicalId
+        : '';
+
+      const validTurnForThisSession = (matchingCandidateTurn && turnCanonical === currentCanonical) ? matchingCandidateTurn : null;
+      const turnId = validTurnForThisSession?.id || (selectedSpeakingTurnId && turnCanonical === currentCanonical ? selectedSpeakingTurnId : '');
+
+      // Step 10: Double-click & duplicate submit protection ONLY for valid turns in this session
       if (turnId && submittedTurnKeys.has(`${turnId}_${juryId}`)) {
         onShowToast('Already Submitted', 'You have already submitted an official score for this speaking turn.', 'info');
-        return;
-      }
-
-      // Step 5: Authoritative session resolved strictly from turn first, fallback to selectedSession
-      const targetSessionId = activeTurn?.session_id || selectedSession.id;
-      const targetSessionName = activeTurn?.session_name || selectedSession.name;
-      const targetSession: ScoringSession = {
-        id: targetSessionId,
-        name: targetSessionName,
-        is_canonical: true
-      };
-
-      // P0 Business Rule: If an evaluation already exists for this learner in this session, reject creating a new full evaluation
-      const existingCheck = storageService.getJuryEvaluations(
-        event.id,
-        targetSession.id,
-        juryId,
-        targetLearner.id,
-        testMode.isTestMode
-      );
-      if (existingCheck.length > 0) {
-        onShowToast('Session Evaluation Exists', `${targetLearner.full_name} already has an official session evaluation (${existingCheck[0].total}/100). Please record a contribution instead.`, 'info');
         return;
       }
 
@@ -1288,11 +1279,11 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
 
       const scoreRecordToPersist: ScoreRecord = {
         id: evalId,
-        event_id: activeTurn?.event_id || event.id,
+        event_id: event.id,
         session_id: targetSession.id,
         session_name: targetSession.name,
-        learner_id: activeTurn?.learner_id || targetLearner.id,
-        learner_name: activeTurn?.learner_name || targetLearner.full_name,
+        learner_id: validTurnForThisSession?.learner_id || targetLearner.id,
+        learner_name: validTurnForThisSession?.learner_name || targetLearner.full_name,
         constituency_number: targetLearner.constituency_number,
         constituency_name: targetLearner.constituency_name,
         party_name: targetLearner.party_name || 'Independent',

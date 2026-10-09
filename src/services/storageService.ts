@@ -284,6 +284,7 @@ export const STORAGE_KEYS = {
 
 export const SUPABASE_COLUMNS: Record<string, string> = {
   COLLEGE_EVENTS_LIST: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,elections_count,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at',
+  COLLEGE_EVENTS_VOLUNTEER: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,elections_count,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at,social_coverage->active_session_id,social_coverage->active_session_name,social_coverage->active_session_updated_at,social_coverage->fn_attendance_locked,social_coverage->an_attendance_locked,social_coverage->attendance_locks',
   COLLEGE_EVENTS: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at,social_coverage',
   COLLEGE_EVENTS_JURY: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at,social_coverage->scores,social_coverage->jury_speech_recognitions,social_coverage->test_speaking_turn_ids,social_coverage->active_session_id,social_coverage->active_session_name,social_coverage->active_session_updated_at',
   COLLEGE_EVENTS_STUDENT: 'id,college_name,event_stage,status,created_at,slug,chapter,level,location,dates,participant_count,chief_guests,assigned_coordinator_name,assigned_coordinator_email,is_locked,treasury_whatsapp_link,opposition_whatsapp_link,updated_at,social_coverage->elections,social_coverage->flash_votes,social_coverage->nominations,social_coverage->open_nominations,social_coverage->cabinet_ministries,social_coverage->proceedings_questions,social_coverage->active_question_id,social_coverage->completed_question_ids,social_coverage->question_calling_order,social_coverage->question_order_version,social_coverage->question_order_updated_at,social_coverage->deleted_question_ids,social_coverage->event_deadline,social_coverage->is_question_window_open,social_coverage->agenda_progress,social_coverage->timer',
@@ -4038,7 +4039,7 @@ class StorageService {
         { data: attData }
       ] = await Promise.all([
         this.dedupeInFlight<{ data: any }>(`query_event_${eventId}`, async () =>
-          await sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS_LIST).eq('id', eventId).limit(1)
+          await sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS_VOLUNTEER).eq('id', eventId).limit(1)
         ),
         this.dedupeInFlight<{ data: any }>(`query_event_days_${eventId}`, async () =>
           await sb.from('event_days').select(SUPABASE_COLUMNS.EVENT_DAYS).eq('event_id', eventId).order('day_number', { ascending: true })
@@ -4052,12 +4053,51 @@ class StorageService {
       ]);
 
       if (evData && evData.length > 0) {
-        const ev = this.normalizeEvent(evData[0] as unknown as CollegeEvent);
+        const rawEv = evData[0] as any;
+        const authSessId = rawEv.active_session_id || rawEv.social_coverage?.active_session_id;
+        const authSessName = rawEv.active_session_name || rawEv.social_coverage?.active_session_name;
+        const normalizedEv: CollegeEvent = {
+          ...rawEv,
+          social_coverage: {
+            ...(rawEv.social_coverage || {}),
+            active_session_id: authSessId || rawEv.social_coverage?.active_session_id,
+            active_session_name: authSessName || rawEv.social_coverage?.active_session_name,
+            active_session_updated_at: rawEv.active_session_updated_at || rawEv.social_coverage?.active_session_updated_at
+          }
+        };
+        const ev = this.normalizeEvent(normalizedEv);
         const curEvs = this.getEvents();
         const existing = curEvs.find(e => e.id === ev.id);
-        const merged = existing ? { ...existing, ...ev } : ev;
+        const merged: CollegeEvent = existing ? {
+          ...existing,
+          ...ev,
+          social_coverage: {
+            ...(existing.social_coverage || {}),
+            ...(ev.social_coverage || {}),
+            active_session_id: authSessId || ev.social_coverage?.active_session_id || existing.social_coverage?.active_session_id,
+            active_session_name: authSessName || ev.social_coverage?.active_session_name || existing.social_coverage?.active_session_name
+          }
+        } : ev;
         this.setItem(STORAGE_KEYS.EVENTS, [...curEvs.filter(e => e.id !== ev.id), merged]);
         this.unpackAndApplyEventState([merged], eventId);
+
+        if (authSessId) {
+          if (typeof localStorage !== 'undefined') {
+            try {
+              localStorage.setItem(
+                `tn_assembly_active_session_${eventId}`,
+                JSON.stringify({ id: authSessId, name: authSessName || 'Assembly Floor Session', updatedAt: Date.now() })
+              );
+            } catch {}
+          }
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('tn_assembly_active_session_changed', {
+                detail: { eventId, sessionId: authSessId, sessionName: authSessName }
+              })
+            );
+          }
+        }
       }
 
       if (daysData) {
@@ -11771,29 +11811,7 @@ class StorageService {
       return { id: canonicalId, name: displayName };
     }
 
-    // 2. Authoritative session_agenda is_current check (REMOTE STATE WINS)
-    const agenda = this.getAgenda(eventId);
-    const currentAgenda = agenda.find(a => a.is_current);
-    if (currentAgenda) {
-      const resolved = resolveCanonicalSession(currentAgenda.id, currentAgenda.title, agenda);
-      const canonicalId = resolved.canonicalId;
-      const displayName = currentAgenda.title || resolved.displayName;
-      // Self-heal stale or conflicting localStorage
-      if (typeof localStorage !== 'undefined') {
-        try {
-          const stored = localStorage.getItem(`tn_assembly_active_session_${eventId}`);
-          if (!stored || JSON.parse(stored)?.id !== canonicalId) {
-            localStorage.setItem(
-              `tn_assembly_active_session_${eventId}`,
-              JSON.stringify({ id: canonicalId, name: displayName, updatedAt: Date.now() })
-            );
-          }
-        } catch {}
-      }
-      return { id: canonicalId, name: displayName };
-    }
-
-    // 3. Explicit local storage with event scope (ONLY IF remote state has no active session configured)
+    // 2. Explicit local storage with event scope (User / Speaker Aid deliberate choice)
     if (typeof localStorage !== 'undefined') {
       try {
         const stored = localStorage.getItem(`tn_assembly_active_session_${eventId}`);
@@ -11804,6 +11822,16 @@ class StorageService {
           }
         }
       } catch {}
+    }
+
+    // 3. Authoritative session_agenda is_current check (REMOTE STATE WINS)
+    const agenda = this.getAgenda(eventId);
+    const currentAgenda = agenda.find(a => a.is_current);
+    if (currentAgenda) {
+      const resolved = resolveCanonicalSession(currentAgenda.id, currentAgenda.title, agenda);
+      const canonicalId = resolved.canonicalId;
+      const displayName = currentAgenda.title || resolved.displayName;
+      return { id: canonicalId, name: displayName };
     }
 
     // 4. Fallback to first available scoring session
@@ -11859,16 +11887,14 @@ class StorageService {
       return res.canonicalId === canonicalId;
     });
 
-    if (matchedAgenda) {
-      const allAgenda = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, []);
-      const updatedAgenda = allAgenda.map(a => {
-        if (a.event_id === eventId) {
-          return { ...a, is_current: a.id === matchedAgenda.id };
-        }
-        return a;
-      });
-      this.setItem(STORAGE_KEYS.AGENDA, updatedAgenda);
-    }
+    const allAgenda = this.getItem<AgendaItem[]>(STORAGE_KEYS.AGENDA, []);
+    const updatedAgenda = allAgenda.map(a => {
+      if (a.event_id === eventId) {
+        return { ...a, is_current: matchedAgenda ? a.id === matchedAgenda.id : false };
+      }
+      return a;
+    });
+    this.setItem(STORAGE_KEYS.AGENDA, updatedAgenda);
 
     // 4. Dispatch local events
     this.notify();
@@ -11893,6 +11919,8 @@ class StorageService {
         if (matchedAgenda) {
           await supabase.from('session_agenda').update({ is_current: false }).eq('event_id', eventId).neq('id', matchedAgenda.id);
           await supabase.from('session_agenda').update({ is_current: true }).eq('id', matchedAgenda.id);
+        } else {
+          await supabase.from('session_agenda').update({ is_current: false }).eq('event_id', eventId);
         }
       } catch (sbErr) {
         console.warn('[setAuthoritativeActiveSession] Supabase persistence error:', sbErr);
@@ -18776,8 +18804,10 @@ class StorageService {
     if (score.speaking_turn_id) {
       const authTurn = this.getSpeakingTurnById(score.speaking_turn_id, score.event_id);
       if (authTurn) {
-        score.session_id = authTurn.session_id;
-        score.session_name = authTurn.session_name || score.session_name;
+        if (!score.session_id || authTurn.status === 'SPEAKING') {
+          score.session_id = authTurn.session_id;
+          score.session_name = authTurn.session_name || score.session_name;
+        }
         score.learner_id = authTurn.learner_id;
         if (authTurn.event_id) {
           score.event_id = authTurn.event_id;
