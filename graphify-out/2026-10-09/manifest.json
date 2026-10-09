@@ -24,9 +24,9 @@
     "semantic_hash": ""
   },
   "src/App.tsx": {
-    "mtime": 1791520303.9498382,
-    "seen": 1791523688.7158625,
-    "ast_hash": "4d44376bb06e7641d7a3c819cb9629c1",
+    "mtime": 1791277234.6834302,
+    "seen": 1791351513.7127593,
+    "ast_hash": "734e907059dafb5bc72ef7cec3588758",
     "semantic_hash": ""
   },
   "src/components/admin/CreateEventModal.tsx": {
@@ -36,9 +36,9 @@
     "semantic_hash": ""
   },
   "src/components/admin/DaysActivitiesTab.tsx": {
-    "mtime": 1791523048.557304,
-    "seen": 1791523688.7159584,
-    "ast_hash": "59332a3fe7c4a7f7ef9fb050570e43b5",
+    "mtime": 1790515504.5345087,
+    "seen": 1790527932.893738,
+    "ast_hash": "9821c63f415e2a7896165f1c31a2dfc8",
     "semantic_hash": ""
   },
   "src/components/admin/EditCoordinatorModal.tsx": {
@@ -102,9 +102,9 @@
     "semantic_hash": ""
   },
   "src/components/common/StandaloneProjectorDisplay.tsx": {
-    "mtime": 1791451643.0595179,
-    "seen": 1791523688.71697,
-    "ast_hash": "9df5372b20b44d61015ca915ee8cc734",
+    "mtime": 1790868777.4192595,
+    "seen": 1790934769.368748,
+    "ast_hash": "5e12b92a12dffeaf20b89571dfaa39ff",
     "semantic_hash": ""
   },
   "src/components/common/Toast.tsx": {
@@ -180,9 +180,9 @@
     "semantic_hash": "3d1db61d896d7a7ddbe19b109b93c6bc"
   },
   "src/components/coordinator/ControlTab.tsx": {
-    "mtime": 1791451629.2127783,
-    "seen": 1791523688.7180676,
-    "ast_hash": "543d21ddab62755147d811d752a1ba83",
+    "mtime": 1790688676.754239,
+    "seen": 1790934769.3697646,
+    "ast_hash": "dbfa1615b6166bcb24f85514b7a39860",
     "semantic_hash": ""
   },
   "src/components/coordinator/CoordinatorDashboard.tsx": {
@@ -276,9 +276,9 @@
     "semantic_hash": "fa5314fe5afc9779f21497b6295a37d9"
   },
   "src/components/coordinator/ScoreGridTab.tsx": {
-    "mtime": 1791436615.4840531,
-    "seen": 1791523688.719536,
-    "ast_hash": "a402c5d8ae4bf5aaa2bc67f84e49aec4",
+    "mtime": 1791273520.8605502,
+    "seen": 1791351513.7160616,
+    "ast_hash": "e3f6a43117ffc08b987f70ea4a83e08d",
     "semantic_hash": ""
   },
   "src/components/coordinator/TeamTab.tsx": {
@@ -294,9 +294,9 @@
     "semantic_hash": ""
   },
   "src/components/jury/JuryDashboard.tsx": {
-    "mtime": 1791523622.8586636,
-    "seen": 1791523688.719775,
-    "ast_hash": "c467a5419e1a785c399e2c3eecc03287",
+    "mtime": 1791351462.1053836,
+    "seen": 1791351513.7162259,
+    "ast_hash": "0ca785de044edc901ed5acf4557ad7c0",
     "semantic_hash": ""
   },
   "src/components/student/StudentDashboard.tsx": {
@@ -318,9 +318,9 @@
     "semantic_hash": ""
   },
   "src/components/volunteer/VolunteerDashboard.tsx": {
-    "mtime": 1791523600.0469327,
-    "seen": 1791523688.7202547,
-    "ast_hash": "3905d7bcaecafd5f909c9323536e4790",
+    "mtime": 1791267939.291789,
+    "seen": 1791351513.7166376,
+    "ast_hash": "e2fde3ef98093eb63d4d8d2aef46403d",
     "semantic_hash": ""
   },
   "src/data/initialMockData.ts": {
@@ -354,15 +354,15 @@
     "semantic_hash": "70ad96049cbe5c2b32d5b0f829a40971"
   },
   "src/services/storageService.ts": {
-    "mtime": 1791523403.3109777,
-    "seen": 1791523688.720903,
-    "ast_hash": "91ab2c9ecda94ec1604f33bc0fb3a557",
+    "mtime": 1791350570.4425373,
+    "seen": 1791351513.7171535,
+    "ast_hash": "76b2d79c20514fb1d39af5d9cb776e60",
     "semantic_hash": ""
   },
   "src/types/index.ts": {
-    "mtime": 1791475348.3096347,
-    "seen": 1791523688.720904,
-    "ast_hash": "696cdfbb059fd224c880b2df916b2c03",
+    "mtime": 1791349947.4326649,
+    "seen": 1791351513.7171547,
+    "ast_hash": "03b1cf73ebfb640040c0a3d9e7bb1676",
     "semantic_hash": ""
   },
   "src/utils/accessCodeGenerator.ts": {
@@ -780,9 +780,9 @@
     "semantic_hash": ""
   },
   "src/components/volunteer/SpeakerAidDashboard.tsx": {
-    "mtime": 1791523609.723243,
-    "seen": 1791523688.7202532,
-    "ast_hash": "ab7ee89ea513bd993144189dfc317901",
+    "mtime": 1791267904.3151538,
+    "seen": 1791351513.7166362,
+    "ast_hash": "8fc9309096dd704498ac467c9ec607cf",
     "semantic_hash": ""
   },
   "src/services/adminApiService.ts": {
@@ -813,72 +813,6 @@
     "mtime": 1791221194.7986882,
     "seen": 1791351513.7187216,
     "ast_hash": "cecdc2f4c52538ed1dcaa0fbe0ba4dfd",
-    "semantic_hash": ""
-  },
-  "scripts/apply_reassignment.js": {
-    "mtime": 1791477543.0293183,
-    "seen": 1791523688.7158487,
-    "ast_hash": "21d54c8a9e63751ca0b60fa5cd4299b8",
-    "semantic_hash": ""
-  },
-  "scripts/check_90_sec_speech.js": {
-    "mtime": 1791477439.3487651,
-    "seen": 1791523688.7158508,
-    "ast_hash": "49ad77b395d2152754d83b5cf2cf97f0",
-    "semantic_hash": ""
-  },
-  "scripts/check_dhanush_boomesh.js": {
-    "mtime": 1791477465.7646527,
-    "seen": 1791523688.715852,
-    "ast_hash": "6b82a6993141904768c742954ae06d31",
-    "semantic_hash": ""
-  },
-  "scripts/compare_conflicts.js": {
-    "mtime": 1791477312.6516383,
-    "seen": 1791523688.715853,
-    "ast_hash": "c1821af49ffa358d8d3885b58eaf2867",
-    "semantic_hash": ""
-  },
-  "scripts/inspect_conflicts_detail.js": {
-    "mtime": 1791477133.357175,
-    "seen": 1791523688.7158542,
-    "ast_hash": "90c6c23eb3ed67d6fdb805106fe63020",
-    "semantic_hash": ""
-  },
-  "scripts/inspect_scores.js": {
-    "mtime": 1791476967.7663372,
-    "seen": 1791523688.7158551,
-    "ast_hash": "47b577e0e01c143e11b2276bdaf6a699",
-    "semantic_hash": ""
-  },
-  "scripts/inspect_turns.js": {
-    "mtime": 1791477169.0594075,
-    "seen": 1791523688.715856,
-    "ast_hash": "7cb2fa185ff3aae4bfe3d7623216abdc",
-    "semantic_hash": ""
-  },
-  "scripts/preview_zero_hour_scores.js": {
-    "mtime": 1791477073.9615638,
-    "seen": 1791523688.7158575,
-    "ast_hash": "c25b0dbf589a7dd71c19ea1be61a24af",
-    "semantic_hash": ""
-  },
-  "scripts/simulate_reassignment.js": {
-    "mtime": 1791477511.1124363,
-    "seen": 1791523688.7158587,
-    "ast_hash": "4f91578ee251a00c10d03ccaa420f7dd",
-    "semantic_hash": ""
-  },
-  "scripts/verify_attendance_locks.js": {
-    "mtime": 1791476687.0882022,
-    "seen": 1791523688.7158597,
-    "ast_hash": "133f8f684a4ee6bbbb46ae4d6f6a1266",
-    "semantic_hash": ""
-  },
-  "scripts/verify_speaker_aid_flow.js": {
-    "mtime": 1791480834.6934886,
-    "seen": 1791523688.715861,
-    "ast_hash": "0ad39d5a590cd8e1fd8d149acf8b171d",
     "semantic_hash": ""
   }
 }
