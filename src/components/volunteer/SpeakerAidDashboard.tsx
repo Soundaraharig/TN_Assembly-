@@ -105,10 +105,14 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
   const isTestMode = testMode.isTestMode;
   const activeTestRunId = testMode.testRunId;
 
-  // Active speaking turn
+  // Active speaking turn (restored from authoritative persisted record across the entire floor)
   const [activeSpeakerTurn, setActiveSpeakerTurn] = useState<SpeakingTurn | null>(() => {
     const tm = storageService.getScoringTestMode(eventId);
-    return storageService.getAuthoritativeCurrentSpeaker(eventId, selectedSessionId, tm.isTestMode ? 'test' : 'live', tm.testRunId);
+    const active = storageService.getAuthoritativeCurrentSpeaker(eventId, undefined, tm.isTestMode ? 'test' : 'live', tm.testRunId);
+    if (active && active.session_id && active.status === 'SPEAKING') {
+      setSelectedSessionId(active.session_id);
+    }
+    return active;
   });
 
   // Recent speaking turns log
@@ -123,6 +127,7 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
   const [isStartingTurn, setIsStartingTurn] = useState(false);
   const [isFinishingTurn, setIsFinishingTurn] = useState(false);
   const [confirmingLearner, setConfirmingLearner] = useState<Learner | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // Live Speaking Timer (client memory derived, zero database writes)
   const [elapsedSec, setElapsedSec] = useState(0);
@@ -134,11 +139,32 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
     const tm = storageService.getScoringTestMode(eventId);
     setTestMode(prev => (areJsonbObjectsEqual(prev, tm) ? prev : tm));
     const mode = tm.isTestMode ? 'test' : 'live';
-    const active = storageService.getAuthoritativeCurrentSpeaker(eventId, selectedSessionId, mode, tm.testRunId);
+    const active = storageService.getAuthoritativeCurrentSpeaker(eventId, undefined, mode, tm.testRunId);
     setActiveSpeakerTurn(prev => (areJsonbObjectsEqual(prev, active) ? prev : active));
+    if (active && active.session_id && active.status === 'SPEAKING' && active.session_id !== selectedSessionId) {
+      setSelectedSessionId(active.session_id);
+    }
     const all = storageService.getSpeakingTurns(eventId, undefined, mode, tm.testRunId);
     const sliced = all.slice(-15).reverse();
     setTurnsLog(prev => (areJsonbObjectsEqual(prev, sliced) ? prev : sliced));
+  };
+
+  const handleManualSync = async () => {
+    if (!eventId || isSyncing) return;
+    setIsSyncing(true);
+    try {
+      await Promise.all([
+        storageService.fetchSpeakingTurns(eventId),
+        storageService.fetchPaginatedLearners(eventId, { limit: 500 }),
+        storageService.syncScoringEnvironment(eventId)
+      ]);
+      refreshFloorState();
+      onShowToast?.('Synchronized', 'Refreshed active speaker floor state and delegates from live database', 'success');
+    } catch (err: any) {
+      onShowToast?.('Sync Failed', err?.message || 'Could not synchronize data', 'error');
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   // Authoritative operational role check: ONLY genuine Speaker Aid may access this dashboard
@@ -428,6 +454,18 @@ export const SpeakerAidDashboard: React.FC<SpeakerAidDashboardProps> = ({
               </select>
             </div>
           )}
+
+          {/* Refresh / Sync Now */}
+          <button
+            type="button"
+            onClick={handleManualSync}
+            disabled={isSyncing}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer disabled:opacity-50"
+            title="Refresh floor state and delegates from live backend"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-indigo-500' : ''}`} />
+            <span className="hidden sm:inline">{isSyncing ? 'Syncing...' : 'Sync Now'}</span>
+          </button>
 
           {/* Theme Toggle */}
           <button

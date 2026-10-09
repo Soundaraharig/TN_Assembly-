@@ -25,7 +25,8 @@ import {
   Mic,
   ClipboardList,
   AlertCircle,
-  Clock
+  Clock,
+  RefreshCw
 } from 'lucide-react';
 import type { JuryMember, Learner, ScoreRecord, CollegeEvent, AgendaItem, ScoringSession, JuryEvaluation, SpeakingTurn } from '../../types';
 import { useTheme } from '../../lib/theme';
@@ -67,6 +68,27 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
   // ── JURY RECOGNITION STATE & SYNC ──
   const [recogTick, setRecogTick] = useState(0);
   const [isTogglingRecog, setIsTogglingRecog] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const handleManualSync = async () => {
+    if (!event?.id || isSyncing) return;
+    setIsSyncing(true);
+    try {
+      await Promise.all([
+        storageService.fetchJuryPortalData(event.id, jury?.id || '', true),
+        storageService.fetchEventLearners(event.id, true),
+        storageService.fetchSpeakingTurns(event.id),
+        storageService.fetchTargetedScores(event.id),
+        storageService.syncScoringEnvironment(event.id)
+      ]);
+      setRecogTick(t => t + 1);
+      onShowToast?.('Synchronized', 'Refreshed active speaker, delegates, and official scores from live backend', 'success');
+    } catch (err: any) {
+      onShowToast?.('Sync Failed', err?.message || 'Could not synchronize data', 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const [selectedLearnerId, setSelectedLearnerId] = useState<string>('');
   const [selectedSpeakingTurnId, setSelectedSpeakingTurnId] = useState<string | null>(null);
@@ -1523,6 +1545,19 @@ export const JuryDashboard: React.FC<JuryDashboardProps> = ({
               <Calendar className="w-3.5 h-3.5" /> Agenda
             </button>
           </div>
+
+          {/* Refresh / Sync Now */}
+          <button
+            type="button"
+            onClick={handleManualSync}
+            disabled={isSyncing}
+            className="px-3.5 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+            style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+            title="Refresh current speaker, delegates, and official scores from live backend"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-amber-500' : ''}`} />
+            <span className="hidden sm:inline">{isSyncing ? 'Syncing...' : 'Sync Now'}</span>
+          </button>
 
           <button
             onClick={onLogout}

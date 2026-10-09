@@ -137,9 +137,10 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
     setSyncedAttendance(dayAttendance);
   }, [dayAttendance]);
 
-  // Fetch authoritative attendance from Supabase on mount/event switch
+  // Fetch authoritative attendance from Supabase on mount/event switch and connect realtime
   useEffect(() => {
     if (event?.id) {
+      storageService.setupRealtimeSync(event.id);
       storageService.fetchDayAttendance(event.id, true).then(recs => {
         if (recs && recs.length > 0) {
           setSyncedAttendance(recs);
@@ -150,7 +151,7 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
     }
   }, [event?.id]);
 
-  // Subscribe to storageService updates so any local or optimistic update reflects immediately
+  // Subscribe to storageService updates and background soft-sync every 15s
   useEffect(() => {
     const unsub = storageService.subscribe(() => {
       if (event?.id) {
@@ -165,9 +166,31 @@ export const DaysActivitiesTab: React.FC<DaysActivitiesTabProps> = ({
     };
     window.addEventListener('tn_assembly_attendance_update', handleAttUpdate);
 
+    // Soft background sync every 15s while viewing attendance tab
+    const interval = setInterval(() => {
+      if (event?.id) {
+        storageService.fetchDayAttendance(event.id, true).then(recs => {
+          if (recs && recs.length > 0) setSyncedAttendance(recs);
+        }).catch(() => {});
+      }
+    }, 15000);
+
+    const handleOnlineOrFocus = () => {
+      if (event?.id) {
+        storageService.fetchDayAttendance(event.id, true).then(recs => {
+          if (recs && recs.length > 0) setSyncedAttendance(recs);
+        }).catch(() => {});
+      }
+    };
+    window.addEventListener('focus', handleOnlineOrFocus);
+    window.addEventListener('online', handleOnlineOrFocus);
+
     return () => {
       unsub();
+      clearInterval(interval);
       window.removeEventListener('tn_assembly_attendance_update', handleAttUpdate);
+      window.removeEventListener('focus', handleOnlineOrFocus);
+      window.removeEventListener('online', handleOnlineOrFocus);
     };
   }, [event?.id]);
 

@@ -30,7 +30,8 @@ import {
   Copy,
   Mic,
   Play,
-  ChevronRight
+  ChevronRight,
+  RefreshCw
 } from 'lucide-react';
 import type {
   Volunteer,
@@ -180,6 +181,27 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
   const [isStartingTurn, setIsStartingTurn] = useState<boolean>(false);
   const [isEndingTurn, setIsEndingTurn] = useState<boolean>(false);
   const [liveElapsedSeconds, setLiveElapsedSeconds] = useState<number>(0);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+
+  const handleManualSync = async () => {
+    if (!eventId || isSyncing) return;
+    setIsSyncing(true);
+    try {
+      await Promise.all([
+        storageService.fetchVolunteerPortalData(eventId, volunteer?.id || '', true),
+        storageService.fetchDayAttendance(eventId, true),
+        storageService.fetchPaginatedLearners(eventId, { limit: 500 }),
+        storageService.fetchSpeakingTurns(eventId)
+      ]);
+      setAttendanceRefreshKey(k => k + 1);
+      setSpeakerAidTick(t => t + 1);
+      onShowToast?.('Synchronized', 'Refreshed attendance and delegates from authoritative server', 'success');
+    } catch (err: any) {
+      onShowToast?.('Sync Failed', err?.message || 'Could not synchronize data', 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   // Synchronize authoritative speaking turns on mount & upon realtime events
   useEffect(() => {
@@ -1249,6 +1271,19 @@ export const VolunteerDashboard: React.FC<VolunteerDashboardProps> = ({
           >
             <span className={`w-2 h-2 rounded-full ${isOnDuty ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
             {isOnDuty ? 'ON DUTY' : 'OFF DUTY'}
+          </button>
+
+          {/* Refresh / Sync Now */}
+          <button
+            type="button"
+            onClick={handleManualSync}
+            disabled={isSyncing}
+            className="px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+            style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+            title="Refresh attendance, delegates, and questions from live backend"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-indigo-500' : ''}`} />
+            <span className="hidden sm:inline">{isSyncing ? 'Syncing...' : 'Sync Now'}</span>
           </button>
 
           {/* Theme Toggle */}

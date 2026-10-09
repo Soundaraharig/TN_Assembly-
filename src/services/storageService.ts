@@ -848,11 +848,20 @@ class StorageService {
       cachedAt: Date.now()
     };
     this.memoryCache.set(key, entry);
+
+    // Skip storing large full-hydration payloads or bulk lists in localStorage to prevent QuotaExceededError
+    if (key.startsWith('hydrate_full_') || key.includes('full_event') || key.startsWith('learners_')) {
+      return;
+    }
+
     try {
       if (typeof window !== 'undefined' && window.localStorage) {
         localStorage.setItem(`tn_cache_${key}`, JSON.stringify(entry));
       }
-    } catch (e) {
+    } catch (e: any) {
+      if (e?.name === 'QuotaExceededError' || e?.code === 22) {
+        this.evictDisposableLocalStorage();
+      }
       console.warn('[StorageService] setCacheEntry quota warning:', e);
     }
   }
@@ -1082,6 +1091,7 @@ class StorageService {
   }
 
   constructor() {
+    this.evictDisposableLocalStorage();
     this.checkAndMigrateCacheVersion();
     this.initDefaults();
     this.isHydrated = true;
@@ -1222,39 +1232,91 @@ class StorageService {
     }, 50);
   }
 
-  // ── localStorage helpers ─────────────────────────────────────────────────
+  // ── localStorage helpers with in-memory backing ─────────────────────────
+  private memoryStore = new Map<string, any>();
+
+  public evictDisposableLocalStorage(): void {
+    try {
+      if (typeof window === 'undefined' || !window.localStorage) return;
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k) continue;
+        if (
+          k.startsWith('tn_cache_') ||
+          k.startsWith('tn_assembly_timer_audio_') ||
+          k.startsWith('portal_') ||
+          k.startsWith('sync_') ||
+          k.startsWith('meta_') ||
+          k.startsWith('fetch_') ||
+          k.startsWith('hydrate_full_')
+        ) {
+          keysToRemove.push(k);
+        }
+      }
+      keysToRemove.forEach(k => {
+        try { localStorage.removeItem(k); } catch { }
+      });
+      // Also prune login records if large
+      try {
+        const loginRaw = localStorage.getItem(STORAGE_KEYS.LOGIN_RECORDS);
+        if (loginRaw && loginRaw.length > 2000) {
+          const parsed = JSON.parse(loginRaw);
+          if (Array.isArray(parsed) && parsed.length > 20) {
+            localStorage.setItem(STORAGE_KEYS.LOGIN_RECORDS, JSON.stringify(parsed.slice(0, 20)));
+          }
+        }
+      } catch {
+        try { localStorage.removeItem(STORAGE_KEYS.LOGIN_RECORDS); } catch { }
+      }
+    } catch (err) {
+      console.warn('[StorageService] Quota eviction warning:', err);
+    }
+  }
 
   private getItem<T>(key: string, defaultValue: T): T {
+    if (this.memoryStore.has(key)) {
+      return this.memoryStore.get(key) as T;
+    }
     try {
       const data = localStorage.getItem(key);
-      return data ? JSON.parse(data) : defaultValue;
+      const val = data ? JSON.parse(data) : defaultValue;
+      this.memoryStore.set(key, val);
+      return val;
     } catch {
+      this.memoryStore.set(key, defaultValue);
       return defaultValue;
     }
   }
 
   private setItem<T>(key: string, value: T): void {
+    this.memoryStore.set(key, value);
     try {
       localStorage.setItem(key, JSON.stringify(value));
       if (key === STORAGE_KEYS.AGENDA) {
         this.invalidateAgendaCache();
       }
       this.notify();
-    } catch (e) {
-      console.error('Storage error:', e);
+    } catch (e: any) {
+      if (e?.name === 'QuotaExceededError' || e?.code === 22) {
+        this.evictDisposableLocalStorage();
+        try {
+          localStorage.setItem(key, JSON.stringify(value));
+        } catch {
+          // Retained safely in memoryStore
+        }
+      } else {
+        console.error('Storage error:', e);
+      }
+      if (key === STORAGE_KEYS.AGENDA) {
+        this.invalidateAgendaCache();
+      }
+      this.notify();
     }
   }
 
   private setItemSafe<T>(key: string, value: T): void {
-    try {
-      localStorage.setItem(key, JSON.stringify(value));
-      if (key === STORAGE_KEYS.AGENDA) {
-        this.invalidateAgendaCache();
-      }
-      this.notify();
-    } catch (e) {
-      console.warn(`[StorageService] localStorage quota warning for "${key}". Data safely held in memory/IDB.`);
-    }
+    this.setItem(key, value);
   }
 
   public tombstoneId(id: string): void {
@@ -3430,10 +3492,6 @@ class StorageService {
     const sb = supabase;
     if (!sb || !eventId) return this.getLearners(eventId);
 
-    if (!force && this.getLearners(eventId).length > 0) {
-      return this.getLearners(eventId);
-    }
-
     const cacheKey = `fetch_learners_${eventId}`;
     return this.fetchCached<Learner[]>(cacheKey, async () => {
       try {
@@ -3891,7 +3949,7 @@ class StorageService {
         this.dedupeInFlight<{ data: any }>(`query_event_${eventId}`, async () =>
           await sb.from('college_events').select(SUPABASE_COLUMNS.COLLEGE_EVENTS_JURY).eq('id', eventId).limit(1)
         ),
-        this.fetchEventLearners(eventId),
+        this.fetchEventLearners(eventId, true),
         this.dedupeInFlight<{ data: any }>(`query_active_agenda_${eventId}`, async () =>
           await sb.from('session_agenda').select('id,title,is_current').eq('event_id', eventId).eq('is_current', true).limit(1)
         )
@@ -5406,7 +5464,7 @@ class StorageService {
             const records = this.getItem<LoginRecord[]>(STORAGE_KEYS.LOGIN_RECORDS, []);
             if (!records.some(r => r.id === rec.id)) {
               records.unshift(rec);
-              if (records.length > 1000) records.pop();
+              if (records.length > 50) records.pop();
               this.setItem(STORAGE_KEYS.LOGIN_RECORDS, records);
               this.notify();
               if (typeof window !== 'undefined') window.dispatchEvent(new Event('storage'));
@@ -10091,8 +10149,38 @@ class StorageService {
     const timestamp = new Date().toISOString();
     const all = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
     const existingIndex = all.findIndex(a => a.event_id === eventId && a.day_id === dayId && a.student_id === studentId);
-    const prior = existingIndex >= 0 ? all[existingIndex] : null;
-    const { fn: priorFn, an: priorAn } = getRecordSessionStatuses(prior || undefined);
+    let prior = existingIndex >= 0 ? all[existingIndex] : null;
+
+    // Preserve the other session status if not present in immediate memory
+    let { fn: priorFn, an: priorAn } = getRecordSessionStatuses(prior || undefined);
+    if (!prior && supabase && isSupabaseEnabled) {
+      try {
+        const { data: remotePrior } = await supabase
+          .from('event_day_attendance')
+          .select('id,status,marked_by,created_at')
+          .eq('event_id', eventId)
+          .eq('day_id', dayId)
+          .eq('student_id', studentId)
+          .maybeSingle();
+        if (remotePrior) {
+          const remoteParsed = getRecordSessionStatuses(remotePrior as any);
+          priorFn = remoteParsed.fn;
+          priorAn = remoteParsed.an;
+          prior = {
+            id: remotePrior.id,
+            event_id: eventId,
+            day_id: dayId,
+            student_id: studentId,
+            status: remotePrior.status as DayAttendanceStatus,
+            fn_status: priorFn,
+            an_status: priorAn,
+            marked_by: remotePrior.marked_by,
+            created_at: remotePrior.created_at,
+            updated_at: timestamp
+          } as DayAttendanceRecord;
+        }
+      } catch {}
+    }
 
     let nextFnStatus: DayAttendanceStatus;
     let nextAnStatus: DayAttendanceStatus;
@@ -10132,7 +10220,7 @@ class StorageService {
       updated_at: timestamp
     };
 
-    // Immediate optimistic local update (0ms latency for volunteer desk badges)
+    // Immediate optimistic local update
     if (existingIndex >= 0) {
       all[existingIndex] = record;
     } else {
@@ -10145,24 +10233,39 @@ class StorageService {
       } catch { }
     }
 
-    // Persist to Supabase in background if connected
-    if (supabase) {
+    // Authoritative backend write verification
+    if (supabase && isSupabaseEnabled) {
       try {
         const res = await this.sbUpsert('event_day_attendance', record as unknown as Record<string, unknown>);
-        if (res.success && res.data?.id && res.data.id !== record.id) {
+        if (res.success && res.data?.id) {
           record.id = res.data.id;
           const curAll = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
           const idx = curAll.findIndex(a => a.event_id === eventId && a.day_id === dayId && a.student_id === studentId);
           if (idx >= 0) {
-            curAll[idx].id = res.data.id;
+            curAll[idx] = record;
             this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, curAll);
           }
         } else if (!res.success) {
-          console.warn('[StorageService] Attendance upsert warning:', res.error);
+          console.error('[StorageService] Attendance upsert error:', res.error);
           this.notifyWriteError('event_day_attendance', 'upsert', res.error);
+          // Rollback optimistic update
+          const curAll = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+          const restored = prior
+            ? curAll.map(a => (a.event_id === eventId && a.day_id === dayId && a.student_id === studentId ? prior! : a))
+            : curAll.filter(a => !(a.event_id === eventId && a.day_id === dayId && a.student_id === studentId));
+          this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, restored);
+          this.notify();
+          throw new Error(res.error?.message || 'Database rejected attendance record. Please try again.');
         }
-      } catch (dbErr) {
-        console.warn('[StorageService] Error syncing attendance to Supabase:', dbErr);
+      } catch (dbErr: any) {
+        // Rollback optimistic update on network / unhandled error
+        const curAll = this.getItem<DayAttendanceRecord[]>(STORAGE_KEYS.DAY_ATTENDANCE, []);
+        const restored = prior
+          ? curAll.map(a => (a.event_id === eventId && a.day_id === dayId && a.student_id === studentId ? prior! : a))
+          : curAll.filter(a => !(a.event_id === eventId && a.day_id === dayId && a.student_id === studentId));
+        this.setItem(STORAGE_KEYS.DAY_ATTENDANCE, restored);
+        this.notify();
+        throw dbErr;
       }
     }
 
